@@ -54,6 +54,9 @@ pub struct MindeState {
     /// this id (see `wm-place-window` &c. in `guile::mod`).
     pub windows: Vec<(u64, Window)>,
     pub next_window_id: u64,
+    /// Window last focused via `wm-focus-window`; gets the border drawn
+    /// around it in the render pass.
+    pub focused_window: Option<Window>,
 }
 
 impl MindeState {
@@ -122,6 +125,7 @@ impl MindeState {
 
             windows: Vec::new(),
             next_window_id: 0,
+            focused_window: None,
         }
     }
 
@@ -180,6 +184,7 @@ impl MindeState {
                         t.send_pending_configure();
                     }
                 }
+                self.focused_window = Some(window);
             }
             WmCommand::ClearFocus => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -192,6 +197,7 @@ impl MindeState {
                         t.send_pending_configure();
                     }
                 }
+                self.focused_window = None;
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -220,6 +226,9 @@ impl MindeState {
     /// Removes a window (by Wayland surface identity) from the registry,
     /// returning its id if it was registered. Called on unmap/destroy.
     pub fn unregister_window(&mut self, window: &Window) -> Option<u64> {
+        if self.focused_window.as_ref() == Some(window) {
+            self.focused_window = None;
+        }
         let pos = self.windows.iter().position(|(_, w)| w == window)?;
         Some(self.windows.remove(pos).0)
     }

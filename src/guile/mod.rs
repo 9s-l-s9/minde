@@ -26,10 +26,6 @@ pub fn set_loop_signal(signal: LoopSignal) {
     let _ = LOOP_SIGNAL.set(signal);
 }
 
-pub fn quit_requested() -> bool {
-    QUIT_REQUESTED.load(Ordering::SeqCst)
-}
-
 /// Commands enqueued from Scheme (possibly from the REPL thread) to be
 /// applied against `&mut MindeState` on the compositor's main thread via
 /// a calloop channel.

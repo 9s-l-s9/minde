@@ -3,7 +3,14 @@ use std::time::Duration;
 use smithay::{
     backend::{
         renderer::{
-            damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer,
+            ImportAll, ImportMem,
+            damage::OutputDamageTracker,
+            element::{
+                Kind,
+                solid::{SolidColorBuffer, SolidColorRenderElement},
+                surface::WaylandSurfaceRenderElement,
+            },
+            gles::GlesRenderer,
         },
         winit::{self, WinitEvent},
     },
@@ -11,6 +18,17 @@ use smithay::{
     reexports::calloop::EventLoop,
     utils::{Rectangle, Transform},
 };
+
+// Space window surfaces plus our solid-color focus border.
+smithay::backend::renderer::element::render_elements! {
+    pub MindeRenderElements<R> where R: ImportAll + ImportMem;
+    Surface=WaylandSurfaceRenderElement<R>,
+    Solid=SolidColorRenderElement,
+}
+
+/// Focused-window border: gruvbox yellow, matching the user's StumpWM theme.
+const BORDER_COLOR: [f32; 4] = [0.84, 0.60, 0.13, 1.0]; // #d79921
+const BORDER_WIDTH: i32 = 2;
 
 use crate::MindeState;
 use crate::guile;
@@ -49,6 +67,11 @@ pub fn init_winit(
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
+    // Persistent buffers for the 4 border edges (stable element ids keep
+    // damage tracking incremental).
+    let mut border_buffers: [SolidColorBuffer; 4] =
+        std::array::from_fn(|_| SolidColorBuffer::new((0, 0), BORDER_COLOR));
+
     event_loop.handle().insert_source(winit, move |event, _, state| {
         match event {
             WinitEvent::Resized { size, .. } => {
@@ -68,11 +91,42 @@ pub fn init_winit(
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
 
+                // Border elements around the focused window, if any.
+                let mut custom: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
+                if let Some(geo) = state
+                    .focused_window
+                    .as_ref()
+                    .and_then(|w| state.space.element_geometry(w))
+                {
+                    let t = BORDER_WIDTH;
+                    let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+                    let rects = [
+                        ((x - t, y - t), (w + 2 * t, t)), // top
+                        ((x - t, y + h), (w + 2 * t, t)), // bottom
+                        ((x - t, y), (t, h)),             // left
+                        ((x + w, y), (t, h)),             // right
+                    ];
+                    for (buf, (loc, sz)) in border_buffers.iter_mut().zip(rects) {
+                        buf.update(sz, BORDER_COLOR);
+                        custom.push(
+                            SolidColorRenderElement::from_buffer(
+                                buf,
+                                smithay::utils::Point::<i32, smithay::utils::Logical>::from(loc)
+                                    .to_physical(1),
+                                1.0,
+                                1.0,
+                                Kind::Unspecified,
+                            )
+                            .into(),
+                        );
+                    }
+                }
+
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
                     smithay::desktop::space::render_output::<
                         _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
+                        MindeRenderElements<GlesRenderer>,
                         _,
                         _,
                     >(
@@ -82,7 +136,7 @@ pub fn init_winit(
                         1.0,
                         0,
                         [&state.space],
-                        &[],
+                        &custom,
                         &mut damage_tracker,
                         [0.1, 0.1, 0.1, 1.0],
                     )

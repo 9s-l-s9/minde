@@ -47,7 +47,6 @@ unsafe extern "C" {
         fcn: Gsubr,
     ) -> Scm;
 
-    pub fn scm_call_0(proc: Scm) -> Scm;
     pub fn scm_call_1(proc: Scm, arg1: Scm) -> Scm;
     pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
     pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
@@ -68,9 +67,6 @@ unsafe extern "C" {
     pub fn scm_c_lookup(name: *const c_char) -> Scm;
     /// Dereferences a variable object obtained from `scm_c_lookup`.
     pub fn scm_variable_ref(var: Scm) -> Scm;
-
-    /// Protects an SCM object from the garbage collector until unprotected.
-    pub fn scm_gc_protect_object(obj: Scm) -> Scm;
 
     pub fn scm_internal_catch(
         tag: Scm,
