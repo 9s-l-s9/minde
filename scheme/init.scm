@@ -11,7 +11,8 @@
 ;; `(use-modules (minde frames))` finds it regardless of cwd.
 (add-to-load-path (dirname (current-filename)))
 
-(use-modules (minde frames))
+(use-modules (minde frames)
+             (minde groups))
 
 ;; ---------------------------------------------------------------------
 ;; Keybinding table
@@ -90,18 +91,28 @@ MODS (possibly '())."
 (and should not be forwarded to the focused client), #f otherwise."
   (case %key-state
     ((prefix)
-     (if (modifier-keysym? keysym-name)
-         #f ; stay in prefix state; let the client see the modifier
-     (begin
-     (set! %key-state 'normal)
-     (let ((thunk (hash-ref %prefix-bindings keysym-name)))
-       (if thunk
-           (run-binding! thunk mods-bitmask keysym-name)
-           ;; Unbound prefix key: swallow it (StumpWM does the same,
-           ;; typically with a "not bound" echo) rather than forwarding a
-           ;; keypress the user didn't intend for the client.
-           (wm-log (format #f "C-t ~a: not bound" keysym-name)))
-       #t))))
+     (cond
+      ;; Pressing the prefix key's keysym again while already in prefix
+      ;; state (e.g. C-t t) is StumpWM's "send this key literally"
+      ;; escape: reset to normal state and forward the keypress to the
+      ;; focused client instead of consuming it. Matched by keysym name
+      ;; only (not modifiers) since the second press may or may not carry
+      ;; the same modifier as the prefix itself.
+      ((string=? keysym-name %prefix-key)
+       (set! %key-state 'normal)
+       #f)
+      ((modifier-keysym? keysym-name)
+       #f) ; stay in prefix state; let the client see the modifier
+      (else
+       (set! %key-state 'normal)
+       (let ((thunk (hash-ref %prefix-bindings keysym-name)))
+         (if thunk
+             (run-binding! thunk mods-bitmask keysym-name)
+             ;; Unbound prefix key: swallow it (StumpWM does the same,
+             ;; typically with a "not bound" echo) rather than forwarding a
+             ;; keypress the user didn't intend for the client.
+             (wm-log (format #f "C-t ~a: not bound" keysym-name)))
+         #t))))
     (else
      (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
          (begin
@@ -129,6 +140,9 @@ MODS (possibly '())."
 ;;   v -- vsplit (stacked)       h -- hsplit (side by side)
 ;;   c -- remove split           n -- next frame
 ;;   f -- next window in frame   k -- close window
+;;   p -- pull window from other frame into this one
+;;   g -- next group             G -- new group (auto-named)
+;;   m -- move window to next group
 ;;   Q -- quit compositor
 ;; (Emacs note: emacsclient needs the user's Guix Home shepherd emacs
 ;; daemon; plain emacs is the fallback.)
@@ -141,7 +155,11 @@ MODS (possibly '())."
 (bind-prefix-key! "c" (lambda () (remove-split!)))
 (bind-prefix-key! "n" (lambda () (focus-next-frame!)))
 (bind-prefix-key! "f" (lambda () (focus-next-window-in-frame!)))
+(bind-prefix-key! "p" (lambda () (pull-window-from-other-frame!)))
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
+(bind-prefix-key! "g" (lambda () (gnext!)))
+(bind-prefix-key! "G" (lambda () (gnew-auto!)))
+(bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
 
 ;; Uncomment to use the Print key as prefix, like the user's StumpWM setup:

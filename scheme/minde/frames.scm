@@ -20,13 +20,41 @@
             remove-split!
             focus-next-frame!
             focus-next-window-in-frame!
+            pull-window-from-other-frame!
             sync-frames!
-            wm-on-window-map
-            wm-on-window-unmap
-            wm-on-output-geometry
+            handle-window-map!
+            handle-window-unmap!
+            handle-output-geometry!
+            remove-window-from-active-tree!
+            remove-window-from-tree-in!
             current-frame-window
             close-current-window!
-            frame-tree-window-count))
+            frame-tree-window-count
+            ;; Group-tree plumbing, used by (minde groups). frames.scm
+            ;; keeps owning the <group> record and the "which group's tree
+            ;; is currently live in %frame-tree/%current-frame" swap
+            ;; (activate-group!) since that's intimately tied to the frame
+            ;; internals below; (minde groups) owns the ordered group
+            ;; list and higher-level operations (switch-to-group! etc).
+            make-group
+            group?
+            group-name
+            set-group-name!
+            group-tree
+            set-group-tree!
+            group-current-frame
+            set-group-current-frame!
+            make-empty-group
+            current-group
+            current-tree
+            current-output-size
+            activate-group!
+            park-group-windows!
+            group-window-count
+            frame-leaves
+            frame-window-ids
+            frame-add-window!
+            hide-window!))
 
 ;; ---------------------------------------------------------------------
 ;; Data types
@@ -56,20 +84,99 @@
   (child-a split-child-a set-split-child-a!)
   (child-b split-child-b set-split-child-b!))
 
+;; A group: a name plus its own frame tree and current-frame pointer.
+;; Exactly one group is "active" at a time -- its tree/current-frame are
+;; the live %frame-tree/%current-frame below; every other group's state
+;; sits quiescently in its own record until (minde groups) activates
+;; it. See activate-group!.
+(define-record-type <group>
+  (make-group name tree current-frame)
+  group?
+  (name group-name set-group-name!)
+  (tree group-tree set-group-tree!)
+  (current-frame group-current-frame set-group-current-frame!))
+
 ;; ---------------------------------------------------------------------
 ;; State
 ;; ---------------------------------------------------------------------
 
 ;; The root of the frame tree -- either a <frame> or a <split> whose leaves
-;; are (transitively) <frame>s.
+;; are (transitively) <frame>s. This is always the ACTIVE group's tree;
+;; other groups' trees live in their own <group> record until activated.
 (define %frame-tree
   (make-frame 0 0 1280 720 '() #f))
 
-;; The leaf <frame> that currently has input focus.
+;; The leaf <frame> that currently has input focus, within %frame-tree.
 (define %current-frame %frame-tree)
 
-(define (default-output-w) 1280)
-(define (default-output-h) 720)
+;; The most recently seen output size, applied to a group's tree whenever
+;; it becomes active (so a group created/hidden before a resize doesn't
+;; show up with stale geometry the first time it's synced).
+(define %last-output-w 1280)
+(define %last-output-h 720)
+
+(define (current-output-size) (list %last-output-w %last-output-h))
+
+;; The group whose tree/current-frame are currently loaded into
+;; %frame-tree/%current-frame above. (minde groups) bootstraps its
+;; default group list by grabbing this one and renaming it, so nothing
+;; here needs to know about groups plural.
+(define %active-group (make-group "default" %frame-tree %current-frame))
+
+(define (current-group) %active-group)
+
+(define (current-tree) %frame-tree)
+
+;; Creates a fresh, empty, single-frame group of the given size. Building
+;; a <group>/<frame> record is pure data construction -- no wm-* calls --
+;; so this is safe to use at module load time too.
+(define (make-empty-group name w h)
+  (let ((f (make-frame 0 0 w h '() #f)))
+    (make-group name f f)))
+
+;; Writes the live %frame-tree/%current-frame back into %active-group's
+;; own fields (which otherwise go stale the moment a split/remove-split
+;; replaces the tree root with a new object).
+(define (flush-active-group!)
+  (set-group-tree! %active-group %frame-tree)
+  (set-group-current-frame! %active-group %current-frame))
+
+;; Makes G the active group: flushes the previously-active group's live
+;; state into its record, loads G's stored tree/current-frame into
+;; %frame-tree/%current-frame, and re-stretches G's tree to the last known
+;; output size. Does not sync or touch any wm-* subr -- callers (typically
+;; (minde groups)'s switch-to-group!) are expected to park the outgoing
+;; group's windows first and call sync-frames! afterwards.
+(define (activate-group! g)
+  (unless (eq? g %active-group)
+    (flush-active-group!)
+    (set! %frame-tree (group-tree g))
+    (set! %current-frame (group-current-frame g))
+    (set! %active-group g)
+    (resize-subtree! %frame-tree 0 0 %last-output-w %last-output-h)))
+
+;; Moves every window tracked by G (active or not) off-screen, without
+;; touching focus. Used when a group is about to be hidden.
+(define (park-group-windows! g)
+  (let ((tree (if (eq? g %active-group) %frame-tree (group-tree g))))
+    (for-each
+     (lambda (frame)
+       (for-each
+        (lambda (id) (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
+        (frame-window-ids frame)))
+     (frame-leaves tree))))
+
+;; Total window count tracked by G (active or not).
+(define (group-window-count g)
+  (let ((tree (if (eq? g %active-group) %frame-tree (group-tree g))))
+    (apply + (map (lambda (f) (length (frame-window-ids f))) (frame-leaves tree)))))
+
+;; Parks a single window off-screen -- used when a window is moved out of
+;; the active group's tree into a hidden group (so it doesn't linger
+;; on-screen with stale geometry; see move-window-to-next-group! in
+;; (minde groups)).
+(define (hide-window! id)
+  (wm-place-window id %offscreen-x %offscreen-y (frame-w %current-frame) (frame-h %current-frame)))
 
 ;; ---------------------------------------------------------------------
 ;; Calling out to Rust (or, in tests, stubs)
@@ -138,9 +245,10 @@
   (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
   (set-frame-current-window! frame id))
 
-;; Removes ID from every frame it appears in (there should be at most one).
-;; Returns #t if it was found and removed.
-(define (remove-window-from-tree! id)
+;; Removes ID from every frame of TREE it appears in (there should be at
+;; most one). Returns #t if it was found and removed. Generic over any
+;; tree so (minde groups) can search hidden groups' trees too.
+(define (remove-window-from-tree-in! tree id)
   (let ((found #f))
     (for-each
      (lambda (frame)
@@ -151,7 +259,14 @@
            (set-frame-current-window!
             frame
             (if (null? (frame-window-ids frame)) #f (car (frame-window-ids frame)))))))
-     (frame-leaves %frame-tree))
+     (frame-leaves tree))
+    found))
+
+;; Removes ID from the active group's tree only. Returns #t if found, in
+;; which case the active group is re-synced.
+(define (remove-window-from-active-tree! id)
+  (let ((found (remove-window-from-tree-in! %frame-tree id)))
+    (when found (sync-frames!))
     found))
 
 (define (current-frame-window)
@@ -291,6 +406,28 @@ window')."
         (set-frame-current-window! %current-frame (list-ref ids (modulo (+ idx 1) n))))))
   (sync-frames!))
 
+(define (pull-window-from-other-frame!)
+  "Finds the next window (round-robin, starting just after the current
+frame) not already in the current frame, and moves it into the current
+frame as its new current window. A no-op if there is only one frame or no
+other frame holds any window."
+  (let* ((leaves (frame-leaves %frame-tree))
+         (n (length leaves))
+         (idx (list-index (lambda (f) (eq? f %current-frame)) leaves)))
+    (when (and idx (> n 1))
+      (let loop ((i 1))
+        (when (<= i (- n 1))
+          (let ((candidate (list-ref leaves (modulo (+ idx i) n))))
+            (if (pair? (frame-window-ids candidate))
+                (let ((id (frame-current-window candidate)))
+                  (set-frame-window-ids! candidate (delete id (frame-window-ids candidate)))
+                  (set-frame-current-window!
+                   candidate
+                   (if (null? (frame-window-ids candidate)) #f (car (frame-window-ids candidate))))
+                  (frame-add-window! %current-frame id))
+                (loop (+ i 1))))))))
+  (sync-frames!))
+
 (define (close-current-window!)
   "Requests the current frame's current window be closed."
   (let ((id (current-frame-window)))
@@ -328,24 +465,32 @@ input focus to the current frame's current window."
         (wm-clear-focus))))
 
 ;; ---------------------------------------------------------------------
-;; Event hooks, called from Rust
+;; Event hooks
 ;; ---------------------------------------------------------------------
+;;
+;; These are no longer the direct wm-on-window-map/wm-on-window-unmap/
+;; wm-on-output-geometry hooks Rust looks up by name -- (minde groups)
+;; owns those now (it needs to route to the active group and search
+;; hidden groups on unmap). These handle-* procedures are the
+;; single-group-tree half of that work.
 
-(define (wm-on-window-map id title app-id)
-  "Called by Rust when a new toplevel is mapped. Adds it to the current
-frame as its new current window."
+(define (handle-window-map! id title app-id)
+  "Adds ID to the active group's current frame as its new current window."
   (frame-add-window! %current-frame id)
   (sync-frames!))
 
-(define (wm-on-window-unmap id)
-  "Called by Rust when a toplevel is unmapped/destroyed. Removes it from
-whichever frame holds it."
-  (remove-window-from-tree! id)
-  (sync-frames!))
+(define (handle-window-unmap! id)
+  "Removes ID from the active group's tree, if present there. Returns #t
+if found (and re-syncs), #f otherwise -- callers should then search other
+groups' trees themselves via remove-window-from-tree-in!."
+  (remove-window-from-active-tree! id))
 
-(define (wm-on-output-geometry width height)
-  "Called by Rust on winit backend init and on every resize. Resizes the
-whole frame tree to the new output size."
+(define (handle-output-geometry! width height)
+  "Called on winit backend init and on every resize. Resizes the active
+group's frame tree to the new output size and remembers it so newly
+activated groups get the current size too."
   (when (and (> width 0) (> height 0))
+    (set! %last-output-w width)
+    (set! %last-output-h height)
     (resize-subtree! %frame-tree 0 0 width height)
     (sync-frames!)))

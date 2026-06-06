@@ -66,19 +66,19 @@
 ;; Set up a 1280x720 output, matching the stub.
 ;; ---------------------------------------------------------------------
 
-(wm-on-output-geometry 1280 720)
+(handle-output-geometry! 1280 720)
 
 ;; ---------------------------------------------------------------------
 ;; Map two windows into the (single, full-screen) initial frame.
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-map 1 "term" "foot")
+(handle-window-map! 1 "term" "foot")
 (check "window 1 placed full-screen after map"
        (hash-ref %placements 1)
        (list 0 0 1280 720))
 (check "window 1 focused after map" %focused 1)
 
-(wm-on-window-map 2 "editor" "emacs")
+(handle-window-map! 2 "editor" "emacs")
 ;; window 2 maps into the same (only) frame, becoming its new current
 ;; window; window 1 should now be parked off-screen since it's no longer
 ;; that frame's current window.
@@ -159,11 +159,11 @@
 ;; Unmap removes a window wherever it is.
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-unmap 1)
+(handle-window-unmap! 1)
 (check "window 1 no longer tracked after unmap" (frame-tree-window-count) 1)
 (check "window 2 remains current after unmap" (current-frame-window) 2)
 
-(wm-on-window-unmap 2)
+(handle-window-unmap! 2)
 (check "no windows tracked after unmapping both" (frame-tree-window-count) 0)
 (check "current-frame-window is #f with no windows" (current-frame-window) #f)
 

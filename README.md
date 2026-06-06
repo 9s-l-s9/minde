@@ -51,16 +51,36 @@ client) with `(mods-bitmask keysym keysym-name)`; returning `#t` consumes
 the key. Modifier bits mirror common X11 masks: shift=1, ctrl=4, alt=8,
 super=64.
 
-Key bindings are StumpWM-style, behind the `C-t` prefix (see
-`scheme/init.scm`): `C-t c` terminal, `C-t s`/`C-t S` vertical/horizontal
-split, `C-t R` remove split, `C-t o` next frame, `C-t n` next window in
-frame, `C-t k` close window; `super+q` quits. Frame layout policy lives in
-`scheme/minde/frames.scm`; unit tests: `guile -L scheme
-tests/frames-test.scm`.
+Key bindings are StumpWM-style behind a prefix (default `C-t`,
+configurable: `(set-prefix-key! '() "Print")`). Pressing the prefix key
+again forwards it literally to the client. Prefix map (see
+`scheme/init.scm`):
 
-Note when running nested inside StumpWM: StumpWM intercepts `C-t` itself --
-forward it with StumpWM's `C-t t`, or change the prefix from the REPL,
-e.g. `(set! %prefix-key "u")`.
+| key | action | | key | action |
+|-----|--------|-|-----|--------|
+| `Return` | terminal (alacritty) | | `r` | run prompt (fuzzel) |
+| `b` | browser (zen/chromium) | | `E` | emacs |
+| `v` / `h` | vsplit / hsplit | | `c` | remove split |
+| `n` | next frame | | `f` | next window in frame |
+| `p` | pull window here | | `k` | close window |
+| `g` | next group | | `G` | new group |
+| `m` | move window to next group | | `Q` | quit |
+
+`super+q` also quits. Groups " I ", " II ", " III " exist at startup.
+
+Configuration: minde loads `$MINDE_INIT`, else
+`~/.config/minde/init.scm`, else the repo's `scheme/init.scm`. The
+bundled modules `(minde frames)` / `(minde groups)` are always on the
+load path. Keyboard layout comes from the standard `XKB_DEFAULT_*`
+environment variables, e.g. `XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone`.
+
+Layout policy lives in `scheme/minde/frames.scm` and
+`scheme/minde/groups.scm`; tests: `guile -L scheme tests/frames-test.scm`
+(also `groups-test.scm`, `keys-test.scm`).
+
+Note when running nested inside StumpWM: StumpWM intercepts the prefix you
+give it (its own default is `C-t`) -- forward with StumpWM's `C-t t`, or
+pick a prefix StumpWM doesn't grab.
 
 `wm-handle-key` is looked up by name on every keypress rather than cached,
 so redefining it (or the keybinding table) from a live REPL takes effect
