@@ -5,7 +5,7 @@ use smithay::{
     input::{Seat, SeatState},
     reexports::{
         calloop::{
-            EventLoop, Interest, LoopSignal, Mode, PostAction, channel::Event as ChannelEvent,
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel::Event as ChannelEvent,
             generic::Generic,
         },
         wayland_server::{
@@ -36,6 +36,10 @@ pub struct MindeState {
 
     pub space: Space<Window>,
     pub loop_signal: LoopSignal,
+    /// Handle into the compositor's own event loop, used by the udev
+    /// backend to register per-device DRM event sources and repaint
+    /// timers after startup (see `src/udev.rs`).
+    pub handle: LoopHandle<'static, MindeState>,
 
     // Smithay protocol state
     pub compositor_state: CompositorState,
@@ -57,10 +61,26 @@ pub struct MindeState {
     /// Window last focused via `wm-focus-window`; gets the border drawn
     /// around it in the render pass.
     pub focused_window: Option<Window>,
+
+    /// Pointer location in the global (logical) coordinate space. Updated
+    /// by every pointer-motion input event (absolute in winit, relative in
+    /// the udev/libinput backend) and used to render the cursor.
+    pub pointer_location: Point<f64, Logical>,
+    /// Current pointer cursor image (default fallback vs. client surface),
+    /// set via `SeatHandler::cursor_image`; consulted by the udev render
+    /// pass.
+    pub cursor_state: crate::render::CursorState,
+
+    /// The libseat session handle, set by the udev backend after it takes
+    /// over a VT. `None` under winit, which makes VT-switch keysyms a no-op
+    /// there (see `input.rs`).
+    pub session: Option<smithay::backend::session::libseat::LibSeatSession>,
+    /// Backend-private state for the udev/DRM backend; `None` under winit.
+    pub udev_data: Option<crate::udev::UdevBackendData>,
 }
 
 impl MindeState {
-    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
         let start_time = std::time::Instant::now();
 
         let dh = display.handle();
@@ -102,6 +122,7 @@ impl MindeState {
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
         let loop_signal = event_loop.get_signal();
+        let handle = event_loop.handle();
 
         Self::init_command_channel(event_loop);
 
@@ -111,6 +132,7 @@ impl MindeState {
 
             space,
             loop_signal,
+            handle,
             socket_name,
 
             compositor_state,
@@ -126,6 +148,41 @@ impl MindeState {
             windows: Vec::new(),
             next_window_id: 0,
             focused_window: None,
+
+            pointer_location: (0.0, 0.0).into(),
+            cursor_state: crate::render::CursorState::default(),
+            session: None,
+            udev_data: None,
+        }
+    }
+
+    /// Clamps `pos` to the union of all mapped outputs' geometry, mirroring
+    /// anvil's `clamp_coords`. Used by the udev backend's relative pointer
+    /// motion (winit only ever gets absolute motion, already in range).
+    pub fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+        if self.space.outputs().next().is_none() {
+            return pos;
+        }
+
+        let (pos_x, pos_y) = pos.into();
+        let max_x = self
+            .space
+            .outputs()
+            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+        let clamped_x = pos_x.clamp(0.0, max_x as f64);
+        let max_y = self
+            .space
+            .outputs()
+            .find(|o| {
+                let geo = self.space.output_geometry(o).unwrap();
+                geo.contains((clamped_x as i32, 0))
+            })
+            .map(|o| self.space.output_geometry(o).unwrap().size.h);
+
+        if let Some(max_y) = max_y {
+            (clamped_x, pos_y.clamp(0.0, max_y as f64)).into()
+        } else {
+            (clamped_x, pos_y).into()
         }
     }
 

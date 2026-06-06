@@ -2,16 +2,7 @@ use std::time::Duration;
 
 use smithay::{
     backend::{
-        renderer::{
-            ImportAll, ImportMem,
-            damage::OutputDamageTracker,
-            element::{
-                Kind,
-                solid::{SolidColorBuffer, SolidColorRenderElement},
-                surface::WaylandSurfaceRenderElement,
-            },
-            gles::GlesRenderer,
-        },
+        renderer::{damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -19,19 +10,9 @@ use smithay::{
     utils::{Rectangle, Transform},
 };
 
-// Space window surfaces plus our solid-color focus border.
-smithay::backend::renderer::element::render_elements! {
-    pub MindeRenderElements<R> where R: ImportAll + ImportMem;
-    Surface=WaylandSurfaceRenderElement<R>,
-    Solid=SolidColorRenderElement,
-}
-
-/// Focused-window border: gruvbox yellow, matching the user's StumpWM theme.
-const BORDER_COLOR: [f32; 4] = [0.84, 0.60, 0.13, 1.0]; // #d79921
-const BORDER_WIDTH: i32 = 2;
-
 use crate::MindeState;
 use crate::guile;
+use crate::render::{BorderBuffers, MindeRenderElements};
 
 pub fn init_winit(
     event_loop: &mut EventLoop<MindeState>,
@@ -65,12 +46,14 @@ pub fn init_winit(
         guile::on_output_geometry(size.w.max(0) as u32, size.h.max(0) as u32);
     }
 
+    // Autostart hook: run once the first (and only, for winit) output is up.
+    guile::on_startup();
+
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
     // Persistent buffers for the 4 border edges (stable element ids keep
     // damage tracking incremental).
-    let mut border_buffers: [SolidColorBuffer; 4] =
-        std::array::from_fn(|_| SolidColorBuffer::new((0, 0), BORDER_COLOR));
+    let mut border_buffers = BorderBuffers::default();
 
     event_loop.handle().insert_source(winit, move |event, _, state| {
         match event {
@@ -98,28 +81,7 @@ pub fn init_winit(
                     .as_ref()
                     .and_then(|w| state.space.element_geometry(w))
                 {
-                    let t = BORDER_WIDTH;
-                    let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
-                    let rects = [
-                        ((x - t, y - t), (w + 2 * t, t)), // top
-                        ((x - t, y + h), (w + 2 * t, t)), // bottom
-                        ((x - t, y), (t, h)),             // left
-                        ((x + w, y), (t, h)),             // right
-                    ];
-                    for (buf, (loc, sz)) in border_buffers.iter_mut().zip(rects) {
-                        buf.update(sz, BORDER_COLOR);
-                        custom.push(
-                            SolidColorRenderElement::from_buffer(
-                                buf,
-                                smithay::utils::Point::<i32, smithay::utils::Logical>::from(loc)
-                                    .to_physical(1),
-                                1.0,
-                                1.0,
-                                Kind::Unspecified,
-                            )
-                            .into(),
-                        );
-                    }
+                    custom.extend(border_buffers.elements(geo, 1));
                 }
 
                 {

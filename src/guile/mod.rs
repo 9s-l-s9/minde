@@ -390,3 +390,14 @@ pub fn on_output_geometry(width: u32, height: u32) {
         from_i64(height as i64),
     );
 }
+
+/// Calls `(wm-on-startup)` if bound, once the first output is up and
+/// synced. Missing definition is a no-op, same as the other `on_*` hooks.
+/// Called from both backends (winit and udev) so autostart works whether
+/// nested or standalone.
+pub fn on_startup() {
+    let Some(proc) = lookup("wm-on-startup") else {
+        return;
+    };
+    protected_call(move || unsafe { ffi::scm_call_0(proc) });
+}

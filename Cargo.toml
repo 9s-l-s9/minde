@@ -13,12 +13,27 @@ path = "src/main.rs"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2.2"
+thiserror = "1"
 
 [dependencies.smithay]
 git = "https://github.com/Smithay/Smithay"
 rev = "3021f619e2ae4dab8bfb1e21f3f210923b9b6582"
 default-features = false
-features = ["backend_winit", "wayland_frontend", "desktop"]
+features = [
+    "backend_winit",
+    "wayland_frontend",
+    "desktop",
+    # standalone DRM/udev/libinput backend (src/udev.rs)
+    "backend_udev",
+    "backend_drm",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_session_libseat",
+    "backend_egl",
+    "use_system_lib",
+    "renderer_gl",
+    "renderer_multi",
+]
 
 [build-dependencies]
 pkg-config = "0.3"

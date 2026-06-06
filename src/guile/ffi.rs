@@ -47,6 +47,7 @@ unsafe extern "C" {
         fcn: Gsubr,
     ) -> Scm;
 
+    pub fn scm_call_0(proc: Scm) -> Scm;
     pub fn scm_call_1(proc: Scm, arg1: Scm) -> Scm;
     pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
     pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
