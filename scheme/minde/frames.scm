@@ -98,6 +98,7 @@
 (define (wm-place-window id x y w h) (rust-call 'wm-place-window id x y w h))
 (define (wm-focus-window id) (rust-call 'wm-focus-window id))
 (define (wm-close-window id) (rust-call 'wm-close-window id))
+(define (wm-clear-focus) (rust-call 'wm-clear-focus))
 
 ;; ---------------------------------------------------------------------
 ;; Tree walking helpers
@@ -320,8 +321,11 @@ input focus to the current frame's current window."
         (frame-window-ids frame))))
    (frame-leaves %frame-tree))
   (let ((id (current-frame-window)))
-    (when id
-      (wm-focus-window id))))
+    (if id
+        (wm-focus-window id)
+        ;; Empty current frame: drop keyboard focus so a hidden/unmapped
+        ;; window doesn't keep receiving keys.
+        (wm-clear-focus))))
 
 ;; ---------------------------------------------------------------------
 ;; Event hooks, called from Rust

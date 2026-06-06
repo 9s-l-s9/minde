@@ -37,6 +37,7 @@ pub fn quit_requested() -> bool {
 pub enum WmCommand {
     Place { id: u64, x: i32, y: i32, w: i32, h: i32 },
     Focus { id: u64 },
+    ClearFocus,
     Close { id: u64 },
 }
 
@@ -258,6 +259,10 @@ unsafe extern "C" fn wm_close_window(id: Scm) -> Scm {
     from_bool(send_command(WmCommand::Close { id }))
 }
 
+unsafe extern "C" fn wm_clear_focus() -> Scm {
+    from_bool(send_command(WmCommand::ClearFocus))
+}
+
 unsafe extern "C" fn wm_output_geometry() -> Scm {
     let w = OUTPUT_W.load(Ordering::SeqCst) as i64;
     let h = OUTPUT_H.load(Ordering::SeqCst) as i64;
@@ -306,17 +311,41 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn(Scm) -> Scm,
             ffi::Gsubr,
         >(wm_close_window));
+        register_gsubr("wm-clear-focus", 0, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn() -> Scm,
+            ffi::Gsubr,
+        >(wm_clear_focus));
         register_gsubr("wm-output-geometry", 0, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_output_geometry));
     }
 
+    // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
+    // the repo's scheme/init.scm (the tested default).
     let init_path = std::env::var("MINDE_INIT")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
+        .ok()
+        .or_else(|| {
+            let user_config = std::env::var("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                        .join(".config")
+                })
+                .join("minde/init.scm");
+            user_config.exists().then_some(user_config)
+        })
+        .unwrap_or_else(|| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scheme/init.scm")
         });
+
+    // Make the bundled modules ((minde frames) &c.) importable from any
+    // init file location, e.g. a user config in ~/.config/minde/.
+    let module_dir = std::env::var("MINDE_SCHEME_DIR").unwrap_or_else(|_| {
+        format!("{}/scheme", env!("CARGO_MANIFEST_DIR"))
+    });
+    eval_string(&format!("(add-to-load-path {:?})", module_dir));
 
     tracing::info!(path = %init_path.display(), "loading scheme init file");
     if load_file(&init_path).is_none() {

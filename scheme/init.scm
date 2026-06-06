@@ -52,9 +52,17 @@ when the binding fires. Global binding, always active."
 right after the prefix key (C-t)."
   (hash-set! %prefix-bindings key thunk))
 
-;; The prefix key itself: C-t.
+;; The prefix key itself: C-t by default, StumpWM-style configurable.
+;; e.g. (set-prefix-key! '() "Print") to mirror a StumpWM
+;; (set-prefix-key (kbd "Print")) setup.
 (define %prefix-mods (mods->bitmask '(ctrl)))
 (define %prefix-key "t")
+
+(define (set-prefix-key! mods key)
+  "Set the prefix to KEY (an xkb keysym name string) with modifier list
+MODS (possibly '())."
+  (set! %prefix-mods (mods->bitmask mods))
+  (set! %prefix-key key))
 
 ;; wm-handle-key is a tiny two-state machine: 'normal (the usual case) and
 ;; 'prefix (right after C-t, waiting for the next key).
@@ -115,25 +123,29 @@ right after the prefix key (C-t)."
 (bind-key! '(super) "q"
            (lambda () (wm-quit)))
 
-;; Prefix (C-t ...) bindings, mirroring StumpWM's defaults:
-;;   c  -- new terminal
-;;   s  -- split current frame vertically (stacked, StumpWM "vsplit")
-;;   S  -- split current frame horizontally (side by side)
-;;   R  -- remove current frame (sibling absorbs its space)
-;;   o  -- cycle to the next frame
-;;   n  -- cycle to the next window within the current frame
-;;   k  -- close the current window
-;;
-;; TODO: StumpWM also supports "C-t t" to forward a literal C-t keystroke
-;; to the focused client. Not implemented yet -- for now C-t always enters
-;; prefix state and the next key is always interpreted as a binding.
-(bind-prefix-key! "c" (lambda () (wm-spawn "foot || alacritty || xterm")))
-(bind-prefix-key! "s" (lambda () (split-frame-vertical!)))
-(bind-prefix-key! "S" (lambda () (split-frame-horizontal!)))
-(bind-prefix-key! "R" (lambda () (remove-split!)))
-(bind-prefix-key! "o" (lambda () (focus-next-frame!)))
-(bind-prefix-key! "n" (lambda () (focus-next-window-in-frame!)))
+;; Prefix bindings, mirroring the user's StumpWM root map:
+;;   Return -- terminal          r -- run prompt (fuzzel)
+;;   b -- browser                E -- emacs
+;;   v -- vsplit (stacked)       h -- hsplit (side by side)
+;;   c -- remove split           n -- next frame
+;;   f -- next window in frame   k -- close window
+;;   Q -- quit compositor
+;; (Emacs note: emacsclient needs the user's Guix Home shepherd emacs
+;; daemon; plain emacs is the fallback.)
+(bind-prefix-key! "Return" (lambda () (wm-spawn "alacritty || foot || xterm")))
+(bind-prefix-key! "r" (lambda () (wm-spawn "fuzzel || bemenu-run")))
+(bind-prefix-key! "b" (lambda () (wm-spawn "zen || chromium --ozone-platform-hint=auto")))
+(bind-prefix-key! "E" (lambda () (wm-spawn "emacsclient -c || emacs")))
+(bind-prefix-key! "v" (lambda () (split-frame-vertical!)))
+(bind-prefix-key! "h" (lambda () (split-frame-horizontal!)))
+(bind-prefix-key! "c" (lambda () (remove-split!)))
+(bind-prefix-key! "n" (lambda () (focus-next-frame!)))
+(bind-prefix-key! "f" (lambda () (focus-next-window-in-frame!)))
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
+(bind-prefix-key! "Q" (lambda () (wm-quit)))
+
+;; Uncomment to use the Print key as prefix, like the user's StumpWM setup:
+;; (set-prefix-key! '() "Print")
 
 ;; ---------------------------------------------------------------------
 ;; REPL server

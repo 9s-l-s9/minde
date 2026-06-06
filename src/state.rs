@@ -44,6 +44,7 @@ pub struct MindeState {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
+    pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
     pub popups: PopupManager,
 
     pub seat: Seat<Self>,
@@ -68,11 +69,30 @@ impl MindeState {
 
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
+        let xdg_decoration_state =
+            smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
-        seat.add_keyboard(Default::default(), 200, 25).unwrap();
+        // Keymap from the standard XKB_DEFAULT_* environment variables
+        // (e.g. XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone); empty
+        // strings mean xkbcommon defaults ("us").
+        let env = |k: &str| std::env::var(k).unwrap_or_default();
+        let (rules, model, layout, variant) = (
+            env("XKB_DEFAULT_RULES"),
+            env("XKB_DEFAULT_MODEL"),
+            env("XKB_DEFAULT_LAYOUT"),
+            env("XKB_DEFAULT_VARIANT"),
+        );
+        let xkb_config = smithay::input::keyboard::XkbConfig {
+            rules: &rules,
+            model: &model,
+            layout: &layout,
+            variant: &variant,
+            options: std::env::var("XKB_DEFAULT_OPTIONS").ok(),
+        };
+        seat.add_keyboard(xkb_config, 200, 25).unwrap();
         seat.add_pointer();
 
         let space = Space::default();
@@ -96,6 +116,7 @@ impl MindeState {
             output_manager_state,
             seat_state,
             data_device_state,
+            xdg_decoration_state,
             popups,
             seat,
 
@@ -152,6 +173,25 @@ impl MindeState {
                     keyboard.set_focus(self, Some(surface), serial);
                 }
                 self.space.raise_element(&window, true);
+                // Let clients render their focused/unfocused state.
+                for (_, w) in &self.windows {
+                    w.set_activated(w == &window);
+                    if let Some(t) = w.toplevel() {
+                        t.send_pending_configure();
+                    }
+                }
+            }
+            WmCommand::ClearFocus => {
+                let serial = SERIAL_COUNTER.next_serial();
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                }
+                for (_, w) in &self.windows {
+                    w.set_activated(false);
+                    if let Some(t) = w.toplevel() {
+                        t.send_pending_configure();
+                    }
+                }
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
