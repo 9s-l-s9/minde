@@ -1,0 +1,166 @@
+;;; init.scm -- minde policy layer.
+;;;
+;;; Loaded by the Rust side (src/guile/mod.rs) once at startup. Redefine
+;;; anything here live from the REPL (see below) to change behavior without
+;;; restarting the compositor.
+
+(use-modules (ice-9 hash-table)
+             (system repl server))
+
+;; scheme/frames.scm lives next to this file; add it to the load path so
+;; `(use-modules (minde frames))` finds it regardless of cwd.
+(add-to-load-path (dirname (current-filename)))
+
+(use-modules (minde frames))
+
+;; ---------------------------------------------------------------------
+;; Keybinding table
+;; ---------------------------------------------------------------------
+
+;; Global (non-prefixed) bindings: (mods . keysym-name) -> thunk. Kept
+;; deliberately small -- StumpWM style is that almost everything goes
+;; through the C-t prefix.
+(define %keybindings (make-hash-table))
+
+;; Prefix-key bindings: keysym-name -> thunk. Looked up with no modifier
+;; requirement beyond having entered prefix state (matching StumpWM, where
+;; e.g. C-t c means "prefix, then plain c").
+(define %prefix-bindings (make-hash-table))
+
+;; X11-style modifier bitmask, mirrored on the Rust side: shift=1 ctrl=4
+;; alt=8 super=64.
+(define (mod-symbol->bit sym)
+  (case sym
+    ((shift) 1)
+    ((ctrl control) 4)
+    ((alt) 8)
+    ((super logo) 64)
+    (else (error "unknown modifier" sym))))
+
+(define (mods->bitmask mods)
+  "MODS is a list of symbols such as '(super) or '(ctrl shift)."
+  (apply + (map mod-symbol->bit mods)))
+
+(define (bind-key! mods key thunk)
+  "Bind KEY (an xkb keysym name string, e.g. \"Return\", \"q\", \"d\") with
+modifier list MODS (e.g. '(super)) to THUNK, a zero-argument procedure run
+when the binding fires. Global binding, always active."
+  (hash-set! %keybindings (cons (mods->bitmask mods) key) thunk))
+
+(define (bind-prefix-key! key thunk)
+  "Bind KEY (e.g. \"s\", \"S\", \"c\") to THUNK, run when KEY is pressed
+right after the prefix key (C-t)."
+  (hash-set! %prefix-bindings key thunk))
+
+;; The prefix key itself: C-t.
+(define %prefix-mods (mods->bitmask '(ctrl)))
+(define %prefix-key "t")
+
+;; wm-handle-key is a tiny two-state machine: 'normal (the usual case) and
+;; 'prefix (right after C-t, waiting for the next key).
+(define %key-state 'normal)
+
+(define (run-binding! thunk mods keysym-name)
+  ;; Errors from a binding are logged, not fatal -- one bad keybinding
+  ;; shouldn't take down the compositor.
+  (catch #t
+    thunk
+    (lambda (key . args)
+      (wm-log (format #f "error in keybinding ~a ~a: ~a ~a" mods keysym-name key args)))))
+
+;; Bare modifier presses (e.g. the Shift_L press that precedes typing "S")
+;; must not be interpreted as the key following the prefix.
+(define %modifier-keysyms
+  '("Shift_L" "Shift_R" "Control_L" "Control_R" "Alt_L" "Alt_R"
+    "Super_L" "Super_R" "Meta_L" "Meta_R" "ISO_Level3_Shift" "Caps_Lock"))
+
+(define (modifier-keysym? name)
+  (member name %modifier-keysyms))
+
+(define (wm-handle-key mods-bitmask keysym keysym-name)
+  "Called from Rust on every key press. Returns #t if the key was consumed
+(and should not be forwarded to the focused client), #f otherwise."
+  (case %key-state
+    ((prefix)
+     (if (modifier-keysym? keysym-name)
+         #f ; stay in prefix state; let the client see the modifier
+     (begin
+     (set! %key-state 'normal)
+     (let ((thunk (hash-ref %prefix-bindings keysym-name)))
+       (if thunk
+           (run-binding! thunk mods-bitmask keysym-name)
+           ;; Unbound prefix key: swallow it (StumpWM does the same,
+           ;; typically with a "not bound" echo) rather than forwarding a
+           ;; keypress the user didn't intend for the client.
+           (wm-log (format #f "C-t ~a: not bound" keysym-name)))
+       #t))))
+    (else
+     (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
+         (begin
+           (set! %key-state 'prefix)
+           #t)
+         (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
+           (if thunk
+               (begin
+                 (run-binding! thunk mods-bitmask keysym-name)
+                 #t)
+               #f))))))
+
+;; ---------------------------------------------------------------------
+;; Default bindings
+;; ---------------------------------------------------------------------
+
+;; Global: super+q quits outright (kept as an escape hatch outside the
+;; prefix, mirroring many StumpWM configs' emergency exit).
+(bind-key! '(super) "q"
+           (lambda () (wm-quit)))
+
+;; Prefix (C-t ...) bindings, mirroring StumpWM's defaults:
+;;   c  -- new terminal
+;;   s  -- split current frame vertically (stacked, StumpWM "vsplit")
+;;   S  -- split current frame horizontally (side by side)
+;;   R  -- remove current frame (sibling absorbs its space)
+;;   o  -- cycle to the next frame
+;;   n  -- cycle to the next window within the current frame
+;;   k  -- close the current window
+;;
+;; TODO: StumpWM also supports "C-t t" to forward a literal C-t keystroke
+;; to the focused client. Not implemented yet -- for now C-t always enters
+;; prefix state and the next key is always interpreted as a binding.
+(bind-prefix-key! "c" (lambda () (wm-spawn "foot || alacritty || xterm")))
+(bind-prefix-key! "s" (lambda () (split-frame-vertical!)))
+(bind-prefix-key! "S" (lambda () (split-frame-horizontal!)))
+(bind-prefix-key! "R" (lambda () (remove-split!)))
+(bind-prefix-key! "o" (lambda () (focus-next-frame!)))
+(bind-prefix-key! "n" (lambda () (focus-next-window-in-frame!)))
+(bind-prefix-key! "k" (lambda () (close-current-window!)))
+
+;; ---------------------------------------------------------------------
+;; REPL server
+;; ---------------------------------------------------------------------
+;;
+;; NOTE: spawn-server runs the REPL in its own thread inside Guile. State
+;; mutated from a REPL connection (e.g. redefining %keybindings or
+;; wm-handle-key) is therefore not synchronized with the compositor's main
+;; thread/event loop -- fine for interactively poking at bindings, but be
+;; aware of races if you mutate shared mutable state from both places at
+;; once.
+
+(define %repl-socket-path
+  (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                 "/minde-repl.sock"))
+
+;; A failure to start the REPL server (e.g. unwritable runtime dir) should
+;; not prevent the rest of the init file / compositor from working.
+(catch #t
+  (lambda ()
+    ;; Remove a stale socket left over from a previous run, if any.
+    (when (file-exists? %repl-socket-path)
+      (delete-file %repl-socket-path))
+    (spawn-server (make-unix-domain-server-socket #:path %repl-socket-path))
+    (wm-log (string-append "REPL server listening at " %repl-socket-path)))
+  (lambda (key . args)
+    (wm-log (format #f "could not start REPL server at ~a: ~a ~a"
+                     %repl-socket-path key args))))
+
+(wm-log "minde scheme layer loaded")

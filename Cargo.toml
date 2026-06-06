@@ -1,0 +1,24 @@
+[package]
+name = "minde"
+version = "0.1.0"
+edition = "2024"
+description = "StumpWM-inspired Guile Scheme Wayland compositor, built on Smithay"
+license = "MIT"
+
+[[bin]]
+name = "minde"
+path = "src/main.rs"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bitflags = "2.2"
+
+[dependencies.smithay]
+git = "https://github.com/Smithay/Smithay"
+rev = "3021f619e2ae4dab8bfb1e21f3f210923b9b6582"
+default-features = false
+features = ["backend_winit", "wayland_frontend", "desktop"]
+
+[build-dependencies]
+pkg-config = "0.3"

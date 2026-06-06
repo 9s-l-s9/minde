@@ -1,0 +1,181 @@
+use smithay::{
+    backend::input::{
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
+        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+    },
+    input::{
+        keyboard::FilterResult,
+        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+    },
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::SERIAL_COUNTER,
+};
+
+use crate::guile;
+use crate::state::MindeState;
+
+/// X11-style modifier bitmask mirrored for the Scheme side: shift=1, ctrl=4,
+/// alt=8, super=64.
+fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
+    let mut mask = 0u32;
+    if mods.shift {
+        mask |= 1;
+    }
+    if mods.ctrl {
+        mask |= 4;
+    }
+    if mods.alt {
+        mask |= 8;
+    }
+    if mods.logo {
+        mask |= 64;
+    }
+    mask
+}
+
+impl MindeState {
+    pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        match event {
+            InputEvent::Keyboard { event, .. } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                let time = Event::time_msec(&event);
+                let key_state = event.state();
+
+                self.seat.get_keyboard().unwrap().input::<(), _>(
+                    self,
+                    event.key_code(),
+                    key_state,
+                    serial,
+                    time,
+                    |_data, mods, keysym_handle| {
+                        // Only intercept on key press; let releases and
+                        // repeats always reach the client so held keys don't
+                        // get stuck if a binding consumed the press.
+                        if key_state == KeyState::Pressed {
+                            let keysym = keysym_handle.modified_sym();
+                            // xkbcommon's name ("t", "Return"), not the
+                            // xkeysym constant name ("XK_t") from `.name()`.
+                            let name = smithay::input::keyboard::xkb::keysym_get_name(keysym);
+                            let consumed =
+                                guile::handle_key(mods_bitmask(mods), keysym.raw(), &name);
+                            if consumed {
+                                return FilterResult::Intercept(());
+                            }
+                        }
+                        FilterResult::Forward
+                    },
+                );
+            }
+            InputEvent::PointerMotion { .. } => {}
+            InputEvent::PointerMotionAbsolute { event, .. } => {
+                let output = self.space.outputs().next().unwrap();
+
+                let output_geo = self.space.output_geometry(output).unwrap();
+
+                let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+
+                let serial = SERIAL_COUNTER.next_serial();
+
+                let pointer = self.seat.get_pointer().unwrap();
+
+                let under = self.surface_under(pos);
+
+                pointer.motion(
+                    self,
+                    under,
+                    &MotionEvent {
+                        location: pos,
+                        serial,
+                        time: event.time_msec(),
+                    },
+                );
+                pointer.frame(self);
+            }
+            InputEvent::PointerButton { event, .. } => {
+                let pointer = self.seat.get_pointer().unwrap();
+                let keyboard = self.seat.get_keyboard().unwrap();
+
+                let serial = SERIAL_COUNTER.next_serial();
+
+                let button = event.button_code();
+
+                let button_state = event.state();
+
+                if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
+                    if let Some((window, _loc)) = self
+                        .space
+                        .element_under(pointer.current_location())
+                        .map(|(w, l)| (w.clone(), l))
+                    {
+                        self.space.raise_element(&window, true);
+                        keyboard.set_focus(
+                            self,
+                            Some(window.toplevel().unwrap().wl_surface().clone()),
+                            serial,
+                        );
+                        self.space.elements().for_each(|window| {
+                            window.toplevel().unwrap().send_pending_configure();
+                        });
+                    } else {
+                        self.space.elements().for_each(|window| {
+                            window.set_activated(false);
+                            window.toplevel().unwrap().send_pending_configure();
+                        });
+                        keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                    }
+                };
+
+                pointer.button(
+                    self,
+                    &ButtonEvent {
+                        button,
+                        state: button_state,
+                        serial,
+                        time: event.time_msec(),
+                    },
+                );
+                pointer.frame(self);
+            }
+            InputEvent::PointerAxis { event, .. } => {
+                let source = event.source();
+
+                let horizontal_amount = event
+                    .amount(Axis::Horizontal)
+                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
+                let vertical_amount = event
+                    .amount(Axis::Vertical)
+                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+                let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
+                let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
+
+                let mut frame = AxisFrame::new(event.time_msec()).source(source);
+                if horizontal_amount != 0.0 {
+                    frame = frame.value(Axis::Horizontal, horizontal_amount);
+                    if let Some(discrete) = horizontal_amount_discrete {
+                        frame = frame.v120(Axis::Horizontal, discrete as i32);
+                    }
+                }
+                if vertical_amount != 0.0 {
+                    frame = frame.value(Axis::Vertical, vertical_amount);
+                    if let Some(discrete) = vertical_amount_discrete {
+                        frame = frame.v120(Axis::Vertical, discrete as i32);
+                    }
+                }
+
+                if source == AxisSource::Finger {
+                    if event.amount(Axis::Horizontal) == Some(0.0) {
+                        frame = frame.stop(Axis::Horizontal);
+                    }
+                    if event.amount(Axis::Vertical) == Some(0.0) {
+                        frame = frame.stop(Axis::Vertical);
+                    }
+                }
+
+                let pointer = self.seat.get_pointer().unwrap();
+                pointer.axis(self, frame);
+                pointer.frame(self);
+            }
+            _ => {}
+        }
+    }
+}
