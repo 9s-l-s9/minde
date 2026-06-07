@@ -1,7 +1,8 @@
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
-        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend,
+        InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        PointerMotionEvent,
     },
     input::{
         keyboard::{FilterResult, keysyms as xkb},
@@ -222,6 +223,12 @@ impl MindeState {
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.axis(self, frame);
                 pointer.frame(self);
+            }
+            InputEvent::DeviceAdded { device } => {
+                tracing::info!(name = device.name(), "input device added");
+            }
+            InputEvent::DeviceRemoved { device } => {
+                tracing::info!(name = device.name(), "input device removed");
             }
             _ => {}
         }

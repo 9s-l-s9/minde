@@ -572,20 +572,37 @@ impl MindeState {
     }
 
     fn render_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
-        if let Err(err) = self.render_surface(node, crtc) {
-            warn!(%err, "error rendering udev output");
+        // If no frame was queued (no damage, or a render error), no VBlank
+        // will arrive to drive `frame_finish`, so the repaint chain would
+        // die -- keep it alive with a timer instead.
+        let queued = match self.render_surface(node, crtc) {
+            Ok(queued) => queued,
+            Err(err) => {
+                warn!(%err, "error rendering udev output");
+                false
+            }
+        };
+        if !queued {
+            self.handle
+                .insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
+                    state.render_now(node, crtc);
+                    TimeoutAction::Drop
+                })
+                .ok();
         }
     }
 
-    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) -> Result<(), SwapBuffersError> {
+    /// Renders one frame; returns whether a frame was queued to the DRM
+    /// surface (i.e. whether a VBlank event is expected).
+    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) -> Result<bool, SwapBuffersError> {
         let udev = self.udev_data.as_mut().ok_or(SwapBuffersError::AlreadySwapped)?;
         let primary_gpu = udev.primary_gpu;
 
         let Some(output_surface) = udev.output.as_mut() else {
-            return Ok(());
+            return Ok(false);
         };
         if output_surface.node != node || output_surface.crtc != crtc {
-            return Ok(());
+            return Ok(false);
         }
 
         let mut renderer = udev
@@ -654,7 +671,8 @@ impl MindeState {
                 _ => SwapBuffersError::AlreadySwapped,
             })?;
 
-        if !render_result.is_empty {
+        let queued = !render_result.is_empty;
+        if queued {
             output_surface
                 .drm_output
                 .queue_frame(None)
@@ -670,6 +688,6 @@ impl MindeState {
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
 
-        Ok(())
+        Ok(queued)
     }
 }
