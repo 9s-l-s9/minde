@@ -166,6 +166,37 @@ MODS (possibly '())."
 ;; (set-prefix-key! '() "Print")
 
 ;; ---------------------------------------------------------------------
+;; Standalone-session extras
+;; ---------------------------------------------------------------------
+
+;; Hardware/media keys work without the prefix. All of these just spawn
+;; shell commands and are harmless no-ops if the tool isn't installed.
+(bind-key! '() "XF86MonBrightnessUp"
+           (lambda () (wm-spawn "brightnessctl set +5%")))
+(bind-key! '() "XF86MonBrightnessDown"
+           (lambda () (wm-spawn "brightnessctl set 5%-")))
+(bind-key! '() "XF86AudioRaiseVolume"
+           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")))
+(bind-key! '() "XF86AudioLowerVolume"
+           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")))
+(bind-key! '() "XF86AudioMute"
+           (lambda () (wm-spawn "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")))
+
+;; Screen lock (needs swaylock installed).
+(bind-prefix-key! "L" (lambda () (wm-spawn "swaylock -c 282828")))
+
+;; Programs to start once, when the compositor is up (first output ready).
+;; Rust calls (wm-on-startup) if it is bound -- both nested and on the TTY.
+(define %autostart
+  '(;; "swaybg -m fill -i ~/Projects/images/wallpaper.png"
+    ;; "foot --server"
+    ))
+
+(define (wm-on-startup)
+  (for-each wm-spawn %autostart)
+  (wm-log (format #f "autostart: ~a programs" (length %autostart))))
+
+;; ---------------------------------------------------------------------
 ;; REPL server
 ;; ---------------------------------------------------------------------
 ;;
