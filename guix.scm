@@ -62,6 +62,23 @@
         (replace 'build
           (lambda _
             (setenv "HOME" (getcwd)) ; cargo wants a writable home
+            ;; wayland-backend (libwayland-server.so.0), smithay's EGL
+            ;; loader (libEGL.so.1 via glvnd) and friends are dlopened at
+            ;; runtime, so the linker never records them and Guix's
+            ;; automatic rpath doesn't cover them. Bake the search path in
+            ;; -- a login session (SDDM) has no LD_LIBRARY_PATH to help.
+            (setenv "RUSTFLAGS"
+                    (string-join
+                     (map (lambda (dir)
+                            (string-append "-C link-arg=-Wl,-rpath=" dir "/lib"))
+                          (list #$(this-package-input "wayland")
+                                #$(this-package-input "libglvnd")
+                                #$(this-package-input "mesa")
+                                #$(this-package-input "libxkbcommon")
+                                #$(this-package-input "libseat")
+                                #$(this-package-input "libinput-minimal")
+                                #$(this-package-input "eudev")))
+                     " "))
             (mkdir-p ".cargo")
             ;; Exactly what `cargo vendor` prints (the git source key must
             ;; carry the ?rev= qualifier to match Cargo.lock).
