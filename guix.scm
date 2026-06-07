@@ -21,6 +21,7 @@
              (gnu packages rust)
              (gnu packages pkg-config)
              (gnu packages guile)
+             (gnu packages admin)
              (gnu packages freedesktop)
              (gnu packages xdisorg)
              (gnu packages gl)
@@ -30,10 +31,12 @@
 (define %source-dir (dirname (current-filename)))
 
 (define (source-select? file stat)
-  ;; Everything except build artifacts and VCS metadata. vendor/ IS
-  ;; included -- it's the offline crate mirror.
-  (let ((name (basename file)))
-    (not (member name '("target" ".git")))))
+  ;; Everything except top-level build artifacts and VCS metadata. Only the
+  ;; repo root's target/ is excluded -- vendored crates legitimately contain
+  ;; paths like vendor/cc/src/target/. vendor/ itself IS included; it's the
+  ;; offline crate mirror.
+  (let ((rel (string-drop file (+ 1 (string-length %source-dir)))))
+    (not (member rel '("target" ".git")))))
 
 (package
   (name "minde")
@@ -48,6 +51,10 @@
     #:phases
     #~(modify-phases %standard-phases
         (delete 'configure)
+        ;; Shebang patching rewrites scripts inside vendor/, invalidating
+        ;; cargo's .cargo-checksum.json for those crates.
+        (delete 'patch-source-shebangs)
+        (delete 'patch-generated-file-shebangs)
         (add-after 'unpack 'check-vendor
           (lambda _
             (unless (file-exists? "vendor")
@@ -56,9 +63,22 @@
           (lambda _
             (setenv "HOME" (getcwd)) ; cargo wants a writable home
             (mkdir-p ".cargo")
+            ;; Exactly what `cargo vendor` prints (the git source key must
+            ;; carry the ?rev= qualifier to match Cargo.lock).
             (call-with-output-file ".cargo/config.toml"
               (lambda (port)
-                (display "[source.crates-io]\nreplace-with = \"vendored\"\n\n[source.\"git+https://github.com/Smithay/Smithay\"]\ngit = \"https://github.com/Smithay/Smithay\"\nreplace-with = \"vendored\"\n\n[source.vendored]\ndirectory = \"vendor\"\n" port)))
+                (display "\
+[source.crates-io]
+replace-with = \"vendored-sources\"
+
+[source.\"git+https://github.com/Smithay/Smithay?rev=3021f619e2ae4dab8bfb1e21f3f210923b9b6582\"]
+git = \"https://github.com/Smithay/Smithay\"
+rev = \"3021f619e2ae4dab8bfb1e21f3f210923b9b6582\"
+replace-with = \"vendored-sources\"
+
+[source.vendored-sources]
+directory = \"vendor\"
+" port)))
             (invoke "cargo" "build" "--release" "--offline")))
         (replace 'check
           (lambda* (#:key tests? #:allow-other-keys)
