@@ -86,6 +86,42 @@ pick a prefix StumpWM doesn't grab.
 so redefining it (or the keybinding table) from a live REPL takes effect
 immediately.
 
+## Running standalone (TTY / login session)
+
+minde auto-picks its backend: nested (winit) when `DISPLAY` or
+`WAYLAND_DISPLAY` is set, DRM/libinput (`--tty`) otherwise; force with
+`--winit`/`--tty`.
+
+First live test from a text console (Ctrl+Alt+F3, log in):
+
+```sh
+cd ~/Projects/minde
+guix shell -m manifest.scm -- sh -c \
+  'XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone cargo run --release -- --tty'
+```
+
+Expected: cursor visible and moving; `C-t Return` opens a terminal; typing
+follows your layout; splits/groups behave as nested; brightness/volume keys
+work; `Ctrl+Alt+F7` VT-switches back to your X session (minde keeps
+running); `super+q` exits back to the console. **Rollback**: your StumpWM
+session is untouched — if minde wedges, switch VTs and `pkill minde`.
+
+To select minde at login (SDDM): build the package and add it to the
+system profile — see `doc/guix-system.scm`. One-time before building:
+
+```sh
+guix shell -m manifest.scm -- cargo vendor vendor   # offline crate mirror
+guix build -f guix.scm                              # sanity check
+```
+
+The package installs `bin/minde-session` (env wrapper: de/bone keymap
+defaults, EGL vendor path, bundled Scheme modules) and
+`share/wayland-sessions/minde.desktop` for the SDDM menu.
+
+Autostart programs: add commands to `%autostart` in your init.scm — they
+run once when the first output is up (`wm-on-startup`). Media keys
+(brightness/volume) and `C-t L` (swaylock) are bound by default.
+
 ## Connecting to the REPL
 
 `scheme/init.scm` starts a Guile REPL server on a Unix socket at
