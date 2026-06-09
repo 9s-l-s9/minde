@@ -139,7 +139,8 @@ MODS (possibly '())."
 ;;   b -- browser                E -- emacs
 ;;   v -- vsplit (stacked)       h -- hsplit (side by side)
 ;;   c -- remove split           n -- next frame
-;;   f -- next window in frame   k -- close window
+;;   f -- next window in frame   k/d -- close window
+;;   e -- lem editor
 ;;   p -- pull window from other frame into this one
 ;;   g -- next group             G -- new group (auto-named)
 ;;   m -- move window to next group
@@ -148,8 +149,14 @@ MODS (possibly '())."
 ;; daemon; plain emacs is the fallback.)
 (bind-prefix-key! "Return" (lambda () (wm-spawn "alacritty || foot || xterm")))
 (bind-prefix-key! "r" (lambda () (wm-spawn "fuzzel || bemenu-run")))
-(bind-prefix-key! "b" (lambda () (wm-spawn "zen || chromium --ozone-platform-hint=auto")))
-(bind-prefix-key! "E" (lambda () (wm-spawn "emacsclient -c || emacs")))
+;; Prebuilt Mozilla binaries sometimes fall back to X11 (which minde
+;; cannot display -- no Xwayland); force the Wayland backend.
+(bind-prefix-key! "b" (lambda () (wm-spawn "MOZ_ENABLE_WAYLAND=1 zen || chromium --ozone-platform-hint=auto")))
+(bind-prefix-key! "e" (lambda () (wm-spawn "lem -i sdl2")))
+;; NOTE: needs a pgtk emacs (Guix package emacs-pgtk) -- an X11-only emacs
+;; build cannot open a frame here at all. emacsclient additionally needs
+;; the daemon running inside this session.
+(bind-prefix-key! "E" (lambda () (wm-spawn "emacsclient -c -a emacs")))
 (bind-prefix-key! "v" (lambda () (split-frame-vertical!)))
 (bind-prefix-key! "h" (lambda () (split-frame-horizontal!)))
 (bind-prefix-key! "c" (lambda () (remove-split!)))
@@ -157,6 +164,7 @@ MODS (possibly '())."
 (bind-prefix-key! "f" (lambda () (focus-next-window-in-frame!)))
 (bind-prefix-key! "p" (lambda () (pull-window-from-other-frame!)))
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
+(bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
 (bind-prefix-key! "g" (lambda () (gnext!)))
 (bind-prefix-key! "G" (lambda () (gnew-auto!)))
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
