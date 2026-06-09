@@ -190,6 +190,24 @@ MODS (possibly '())."
 (bind-key! '() "XF86AudioMute"
            (lambda () (wm-spawn "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")))
 
+;; C-t R: reload this init file in place -- edit
+;; ~/.config/minde/init.scm, hit C-t R, and the new bindings are live.
+;; Errors during the reload are logged and leave the old state in place
+;; for whatever was already defined.
+(define (init-file-path)
+  (or (getenv "MINDE_INIT")
+      (string-append (getenv "HOME") "/.config/minde/init.scm")))
+
+(define (reload-init!)
+  (let ((path (init-file-path)))
+    (if (file-exists? path)
+        (begin
+          (load path)
+          (wm-log (string-append "reloaded " path)))
+        (wm-log (string-append "no init file at " path)))))
+
+(bind-prefix-key! "R" (lambda () (reload-init!)))
+
 ;; Screen lock (needs swaylock installed).
 (bind-prefix-key! "L" (lambda () (wm-spawn "swaylock -c 282828")))
 
@@ -221,15 +239,20 @@ MODS (possibly '())."
 
 ;; A failure to start the REPL server (e.g. unwritable runtime dir) should
 ;; not prevent the rest of the init file / compositor from working.
-(catch #t
-  (lambda ()
-    ;; Remove a stale socket left over from a previous run, if any.
-    (when (file-exists? %repl-socket-path)
-      (delete-file %repl-socket-path))
-    (spawn-server (make-unix-domain-server-socket #:path %repl-socket-path))
-    (wm-log (string-append "REPL server listening at " %repl-socket-path)))
-  (lambda (key . args)
-    (wm-log (format #f "could not start REPL server at ~a: ~a ~a"
-                     %repl-socket-path key args))))
+;; Guarded via an environment variable (not a define) so that reloading
+;; this file with C-t R doesn't spawn a second server: top-level defines
+;; are re-evaluated on load, but the process environment persists.
+(unless (getenv "MINDE_REPL_STARTED")
+  (catch #t
+    (lambda ()
+      ;; Remove a stale socket left over from a previous run, if any.
+      (when (file-exists? %repl-socket-path)
+        (delete-file %repl-socket-path))
+      (spawn-server (make-unix-domain-server-socket #:path %repl-socket-path))
+      (setenv "MINDE_REPL_STARTED" "1")
+      (wm-log (string-append "REPL server listening at " %repl-socket-path)))
+    (lambda (key . args)
+      (wm-log (format #f "could not start REPL server at ~a: ~a ~a"
+                       %repl-socket-path key args)))))
 
 (wm-log "minde scheme layer loaded")
