@@ -125,6 +125,29 @@
             (pair? %spawned))
 
 ;; ---------------------------------------------------------------------
+;; Nested keymaps: C-t A enters the agents submap, then c spawns.
+;; ---------------------------------------------------------------------
+
+(set! %spawned '())
+(wm-handle-key ctrl-bit #f "t")
+(check "C-t A is consumed (enters agents submap)"
+       (wm-handle-key 1 #f "A")
+       #t)
+(check "submap key c is consumed"
+       (wm-handle-key 0 #f "c")
+       #t)
+(check-true "submap binding spawned the agent command"
+            (and (pair? %spawned)
+                 (string-contains (car %spawned) "codex")))
+;; And unbound submap keys swallow + reset.
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 1 #f "A")
+(check "unbound submap key consumed" (wm-handle-key 0 #f "x") #t)
+(check "state reset to normal after unbound submap key"
+       (wm-handle-key 0 #f "x")
+       #f)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

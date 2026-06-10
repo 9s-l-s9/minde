@@ -50,8 +50,20 @@ when the binding fires. Global binding, always active."
 
 (define (bind-prefix-key! key thunk)
   "Bind KEY (e.g. \"s\", \"S\", \"c\") to THUNK, run when KEY is pressed
-right after the prefix key (C-t)."
+right after the prefix key (C-t). THUNK may also be a keymap made with
+`make-keymap` (StumpWM-style nested map): the next keypress is then looked
+up in it."
   (hash-set! %prefix-bindings key thunk))
+
+(define (make-keymap . bindings)
+  "Builds a nested keymap from KEY THUNK pairs, bindable under a prefix
+key: (bind-prefix-key! \"A\" (make-keymap \"c\" thunk1 \"d\" thunk2))."
+  (let ((map (make-hash-table)))
+    (let loop ((b bindings))
+      (unless (null? b)
+        (hash-set! map (car b) (cadr b))
+        (loop (cddr b))))
+    map))
 
 ;; The prefix key itself: C-t by default, StumpWM-style configurable.
 ;; e.g. (set-prefix-key! '() "Print") to mirror a StumpWM
@@ -65,8 +77,9 @@ MODS (possibly '())."
   (set! %prefix-mods (mods->bitmask mods))
   (set! %prefix-key key))
 
-;; wm-handle-key is a tiny two-state machine: 'normal (the usual case) and
-;; 'prefix (right after C-t, waiting for the next key).
+;; wm-handle-key is a tiny state machine: 'normal (the usual case) or the
+;; keymap currently awaiting a key -- %prefix-bindings right after the
+;; prefix key, or a nested keymap (see make-keymap) after its parent key.
 (define %key-state 'normal)
 
 (define (run-binding! thunk mods keysym-name)
@@ -89,41 +102,46 @@ MODS (possibly '())."
 (define (wm-handle-key mods-bitmask keysym keysym-name)
   "Called from Rust on every key press. Returns #t if the key was consumed
 (and should not be forwarded to the focused client), #f otherwise."
-  (case %key-state
-    ((prefix)
-     (cond
-      ;; Pressing the prefix key's keysym again while already in prefix
-      ;; state (e.g. C-t t) is StumpWM's "send this key literally"
-      ;; escape: reset to normal state and forward the keypress to the
-      ;; focused client instead of consuming it. Matched by keysym name
-      ;; only (not modifiers) since the second press may or may not carry
-      ;; the same modifier as the prefix itself.
-      ((string=? keysym-name %prefix-key)
-       (set! %key-state 'normal)
-       #f)
-      ((modifier-keysym? keysym-name)
-       #f) ; stay in prefix state; let the client see the modifier
-      (else
-       (set! %key-state 'normal)
-       (let ((thunk (hash-ref %prefix-bindings keysym-name)))
-         (if thunk
-             (run-binding! thunk mods-bitmask keysym-name)
-             ;; Unbound prefix key: swallow it (StumpWM does the same,
-             ;; typically with a "not bound" echo) rather than forwarding a
-             ;; keypress the user didn't intend for the client.
-             (wm-log (format #f "C-t ~a: not bound" keysym-name)))
-         #t))))
-    (else
-     (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
-         (begin
-           (set! %key-state 'prefix)
-           #t)
-         (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
-           (if thunk
-               (begin
-                 (run-binding! thunk mods-bitmask keysym-name)
-                 #t)
-               #f))))))
+  (if (hash-table? %key-state)
+      (cond
+       ;; Pressing the prefix key's keysym again while awaiting a key
+       ;; (e.g. C-t t) is StumpWM's "send this key literally" escape:
+       ;; reset to normal state and forward the keypress to the focused
+       ;; client instead of consuming it. Matched by keysym name only
+       ;; (not modifiers) since the second press may or may not carry the
+       ;; same modifier as the prefix itself. Only at the top level --
+       ;; inside a nested keymap the prefix keysym is just another key.
+       ((and (eq? %key-state %prefix-bindings)
+             (string=? keysym-name %prefix-key))
+        (set! %key-state 'normal)
+        #f)
+       ((modifier-keysym? keysym-name)
+        #f) ; stay put; let the client see the modifier
+       (else
+        (let ((binding (hash-ref %key-state keysym-name)))
+          (set! %key-state 'normal)
+          (cond
+           ;; A nested keymap: keep waiting, now in the submap.
+           ((hash-table? binding)
+            (set! %key-state binding))
+           (binding
+            (run-binding! binding mods-bitmask keysym-name))
+           (else
+            ;; Unbound key: swallow it (StumpWM does the same, typically
+            ;; with a "not bound" echo) rather than forwarding a keypress
+            ;; the user didn't intend for the client.
+            (wm-log (format #f "prefix ~a: not bound" keysym-name))))
+          #t)))
+      (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
+          (begin
+            (set! %key-state %prefix-bindings)
+            #t)
+          (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
+            (if thunk
+                (begin
+                  (run-binding! thunk mods-bitmask keysym-name)
+                  #t)
+                #f)))))
 
 ;; ---------------------------------------------------------------------
 ;; Default bindings
@@ -169,6 +187,39 @@ MODS (possibly '())."
 (bind-prefix-key! "G" (lambda () (gnew-auto!)))
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
+
+;; ---- Ported from the user's StumpWM config ----
+
+;; w: voice dictation (script may still assume X tools internally).
+(bind-prefix-key! "w" (lambda () (wm-spawn "~/Projects/System/scripts/voice-dictate.scm")))
+
+;; i: eww desktop widgets (eww supports Wayland natively; the X-only
+;; windowlower workaround from StumpWM is dropped).
+(bind-prefix-key! "i" (lambda () (wm-spawn "eww open --toggle sysinfo")))
+
+;; A: agents submap, like StumpWM's *agents-map*.
+(bind-prefix-key! "A"
+  (make-keymap
+   "c" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/codex-guix.scm"))
+   "d" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/claude-guix.scm"))
+   "o" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/open-code-guix.scm"))
+   "p" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/pi-guix.scm"))))
+
+;; P: misc submap, like StumpWM's *misc-map*. Wayland substitutions:
+;; swaybg for feh (wallpaper), wl-paste/wl-copy for xsel (clipboard).
+(bind-prefix-key! "P"
+  (make-keymap
+   "w" (lambda ()
+         (wm-spawn "pkill swaybg; swaybg -m fill -i \"$(ls ~/Projects/images/* | shuf -n1)\""))
+   "a" (lambda ()
+         (wm-spawn "sel=$(wl-paste); [ -n \"$sel\" ] && ASK_AI_SYSTEM='You are a copy editor. Improve grammar, clarity and flow. Keep the meaning and the original language. Output only the revised text.' ~/Projects/System/scripts/ask-ai.scm \"$sel\" | wl-copy"))))
+
+;; Not ported yet (missing infrastructure), from StumpWM:
+;;   a  ask-ai, D/t dashboards -- need a message/echo area
+;;   l  windowlist, T add-todo -- need a non-blocking prompt/menu
+;;   F  float-this             -- no floating layer
+;;   z  zen (gaps + mode line) -- no gaps/mode-line
+;;   S  screenshot map         -- needs wlr-screencopy (grim) support
 
 ;; Print as the prefix key, matching the user's StumpWM setup. Comment out
 ;; to fall back to the C-t default.
