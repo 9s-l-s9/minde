@@ -206,6 +206,7 @@
 (define (wm-focus-window id) (rust-call 'wm-focus-window id))
 (define (wm-close-window id) (rust-call 'wm-close-window id))
 (define (wm-clear-focus) (rust-call 'wm-clear-focus))
+(define (wm-focus-rect x y w h) (rust-call 'wm-focus-rect x y w h))
 
 ;; ---------------------------------------------------------------------
 ;; Tree walking helpers
@@ -457,6 +458,10 @@ input focus to the current frame's current window."
               (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
         (frame-window-ids frame))))
    (frame-leaves %frame-tree))
+  ;; Tell Rust where the selected frame is, so the focus border marks the
+  ;; frame itself (visible even when the frame is empty).
+  (wm-focus-rect (frame-x %current-frame) (frame-y %current-frame)
+                 (frame-w %current-frame) (frame-h %current-frame))
   (let ((id (current-frame-window)))
     (if id
         (wm-focus-window id)

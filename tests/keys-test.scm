@@ -40,6 +40,10 @@
 (primitive-load (canonicalize-path
                  (string-append (dirname (current-filename)) "/../scheme/init.scm")))
 
+;; init.scm ships whatever prefix the user prefers (currently Print); pin
+;; it back to C-t so the state-machine checks below are stable.
+(set-prefix-key! '(ctrl) "t")
+
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
 ;; ---------------------------------------------------------------------

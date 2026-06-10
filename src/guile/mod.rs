@@ -35,6 +35,10 @@ pub enum WmCommand {
     Focus { id: u64 },
     ClearFocus,
     Close { id: u64 },
+    /// Rectangle of the currently-selected frame; the render pass draws
+    /// the focus border around this (not around the focused window), so an
+    /// empty frame is still visibly selected.
+    FocusRect { x: i32, y: i32, w: i32, h: i32 },
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -259,6 +263,14 @@ unsafe extern "C" fn wm_clear_focus() -> Scm {
     from_bool(send_command(WmCommand::ClearFocus))
 }
 
+unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
+    let x = to_i64(x) as i32;
+    let y = to_i64(y) as i32;
+    let w = to_i64(w) as i32;
+    let h = to_i64(h) as i32;
+    from_bool(send_command(WmCommand::FocusRect { x, y, w, h }))
+}
+
 unsafe extern "C" fn wm_output_geometry() -> Scm {
     let w = OUTPUT_W.load(Ordering::SeqCst) as i64;
     let h = OUTPUT_H.load(Ordering::SeqCst) as i64;
@@ -311,6 +323,10 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_clear_focus));
+        register_gsubr("wm-focus-rect", 4, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm, Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_focus_rect));
         register_gsubr("wm-output-geometry", 0, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,

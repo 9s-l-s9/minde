@@ -74,13 +74,15 @@ pub fn init_winit(
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
 
-                // Border elements around the focused window, if any.
+                // Border elements around the selected frame (falling back
+                // to the focused window before the first sync).
                 let mut custom: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
-                if let Some(geo) = state
-                    .focused_window
-                    .as_ref()
-                    .and_then(|w| state.space.element_geometry(w))
-                {
+                if let Some(geo) = state.focus_rect.or_else(|| {
+                    state
+                        .focused_window
+                        .as_ref()
+                        .and_then(|w| state.space.element_geometry(w))
+                }) {
                     custom.extend(border_buffers.elements(geo, 1));
                 }
 

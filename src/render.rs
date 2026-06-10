@@ -32,7 +32,7 @@ smithay::backend::renderer::element::render_elements! {
 
 /// Focused-window border: gruvbox yellow, matching the user's StumpWM theme.
 pub const BORDER_COLOR: [f32; 4] = [0.84, 0.60, 0.13, 1.0]; // #d79921
-pub const BORDER_WIDTH: i32 = 2;
+pub const BORDER_WIDTH: i32 = 3;
 
 /// Persistent buffers for the 4 border edges (stable element ids keep
 /// damage tracking incremental across frames).
@@ -61,11 +61,13 @@ impl BorderBuffers {
     {
         let t = BORDER_WIDTH;
         let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+        // Drawn *inside* the rectangle: a frame filling the whole output
+        // would otherwise have its border entirely off-screen.
         let rects = [
-            ((x - t, y - t), (w + 2 * t, t)), // top
-            ((x - t, y + h), (w + 2 * t, t)), // bottom
-            ((x - t, y), (t, h)),             // left
-            ((x + w, y), (t, h)),             // right
+            ((x, y), (w, t)),             // top
+            ((x, y + h - t), (w, t)),     // bottom
+            ((x, y + t), (t, h - 2 * t)), // left
+            ((x + w - t, y + t), (t, h - 2 * t)), // right
         ];
         let mut out = Vec::with_capacity(4);
         for (buf, (loc, sz)) in self.buffers.iter_mut().zip(rects) {

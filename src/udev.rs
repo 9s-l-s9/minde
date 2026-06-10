@@ -624,12 +624,13 @@ impl MindeState {
             custom.extend(self.cursor_state.render_elements(&mut renderer, cursor_phys, scale));
         }
 
-        // Focused-window border.
-        if let Some(geo) = self
-            .focused_window
-            .as_ref()
-            .and_then(|w| self.space.element_geometry(w))
-        {
+        // Border around the selected frame (falling back to the focused
+        // window before the first sync).
+        if let Some(geo) = self.focus_rect.or_else(|| {
+            self.focused_window
+                .as_ref()
+                .and_then(|w| self.space.element_geometry(w))
+        }) {
             custom.extend(
                 output_surface
                     .border_buffers

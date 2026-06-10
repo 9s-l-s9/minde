@@ -170,8 +170,9 @@ MODS (possibly '())."
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
 
-;; Uncomment to use the Print key as prefix, like the user's StumpWM setup:
-;; (set-prefix-key! '() "Print")
+;; Print as the prefix key, matching the user's StumpWM setup. Comment out
+;; to fall back to the C-t default.
+(set-prefix-key! '() "Print")
 
 ;; ---------------------------------------------------------------------
 ;; Standalone-session extras

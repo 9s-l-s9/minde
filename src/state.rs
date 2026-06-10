@@ -14,7 +14,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Logical, Point, SERIAL_COUNTER},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -61,6 +61,10 @@ pub struct MindeState {
     /// Window last focused via `wm-focus-window`; gets the border drawn
     /// around it in the render pass.
     pub focused_window: Option<Window>,
+    /// Rectangle of the currently-selected frame (sent from Scheme's
+    /// `sync-frames!` via `wm-focus-rect`); the focus border is drawn
+    /// around this so an empty frame is still visibly selected.
+    pub focus_rect: Option<Rectangle<i32, Logical>>,
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -148,6 +152,7 @@ impl MindeState {
             windows: Vec::new(),
             next_window_id: 0,
             focused_window: None,
+            focus_rect: None,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -215,6 +220,14 @@ impl MindeState {
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.with_pending_state(|state| {
                         state.size = Some((w, h).into());
+                        // Mark the window tiled on all edges: Firefox-family
+                        // clients (zen) only obey exact configure sizes and
+                        // drop their CSD shadow margins when tiled.
+                        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+                        state.states.set(XdgState::TiledLeft);
+                        state.states.set(XdgState::TiledRight);
+                        state.states.set(XdgState::TiledTop);
+                        state.states.set(XdgState::TiledBottom);
                     });
                     toplevel.send_pending_configure();
                 }
@@ -255,6 +268,9 @@ impl MindeState {
                     }
                 }
                 self.focused_window = None;
+            }
+            WmCommand::FocusRect { x, y, w, h } => {
+                self.focus_rect = Some(Rectangle::new((x, y).into(), (w, h).into()));
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
