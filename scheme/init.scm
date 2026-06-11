@@ -157,8 +157,10 @@ MODS (possibly '())."
 ;;   b -- browser                E -- emacs
 ;;   v -- vsplit (stacked)       h -- hsplit (side by side)
 ;;   c -- remove split           n -- next frame
-;;   f -- next window in frame   k/d -- close window
-;;   e -- lem editor
+;;   f -- next window (group-wide, like cycling emacs buffers)
+;;   o -- next window within this frame's stack
+;;   p -- pull next hidden window into this frame
+;;   k/d -- close window          e -- lem editor
 ;;   p -- pull window from other frame into this one
 ;;   g -- next group             G -- new group (auto-named)
 ;;   m -- move window to next group
@@ -179,8 +181,13 @@ MODS (possibly '())."
 (bind-prefix-key! "h" (lambda () (split-frame-horizontal!)))
 (bind-prefix-key! "c" (lambda () (remove-split!)))
 (bind-prefix-key! "n" (lambda () (focus-next-frame!)))
-(bind-prefix-key! "f" (lambda () (focus-next-window-in-frame!)))
-(bind-prefix-key! "p" (lambda () (pull-window-from-other-frame!)))
+;; f: StumpWM `next` -- cycle through ALL of the group's windows,
+;; emacs-buffer-style, jumping frames as needed.
+(bind-prefix-key! "f" (lambda () (focus-next-window!)))
+;; p: StumpWM `pull` -- dig the next hidden window out into this frame.
+(bind-prefix-key! "p" (lambda () (pull-hidden-next!)))
+;; o: cycle only within the current frame's own window stack.
+(bind-prefix-key! "o" (lambda () (focus-next-window-in-frame!)))
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
 (bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
 (bind-prefix-key! "g" (lambda () (gnext!)))

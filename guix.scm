@@ -101,6 +101,7 @@ directory = \"vendor\"
           (lambda* (#:key tests? #:allow-other-keys)
             (when tests?
               (invoke "guile" "-L" "scheme" "tests/frames-test.scm")
+              (invoke "guile" "-L" "scheme" "tests/next-pull-test.scm")
               (invoke "guile" "-L" "scheme" "tests/groups-test.scm")
               (invoke "guile" "-L" "scheme" "tests/keys-test.scm"))))
         (replace 'install

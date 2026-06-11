@@ -19,7 +19,9 @@
             split-frame-vertical!
             remove-split!
             focus-next-frame!
+            focus-next-window!
             focus-next-window-in-frame!
+            pull-hidden-next!
             pull-window-from-other-frame!
             sync-frames!
             handle-window-map!
@@ -406,6 +408,57 @@ window')."
              (idx (list-index (lambda (i) (equal? i cur)) ids)))
         (set-frame-current-window! %current-frame (list-ref ids (modulo (+ idx 1) n))))))
   (sync-frames!))
+
+;; All window ids in the active group, in frame order. This is the
+;; "buffer list" that focus-next-window!/pull-hidden-next! cycle through.
+(define (all-window-ids)
+  (append-map frame-window-ids (frame-leaves %frame-tree)))
+
+;; The leaf frame a window currently lives in, or #f.
+(define (frame-of-window id)
+  (find (lambda (f) (member id (frame-window-ids f)))
+        (frame-leaves %frame-tree)))
+
+(define (focus-next-window!)
+  "StumpWM's `next`: cycles through ALL windows of the group (the way
+emacs cycles buffers), not just the current frame's stack. Focus moves to
+wherever the next window lives -- its frame becomes current and the window
+is raised in it if it was hidden."
+  (let* ((ids (all-window-ids))
+         (n (length ids))
+         (cur (current-frame-window)))
+    (when (> n 0)
+      (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) -1))
+             (next-id (list-ref ids (modulo (+ idx 1) n)))
+             (f (frame-of-window next-id)))
+        (when f
+          (set! %current-frame f)
+          (set-frame-current-window! f next-id)))))
+  (sync-frames!))
+
+;; Windows not currently visible: everything that isn't its frame's
+;; current window.
+(define (hidden-window-ids)
+  (append-map
+   (lambda (f)
+     (filter (lambda (id) (not (equal? id (frame-current-window f))))
+             (frame-window-ids f)))
+   (frame-leaves %frame-tree)))
+
+(define (pull-hidden-next!)
+  "StumpWM's `pull` (pull-hidden-next): moves the next HIDDEN window of
+the group into the current frame and shows it. Never steals a window that
+is visible in another frame; a no-op when nothing is hidden."
+  (let ((hidden (hidden-window-ids)))
+    (unless (null? hidden)
+      (let* ((id (car hidden))
+             (f (frame-of-window id)))
+        (set-frame-window-ids! f (delete id (frame-window-ids f)))
+        (when (equal? (frame-current-window f) id)
+          (set-frame-current-window!
+           f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f)))))
+        (frame-add-window! %current-frame id)
+        (sync-frames!)))))
 
 (define (pull-window-from-other-frame!)
   "Finds the next window (round-robin, starting just after the current
