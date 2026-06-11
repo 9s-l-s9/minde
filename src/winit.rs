@@ -88,6 +88,17 @@ pub fn init_winit(
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
+                    // Message overlay, centered, above everything.
+                    if let Some(msg) = state.message.as_ref() {
+                        if let Some(elem) = crate::render::message_element(
+                            &mut *renderer,
+                            msg,
+                            (size.w, size.h),
+                            1,
+                        ) {
+                            custom.insert(0, elem);
+                        }
+                    }
                     smithay::desktop::space::render_output::<
                         _,
                         MindeRenderElements<GlesRenderer>,

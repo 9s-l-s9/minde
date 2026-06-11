@@ -19,6 +19,9 @@ unsafe impl Send for Scm {}
 // SCM_MAKIFLAG_BITS(n) = (n << 8) + scm_tc8_flag(4). Stable across Guile 3.x.
 pub const SCM_BOOL_F: Scm = Scm(0x004 as *mut c_void);
 pub const SCM_BOOL_T: Scm = Scm(0x404 as *mut c_void);
+/// Passed by Guile for a missing optional gsubr argument (iflag 9, see
+/// libguile/tags.h; same encoding scheme as the booleans above).
+pub const SCM_UNDEFINED: Scm = Scm(0x904 as *mut c_void);
 
 pub fn scm_from_bool_inline(x: bool) -> Scm {
     if x { SCM_BOOL_T } else { SCM_BOOL_F }

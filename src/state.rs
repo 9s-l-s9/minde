@@ -65,6 +65,11 @@ pub struct MindeState {
     /// `sync-frames!` via `wm-focus-rect`); the focus border is drawn
     /// around this so an empty frame is still visibly selected.
     pub focus_rect: Option<Rectangle<i32, Logical>>,
+    /// Currently displayed message overlay (StumpWM echo window), if any.
+    /// The generation counter lets the hide timer verify it isn't
+    /// clearing a newer message.
+    pub message: Option<crate::render::MessageState>,
+    pub message_generation: u64,
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -153,6 +158,8 @@ impl MindeState {
             next_window_id: 0,
             focused_window: None,
             focus_rect: None,
+            message: None,
+            message_generation: 0,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -271,6 +278,32 @@ impl MindeState {
             }
             WmCommand::FocusRect { x, y, w, h } => {
                 self.focus_rect = Some(Rectangle::new((x, y).into(), (w, h).into()));
+            }
+            WmCommand::Message { text, timeout_ms } => {
+                self.message_generation += 1;
+                let generation = self.message_generation;
+                let (max_w, max_h) = self
+                    .space
+                    .outputs()
+                    .next()
+                    .and_then(|o| self.space.output_geometry(o))
+                    .map(|g| (g.size.w, g.size.h))
+                    .unwrap_or((1280, 720));
+                self.message = Some(crate::render::render_message(&text, generation, max_w, max_h));
+                if timeout_ms > 0 {
+                    let timer = smithay::reexports::calloop::timer::Timer::from_duration(
+                        std::time::Duration::from_millis(timeout_ms),
+                    );
+                    let _ = self.handle.insert_source(timer, move |_, _, state| {
+                        if state.message.as_ref().map(|m| m.generation) == Some(generation) {
+                            state.message = None;
+                        }
+                        smithay::reexports::calloop::timer::TimeoutAction::Drop
+                    });
+                }
+            }
+            WmCommand::ClearMessage => {
+                self.message = None;
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {

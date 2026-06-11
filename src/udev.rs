@@ -624,6 +624,18 @@ impl MindeState {
             custom.extend(self.cursor_state.render_elements(&mut renderer, cursor_phys, scale));
         }
 
+        // Message overlay, centered (below the cursor, above windows).
+        if let Some(msg) = self.message.as_ref() {
+            if let Some(elem) = crate::render::message_element(
+                &mut renderer,
+                msg,
+                (output_geo.size.w, output_geo.size.h),
+                output.current_scale().integer_scale(),
+            ) {
+                custom.push(elem);
+            }
+        }
+
         // Border around the selected frame (falling back to the focused
         // window before the first sync).
         if let Some(geo) = self.focus_rect.or_else(|| {

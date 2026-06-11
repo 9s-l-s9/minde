@@ -29,7 +29,7 @@ pub fn set_loop_signal(signal: LoopSignal) {
 /// Commands enqueued from Scheme (possibly from the REPL thread) to be
 /// applied against `&mut MindeState` on the compositor's main thread via
 /// a calloop channel.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum WmCommand {
     Place { id: u64, x: i32, y: i32, w: i32, h: i32 },
     Focus { id: u64 },
@@ -39,6 +39,11 @@ pub enum WmCommand {
     /// the focus border around this (not around the focused window), so an
     /// empty frame is still visibly selected.
     FocusRect { x: i32, y: i32, w: i32, h: i32 },
+    /// Show text in the centered message overlay (StumpWM's message
+    /// window); auto-hides after `timeout_ms` (0 = sticky until replaced
+    /// or cleared).
+    Message { text: String, timeout_ms: u64 },
+    ClearMessage,
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -263,6 +268,24 @@ unsafe extern "C" fn wm_clear_focus() -> Scm {
     from_bool(send_command(WmCommand::ClearFocus))
 }
 
+/// `(wm-message text)` or `(wm-message text timeout-ms)`. Guile passes
+/// SCM_UNDEFINED for a missing optional argument.
+unsafe extern "C" fn wm_message(text: Scm, timeout: Scm) -> Scm {
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    let timeout_ms = if timeout.0 == ffi::SCM_UNDEFINED.0 {
+        5000
+    } else {
+        to_i64(timeout).max(0) as u64
+    };
+    from_bool(send_command(WmCommand::Message { text, timeout_ms }))
+}
+
+unsafe extern "C" fn wm_clear_message() -> Scm {
+    from_bool(send_command(WmCommand::ClearMessage))
+}
+
 unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
     let x = to_i64(x) as i32;
     let y = to_i64(y) as i32;
@@ -323,6 +346,14 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_clear_focus));
+        register_gsubr("wm-message", 1, 1, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_message));
+        register_gsubr("wm-clear-message", 0, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn() -> Scm,
+            ffi::Gsubr,
+        >(wm_clear_message));
         register_gsubr("wm-focus-rect", 4, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn(Scm, Scm, Scm, Scm) -> Scm,
             ffi::Gsubr,
