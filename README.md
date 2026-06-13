@@ -51,22 +51,40 @@ client) with `(mods-bitmask keysym keysym-name)`; returning `#t` consumes
 the key. Modifier bits mirror common X11 masks: shift=1, ctrl=4, alt=8,
 super=64.
 
-Key bindings are StumpWM-style behind a prefix (default `C-t`,
-configurable: `(set-prefix-key! '() "Print")`). Pressing the prefix key
-again forwards it literally to the client. Prefix map (see
-`scheme/init.scm`):
+Key bindings are StumpWM-style behind a prefix (default: `Print`, like
+the author's StumpWM; change with `(set-prefix-key! '(ctrl) "t")`).
+Pressing the prefix key again forwards it literally to the client.
+Prefix map (see `scheme/init.scm`):
 
 | key | action | | key | action |
 |-----|--------|-|-----|--------|
 | `Return` | terminal (alacritty) | | `r` | run prompt (fuzzel) |
-| `b` | browser (zen/chromium) | | `E` | emacs |
+| `b` | browser (zen/chromium) | | `e` / `E` | lem / emacsclient |
 | `v` / `h` | vsplit / hsplit | | `c` | remove split |
-| `n` | next frame | | `f` | next window in frame |
-| `p` | pull window here | | `k` | close window |
+| `n` | next frame | | `f` | next window (group-wide) |
+| `p` | pull next hidden window | | `o` | next window in this frame |
+| `k` / `d` | close window | | `l` | windowlist (fuzzel) |
 | `g` | next group | | `G` | new group |
-| `m` | move window to next group | | `Q` | quit |
+| `m` | move window to next group | | `y` | window info echo |
+| `a` | ask AI (prompt + echo) | | `T` | add TODO (prompt) |
+| `w` | voice dictate | | `i` | eww widgets |
+| `A` | agents submap (c/d/o/p) | | `P` | misc submap (w/a) |
+| `R` | reload init.scm | | `L` / `Q` | lock / quit |
 
 `super+q` also quits. Groups " I ", " II ", " III " exist at startup.
+The window model is StumpWM's (emacs-like): frames are panes, the group's
+window list is the buffer list; `f` cycles it group-wide, `p` digs out
+hidden windows, one window per frame is visible at a time.
+
+## Message area
+
+`(wm-message "text")` (optional second arg: timeout in ms, default 5000)
+shows a centered gruvbox echo box rendered in-compositor -- StumpWM's
+message window. Unbound prefix keys, group switches, and `Print y` use
+it. From shell scripts, `minde-msg "text"` / `minde-cmd '(expr)'`
+(installed in the package's `bin/`, or `scripts/` in the repo) talk to
+the running compositor via the REPL socket -- that's how the `a`/`T`/`l`
+prompt workflows report back.
 
 Configuration: minde loads `$MINDE_INIT`, else
 `~/.config/minde/init.scm`, else the repo's `scheme/init.scm`. The
