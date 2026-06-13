@@ -127,10 +127,8 @@ MODS (possibly '())."
            (binding
             (run-binding! binding mods-bitmask keysym-name))
            (else
-            ;; Unbound key: swallow it (StumpWM does the same, typically
-            ;; with a "not bound" echo) rather than forwarding a keypress
-            ;; the user didn't intend for the client.
-            (wm-log (format #f "prefix ~a: not bound" keysym-name))))
+            ;; Unbound key: swallow it and echo, like StumpWM.
+            (echo (format #f "~a is not bound" keysym-name))))
           #t)))
       (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
           (begin
@@ -191,7 +189,16 @@ MODS (possibly '())."
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
 (bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
 (bind-prefix-key! "g" (lambda () (gnext!)))
-(bind-prefix-key! "G" (lambda () (gnew-auto!)))
+(bind-prefix-key! "G" (lambda ()
+                        (let ((g (gnew-auto!)))
+                          (echo (string-append "new group:" (group-name g))))))
+;; y: StumpWM `info` -- echo the current window and group.
+(bind-prefix-key! "y" (lambda ()
+                        (let ((id (current-frame-window)))
+                          (echo (if id
+                                    (format #f "~a  [~a]" (window-title id)
+                                            (string-trim-both (current-group-name)))
+                                    "no window")))))
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
 

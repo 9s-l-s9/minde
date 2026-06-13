@@ -91,7 +91,19 @@ or clearing focus)."
     (when (and target (not (eq? target (current-group))))
       (park-group-windows! (current-group))
       (activate-group! target)
-      (sync-frames!))))
+      (sync-frames!)
+      (echo (group-list-string)))))
+
+(define (group-list-string)
+  "The group list with the current one bracketed, StumpWM message style:
+\"[ I ]  II   III \"."
+  (string-join
+   (map (lambda (g)
+          (if (eq? g (current-group))
+              (string-append "[" (string-trim-both (group-name g)) "]")
+              (string-trim-both (group-name g))))
+        %groups)
+   "  "))
 
 (define (gnext!)
   "Switches to the next group in %groups, wrapping around."
@@ -173,6 +185,7 @@ group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen)."
   (unless (remove-window-from-active-tree! id)
     (find (lambda (g) (remove-window-from-tree-in! (group-tree g) id)) %groups))
+  (forget-window-title! id)
   #t)
 
 (define (wm-on-output-geometry width height)

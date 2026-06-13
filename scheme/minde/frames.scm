@@ -32,6 +32,11 @@
             current-frame-window
             close-current-window!
             frame-tree-window-count
+            echo
+            window-title
+            forget-window-title!
+            window-ids-with-titles
+            focus-window-by-id!
             ;; Group-tree plumbing, used by (minde groups). frames.scm
             ;; keeps owning the <group> record and the "which group's tree
             ;; is currently live in %frame-tree/%current-frame" swap
@@ -205,6 +210,15 @@
           #f))))
 
 (define (wm-place-window id x y w h) (rust-call 'wm-place-window id x y w h))
+
+(define (echo text)
+  "Shows TEXT in the compositor's message overlay (StumpWM's message
+window), falling back to the log when running against a binary without
+wm-message (or under the test stubs)."
+  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
+    (if (and mod (module-variable mod 'wm-message))
+        (rust-call 'wm-message text)
+        (rust-call 'wm-log text))))
 (define (wm-focus-window id) (rust-call 'wm-focus-window id))
 (define (wm-close-window id) (rust-call 'wm-close-window id))
 (define (wm-clear-focus) (rust-call 'wm-clear-focus))
@@ -243,6 +257,31 @@
 ;; ---------------------------------------------------------------------
 ;; Window <-> frame bookkeeping
 ;; ---------------------------------------------------------------------
+
+;; id -> title, remembered from handle-window-map! for the windowlist and
+;; `info`-style echoes. Survives moves between frames/groups; dropped on
+;; unmap.
+(define %window-titles (make-hash-table))
+
+(define (window-title id)
+  (or (hash-ref %window-titles id)
+      (format #f "window ~a" id)))
+
+(define (forget-window-title! id)
+  (hash-remove! %window-titles id))
+
+(define (window-ids-with-titles)
+  "All windows of the active group, as (id . title) pairs in frame order."
+  (map (lambda (id) (cons id (window-title id))) (all-window-ids)))
+
+(define (focus-window-by-id! id)
+  "Jumps to window ID wherever it lives in the active group: its frame
+becomes current and it is raised. Used by the fuzzel windowlist."
+  (let ((f (frame-of-window id)))
+    (when f
+      (set! %current-frame f)
+      (set-frame-current-window! f id)
+      (sync-frames!))))
 
 (define (frame-add-window! frame id)
   (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
@@ -534,6 +573,10 @@ input focus to the current frame's current window."
 
 (define (handle-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window."
+  (hash-set! %window-titles id
+             (if (and (string? title) (not (string-null? title)))
+                 title
+                 (if (string? app-id) app-id "")))
   (frame-add-window! %current-frame id)
   (sync-frames!))
 

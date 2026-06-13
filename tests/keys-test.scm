@@ -24,6 +24,8 @@
 (define (wm-close-window id) #t)
 (define (wm-clear-focus) #t)
 (define (wm-output-geometry) (list 1280 720))
+(define %messages '())
+(define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 
 ;; Load init.scm by its full canonical path. init.scm's own top-level code
 ;; calls (current-filename) (to find scheme/ for add-to-load-path), which
@@ -146,6 +148,9 @@
 (check "state reset to normal after unbound submap key"
        (wm-handle-key 0 #f "x")
        #f)
+(check-true "unbound key echoed via wm-message"
+            (and (pair? %messages)
+                 (string-contains (car %messages) "not bound")))
 
 ;; ---------------------------------------------------------------------
 
