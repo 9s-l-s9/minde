@@ -226,11 +226,46 @@ MODS (possibly '())."
    "w" (lambda ()
          (wm-spawn "pkill swaybg; swaybg -m fill -i \"$(ls ~/Projects/images/* | shuf -n1)\""))
    "a" (lambda ()
-         (wm-spawn "sel=$(wl-paste); [ -n \"$sel\" ] && ASK_AI_SYSTEM='You are a copy editor. Improve grammar, clarity and flow. Keep the meaning and the original language. Output only the revised text.' ~/Projects/System/scripts/ask-ai.scm \"$sel\" | wl-copy"))))
+         (wm-spawn "sel=$(wl-paste); [ -n \"$sel\" ] && ASK_AI_SYSTEM='You are a copy editor. Improve grammar, clarity and flow. Keep the meaning and the original language. Output only the revised text.' ~/Projects/System/scripts/ask-ai.scm \"$sel\" | wl-copy && minde-msg 'clipboard updated'"))))
+
+;; Prompt-driven workflows. The pattern: fuzzel --dmenu (an ordinary
+;; async Wayland client, so the compositor never blocks) collects input,
+;; and minde-msg/minde-cmd (REPL-socket helpers on PATH from the
+;; package) push results back into the compositor.
+
+;; a: ask-ai -- prompt, ask, echo the answer (sticky for 30s).
+(bind-prefix-key! "a"
+  (lambda ()
+    (wm-spawn "q=$(: | fuzzel --dmenu -p 'Ask AI: '); [ -n \"$q\" ] && minde-msg -t 30000 \"$(~/Projects/System/scripts/ask-ai.scm \"$q\")\"")))
+
+;; T: add-todo -- prompt, append to the org file, confirm.
+(bind-prefix-key! "T"
+  (lambda ()
+    (wm-spawn "todo=$(: | fuzzel --dmenu -p 'TODO: '); [ -n \"$todo\" ] && ~/Projects/System/scripts/add-todo.scm \"$todo\" ~/Projects/WorkingMemory/wm.org && minde-msg \"added: $todo\"")))
+
+;; l: windowlist -- pick a window with fuzzel, jump to it. The list is
+;; written to a file so titles never touch shell quoting.
+(define (windowlist!)
+  (let ((pairs (window-ids-with-titles))
+        (tmp (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                            "/minde-windowlist")))
+    (if (null? pairs)
+        (echo "no windows")
+        (begin
+          (call-with-output-file tmp
+            (lambda (p)
+              (for-each (lambda (pr) (format p "~a  ~a~%" (car pr) (cdr pr)))
+                        pairs)))
+          (wm-spawn (string-append
+                     "sel=$(fuzzel --dmenu -p 'window: ' < " tmp "); "
+                     "id=${sel%% *}; "
+                     "[ -n \"$id\" ] && minde-cmd \"((@ (minde frames) focus-window-by-id!) $id)\""))))))
+
+(bind-prefix-key! "l" (lambda () (windowlist!)))
 
 ;; Not ported yet (missing infrastructure), from StumpWM:
-;;   a  ask-ai, D/t dashboards -- need a message/echo area
-;;   l  windowlist, T add-todo -- need a non-blocking prompt/menu
+;;   D/t dashboards -- interactive terminal scripts; run them in a
+;;                     terminal yourself, or bind alacritty -e wrappers
 ;;   F  float-this             -- no floating layer
 ;;   z  zen (gaps + mode line) -- no gaps/mode-line
 ;;   S  screenshot map         -- needs wlr-screencopy (grim) support
