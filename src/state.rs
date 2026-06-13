@@ -49,6 +49,7 @@ pub struct MindeState {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
+    pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
     pub popups: PopupManager,
 
     pub seat: Seat<Self>,
@@ -70,6 +71,9 @@ pub struct MindeState {
     /// clearing a newer message.
     pub message: Option<crate::render::MessageState>,
     pub message_generation: u64,
+    /// Last usable area (output minus layer-shell exclusive zones) sent to
+    /// Scheme, to avoid re-announcing an unchanged rect on every commit.
+    pub usable_area: Option<Rectangle<i32, Logical>>,
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -103,6 +107,8 @@ impl MindeState {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let xdg_decoration_state =
             smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
+        let layer_shell_state =
+            smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -151,6 +157,7 @@ impl MindeState {
             seat_state,
             data_device_state,
             xdg_decoration_state,
+            layer_shell_state,
             popups,
             seat,
 
@@ -160,6 +167,7 @@ impl MindeState {
             focus_rect: None,
             message: None,
             message_generation: 0,
+            usable_area: None,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -369,12 +377,58 @@ impl MindeState {
         socket_name
     }
 
+    /// Recomputes the usable area (output geometry minus layer-shell
+    /// exclusive zones) and tells Scheme when it changed, so the frame
+    /// tree shrinks around docked panels (eww bars etc.). Call after any
+    /// layer surface maps, unmaps, or commits, and on output init/resize.
+    pub fn update_usable_area(&mut self) {
+        let Some(output) = self.space.outputs().next().cloned() else {
+            return;
+        };
+        let zone = {
+            let mut map = smithay::desktop::layer_map_for_output(&output);
+            map.arrange();
+            map.non_exclusive_zone()
+        };
+        if self.usable_area != Some(zone) {
+            self.usable_area = Some(zone);
+            guile::on_output_geometry(
+                zone.loc.x,
+                zone.loc.y,
+                zone.size.w.max(0) as u32,
+                zone.size.h.max(0) as u32,
+            );
+        }
+    }
+
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(pos).and_then(|(window, location)| {
-            window
-                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                .map(|(s, p)| (s, (p + location).to_f64()))
-        })
+        use smithay::wayland::shell::wlr_layer::Layer;
+
+        let output = self.space.outputs().next()?;
+        let output_geo = self.space.output_geometry(output).unwrap();
+        let layers = smithay::desktop::layer_map_for_output(output);
+        let local = pos - output_geo.loc.to_f64();
+
+        let layer_surface_under = |layer_types: &[Layer]| {
+            layer_types.iter().find_map(|lt| {
+                layers.layer_under(*lt, local).and_then(|layer| {
+                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                    layer
+                        .surface_under(local - layer_loc.to_f64(), WindowSurfaceType::ALL)
+                        .map(|(s, p)| (s, (p + layer_loc + output_geo.loc).to_f64()))
+                })
+            })
+        };
+
+        layer_surface_under(&[Layer::Overlay, Layer::Top])
+            .or_else(|| {
+                self.space.element_under(pos).and_then(|(window, location)| {
+                    window
+                        .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                        .map(|(s, p)| (s, (p + location).to_f64()))
+                })
+            })
+            .or_else(|| layer_surface_under(&[Layer::Bottom, Layer::Background]))
     }
 }
 

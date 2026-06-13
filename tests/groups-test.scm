@@ -69,7 +69,7 @@
 ;; Set up a 1280x720 output.
 ;; ---------------------------------------------------------------------
 
-(handle-output-geometry! 1280 720)
+(handle-output-geometry! 0 0 1280 720)
 
 (check "default groups are I, II, III" (group-names) (list " I " " II " " III "))
 (check "current group starts as I" (current-group-name) " I ")

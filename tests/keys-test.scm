@@ -23,7 +23,7 @@
 (define (wm-focus-window id) #t)
 (define (wm-close-window id) #t)
 (define (wm-clear-focus) #t)
-(define (wm-output-geometry) (list 1280 720))
+(define (wm-output-geometry) (list 0 0 1280 720))
 (define %messages '())
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 

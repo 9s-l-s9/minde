@@ -66,7 +66,7 @@
 ;; Set up a 1280x720 output, matching the stub.
 ;; ---------------------------------------------------------------------
 
-(handle-output-geometry! 1280 720)
+(handle-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
 ;; Map two windows into the (single, full-screen) initial frame.

@@ -14,7 +14,7 @@
 (define (wm-close-window id) #t)
 (define (wm-clear-focus) (set! %focused #f) #t)
 (define (wm-focus-rect x y w h) #t)
-(define (wm-output-geometry) (list 1280 720))
+(define (wm-output-geometry) (list 0 0 1280 720))
 (define (wm-log msg) #t)
 
 (use-modules (minde frames))
@@ -33,7 +33,7 @@
 
 ;; Layout: two frames side by side. Left frame holds windows 1 and 2
 ;; (2 visible, 1 hidden behind it), right frame holds window 3.
-(handle-output-geometry! 1280 720)
+(handle-output-geometry! 0 0 1280 720)
 (handle-window-map! 1 "one" "app")
 (handle-window-map! 2 "two" "app")
 (split-frame-horizontal!)      ; 1,2 stay in the left frame, which is current

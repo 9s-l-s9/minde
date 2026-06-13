@@ -116,9 +116,12 @@
 ;; The leaf <frame> that currently has input focus, within %frame-tree.
 (define %current-frame %frame-tree)
 
-;; The most recently seen output size, applied to a group's tree whenever
-;; it becomes active (so a group created/hidden before a resize doesn't
-;; show up with stale geometry the first time it's synced).
+;; The most recently seen usable area (output minus layer-shell exclusive
+;; zones, e.g. a docked eww bar), applied to a group's tree whenever it
+;; becomes active (so a group created/hidden before a resize doesn't show
+;; up with stale geometry the first time it's synced).
+(define %last-output-x 0)
+(define %last-output-y 0)
 (define %last-output-w 1280)
 (define %last-output-h 720)
 
@@ -160,7 +163,8 @@
     (set! %frame-tree (group-tree g))
     (set! %current-frame (group-current-frame g))
     (set! %active-group g)
-    (resize-subtree! %frame-tree 0 0 %last-output-w %last-output-h)))
+    (resize-subtree! %frame-tree %last-output-x %last-output-y
+                     %last-output-w %last-output-h)))
 
 ;; Moves every window tracked by G (active or not) off-screen, without
 ;; touching focus. Used when a group is about to be hidden.
@@ -586,12 +590,15 @@ if found (and re-syncs), #f otherwise -- callers should then search other
 groups' trees themselves via remove-window-from-tree-in!."
   (remove-window-from-active-tree! id))
 
-(define (handle-output-geometry! width height)
-  "Called on winit backend init and on every resize. Resizes the active
-group's frame tree to the new output size and remembers it so newly
-activated groups get the current size too."
+(define (handle-output-geometry! x y width height)
+  "Called on output init/resize and whenever layer-shell exclusive zones
+change the usable area (X Y is its origin -- e.g. below a docked bar).
+Resizes the active group's frame tree to the new rect and remembers it so
+newly activated groups get the current geometry too."
   (when (and (> width 0) (> height 0))
+    (set! %last-output-x x)
+    (set! %last-output-y y)
     (set! %last-output-w width)
     (set! %last-output-h height)
-    (resize-subtree! %frame-tree 0 0 width height)
+    (resize-subtree! %frame-tree x y width height)
     (sync-frames!)))

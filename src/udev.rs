@@ -508,7 +508,7 @@ fn try_setup_output(state: &mut MindeState, node: DrmNode, info: &connector::Inf
         border_buffers: BorderBuffers::default(),
     });
 
-    guile::on_output_geometry(wl_mode.size.w.max(0) as u32, wl_mode.size.h.max(0) as u32);
+    state.update_usable_area();
     guile::on_startup();
 
     state.render_now(node, crtc);
@@ -636,6 +636,34 @@ impl MindeState {
             }
         }
 
+        // Layer-shell surfaces: upper (top/overlay -- fuzzel, swaylock)
+        // draw above windows; lower (bottom/background -- swaybg) below.
+        use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+        let layer_map = smithay::desktop::layer_map_for_output(&output);
+        let (lower, upper): (Vec<&smithay::desktop::LayerSurface>, Vec<_>) = layer_map
+            .layers()
+            .partition(|s| matches!(s.layer(), WlrLayer::Background | WlrLayer::Bottom));
+        macro_rules! layer_elements {
+            ($surfaces:expr) => {
+                $surfaces.iter().flat_map(|surface| {
+                    let loc = layer_map
+                        .layer_geometry(surface)
+                        .map(|geo| geo.loc)
+                        .unwrap_or_default();
+                    smithay::backend::renderer::element::AsRenderElements::<
+                        UdevRenderer<'_>,
+                    >::render_elements::<MindeRenderElements<UdevRenderer<'_>>>(
+                        *surface,
+                        &mut renderer,
+                        loc.to_physical_precise_round(scale),
+                        scale,
+                        1.0,
+                    )
+                })
+            };
+        }
+        custom.extend(layer_elements!(upper));
+
         // Border around the selected frame (falling back to the focused
         // window before the first sync).
         if let Some(geo) = self.focus_rect.or_else(|| {
@@ -665,6 +693,8 @@ impl MindeState {
                 window, &mut renderer, phys_loc, scale, 1.0
             ));
         }
+        // Background/bottom layers under everything.
+        all_elements.extend(layer_elements!(lower));
 
         let render_result = output_surface
             .drm_output

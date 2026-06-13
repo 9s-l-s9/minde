@@ -1,4 +1,5 @@
 mod compositor;
+mod layer_shell;
 mod xdg_decoration;
 mod xdg_shell;
 

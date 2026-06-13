@@ -16,7 +16,7 @@ use smithay::reexports::calloop::channel::Sender;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 /// Set once, before `scm_init_guile`, so `wm-quit` can reach the event loop.
 static LOOP_SIGNAL: OnceLock<LoopSignal> = OnceLock::new();
@@ -52,9 +52,11 @@ pub enum WmCommand {
 /// `MindeState`.
 static COMMAND_SENDER: OnceLock<Sender<WmCommand>> = OnceLock::new();
 
-/// Last known output size, updated by the winit backend on init/resize.
+/// Last known usable area (output minus layer-shell exclusive zones).
 /// Stored outside `MindeState` so `(wm-output-geometry)` is callable from
 /// any thread, including the REPL.
+static OUTPUT_X: AtomicI32 = AtomicI32::new(0);
+static OUTPUT_Y: AtomicI32 = AtomicI32::new(0);
 static OUTPUT_W: AtomicU32 = AtomicU32::new(0);
 static OUTPUT_H: AtomicU32 = AtomicU32::new(0);
 
@@ -62,7 +64,9 @@ pub fn set_command_sender(sender: Sender<WmCommand>) {
     let _ = COMMAND_SENDER.set(sender);
 }
 
-pub fn set_output_geometry(width: u32, height: u32) {
+pub fn set_output_geometry(x: i32, y: i32, width: u32, height: u32) {
+    OUTPUT_X.store(x, Ordering::SeqCst);
+    OUTPUT_Y.store(y, Ordering::SeqCst);
     OUTPUT_W.store(width, Ordering::SeqCst);
     OUTPUT_H.store(height, Ordering::SeqCst);
 }
@@ -155,6 +159,10 @@ pub fn call3(proc: Scm, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
     protected_call(move || unsafe { ffi::scm_call_3(proc, a, b, c) })
 }
 
+pub fn call4(proc: Scm, a: Scm, b: Scm, c: Scm, d: Scm) -> Option<Scm> {
+    protected_call(move || unsafe { ffi::scm_call_4(proc, a, b, c, d) })
+}
+
 /// Looks up NAME fresh and calls it with one argument, if bound. Mirrors
 /// `handle_key`'s "missing definition = no-op" behavior.
 fn call_named_1(name: &str, a: Scm) -> Option<Scm> {
@@ -167,6 +175,10 @@ fn call_named_2(name: &str, a: Scm, b: Scm) -> Option<Scm> {
 
 fn call_named_3(name: &str, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
     call3(lookup(name)?, a, b, c)
+}
+
+fn call_named_4(name: &str, a: Scm, b: Scm, c: Scm, d: Scm) -> Option<Scm> {
+    call4(lookup(name)?, a, b, c, d)
 }
 
 /// Converts a Scheme integer to `i64`. Only call this on values expected to
@@ -295,9 +307,11 @@ unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_output_geometry() -> Scm {
+    let x = OUTPUT_X.load(Ordering::SeqCst) as i64;
+    let y = OUTPUT_Y.load(Ordering::SeqCst) as i64;
     let w = OUTPUT_W.load(Ordering::SeqCst) as i64;
     let h = OUTPUT_H.load(Ordering::SeqCst) as i64;
-    unsafe { ffi::scm_list_2(from_i64(w), from_i64(h)) }
+    unsafe { ffi::scm_list_4(from_i64(x), from_i64(y), from_i64(w), from_i64(h)) }
 }
 
 fn register_gsubr(name: &str, req: i32, opt: i32, rst: i32, f: ffi::Gsubr) {
@@ -426,13 +440,16 @@ pub fn on_window_unmap(id: u64) {
     call_named_1("wm-on-window-unmap", from_i64(id as i64));
 }
 
-/// Records the new output size and calls `(wm-on-output-geometry width
-/// height)` if bound. Call this whenever the output size changes (init and
-/// resize).
-pub fn on_output_geometry(width: u32, height: u32) {
-    set_output_geometry(width, height);
-    call_named_2(
+/// Records the new usable area and calls `(wm-on-output-geometry x y width
+/// height)` if bound. Call this whenever the usable area changes: output
+/// init/resize (x/y = 0) or a layer-shell exclusive zone reserving space
+/// (x/y = the zone's origin).
+pub fn on_output_geometry(x: i32, y: i32, width: u32, height: u32) {
+    set_output_geometry(x, y, width, height);
+    call_named_4(
         "wm-on-output-geometry",
+        from_i64(x as i64),
+        from_i64(y as i64),
         from_i64(width as i64),
         from_i64(height as i64),
     );

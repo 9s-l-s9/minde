@@ -188,5 +188,5 @@ a sync since nothing hidden is on-screen)."
   (forget-window-title! id)
   #t)
 
-(define (wm-on-output-geometry width height)
-  (handle-output-geometry! width height))
+(define (wm-on-output-geometry x y width height)
+  (handle-output-geometry! x y width height))

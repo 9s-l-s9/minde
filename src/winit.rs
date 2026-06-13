@@ -41,10 +41,8 @@ pub fn init_winit(
 
     state.space.map_output(&output, (0, 0));
 
-    {
-        let size = backend.window_size();
-        guile::on_output_geometry(size.w.max(0) as u32, size.h.max(0) as u32);
-    }
+    // Announce the initial usable area (full output; no layers yet).
+    state.update_usable_area();
 
     // Autostart hook: run once the first (and only, for winit) output is up.
     guile::on_startup();
@@ -67,7 +65,10 @@ pub fn init_winit(
                     None,
                     None,
                 );
-                guile::on_output_geometry(size.w.max(0) as u32, size.h.max(0) as u32);
+                // Re-derive the usable area from the new size (layer
+                // exclusive zones re-arranged inside).
+                state.usable_area = None;
+                state.update_usable_area();
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {

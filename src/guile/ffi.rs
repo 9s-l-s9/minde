@@ -54,6 +54,7 @@ unsafe extern "C" {
     pub fn scm_call_1(proc: Scm, arg1: Scm) -> Scm;
     pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
     pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
+    pub fn scm_call_4(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm) -> Scm;
 
     pub fn scm_from_utf8_string(s: *const c_char) -> Scm;
     /// Returns a malloc'd, NUL-terminated UTF-8 buffer; caller must free() it.
@@ -66,6 +67,7 @@ unsafe extern "C" {
 
     /// Builds a two-element list `(a b)`.
     pub fn scm_list_2(a: Scm, b: Scm) -> Scm;
+    pub fn scm_list_4(a: Scm, b: Scm, c: Scm, d: Scm) -> Scm;
 
     /// Looks up a top-level variable object by name (throws if unbound).
     pub fn scm_c_lookup(name: *const c_char) -> Scm;

@@ -43,6 +43,73 @@ impl CompositorHandler for MindeState {
 
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
+        self.handle_layer_commit(surface);
+    }
+}
+
+impl MindeState {
+    /// Layer-surface commit handling: arrange the output's layer map,
+    /// send the initial configure if this was the first commit (required
+    /// by the protocol before the client may attach a buffer), track
+    /// exclusive-zone changes, and give exclusive-keyboard layers
+    /// (fuzzel, swaylock) the keyboard.
+    fn handle_layer_commit(&mut self, surface: &WlSurface) {
+        use smithay::desktop::{WindowSurfaceType, layer_map_for_output};
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::wlr_layer::{
+            KeyboardInteractivity, Layer, LayerSurfaceCachedState, LayerSurfaceData,
+        };
+
+        let Some(output) = self
+            .space
+            .outputs()
+            .find(|o| {
+                layer_map_for_output(o)
+                    .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                    .is_some()
+            })
+            .cloned()
+        else {
+            return;
+        };
+
+        let initial_configure_sent = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<LayerSurfaceData>()
+                .map(|d| d.lock().unwrap().initial_configure_sent)
+                .unwrap_or(true)
+        });
+
+        {
+            let mut map = layer_map_for_output(&output);
+            // Arrange before the initial configure so the configure
+            // carries the size the anchors/margins produce.
+            map.arrange();
+            if !initial_configure_sent {
+                if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL) {
+                    layer.layer_surface().send_configure();
+                }
+            }
+        }
+        self.update_usable_area();
+
+        // Exclusive keyboard interactivity on a top/overlay layer takes
+        // the keyboard (this is how fuzzel/swaylock type).
+        let wants_keyboard = with_states(surface, |states| {
+            let mut guard = states.cached_state.get::<LayerSurfaceCachedState>();
+            let state = guard.current();
+            state.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                && matches!(state.layer, Layer::Top | Layer::Overlay)
+        });
+        if wants_keyboard {
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                if keyboard.current_focus().as_ref() != Some(surface) {
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    keyboard.set_focus(self, Some(surface.clone()), serial);
+                }
+            }
+        }
     }
 }
 
