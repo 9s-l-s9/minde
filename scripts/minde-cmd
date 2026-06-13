@@ -1,0 +1,29 @@
+#!/bin/sh
+# Sends one Scheme expression to the running minde's REPL socket and
+# waits for the connection to close. Lets spawned shell pipelines call
+# back into the compositor, e.g.:
+#
+#   minde-cmd '(wm-message "hello")'
+#
+# NOTE: the REPL server runs in its own Guile thread; only call things
+# that are thread-safe. All wm-* subrs are (they enqueue commands on the
+# compositor's channel).
+[ -n "$1" ] || { echo "usage: minde-cmd EXPR" >&2; exit 1; }
+exec guile -q -c '
+(use-modules (ice-9 rdelim))
+(let* ((path (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                            "/minde-repl.sock"))
+       (sock (socket PF_UNIX SOCK_STREAM 0)))
+  (connect sock AF_UNIX path)
+  (display (cadr (command-line)) sock)
+  (newline sock)
+  (force-output sock)
+  ;; Half-close: the REPL sees EOF after our expression and shuts the
+  ;; session down cleanly (a \",q\" instead makes it error noisily).
+  (shutdown sock 1)
+  ;; Drain until the REPL closes the connection so the expression is
+  ;; guaranteed to have been read (and thus evaluated) before we exit.
+  (let loop ()
+    (let ((line (read-line sock)))
+      (unless (eof-object? line)
+        (loop)))))' "$1"

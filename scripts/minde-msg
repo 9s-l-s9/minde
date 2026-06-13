@@ -1,0 +1,10 @@
+#!/bin/sh
+# Shows TEXT in minde's message overlay:  minde-msg "hello world"
+# Optional second form:  minde-msg -t MS "text"  for a custom timeout.
+timeout=""
+if [ "$1" = "-t" ]; then
+  timeout=" $2"
+  shift 2
+fi
+text=$(printf %s "$*" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+exec "$(dirname "$0")/minde-cmd" "(wm-message \"$text\"$timeout)"

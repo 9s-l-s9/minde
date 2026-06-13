@@ -134,6 +134,18 @@ exec ~a/minde --tty \"$@\"
                           #$(this-package-input "bash-minimal")
                           share mesa share bin)))
               (chmod (string-append bin "/minde-session") #o755)
+              ;; REPL-socket helper scripts (used by prompt/message
+              ;; workflows spawned from bindings). Pin their guile.
+              (for-each
+               (lambda (script)
+                 (let ((dest (string-append bin "/" script)))
+                   (copy-file (string-append "scripts/" script) dest)
+                   (substitute* dest
+                     (("^exec guile")
+                      (string-append "exec " #$(this-package-input "guile")
+                                     "/bin/guile")))
+                   (chmod dest #o755)))
+               '("minde-cmd" "minde-msg"))
               (call-with-output-file (string-append sessions "/minde.desktop")
                 (lambda (port)
                   (display "[Desktop Entry]
