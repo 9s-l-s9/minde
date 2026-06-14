@@ -727,6 +727,13 @@ impl MindeState {
                 Some(output.clone())
             });
         });
+        // Layer surfaces need frame callbacks too, or clients like fuzzel
+        // draw once and then wait forever before rendering typed input.
+        for layer in smithay::desktop::layer_map_for_output(&output).layers() {
+            layer.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
+                Some(output.clone())
+            });
+        }
         self.space.refresh();
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();

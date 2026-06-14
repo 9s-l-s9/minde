@@ -129,6 +129,17 @@ pub fn init_winit(
                     )
                 });
 
+                // Layer surfaces need frame callbacks too, or clients
+                // like fuzzel draw once and then never repaint.
+                for layer in smithay::desktop::layer_map_for_output(&output).layers() {
+                    layer.send_frame(
+                        &output,
+                        state.start_time.elapsed(),
+                        Some(Duration::ZERO),
+                        |_, _| Some(output.clone()),
+                    )
+                }
+
                 state.space.refresh();
                 state.popups.cleanup();
                 let _ = state.display_handle.flush_clients();
