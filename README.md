@@ -58,7 +58,7 @@ Prefix map (see `scheme/init.scm`):
 
 | key | action | | key | action |
 |-----|--------|-|-----|--------|
-| `Return` | terminal (alacritty) | | `r` | run prompt (fuzzel) |
+| `Return` | terminal (alacritty) | | `r` | run prompt (native, TAB-completes PATH) |
 | `b` | browser (zen/chromium) | | `e` / `E` | lem / emacsclient |
 | `v` / `h` | vsplit / hsplit | | `c` | remove split |
 | `n` | next frame | | `f` | next window (group-wide) |
@@ -85,6 +85,19 @@ space -- the frame tree automatically tiles into the remaining area, so
 an eww mode-line never overlaps windows. Exclusive-keyboard layers
 (fuzzel, swaylock) take the keyboard while open; focus returns to the
 current frame's window when they close.
+
+## Native input prompt
+
+`(read-one-line prompt on-submit #:key completions initial history)` from
+`(minde input)` prompts in the message overlay -- StumpWM's
+`read-one-line`, no external launcher. `Print r/a/T/l/G` use it. Editing
+keys (StumpWM `*input-map*` subset): BackSpace, `C-d`/Delete, `C-f`/`C-b`
+(Right/Left), `M-f`/`M-b` (words), `C-a`/`C-e` (Home/End), `C-k`, `C-u`,
+`M-d`/`M-BackSpace` (kill words), `C-p`/`C-n` (Up/Down: history), TAB /
+Shift-TAB (prefix-completion cycle), RET submit, `C-g`/ESC abort. Known
+limitation: no key auto-repeat inside the prompt (Wayland repeat is
+client-side). While the prefix key is armed, the focus border turns red
+(`wm-border-color`, colors configurable in init.scm).
 
 ## Message area
 
