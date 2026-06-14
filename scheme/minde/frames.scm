@@ -540,6 +540,11 @@ other frame holds any window."
 (define %offscreen-x -10000)
 (define %offscreen-y -10000)
 
+;; The focus border (drawn by Rust *inside* the frame rect, see
+;; BORDER_WIDTH in src/render.rs) must not overlap window content, so
+;; windows are placed inset by this much within their frame.
+(define %border-width 3)
+
 (define (sync-frames!)
   "Walks the frame tree, placing each frame's current window at its frame's
 pixel geometry, moving every other (hidden) window off-screen, and setting
@@ -550,7 +555,10 @@ input focus to the current frame's current window."
        (for-each
         (lambda (id)
           (if (equal? id cur)
-              (wm-place-window id (frame-x frame) (frame-y frame) (frame-w frame) (frame-h frame))
+              (let ((bw %border-width))
+                (wm-place-window id
+                                 (+ (frame-x frame) bw) (+ (frame-y frame) bw)
+                                 (- (frame-w frame) (* 2 bw)) (- (frame-h frame) (* 2 bw))))
               (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
         (frame-window-ids frame))))
    (frame-leaves %frame-tree))

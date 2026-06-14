@@ -102,7 +102,7 @@
 (switch-to-group! " I ")
 
 (check "current group is I again" (current-group-name) " I ")
-(check "window 2 back on-screen full-screen" (hash-ref %placements 2) (list 0 0 1280 720))
+(check "window 2 back on-screen frame-filling" (hash-ref %placements 2) (list 3 3 1274 714))
 (check "focus restored to window 2" %focused 2)
 (check-true "window 1 still parked off-screen (not current in its frame)"
             (offscreen? (hash-ref %placements 1)))
@@ -122,9 +122,9 @@
 (check "window 1 becomes current group I's window after 2 left" (current-frame-window) 1)
 
 (switch-to-group! " II ")
-(check "window 2 placed full-screen after switching to II where it now lives"
+(check "window 2 placed frame-filling after switching to II where it now lives"
        (hash-ref %placements 2)
-       (list 0 0 1280 720))
+       (list 3 3 1274 714))
 (check "focus on window 2 in group II" %focused 2)
 
 ;; Back to I for the remaining tests.

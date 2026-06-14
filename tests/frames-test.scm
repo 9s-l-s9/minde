@@ -69,13 +69,13 @@
 (handle-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
-;; Map two windows into the (single, full-screen) initial frame.
+;; Map two windows into the (single, frame-filling) initial frame.
 ;; ---------------------------------------------------------------------
 
 (handle-window-map! 1 "term" "foot")
-(check "window 1 placed full-screen after map"
+(check "window 1 placed frame-filling after map"
        (hash-ref %placements 1)
-       (list 0 0 1280 720))
+       (list 3 3 1274 714))
 (check "window 1 focused after map" %focused 1)
 
 (handle-window-map! 2 "editor" "emacs")
@@ -83,9 +83,9 @@
 ;; window; window 1 should now be parked off-screen since it's no longer
 ;; that frame's current window.
 (check "window 2 is now current in the frame" (current-frame-window) 2)
-(check "window 2 placed full-screen after map"
+(check "window 2 placed frame-filling after map"
        (hash-ref %placements 2)
-       (list 0 0 1280 720))
+       (list 3 3 1274 714))
 (let ((p1 (hash-ref %placements 1)))
   (check-true "window 1 parked off-screen (negative coords)"
               (and p1 (< (car p1) 0) (< (cadr p1) 0))))
@@ -100,7 +100,7 @@
 (let* ((p2 (hash-ref %placements 2)))
   (check "window 2 (current) geometry after vsplit is top half"
          p2
-         (list 0 0 1280 360)))
+         (list 3 3 1274 354)))
 
 ;; Move window 1 into the new (bottom) frame by cycling frames and mapping
 ;; it there -- but window 1 isn't mapped again; instead exercise
@@ -125,7 +125,7 @@
 (focus-next-window-in-frame!)
 (check "focus-next-window-in-frame! cycled to window 1" (current-frame-window) 1)
 (let ((p1 (hash-ref %placements 1)))
-  (check "window 1 now on-screen in top frame" p1 (list 0 0 1280 360)))
+  (check "window 1 now on-screen in top frame" p1 (list 3 3 1274 354)))
 (let ((p2 (hash-ref %placements 2)))
   (check-true "window 2 now parked off-screen"
               (and p2 (< (car p2) 0) (< (cadr p2) 0))))
@@ -138,7 +138,7 @@
 ;; (We don't have direct access to the frame list from outside the module,
 ;; but window 1's and window 2's on-screen geometries when each is current
 ;; already demonstrated top=[0,0,1280,360]; the bottom frame's rectangle is
-;; verified indirectly below via remove-split! restoring full-screen.)
+;; verified indirectly below via remove-split! restoring frame-filling.)
 
 ;; ---------------------------------------------------------------------
 ;; remove-split! restores full screen.
@@ -151,9 +151,9 @@
 (let ((cur (current-frame-window)))
   (check-true "some window is current after remove-split!" cur))
 (let ((p (hash-ref %placements (current-frame-window))))
-  (check "current window full-screen again after remove-split!"
+  (check "current window frame-filling again after remove-split!"
          p
-         (list 0 0 1280 720)))
+         (list 3 3 1274 714)))
 
 ;; ---------------------------------------------------------------------
 ;; Unmap removes a window wherever it is.
