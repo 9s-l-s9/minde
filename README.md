@@ -76,6 +76,16 @@ The window model is StumpWM's (emacs-like): frames are panes, the group's
 window list is the buffer list; `f` cycles it group-wide, `p` digs out
 hidden windows, one window per frame is visible at a time.
 
+## Layer shell
+
+minde implements `zwlr_layer_shell_v1`: launchers (fuzzel), wallpaper
+(swaybg), lockers (swaylock), and bars/widgets (eww) work. A layer
+surface with an exclusive zone (e.g. a docked eww bar) reserves screen
+space -- the frame tree automatically tiles into the remaining area, so
+an eww mode-line never overlaps windows. Exclusive-keyboard layers
+(fuzzel, swaylock) take the keyboard while open; focus returns to the
+current frame's window when they close.
+
 ## Message area
 
 `(wm-message "text")` (optional second arg: timeout in ms, default 5000)
