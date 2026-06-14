@@ -74,8 +74,13 @@ impl MindeState {
                             // xkbcommon's name ("t", "Return"), not the
                             // xkeysym constant name ("XK_t") from `.name()`.
                             let name = smithay::input::keyboard::xkb::keysym_get_name(keysym);
+                            // The text this key produces under the active
+                            // keymap (empty for Return/Backspace/etc.) --
+                            // what the native input prompt inserts.
+                            let mut utf8 = smithay::input::keyboard::xkb::keysym_to_utf8(keysym);
+                            utf8.retain(|c| !c.is_control());
                             let consumed =
-                                guile::handle_key(mods_bitmask(mods), keysym.raw(), &name);
+                                guile::handle_key(mods_bitmask(mods), keysym.raw(), &name, &utf8);
                             if consumed {
                                 return FilterResult::Intercept(());
                             }

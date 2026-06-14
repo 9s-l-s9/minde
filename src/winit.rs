@@ -84,7 +84,7 @@ pub fn init_winit(
                         .as_ref()
                         .and_then(|w| state.space.element_geometry(w))
                 }) {
-                    custom.extend(border_buffers.elements(geo, 1));
+                    custom.extend(border_buffers.elements(geo, 1, state.border_color));
                 }
 
                 {

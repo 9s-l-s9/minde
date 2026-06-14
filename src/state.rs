@@ -74,6 +74,9 @@ pub struct MindeState {
     /// Last usable area (output minus layer-shell exclusive zones) sent to
     /// Scheme, to avoid re-announcing an unchanged rect on every commit.
     pub usable_area: Option<Rectangle<i32, Logical>>,
+    /// Focus border color; Scheme flips it while the prefix key is armed
+    /// (StumpWM's pointer-box equivalent).
+    pub border_color: [f32; 4],
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -168,6 +171,7 @@ impl MindeState {
             message: None,
             message_generation: 0,
             usable_area: None,
+            border_color: crate::render::BORDER_COLOR,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -312,6 +316,9 @@ impl MindeState {
             }
             WmCommand::ClearMessage => {
                 self.message = None;
+            }
+            WmCommand::BorderColor { rgba } => {
+                self.border_color = rgba;
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {

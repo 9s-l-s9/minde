@@ -674,7 +674,7 @@ impl MindeState {
             custom.extend(
                 output_surface
                     .border_buffers
-                    .elements(geo, output.current_scale().integer_scale()),
+                    .elements(geo, output.current_scale().integer_scale(), self.border_color),
             );
         }
 

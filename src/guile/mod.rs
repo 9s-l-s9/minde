@@ -44,6 +44,8 @@ pub enum WmCommand {
     /// or cleared).
     Message { text: String, timeout_ms: u64 },
     ClearMessage,
+    /// Focus-border color (prefix-state indicator).
+    BorderColor { rgba: [f32; 4] },
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -298,6 +300,29 @@ unsafe extern "C" fn wm_clear_message() -> Scm {
     from_bool(send_command(WmCommand::ClearMessage))
 }
 
+/// `(wm-border-color "#rrggbb")` -- sets the focus-border color.
+unsafe extern "C" fn wm_border_color(hex: Scm) -> Scm {
+    let Some(hex) = to_string_lossy(hex) else {
+        return from_bool(false);
+    };
+    let s = hex.trim_start_matches('#');
+    if s.len() != 6 {
+        tracing::warn!(%hex, "wm-border-color: expected #rrggbb");
+        return from_bool(false);
+    }
+    let Ok(v) = u32::from_str_radix(s, 16) else {
+        tracing::warn!(%hex, "wm-border-color: bad hex");
+        return from_bool(false);
+    };
+    let rgba = [
+        ((v >> 16) & 0xff) as f32 / 255.0,
+        ((v >> 8) & 0xff) as f32 / 255.0,
+        (v & 0xff) as f32 / 255.0,
+        1.0,
+    ];
+    from_bool(send_command(WmCommand::BorderColor { rgba }))
+}
+
 unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
     let x = to_i64(x) as i32;
     let y = to_i64(y) as i32;
@@ -368,6 +393,10 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_clear_message));
+        register_gsubr("wm-border-color", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_border_color));
         register_gsubr("wm-focus-rect", 4, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn(Scm, Scm, Scm, Scm) -> Scm,
             ffi::Gsubr,
@@ -413,14 +442,15 @@ pub fn init(loop_signal: LoopSignal) {
 /// Calls `(wm-handle-key mods keysym keysym-name)` if that variable is
 /// currently bound, looking it up fresh each time so it can be redefined
 /// live from the REPL. Returns `true` if the key was consumed.
-pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str) -> bool {
+pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool {
     let Some(proc) = lookup("wm-handle-key") else {
         return false;
     };
     let a = from_i64(mods as i64);
     let b = from_i64(keysym as i64);
     let c = from_str(keysym_name);
-    let result = call3(proc, a, b, c);
+    let d = from_str(utf8);
+    let result = call4(proc, a, b, c, d);
     let consumed = match result {
         Some(r) => to_bool(r),
         None => false,

@@ -5,6 +5,7 @@
 ;;; restarting the compositor.
 
 (use-modules (ice-9 hash-table)
+             (srfi srfi-1)
              (system repl server))
 
 ;; scheme/frames.scm lives next to this file; add it to the load path so
@@ -12,7 +13,8 @@
 (add-to-load-path (dirname (current-filename)))
 
 (use-modules (minde frames)
-             (minde groups))
+             (minde groups)
+             (minde input))
 
 ;; ---------------------------------------------------------------------
 ;; Keybinding table
@@ -82,6 +84,23 @@ MODS (possibly '())."
 ;; prefix key, or a nested keymap (see make-keymap) after its parent key.
 (define %key-state 'normal)
 
+;; Prefix indicator (StumpWM's pointer-box equivalent): the focus border
+;; turns red while a prefix/submap is armed, yellow when idle.
+(define %border-color-normal "#d79921")
+(define %border-color-prefix "#cc241d")
+
+(define (set-border-color! hex)
+  ;; Tolerate a binary older than this config (subr not registered yet).
+  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
+    (let ((var (and mod (module-variable mod 'wm-border-color))))
+      (when var ((variable-ref var) hex)))))
+
+(define (set-key-state! s)
+  (set! %key-state s)
+  (set-border-color! (if (eq? s 'normal)
+                         %border-color-normal
+                         %border-color-prefix)))
+
 (define (run-binding! thunk mods keysym-name)
   ;; Errors from a binding are logged, not fatal -- one bad keybinding
   ;; shouldn't take down the compositor.
@@ -99,9 +118,21 @@ MODS (possibly '())."
 (define (modifier-keysym? name)
   (member name %modifier-keysyms))
 
-(define (wm-handle-key mods-bitmask keysym keysym-name)
-  "Called from Rust on every key press. Returns #t if the key was consumed
-(and should not be forwarded to the focused client), #f otherwise."
+(define (wm-handle-key mods-bitmask keysym keysym-name . rest)
+  "Called from Rust on every key press (4th argument: the UTF-8 text the
+key produces under the active keymap, empty for Return/BackSpace/...).
+Returns #t if the key was consumed (and should not be forwarded to the
+focused client), #f otherwise."
+  (define utf8 (if (pair? rest) (car rest) ""))
+  (cond
+   ;; A native input prompt is open: it owns the keyboard.
+   ((input-active?)
+    (if (modifier-keysym? keysym-name)
+        #t
+        (input-handle-key! mods-bitmask keysym-name utf8)))
+   (else (dispatch-key mods-bitmask keysym-name))))
+
+(define (dispatch-key mods-bitmask keysym-name)
   (if (hash-table? %key-state)
       (cond
        ;; Pressing the prefix key's keysym again while awaiting a key
@@ -113,17 +144,17 @@ MODS (possibly '())."
        ;; inside a nested keymap the prefix keysym is just another key.
        ((and (eq? %key-state %prefix-bindings)
              (string=? keysym-name %prefix-key))
-        (set! %key-state 'normal)
+        (set-key-state! 'normal)
         #f)
        ((modifier-keysym? keysym-name)
         #f) ; stay put; let the client see the modifier
        (else
         (let ((binding (hash-ref %key-state keysym-name)))
-          (set! %key-state 'normal)
+          (set-key-state! 'normal)
           (cond
            ;; A nested keymap: keep waiting, now in the submap.
            ((hash-table? binding)
-            (set! %key-state binding))
+            (set-key-state! binding))
            (binding
             (run-binding! binding mods-bitmask keysym-name))
            (else
@@ -132,7 +163,7 @@ MODS (possibly '())."
           #t)))
       (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
           (begin
-            (set! %key-state %prefix-bindings)
+            (set-key-state! %prefix-bindings)
             #t)
           (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
             (if thunk
@@ -166,7 +197,10 @@ MODS (possibly '())."
 ;; (Emacs note: emacsclient needs the user's Guix Home shepherd emacs
 ;; daemon; plain emacs is the fallback.)
 (bind-prefix-key! "Return" (lambda () (wm-spawn "alacritty || foot || xterm")))
-(bind-prefix-key! "r" (lambda () (wm-spawn "fuzzel || bemenu-run")))
+;; r: StumpWM exec -- native prompt with PATH completion (TAB). An
+;; external launcher (fuzzel/bemenu) is no longer needed but still works
+;; as a layer-shell client if you prefer one.
+(bind-prefix-key! "r" (lambda () (run-prompt!)))
 ;; Prebuilt Mozilla binaries sometimes fall back to X11 (which minde
 ;; cannot display -- no Xwayland); force the Wayland backend.
 (bind-prefix-key! "b" (lambda () (wm-spawn "MOZ_ENABLE_WAYLAND=1 zen || chromium --ozone-platform-hint=auto")))
@@ -189,9 +223,16 @@ MODS (possibly '())."
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
 (bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
 (bind-prefix-key! "g" (lambda () (gnext!)))
-(bind-prefix-key! "G" (lambda ()
-                        (let ((g (gnew-auto!)))
-                          (echo (string-append "new group:" (group-name g))))))
+;; G: new group -- prompts for a name; empty input auto-names (roman).
+(bind-prefix-key! "G"
+  (lambda ()
+    (read-one-line "new group: "
+      (lambda (name)
+        (let ((g (if (string-null? name)
+                     (gnew-auto!)
+                     (gnew! (string-append " " name " ")))))
+          (echo (string-append "new group:" (group-name g)))))
+      #:history 'group)))
 ;; y: StumpWM `info` -- echo the current window and group.
 (bind-prefix-key! "y" (lambda ()
                         (let ((id (current-frame-window)))
@@ -228,38 +269,83 @@ MODS (possibly '())."
    "a" (lambda ()
          (wm-spawn "sel=$(wl-paste); [ -n \"$sel\" ] && ASK_AI_SYSTEM='You are a copy editor. Improve grammar, clarity and flow. Keep the meaning and the original language. Output only the revised text.' ~/Projects/System/scripts/ask-ai.scm \"$sel\" | wl-copy && minde-msg 'clipboard updated'"))))
 
-;; Prompt-driven workflows. The pattern: fuzzel --dmenu (an ordinary
-;; async Wayland client, so the compositor never blocks) collects input,
-;; and minde-msg/minde-cmd (REPL-socket helpers on PATH from the
-;; package) push results back into the compositor.
+;; Prompt-driven workflows, all through the native read-one-line prompt
+;; ((minde input) module -- StumpWM's input.lisp semantics: emacs
+;; editing keys, TAB prefix completion, C-p/C-n history, C-g/ESC abort).
+
+;; POSIX single-quote escaping for splicing prompt input into wm-spawn
+;; shell strings (port of StumpWM's sh-quote).
+(define (sh-quote s)
+  (string-append "'" (string-join (string-split s #\') "'\\''") "'"))
+
+;; Executable names on PATH, cached after the first scan (completion for
+;; the run prompt).
+(define %path-commands #f)
+(define (path-commands)
+  (unless %path-commands
+    (set! %path-commands
+          (sort
+           (delete-duplicates
+            (append-map
+             (lambda (dir)
+               (catch #t
+                 (lambda ()
+                   (let ((d (opendir dir)))
+                     (let loop ((acc '()))
+                       (let ((e (readdir d)))
+                         (if (eof-object? e)
+                             (begin (closedir d) acc)
+                             (loop (if (member e '("." "..")) acc (cons e acc))))))))
+                 (lambda _ '())))
+             (string-split (or (getenv "PATH") "") #\:)))
+           string<?)))
+  %path-commands)
+
+(define (run-prompt!)
+  (read-one-line "run: "
+    (lambda (cmd) (unless (string-null? cmd) (wm-spawn cmd)))
+    #:completions path-commands
+    #:history 'run))
 
 ;; a: ask-ai -- prompt, ask, echo the answer (sticky for 30s).
 (bind-prefix-key! "a"
   (lambda ()
-    (wm-spawn "q=$(: | fuzzel --dmenu -p 'Ask AI: '); [ -n \"$q\" ] && minde-msg -t 30000 \"$(~/Projects/System/scripts/ask-ai.scm \"$q\")\"")))
+    (read-one-line "Ask AI: "
+      (lambda (q)
+        (unless (string-null? q)
+          (echo "thinking...")
+          (wm-spawn (string-append
+                     "minde-msg -t 30000 \"$(~/Projects/System/scripts/ask-ai.scm "
+                     (sh-quote q) ")\""))))
+      #:history 'ask-ai)))
 
 ;; T: add-todo -- prompt, append to the org file, confirm.
 (bind-prefix-key! "T"
   (lambda ()
-    (wm-spawn "todo=$(: | fuzzel --dmenu -p 'TODO: '); [ -n \"$todo\" ] && ~/Projects/System/scripts/add-todo.scm \"$todo\" ~/Projects/WorkingMemory/wm.org && minde-msg \"added: $todo\"")))
+    (read-one-line "TODO: "
+      (lambda (todo)
+        (unless (string-null? todo)
+          (wm-spawn (string-append
+                     "~/Projects/System/scripts/add-todo.scm " (sh-quote todo)
+                     " ~/Projects/WorkingMemory/wm.org && minde-msg "
+                     (sh-quote (string-append "added: " todo))))))
+      #:history 'todo)))
 
-;; l: windowlist -- pick a window with fuzzel, jump to it. The list is
-;; written to a file so titles never touch shell quoting.
+;; l: windowlist -- title prompt with completion; exact title wins, else
+;; first prefix match.
 (define (windowlist!)
-  (let ((pairs (window-ids-with-titles))
-        (tmp (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
-                            "/minde-windowlist")))
+  (let ((pairs (window-ids-with-titles)))
     (if (null? pairs)
         (echo "no windows")
-        (begin
-          (call-with-output-file tmp
-            (lambda (p)
-              (for-each (lambda (pr) (format p "~a  ~a~%" (car pr) (cdr pr)))
-                        pairs)))
-          (wm-spawn (string-append
-                     "sel=$(fuzzel --dmenu -p 'window: ' < " tmp "); "
-                     "id=${sel%% *}; "
-                     "[ -n \"$id\" ] && minde-cmd \"((@ (minde frames) focus-window-by-id!) $id)\""))))))
+        (read-one-line "window: "
+          (lambda (sel)
+            (let ((hit (or (find (lambda (p) (string=? (cdr p) sel)) pairs)
+                           (find (lambda (p) (string-prefix? sel (cdr p))) pairs))))
+              (if hit
+                  (focus-window-by-id! (car hit))
+                  (echo (string-append "no window: " sel)))))
+          #:completions (map cdr pairs)
+          #:history 'window))))
 
 (bind-prefix-key! "l" (lambda () (windowlist!)))
 

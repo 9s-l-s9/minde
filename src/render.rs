@@ -50,11 +50,13 @@ impl Default for BorderBuffers {
 
 impl BorderBuffers {
     /// Builds the 4 border-edge render elements around `geo` (in logical
-    /// coordinates, at the given integer output `scale`).
+    /// coordinates, at the given integer output `scale`), in `color`
+    /// (changes with prefix-key state, StumpWM style).
     pub fn elements<R>(
         &mut self,
         geo: Rectangle<i32, Logical>,
         scale: i32,
+        color: [f32; 4],
     ) -> Vec<MindeRenderElements<R>>
     where
         R: Renderer + ImportAll + ImportMem,
@@ -71,7 +73,7 @@ impl BorderBuffers {
         ];
         let mut out = Vec::with_capacity(4);
         for (buf, (loc, sz)) in self.buffers.iter_mut().zip(rects) {
-            buf.update(sz, BORDER_COLOR);
+            buf.update(sz, color);
             out.push(
                 SolidColorRenderElement::from_buffer(
                     buf,
