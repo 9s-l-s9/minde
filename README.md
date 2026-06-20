@@ -63,7 +63,7 @@ Prefix map (see `scheme/init.scm`):
 | `v` / `h` | vsplit / hsplit | | `c` | remove split |
 | `n` | next frame | | `f` | next window (group-wide) |
 | `p` | pull next hidden window | | `o` | next window in this frame |
-| `k` / `d` | close window | | `l` | windowlist (fuzzel) |
+| `k` / `d` | close window | | `l` | windowlist (native prompt) |
 | `g` | next group | | `G` | new group |
 | `m` | move window to next group | | `y` | window info echo |
 | `a` | ask AI (prompt + echo) | | `T` | add TODO (prompt) |
