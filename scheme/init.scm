@@ -10,7 +10,12 @@
 
 ;; scheme/frames.scm lives next to this file; add it to the load path so
 ;; `(use-modules (minde frames))` finds it regardless of cwd.
-(add-to-load-path (dirname (current-filename)))
+;; current-filename can be #f when this file is re-(load)ed at runtime
+;; (Print R); the module dir is then already on the load path anyway
+;; (MINDE_SCHEME_DIR, plus the initial load added it).
+(let ((f (current-filename)))
+  (when (string? f)
+    (add-to-load-path (dirname f))))
 
 (use-modules (minde frames)
              (minde groups)
@@ -401,10 +406,17 @@ focused client), #f otherwise."
 (define (reload-init!)
   (let ((path (init-file-path)))
     (if (file-exists? path)
-        (begin
-          (load path)
-          (wm-log (string-append "reloaded " path)))
-        (wm-log (string-append "no init file at " path)))))
+        (catch #t
+          (lambda ()
+            ;; 'absolute keeps (current-filename) meaningful inside the
+            ;; loaded file (its add-to-load-path needs it; see the same
+            ;; fluid in tests/keys-test.scm).
+            (with-fluids ((%file-port-name-canonicalization 'absolute))
+              (load path))
+            (echo (string-append "reloaded " path)))
+          (lambda (key . args)
+            (echo (format #f "reload FAILED: ~a ~s" key args))))
+        (echo (string-append "no init file at " path)))))
 
 (bind-prefix-key! "R" (lambda () (reload-init!)))
 
