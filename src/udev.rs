@@ -729,7 +729,12 @@ impl MindeState {
         });
         // Layer surfaces need frame callbacks too, or clients like fuzzel
         // draw once and then wait forever before rendering typed input.
-        for layer in smithay::desktop::layer_map_for_output(&output).layers() {
+        // NOTE: reuse the `layer_map` guard from above -- calling
+        // layer_map_for_output again here double-borrows the output's
+        // RefCell and panics on the first frame (froze the whole session
+        // on the TTY once; the winit path is immune because
+        // space::render_output scopes its own borrow).
+        for layer in layer_map.layers() {
             layer.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
                 Some(output.clone())
             });
