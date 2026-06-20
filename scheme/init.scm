@@ -142,8 +142,11 @@ focused client), #f otherwise."
        ;; (not modifiers) since the second press may or may not carry the
        ;; same modifier as the prefix itself. Only at the top level --
        ;; inside a nested keymap the prefix keysym is just another key.
+       ;; An explicit prefix-map binding for the prefix keysym wins over
+       ;; the literal forward (e.g. Print Print below).
        ((and (eq? %key-state %prefix-bindings)
-             (string=? keysym-name %prefix-key))
+             (string=? keysym-name %prefix-key)
+             (not (hash-ref %prefix-bindings keysym-name)))
         (set-key-state! 'normal)
         #f)
        ((modifier-keysym? keysym-name)
@@ -218,8 +221,12 @@ focused client), #f otherwise."
 (bind-prefix-key! "f" (lambda () (focus-next-window!)))
 ;; p: StumpWM `pull` -- dig the next hidden window out into this frame.
 (bind-prefix-key! "p" (lambda () (pull-hidden-next!)))
-;; o: cycle only within the current frame's own window stack.
+;; o: cycle only within the current frame's own window stack. Print Print
+;; (prefix key twice) does the same -- nobody sends a literal Print to a
+;; client anyway; rebind or unbind "Print" here to restore the StumpWM
+;; literal-forward behavior.
 (bind-prefix-key! "o" (lambda () (focus-next-window-in-frame!)))
+(bind-prefix-key! "Print" (lambda () (focus-next-window-in-frame!)))
 (bind-prefix-key! "k" (lambda () (close-current-window!)))
 (bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
 (bind-prefix-key! "g" (lambda () (gnext!)))
