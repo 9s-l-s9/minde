@@ -153,6 +153,20 @@
                  (string-contains (car %messages) "not bound")))
 
 ;; ---------------------------------------------------------------------
+;; Prefix keysym bound in the prefix map: repeated presses keep cycling
+;; (Print Print Print...), state stays armed.
+;; ---------------------------------------------------------------------
+
+(set-prefix-key! '() "Print")
+(check "Print arms the prefix" (wm-handle-key 0 #f "Print") #t)
+(check "second Print fires its binding (consumed)" (wm-handle-key 0 #f "Print") #t)
+(check "third Print fires again without re-arming" (wm-handle-key 0 #f "Print") #t)
+;; Still armed: a bound prefix key like v fires and resolves.
+(check "prefix still armed afterwards: v runs vsplit" (wm-handle-key 0 #f "v") #t)
+(check "then back to normal: plain t forwarded" (wm-handle-key 0 #f "t") #f)
+(set-prefix-key! '(ctrl) "t")
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

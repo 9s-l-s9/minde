@@ -159,7 +159,13 @@ focused client), #f otherwise."
            ((hash-table? binding)
             (set-key-state! binding))
            (binding
-            (run-binding! binding mods-bitmask keysym-name))
+            (run-binding! binding mods-bitmask keysym-name)
+            ;; The prefix keysym's own binding keeps the prefix armed, so
+            ;; hammering Print cycles window after window (Print Print
+            ;; Print ... = repeated Print-o). Any other key resolves the
+            ;; prefix as usual.
+            (when (string=? keysym-name %prefix-key)
+              (set-key-state! %prefix-bindings)))
            (else
             ;; Unbound key: swallow it and echo, like StumpWM.
             (echo (format #f "~a is not bound" keysym-name))))
