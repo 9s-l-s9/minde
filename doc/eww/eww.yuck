@@ -12,7 +12,7 @@
 
 (deflisten minde-status
   :initial "…"
-  "tail -F ${XDG_RUNTIME_DIR:-/tmp}/minde-status 2>/dev/null")
+  "tail -F $XDG_RUNTIME_DIR/minde-status 2>/dev/null")
 
 (defpoll clock :interval "10s" "date '+%a %d %b  %H:%M'")
 
