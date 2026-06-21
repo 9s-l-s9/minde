@@ -186,3 +186,23 @@ socket path. Note: the REPL runs in its own Guile-managed thread, so
 mutating compositor state from it isn't synchronized with the main event
 loop -- fine for redefining keybindings interactively, but be aware of
 races if you touch other shared state.
+
+## Development: ./check
+
+One command verifies everything the sandbox can reach:
+
+```sh
+guix shell -m manifest.scm xorg-server xdotool imagemagick foot -- ./check
+```
+
+build + clippy (informational) + a borrow lint (`tests/lint-borrows.sh`,
+guards the layer-map RefCell double-borrow class that once froze the TTY)
++ all Guile suites + a scripted Xvfb e2e (`tests/e2e.sh`: prompt, TAB
+completion, spawn, reload, splits; screenshots land in /tmp/minde-e2e).
+
+What it cannot reach: the udev/DRM backend at runtime. Anything touching
+`src/udev.rs` needs a live `./debug-tty.sh` from a spare VT **before**
+`guix system reconfigure`. If a session does crash, evidence survives in
+`~/.local/state/minde/`: `session.log` (full compositor output, via
+the session wrapper) and `crash.log` (panic + backtrace, via the
+binary's panic hook).

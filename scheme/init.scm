@@ -413,8 +413,10 @@ focused client), #f otherwise."
             ;; fluid in tests/keys-test.scm).
             (with-fluids ((%file-port-name-canonicalization 'absolute))
               (load path))
+            (wm-log (string-append "reloaded " path))
             (echo (string-append "reloaded " path)))
           (lambda (key . args)
+            (wm-log (format #f "reload FAILED: ~a ~s" key args))
             (echo (format #f "reload FAILED: ~a ~s" key args))))
         (echo (string-append "no init file at " path)))))
 

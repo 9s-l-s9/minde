@@ -129,7 +129,13 @@ export __EGL_VENDOR_LIBRARY_DIRS=~a/share/glvnd/egl_vendor.d
 if [ ! -f \"$HOME/.config/minde/init.scm\" ]; then
   export MINDE_INIT=~a/scheme/init.scm
 fi
-exec ~a/minde --tty \"$@\"
+# Keep full compositor output somewhere readable (SDDM's session log
+# tends to lose stdout); panics additionally land in crash.log via the
+# binary's own panic hook.
+LOGDIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/minde\"
+mkdir -p \"$LOGDIR\"
+export RUST_BACKTRACE=1
+exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
 "
                           #$(this-package-input "bash-minimal")
                           share mesa share bin)))

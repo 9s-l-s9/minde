@@ -46,6 +46,7 @@ fn parse_backend() -> Backend {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
+    install_crash_log();
 
     let backend = parse_backend();
     tracing::info!(?backend, "selected backend");
@@ -89,6 +90,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
+}
+
+/// A panic on the TTY backend takes the whole session down with no
+/// visible output (frozen VT). Leave evidence: append panic message and
+/// backtrace to $XDG_STATE_HOME/minde/crash.log (or ~/.local/state).
+fn install_crash_log() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let state_dir = std::env::var("XDG_STATE_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join(".local/state")
+            })
+            .join("minde");
+        let _ = std::fs::create_dir_all(&state_dir);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let entry = format!(
+            "==== {} minde panic ====\n{info}\n{backtrace}\n",
+            chrono_free_timestamp()
+        );
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(state_dir.join("crash.log"))
+        {
+            let _ = f.write_all(entry.as_bytes());
+        }
+        default_hook(info);
+    }));
+}
+
+/// Seconds since the epoch -- enough to order crash-log entries without
+/// pulling in a date/time dependency.
+fn chrono_free_timestamp() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => format!("@{}", d.as_secs()),
+        Err(_) => "@unknown".into(),
+    }
 }
 
 fn init_logging() {
