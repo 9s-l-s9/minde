@@ -81,6 +81,25 @@ xdotool key Print; sleep 0.2; xdotool key Print; sleep 0.5
 loggrep "error in keybinding" && fail "a keybinding errored (see log)"
 ok "split + Print Print cycle without errors"
 
+# iresize mode: Print s, nudge the divider, exit -- must not error.
+xdotool key Print; sleep 0.2; xdotool key s; sleep 0.3
+xdotool key Down; sleep 0.2; xdotool key Down; sleep 0.2
+xdotool key Return; sleep 0.5
+loggrep "error in keybinding" && fail "iresize errored (see log)"
+ok "iresize mode"
+
+# Layouts + gaps via the REPL socket, with a log marker to assert on.
+scripts/minde-cmd '(begin
+  (use-modules (minde layouts) (minde frames))
+  (apply-layout! "grid4")
+  (set-gaps! 8 8)
+  (wm-log "e2e-layout-and-gaps-ok"))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-layout-and-gaps-ok" || fail "layout/gaps REPL round-trip"
+loggrep "error in keybinding" && fail "layout/gaps errored (see log)"
+import -window root "$OUT/layout.png"
+ok "grid4 layout + gaps applied via REPL"
+
 # Screenshots must not be blank (a uniform 1280x800 PNG is ~1KB).
 for shot in prompt reload; do
   size=$(wc -c < "$OUT/$shot.png")

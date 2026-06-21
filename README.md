@@ -68,13 +68,46 @@ Prefix map (see `scheme/init.scm`):
 | `m` | move window to next group | | `y` | window info echo |
 | `a` | ask AI (prompt + echo) | | `T` | add TODO (prompt) |
 | `w` | voice dictate | | `i` | eww widgets |
-| `A` | agents submap (c/d/o/p) | | `P` | misc submap (w/a) |
+| `A` | agents submap (c/d/o/p) | | `P` | misc submap (s/w/a) |
+| `s` | resize mode (iresize) | | `F` | apply layout (prompt) |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit |
 
 `super+q` also quits. Groups " I ", " II ", " III " exist at startup.
 The window model is StumpWM's (emacs-like): frames are panes, the group's
 window list is the buffer list; `f` cycles it group-wide, `p` digs out
 hidden windows, one window per frame is visible at a time.
+
+## Gaps, resize, layouts, placement rules
+
+- **Gaps**: `(set-gaps! inner outer)` (from `(minde frames)`) puts
+  `inner` px of space between frames and `outer` px against the screen
+  edge. Off by default; see the commented example in init.scm.
+- **Resize**: `Print s` enters StumpWM-style iresize -- arrows/`hjkl`
+  move the nearest split divider by 30px, `b`/`=` balances all frames,
+  `RET`/`ESC` exits. The focus border turns blue while the mode is
+  armed. One-shot from Scheme: `(resize-frame! 'down 30)`,
+  `(balance-frames!)`.
+- **Layouts** (`(minde layouts)`): named frame-tree presets. A spec
+  is `'leaf` or `(hsplit ratio a b)` / `(vsplit ratio a b)`; presets
+  `main-side`, `main-stack`, `grid4`, `full` ship in init.scm.
+  `Print F` prompts (TAB completes) and applies one, redistributing the
+  group's windows; `Print P s` saves the live tree under a name to
+  `~/.config/minde/layouts.scm`, reloaded at startup. From Scheme:
+  `(define-layout! name spec)`, `(apply-layout! name)`,
+  `(dump-layout-spec)`.
+- **Placement rules**: `(add-placement-rule! "zen" #:group "II"
+  #:frame 0 #:follow? #f)` routes windows whose app-id or title contains
+  the matcher string to a group/frame when they map (StumpWM
+  `define-frame-preference`). First matching rule wins.
+
+## Status line for bars (eww)
+
+minde writes `"[I]  II  III | window title"` to
+`$XDG_RUNTIME_DIR/minde-status` whenever it changes (also available
+as `(status-line)` over the REPL socket / `minde-cmd`). `doc/eww/`
+contains a minimal working eww bar consuming it with `deflisten` +
+`tail -F`; because the bar sets a layer-shell exclusive zone, the frame
+tree automatically tiles into the remaining space.
 
 ## Layer shell
 

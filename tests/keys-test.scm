@@ -167,6 +167,26 @@
 (set-prefix-key! '(ctrl) "t")
 
 ;; ---------------------------------------------------------------------
+;; iresize mode: C-t s arms the resize keymap; its bindings return the
+;; keymap so it stays armed until Return/Escape.
+;; ---------------------------------------------------------------------
+
+(wm-handle-key ctrl-bit #f "t")
+(check "C-t s enters resize mode (consumed)" (wm-handle-key 0 #f "s") #t)
+(check "Left consumed in resize mode" (wm-handle-key 0 #f "Left") #t)
+(check "mode stays armed: second Left consumed" (wm-handle-key 0 #f "Left") #t)
+(check "b (balance) consumed and stays armed" (wm-handle-key 0 #f "b") #t)
+(check "Down still consumed after balance" (wm-handle-key 0 #f "Down") #t)
+(check "Return exits resize mode (consumed)" (wm-handle-key 0 #f "Return") #t)
+(check "after exit, plain t is forwarded again" (wm-handle-key 0 #f "t") #f)
+
+;; Escape exits too.
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "s")
+(check "Escape exits resize mode (consumed)" (wm-handle-key 0 #f "Escape") #t)
+(check "after Escape, plain t forwarded" (wm-handle-key 0 #f "t") #f)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

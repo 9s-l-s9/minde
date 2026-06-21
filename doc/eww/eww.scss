@@ -1,0 +1,20 @@
+// Gruvbox to match minde's message area.
+* {
+  all: unset;
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 13px;
+}
+
+.bar, window {
+  background-color: #282828;
+  color: #ebdbb2;
+}
+
+.status {
+  margin-left: 8px;
+  color: #d79921;
+}
+
+.clock {
+  margin-right: 8px;
+}

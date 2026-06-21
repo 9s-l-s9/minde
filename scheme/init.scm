@@ -19,7 +19,8 @@
 
 (use-modules (minde frames)
              (minde groups)
-             (minde input))
+             (minde input)
+             (minde layouts))
 
 ;; ---------------------------------------------------------------------
 ;; Keybinding table
@@ -93,6 +94,7 @@ MODS (possibly '())."
 ;; turns red while a prefix/submap is armed, yellow when idle.
 (define %border-color-normal "#d79921")
 (define %border-color-prefix "#cc241d")
+(define %border-color-resize "#458588")
 
 (define (set-border-color! hex)
   ;; Tolerate a binary older than this config (subr not registered yet).
@@ -102,9 +104,10 @@ MODS (possibly '())."
 
 (define (set-key-state! s)
   (set! %key-state s)
-  (set-border-color! (if (eq? s 'normal)
-                         %border-color-normal
-                         %border-color-prefix)))
+  (set-border-color! (cond
+                      ((eq? s 'normal) %border-color-normal)
+                      ((eq? s %resize-map) %border-color-resize)
+                      (else %border-color-prefix))))
 
 (define (run-binding! thunk mods keysym-name)
   ;; Errors from a binding are logged, not fatal -- one bad keybinding
@@ -164,13 +167,19 @@ focused client), #f otherwise."
            ((hash-table? binding)
             (set-key-state! binding))
            (binding
-            (run-binding! binding mods-bitmask keysym-name)
-            ;; The prefix keysym's own binding keeps the prefix armed, so
-            ;; hammering Print cycles window after window (Print Print
-            ;; Print ... = repeated Print-o). Any other key resolves the
-            ;; prefix as usual.
-            (when (string=? keysym-name %prefix-key)
-              (set-key-state! %prefix-bindings)))
+            (let ((result (run-binding! binding mods-bitmask keysym-name)))
+              (cond
+               ;; A binding may return a keymap to stay armed in it --
+               ;; that's how the iresize mode (%resize-map) keeps
+               ;; accepting arrow presses without re-hitting the prefix.
+               ((hash-table? result)
+                (set-key-state! result))
+               ;; The prefix keysym's own binding keeps the prefix
+               ;; armed, so hammering Print cycles window after window
+               ;; (Print Print Print ... = repeated Print-o). Any other
+               ;; key resolves the prefix as usual.
+               ((string=? keysym-name %prefix-key)
+                (set-key-state! %prefix-bindings)))))
            (else
             ;; Unbound key: swallow it and echo, like StumpWM.
             (echo (format #f "~a is not bound" keysym-name))))
@@ -261,6 +270,103 @@ focused client), #f otherwise."
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
 
+;; ---------------------------------------------------------------------
+;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
+;; Arrows/hjkl move the nearest split divider by %resize-step pixels,
+;; b/= balances all frames, Return/Escape leaves the mode. The mode works
+;; by its bindings returning %resize-map, which dispatch-key re-arms
+;; (border turns blue while armed).
+;; ---------------------------------------------------------------------
+
+(define %resize-step 30)
+
+;; Guarded like set-border-color!: tolerate a binary/test without the
+;; message subrs.
+(define (call-if-bound name . args)
+  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+         (var (and mod (module-variable mod name))))
+    (when var (apply (variable-ref var) args))))
+
+(define %resize-help "Resize: arrows/hjkl move divider, b balance, RET/ESC done")
+
+(define (resize-and-stay dir)
+  (lambda ()
+    (resize-frame! dir %resize-step)
+    (call-if-bound 'wm-message %resize-help 0)
+    %resize-map))
+
+(define (exit-resize!)
+  (call-if-bound 'wm-clear-message)
+  #t)
+
+(define %resize-map
+  (make-keymap
+   "Left"  (resize-and-stay 'left)
+   "Right" (resize-and-stay 'right)
+   "Up"    (resize-and-stay 'up)
+   "Down"  (resize-and-stay 'down)
+   "h"     (resize-and-stay 'left)
+   "l"     (resize-and-stay 'right)
+   "k"     (resize-and-stay 'up)
+   "j"     (resize-and-stay 'down)
+   "b"     (lambda () (balance-frames!)
+                      (call-if-bound 'wm-message %resize-help 0)
+                      %resize-map)
+   "equal" (lambda () (balance-frames!)
+                      (call-if-bound 'wm-message %resize-help 0)
+                      %resize-map)
+   "Return" (lambda () (exit-resize!))
+   "Escape" (lambda () (exit-resize!))))
+
+(bind-prefix-key! "s"
+  (lambda ()
+    (call-if-bound 'wm-message %resize-help 0)
+    %resize-map))
+
+;; ---------------------------------------------------------------------
+;; Gaps: space between frames (inner) and against the screen edge
+;; (outer). Off by default; uncomment to taste.
+;; ---------------------------------------------------------------------
+
+;; (set-gaps! 8 8)
+
+;; ---------------------------------------------------------------------
+;; Layouts: named frame-tree presets ((minde layouts)). Print F
+;; prompts (TAB completes) and applies; Print P s saves the live tree
+;; under a name to ~/.config/minde/layouts.scm, reloaded at startup.
+;; Spec grammar: 'leaf | (hsplit ratio a b) | (vsplit ratio a b).
+;; ---------------------------------------------------------------------
+
+;; Main window on the left 2/3, a stack column on the right.
+(define-layout! "main-side" '(hsplit 2/3 leaf leaf))
+;; Main + right column split in two.
+(define-layout! "main-stack" '(hsplit 2/3 leaf (vsplit 1/2 leaf leaf)))
+;; Four equal quarters.
+(define-layout! "grid4" '(vsplit 1/2 (hsplit 1/2 leaf leaf) (hsplit 1/2 leaf leaf)))
+;; One full-screen frame.
+(define-layout! "full" 'leaf)
+
+;; Layouts saved with Print P s in earlier sessions.
+(load-layouts!)
+
+(define (layout-prompt!)
+  (read-one-line "layout: "
+    (lambda (name)
+      (unless (string-null? name)
+        (apply-layout! name)))
+    #:completions layout-names
+    #:history 'layout))
+
+(bind-prefix-key! "F" (lambda () (layout-prompt!)))
+
+;; ---------------------------------------------------------------------
+;; Placement rules: route windows to a group/frame by app-id or title
+;; substring when they map (StumpWM define-frame-preference). Examples:
+;; ---------------------------------------------------------------------
+
+;; (add-placement-rule! "zen" #:group "II" #:frame 0)
+;; (add-placement-rule! "emacs" #:frame 1 #:follow? #t)
+
 ;; ---- Ported from the user's StumpWM config ----
 
 ;; w: voice dictation (script may still assume X tools internally).
@@ -282,6 +388,14 @@ focused client), #f otherwise."
 ;; swaybg for feh (wallpaper), wl-paste/wl-copy for xsel (clipboard).
 (bind-prefix-key! "P"
   (make-keymap
+   ;; s: save the current frame tree as a named layout (Print F applies).
+   "s" (lambda ()
+         (read-one-line "save layout as: "
+           (lambda (name)
+             (unless (string-null? name)
+               (save-layout! name)))
+           #:completions layout-names
+           #:history 'layout))
    "w" (lambda ()
          (wm-spawn "pkill swaybg; swaybg -m fill -i \"$(ls ~/Projects/images/* | shuf -n1)\""))
    "a" (lambda ()

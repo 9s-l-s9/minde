@@ -168,6 +168,59 @@
 (check "current-frame-window is #f with no windows" (current-frame-window) #f)
 
 ;; ---------------------------------------------------------------------
+;; Gaps: outer at the usable-area boundary, half the inner gap at shared
+;; edges, window still inset by the border width inside the gapped rect.
+;; ---------------------------------------------------------------------
+
+(handle-window-map! 3 "term2" "foot")
+(set-gaps! 10 6)
+(check "single gapped frame: outer gap on all sides"
+       (hash-ref %placements 3)
+       (list 9 9 1262 702)) ; 6 outer + 3 border inset
+
+(split-frame-vertical!)
+;; Top frame 0,0,1280,360: outer 6 left/top/right, inner/2 = 5 bottom.
+(check "gapped top frame after vsplit"
+       (hash-ref %placements 3)
+       (list 9 9 1262 343))
+
+(set-gaps! 0 0)
+(check "gaps off again: top frame border-inset only"
+       (hash-ref %placements 3)
+       (list 3 3 1274 354))
+
+;; ---------------------------------------------------------------------
+;; Resize: moving the divider of the enclosing split, and balancing.
+;; ---------------------------------------------------------------------
+
+;; Current frame is the top half (h 360). Push the divider down 30px.
+(resize-frame! 'down 30)
+(check "resize-frame! 'down grew the top frame by 30"
+       (hash-ref %placements 3)
+       (list 3 3 1274 384))
+
+(resize-frame! 'up 30)
+(check "resize-frame! 'up restored the split"
+       (hash-ref %placements 3)
+       (list 3 3 1274 354))
+
+;; No horizontal split anywhere: left/right resize is a no-op.
+(resize-frame! 'right 30)
+(check "resize-frame! with no matching split is a no-op"
+       (hash-ref %placements 3)
+       (list 3 3 1274 354))
+
+(resize-frame! 'down 30)
+(resize-frame! 'down 30)
+(balance-frames!)
+(check "balance-frames! equalizes the two frames again"
+       (hash-ref %placements 3)
+       (list 3 3 1274 354))
+
+(remove-split!)
+(handle-window-unmap! 3)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

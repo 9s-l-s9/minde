@@ -33,7 +33,14 @@
             close-current-window!
             frame-tree-window-count
             echo
+            set-gaps!
+            resize-frame!
+            balance-frames!
+            apply-layout-spec!
+            dump-layout-spec
+            set-sync-hook!
             window-title
+            remember-window-title!
             forget-window-title!
             window-ids-with-titles
             focus-window-by-id!
@@ -87,7 +94,7 @@
   (make-split orientation ratio child-a child-b)
   split?
   (orientation split-orientation)
-  (ratio split-ratio)
+  (ratio split-ratio set-split-ratio!)
   (child-a split-child-a set-split-child-a!)
   (child-b split-child-b set-split-child-b!))
 
@@ -274,6 +281,12 @@ wm-message (or under the test stubs)."
 (define (forget-window-title! id)
   (hash-remove! %window-titles id))
 
+(define (remember-window-title! id title app-id)
+  (hash-set! %window-titles id
+             (if (and (string? title) (not (string-null? title)))
+                 title
+                 (if (string? app-id) app-id ""))))
+
 (define (window-ids-with-titles)
   "All windows of the active group, as (id . title) pairs in frame order."
   (map (lambda (id) (cons id (window-title id))) (all-window-ids)))
@@ -429,6 +442,112 @@ frame is the whole tree (nothing to remove)."
               (resize-subtree! (split-child-b node) x (+ y ah) w (- h ah)))))))
 
 ;; ---------------------------------------------------------------------
+;; Resizing (iresize) and balancing
+;; ---------------------------------------------------------------------
+
+;; The nearest ancestor <split> of NODE with the given orientation, or #f.
+(define (find-oriented-ancestor node orientation)
+  (let loop ((node node))
+    (let-values (((parent side) (find-parent %frame-tree node)))
+      (cond
+       ((not parent) #f)
+       ((eq? (split-orientation parent) orientation) parent)
+       (else (loop parent))))))
+
+(define (resize-frame! dir step)
+  "Moves the divider of the nearest split in direction DIR ('left 'right
+'up 'down) by STEP pixels: right/down push the divider right/down,
+left/up pull it left/up. A no-op when no split of that orientation
+encloses the current frame. Ratio is clamped to [1/10, 9/10]."
+  (let* ((orientation (if (memq dir '(left right)) 'horizontal 'vertical))
+         (split (find-oriented-ancestor %current-frame orientation)))
+    (when split
+      (let* ((rect (subtree-rect split))
+             (span (if (eq? orientation 'horizontal) (caddr rect) (cadddr rect)))
+             (delta (* (/ step span) (if (memq dir '(right down)) 1 -1)))
+             (ratio (min 9/10 (max 1/10 (+ (split-ratio split) delta)))))
+        (set-split-ratio! split ratio)
+        (apply resize-subtree! split rect)
+        (sync-frames!)))))
+
+(define (balance-frames!)
+  "Resets every split's ratio so all leaf frames get equal shares
+(weighted by leaf count on each side), StumpWM's balance-frames."
+  (let balance! ((node %frame-tree))
+    (unless (frame? node)
+      (let ((la (length (frame-leaves (split-child-a node))))
+            (lb (length (frame-leaves (split-child-b node)))))
+        (set-split-ratio! node (/ la (+ la lb)))
+        (balance! (split-child-a node))
+        (balance! (split-child-b node)))))
+  (resize-subtree! %frame-tree %last-output-x %last-output-y
+                   %last-output-w %last-output-h)
+  (sync-frames!))
+
+;; ---------------------------------------------------------------------
+;; Layout specs: a pure-sexp mirror of the tree, for presets and
+;; save/restore. Grammar: 'leaf | (hsplit RATIO SPEC SPEC) | (vsplit ...)
+;; where hsplit puts its children side by side (like
+;; split-frame-horizontal!) and RATIO is child-a's share.
+;; ---------------------------------------------------------------------
+
+(define (spec->tree spec)
+  (cond
+   ((eq? spec 'leaf) (make-frame 0 0 100 100 '() #f))
+   ((and (list? spec) (= (length spec) 4) (memq (car spec) '(hsplit vsplit))
+         (number? (cadr spec)) (< 0 (cadr spec) 1))
+    (make-split (if (eq? (car spec) 'hsplit) 'horizontal 'vertical)
+                (cadr spec)
+                (spec->tree (caddr spec))
+                (spec->tree (cadddr spec))))
+   (else (error "bad layout spec" spec))))
+
+(define (apply-layout-spec! spec)
+  "Replaces the active group's frame tree with one built from SPEC, sized
+to the current usable area. Existing windows are redistributed: the
+current window into the first leaf, the rest round-robin over all
+leaves. Windows never get lost -- every id ends up in some leaf."
+  (let* ((tree (spec->tree spec))
+         (leaves (frame-leaves tree))
+         (ids (all-window-ids))
+         (cur (current-frame-window))
+         (ordered (if (and cur (member cur ids)) (cons cur (delete cur ids)) ids)))
+    (resize-subtree! tree %last-output-x %last-output-y
+                     %last-output-w %last-output-h)
+    (let loop ((ids ordered) (i 0))
+      (unless (null? ids)
+        (frame-add-window! (list-ref leaves (modulo i (length leaves))) (car ids))
+        (loop (cdr ids) (+ i 1))))
+    ;; Round-robin appends, so a leaf's *first* window should be visible,
+    ;; not whichever landed there last.
+    (for-each
+     (lambda (f)
+       (unless (null? (frame-window-ids f))
+         (set-frame-current-window! f (car (frame-window-ids f)))))
+     leaves)
+    (set! %frame-tree tree)
+    (set! %current-frame (car leaves))
+    (sync-frames!)))
+
+(define (dump-layout-spec)
+  "The active group's live tree as a layout spec; ratios are derived from
+the actual pixel rectangles so manual resizes survive a dump/apply
+round-trip."
+  (let node->spec ((node %frame-tree))
+    (if (frame? node)
+        'leaf
+        (let* ((ra (subtree-rect (split-child-a node)))
+               (rr (subtree-rect node))
+               (horizontal? (eq? (split-orientation node) 'horizontal))
+               (ratio (if horizontal?
+                          (/ (caddr ra) (caddr rr))
+                          (/ (cadddr ra) (cadddr rr)))))
+          (list (if horizontal? 'hsplit 'vsplit)
+                ratio
+                (node->spec (split-child-a node))
+                (node->spec (split-child-b node)))))))
+
+;; ---------------------------------------------------------------------
 ;; Focus cycling
 ;; ---------------------------------------------------------------------
 
@@ -545,33 +664,69 @@ other frame holds any window."
 ;; windows are placed inset by this much within their frame.
 (define %border-width 3)
 
+;; Gaps: %inner-gap of empty space between adjacent frames (each frame
+;; gives up half at a shared edge), %outer-gap between frames and the
+;; usable-area boundary. Both default to 0 (off); enable from init.scm
+;; with e.g. (set-gaps! 8 8).
+(define %inner-gap 0)
+(define %outer-gap 0)
+
+(define (set-gaps! inner outer)
+  "Sets the inner (between frames) and outer (screen edge) gap in pixels
+and re-syncs the active group."
+  (set! %inner-gap inner)
+  (set! %outer-gap outer)
+  (sync-frames!))
+
+;; The rectangle a frame actually displays as (focus border drawn on it,
+;; window inside it): the frame's tree rect shrunk by half the inner gap
+;; on every side, except sides on the usable-area boundary which get the
+;; outer gap instead.
+(define (frame-display-rect frame)
+  (let* ((x (frame-x frame)) (y (frame-y frame))
+         (w (frame-w frame)) (h (frame-h frame))
+         (half (quotient %inner-gap 2))
+         (l (if (= x %last-output-x) %outer-gap half))
+         (t (if (= y %last-output-y) %outer-gap half))
+         (r (if (= (+ x w) (+ %last-output-x %last-output-w)) %outer-gap half))
+         (b (if (= (+ y h) (+ %last-output-y %last-output-h)) %outer-gap half)))
+    (list (+ x l) (+ y t) (max 1 (- w l r)) (max 1 (- h t b)))))
+
+;; Called (when set) at the end of every sync-frames! -- (minde
+;; groups) uses it to keep the status-line file for external bars (eww)
+;; current without frames.scm having to know about groups or bars.
+(define %sync-hook #f)
+(define (set-sync-hook! proc) (set! %sync-hook proc))
+
 (define (sync-frames!)
   "Walks the frame tree, placing each frame's current window at its frame's
 pixel geometry, moving every other (hidden) window off-screen, and setting
 input focus to the current frame's current window."
   (for-each
    (lambda (frame)
-     (let ((cur (frame-current-window frame)))
+     (let ((cur (frame-current-window frame))
+           (rect (frame-display-rect frame)))
        (for-each
         (lambda (id)
           (if (equal? id cur)
               (let ((bw %border-width))
                 (wm-place-window id
-                                 (+ (frame-x frame) bw) (+ (frame-y frame) bw)
-                                 (- (frame-w frame) (* 2 bw)) (- (frame-h frame) (* 2 bw))))
+                                 (+ (car rect) bw) (+ (cadr rect) bw)
+                                 (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))))
               (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
         (frame-window-ids frame))))
    (frame-leaves %frame-tree))
   ;; Tell Rust where the selected frame is, so the focus border marks the
   ;; frame itself (visible even when the frame is empty).
-  (wm-focus-rect (frame-x %current-frame) (frame-y %current-frame)
-                 (frame-w %current-frame) (frame-h %current-frame))
+  (let ((rect (frame-display-rect %current-frame)))
+    (apply wm-focus-rect rect))
   (let ((id (current-frame-window)))
     (if id
         (wm-focus-window id)
         ;; Empty current frame: drop keyboard focus so a hidden/unmapped
         ;; window doesn't keep receiving keys.
-        (wm-clear-focus))))
+        (wm-clear-focus)))
+  (when %sync-hook (%sync-hook)))
 
 ;; ---------------------------------------------------------------------
 ;; Event hooks
@@ -585,10 +740,7 @@ input focus to the current frame's current window."
 
 (define (handle-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window."
-  (hash-set! %window-titles id
-             (if (and (string? title) (not (string-null? title)))
-                 title
-                 (if (string? app-id) app-id "")))
+  (remember-window-title! id title app-id)
   (frame-add-window! %current-frame id)
   (sync-frames!))
 

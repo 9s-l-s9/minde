@@ -103,7 +103,8 @@ directory = \"vendor\"
               (invoke "guile" "-L" "scheme" "tests/frames-test.scm")
               (invoke "guile" "-L" "scheme" "tests/next-pull-test.scm")
               (invoke "guile" "-L" "scheme" "tests/groups-test.scm")
-              (invoke "guile" "-L" "scheme" "tests/keys-test.scm"))))
+              (invoke "guile" "-L" "scheme" "tests/keys-test.scm")
+              (invoke "guile" "-L" "scheme" "tests/layouts-test.scm"))))
         (replace 'install
           (lambda* (#:key inputs #:allow-other-keys)
             (let* ((out #$output)

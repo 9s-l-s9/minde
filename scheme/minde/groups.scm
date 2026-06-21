@@ -14,8 +14,12 @@
 
 (define-module (minde groups)
   #:use-module (srfi srfi-1)
+  #:use-module (ice-9 optargs)
   #:use-module (minde frames)
   #:export (switch-to-group!
+            add-placement-rule!
+            clear-placement-rules!
+            status-line
             gnext!
             gprev!
             gnew!
@@ -171,13 +175,97 @@ group or the current frame has no window."
             (sync-frames!)))))))
 
 ;; ---------------------------------------------------------------------
+;; Placement rules (StumpWM define-frame-preference): route a newly
+;; mapped window to a specific group and/or frame by matching its app-id
+;; or title.
+;; ---------------------------------------------------------------------
+
+;; Each rule: (matcher group-name frame-index follow?). MATCHER is a
+;; string matched as a substring against the window's app-id, then its
+;; title. GROUP-NAME is compared trimmed (" II " and "II" both work);
+;; #f means "the current group". FRAME-INDEX is 0-based in tree order,
+;; clamped to the existing leaves. First matching rule wins.
+(define %placement-rules '())
+
+(define* (add-placement-rule! matcher #:key (group #f) (frame 0) (follow? #f))
+  (set! %placement-rules
+        (append %placement-rules (list (list matcher group frame follow?)))))
+
+(define (clear-placement-rules!)
+  (set! %placement-rules '()))
+
+(define (rule-matches? rule title app-id)
+  (let ((m (car rule)))
+    (or (and (string? app-id) (string-contains app-id m))
+        (and (string? title) (string-contains title m)))))
+
+(define (find-group-loose name)
+  (and name
+       (find (lambda (g)
+               (string=? (string-trim-both (group-name g))
+                         (string-trim-both name)))
+             %groups)))
+
+(define (place-by-rule! rule id title app-id)
+  (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
+         (active? (eq? g (current-group)))
+         (tree (if active? (current-tree) (group-tree g)))
+         (leaves (frame-leaves tree))
+         (leaf (list-ref leaves (min (max 0 (caddr rule))
+                                     (- (length leaves) 1)))))
+    (remember-window-title! id title app-id)
+    (frame-add-window! leaf id)
+    (if active?
+        (sync-frames!)
+        (begin
+          ;; Park it: it belongs to a hidden group and must not linger
+          ;; on-screen at whatever geometry it mapped with.
+          (hide-window! id)
+          (when (cadddr rule)
+            (switch-to-group! (group-name g)))))))
+
+;; ---------------------------------------------------------------------
+;; Status line for external bars (eww etc.): written to
+;; $XDG_RUNTIME_DIR/minde-status whenever it changes, via the
+;; frames.scm sync hook. Consume with `tail -F` (eww deflisten) or poll
+;; `minde-cmd '(status-line)'`.
+;; ---------------------------------------------------------------------
+
+(define (status-line)
+  (let ((id (current-frame-window)))
+    (string-append (group-list-string)
+                   " | "
+                   (if id (window-title id) ""))))
+
+(define %status-path
+  (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp") "/minde-status"))
+
+(define %last-status #f)
+
+(define (write-status!)
+  (let ((s (status-line)))
+    (unless (equal? s %last-status)
+      (set! %last-status s)
+      (catch #t
+        (lambda ()
+          (call-with-output-file %status-path
+            (lambda (port) (display s port) (newline port))))
+        (lambda _ #f)))))
+
+(set-sync-hook! write-status!)
+
+;; ---------------------------------------------------------------------
 ;; Rust-facing hooks (looked up by name in (guile-user) -- see
 ;; frames.scm's rust-call comment for why these must be plain top-level
 ;; procedures rather than something requiring qualified lookup).
 ;; ---------------------------------------------------------------------
 
 (define (wm-on-window-map id title app-id)
-  (handle-window-map! id title app-id))
+  (let ((rule (find (lambda (r) (rule-matches? r title app-id))
+                    %placement-rules)))
+    (if rule
+        (place-by-rule! rule id title app-id)
+        (handle-window-map! id title app-id))))
 
 (define (wm-on-window-unmap id)
   "Removes ID from whichever group's tree currently holds it -- the active

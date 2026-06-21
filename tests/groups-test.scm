@@ -166,6 +166,42 @@
   (check-true "pulled window is one of 1 or 3" (member pulled (list 1 3))))
 
 ;; ---------------------------------------------------------------------
+;; (f) Placement rules route mapping windows by app-id/title.
+;; ---------------------------------------------------------------------
+
+;; By app-id, into hidden group II: window must land there parked, with
+;; the current group unchanged.
+(add-placement-rule! "zen-two" #:group "II" #:frame 0)
+(wm-on-window-map 4 "some page" "zen-two")
+(check "rule-matched window landed in group II" (group-has-window? " II " 4) #t)
+(check "rule-matched window not in group I" (group-has-window? " I " 4) #f)
+(check "current group unchanged by non-follow rule" (current-group-name) " I ")
+(check-true "rule-matched window parked off-screen"
+            (offscreen? (hash-ref %placements 4)))
+
+;; By title, with #:follow?: switches to the target group and shows it.
+(add-placement-rule! "follow-me" #:group "III" #:follow? #t)
+(wm-on-window-map 5 "follow-me notes" "someapp")
+(check "follow rule switched to group III" (current-group-name) " III ")
+(check "followed window is in group III" (group-has-window? " III " 5) #t)
+(check "followed window placed frame-filling"
+       (hash-ref %placements 5)
+       (list 3 3 1274 714))
+(check "followed window focused" %focused 5)
+
+;; status-line reflects the group list and current window title.
+(check-true "status-line shows bracketed current group"
+            (string-contains (status-line) "[III]"))
+(check-true "status-line shows the window title"
+            (string-contains (status-line) "follow-me notes"))
+
+;; Unmatched windows still go through the default path.
+(wm-on-window-map 6 "plain" "plainapp")
+(check "unmatched window mapped into the current frame" (current-frame-window) 6)
+
+(clear-placement-rules!)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin
