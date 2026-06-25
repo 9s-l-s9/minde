@@ -57,6 +57,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = MindeState::new(&mut event_loop, display);
 
+    // Recorded for wm-spawn so children get WAYLAND_DISPLAY even when
+    // spawned (via wm-on-startup) before the env export further down.
+    let _ = guile::SOCKET_NAME.set(state.socket_name.to_string_lossy().into_owned());
+
     // Guile must be initialized on the main thread, and after this call
     // every libguile function must be called from this same thread (except
     // through Guile's own REPL server, which manages its own thread).

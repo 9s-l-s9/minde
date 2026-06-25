@@ -229,10 +229,24 @@ pub fn to_string_lossy(v: Scm) -> Option<String> {
 // Subrs exposed to Scheme
 // ---------------------------------------------------------------------
 
+/// Our Wayland socket name, recorded before the backend (and Scheme)
+/// start. `wm-spawn` sets WAYLAND_DISPLAY from this explicitly: the
+/// process-wide env var is only exported late in main() (exporting it
+/// before winit init would make winit connect to ourselves), so children
+/// spawned from `wm-on-startup` would otherwise inherit a stale/absent
+/// WAYLAND_DISPLAY and fail to find the compositor (seen as eww's
+/// "Failed to initialize GTK" on the TTY).
+pub static SOCKET_NAME: OnceLock<String> = OnceLock::new();
+
 unsafe extern "C" fn wm_spawn(cmd: Scm) -> Scm {
     if let Some(cmd) = to_string_lossy(cmd) {
         tracing::info!(%cmd, "wm-spawn");
-        let result = std::process::Command::new("sh").arg("-c").arg(&cmd).spawn();
+        let mut command = std::process::Command::new("sh");
+        command.arg("-c").arg(&cmd);
+        if let Some(socket) = SOCKET_NAME.get() {
+            command.env("WAYLAND_DISPLAY", socket);
+        }
+        let result = command.spawn();
         if let Err(e) = result {
             tracing::warn!(%cmd, error = %e, "wm-spawn failed");
             return from_bool(false);
