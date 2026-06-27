@@ -154,6 +154,41 @@ impl XdgShellHandler for MindeState {
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         // TODO popup grabs
     }
+
+    // The frame tree owns all geometry, so (un)maximize and
+    // (un)fullscreen requests are never granted. The protocol still
+    // demands a configure in reply either way -- Firefox-family clients
+    // (zen restoring a maximized session calls set_maximized right at
+    // startup) otherwise stop obeying our sizes entirely. The pending
+    // state already carries the frame geometry from wm-place-window, so
+    // replying re-asserts it.
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        if surface.is_initial_configure_sent() {
+            surface.send_configure();
+        }
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        if surface.is_initial_configure_sent() {
+            surface.send_configure();
+        }
+    }
+
+    fn fullscreen_request(
+        &mut self,
+        surface: ToplevelSurface,
+        _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
+    ) {
+        if surface.is_initial_configure_sent() {
+            surface.send_configure();
+        }
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        if surface.is_initial_configure_sent() {
+            surface.send_configure();
+        }
+    }
 }
 
 fn check_grab(
