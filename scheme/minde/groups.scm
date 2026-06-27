@@ -17,6 +17,7 @@
   #:use-module (ice-9 optargs)
   #:use-module (minde frames)
   #:export (switch-to-group!
+            gother!
             add-placement-rule!
             clear-placement-rules!
             status-line
@@ -93,10 +94,19 @@ activates the target group and syncs it (placing its windows, restoring
 or clearing focus)."
   (let ((target (resolve-target name-or-index)))
     (when (and target (not (eq? target (current-group))))
+      (set! %last-group (current-group))
       (park-group-windows! (current-group))
       (activate-group! target)
       (sync-frames!)
       (echo (group-list-string)))))
+
+;; The group that was current before the last switch (StumpWM gother).
+(define %last-group #f)
+
+(define (gother!)
+  "Toggles back to the previously current group."
+  (when (and %last-group (memq %last-group %groups))
+    (switch-to-group! (group-name %last-group))))
 
 (define (group-list-string)
   "The group list with the current one bracketed, StumpWM message style:
@@ -171,6 +181,7 @@ group or the current frame has no window."
           (let ((next (list-ref %groups (modulo (+ idx 1) n))))
             (remove-window-from-tree-in! (current-tree) id)
             (hide-window! id)
+            (ensure-unique-window-number! id (group-tree next))
             (frame-add-window! (group-current-frame next) id)
             (sync-frames!)))))))
 
@@ -214,6 +225,7 @@ group or the current frame has no window."
          (leaf (list-ref leaves (min (max 0 (caddr rule))
                                      (- (length leaves) 1)))))
     (remember-window-title! id title app-id)
+    (assign-window-number! id tree)
     (frame-add-window! leaf id)
     (if active?
         (sync-frames!)
@@ -274,6 +286,7 @@ a sync since nothing hidden is on-screen)."
   (unless (remove-window-from-active-tree! id)
     (find (lambda (g) (remove-window-from-tree-in! (group-tree g) id)) %groups))
   (forget-window-title! id)
+  (forget-window-number! id)
   #t)
 
 (define (wm-on-output-geometry x y width height)

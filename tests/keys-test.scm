@@ -187,6 +187,28 @@
 (check "after Escape, plain t forwarded" (wm-handle-key 0 #f "t") #f)
 
 ;; ---------------------------------------------------------------------
+;; Modifier-prefixed keymap specs: C-0 pulls, plain 0 selects; M-Left
+;; fires; unprefixed bindings still work under shift (bare fallback).
+;; ---------------------------------------------------------------------
+
+(wm-handle-key ctrl-bit #f "t")
+(check "plain 0 dispatches (select-by-number)" (wm-handle-key 0 #f "0") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "C-0 dispatches (pull-by-number)" (wm-handle-key 4 #f "0") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "M-Left dispatches (move-window)" (wm-handle-key 8 #f "Left") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "plain Left dispatches (move-focus)" (wm-handle-key 0 #f "Left") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "Tab dispatches (other-window)" (wm-handle-key 0 #f "Tab") #t)
+;; Shifted letter: arrives as mods=1 name="W"; no "S-W" binding exists,
+;; so the bare "W" (echo-windows) must fire via the fallback.
+(wm-handle-key ctrl-bit #f "t")
+(set! %messages '())
+(check "shift+W falls back to the bare W binding" (wm-handle-key 1 #f "W") #t)
+(check-true "W echoed the window list" (pair? %messages))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

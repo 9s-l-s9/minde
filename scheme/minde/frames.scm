@@ -19,10 +19,32 @@
             split-frame-vertical!
             remove-split!
             focus-next-frame!
+            focus-prev-frame!
             focus-next-window!
+            focus-prev-window!
             focus-next-window-in-frame!
+            focus-prev-window-in-frame!
             pull-hidden-next!
+            pull-hidden-previous!
             pull-window-from-other-frame!
+            other-window!
+            other-frame!
+            move-focus!
+            move-window!
+            exchange-windows!
+            only!
+            fclear!
+            hsplit-equally!
+            vsplit-equally!
+            window-number
+            assign-window-number!
+            forget-window-number!
+            ensure-unique-window-number!
+            select-window-by-number!
+            pull-window-by-number!
+            renumber-window!
+            repack-window-numbers!
+            echo-windows-string
             sync-frames!
             handle-window-map!
             handle-window-unmap!
@@ -104,11 +126,23 @@
 ;; sits quiescently in its own record until (minde groups) activates
 ;; it. See activate-group!.
 (define-record-type <group>
-  (make-group name tree current-frame)
+  (%make-group name tree current-frame
+               last-window shown-window last-frame shown-frame)
   group?
   (name group-name set-group-name!)
   (tree group-tree set-group-tree!)
-  (current-frame group-current-frame set-group-current-frame!))
+  (current-frame group-current-frame set-group-current-frame!)
+  ;; StumpWM's "other window/frame" memory, per group: shown-* is what
+  ;; was current at the end of the previous sync, last-* is what was
+  ;; current before that (the toggle target). Updated in sync-frames!.
+  (last-window group-last-window set-group-last-window!)
+  (shown-window group-shown-window set-group-shown-window!)
+  (last-frame group-last-frame set-group-last-frame!)
+  (shown-frame group-shown-frame set-group-shown-frame!))
+
+;; Public 3-argument constructor (the last/shown fields start empty).
+(define (make-group name tree current-frame)
+  (%make-group name tree current-frame #f #f #f #f))
 
 ;; ---------------------------------------------------------------------
 ;; State
@@ -290,6 +324,111 @@ wm-message (or under the test stubs)."
 (define (window-ids-with-titles)
   "All windows of the active group, as (id . title) pairs in frame order."
   (map (lambda (id) (cons id (window-title id))) (all-window-ids)))
+
+;; ---------------------------------------------------------------------
+;; Window numbers (StumpWM: every window gets the smallest free number
+;; in its group; Print 0-9 select by number).
+;; ---------------------------------------------------------------------
+
+;; id -> number. Global map, but numbers are only kept unique within a
+;; group (a window lives in exactly one group's tree).
+(define %window-numbers (make-hash-table))
+
+(define (window-number id)
+  (hash-ref %window-numbers id))
+
+(define (tree-window-ids tree)
+  (append-map frame-window-ids (frame-leaves tree)))
+
+(define (used-numbers-in tree except-id)
+  (filter-map (lambda (id)
+                (and (not (equal? id except-id))
+                     (hash-ref %window-numbers id)))
+              (tree-window-ids tree)))
+
+(define (smallest-free used)
+  (let loop ((n 0)) (if (memv n used) (loop (+ n 1)) n)))
+
+(define (assign-window-number! id tree)
+  "Gives ID the smallest number not used by another window of TREE."
+  (hash-set! %window-numbers id (smallest-free (used-numbers-in tree id))))
+
+(define (forget-window-number! id)
+  (hash-remove! %window-numbers id))
+
+(define (ensure-unique-window-number! id tree)
+  "Keeps ID's number if free within TREE (its new group), else assigns a
+fresh one -- for windows moved between groups."
+  (let ((n (hash-ref %window-numbers id)))
+    (when (or (not n) (memv n (used-numbers-in tree id)))
+      (assign-window-number! id tree))))
+
+(define (window-id-by-number n)
+  (find (lambda (id) (eqv? n (hash-ref %window-numbers id)))
+        (all-window-ids)))
+
+(define (select-window-by-number! n)
+  "Jumps to the active group's window number N, wherever it lives."
+  (let ((id (window-id-by-number n)))
+    (if id
+        (focus-window-by-id! id)
+        (echo (format #f "no window ~a" n)))))
+
+(define (pull-window-by-number! n)
+  "Pulls the active group's window number N into the current frame."
+  (let ((id (window-id-by-number n)))
+    (if id
+        (let ((f (frame-of-window id)))
+          (unless (eq? f %current-frame)
+            (set-frame-window-ids! f (delete id (frame-window-ids f)))
+            (when (equal? (frame-current-window f) id)
+              (set-frame-current-window!
+               f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f))))))
+          (frame-add-window! %current-frame id)
+          (sync-frames!))
+        (echo (format #f "no window ~a" n)))))
+
+(define (renumber-window! n)
+  "Gives the current window the number N; if another window of the group
+holds N, the two swap (StumpWM renumber)."
+  (let ((id (current-frame-window)))
+    (when id
+      (let ((holder (window-id-by-number n))
+            (old (hash-ref %window-numbers id)))
+        (when (and holder (not (equal? holder id)))
+          (hash-set! %window-numbers holder old))
+        (hash-set! %window-numbers id n)))))
+
+(define (repack-window-numbers!)
+  "Renumbers the active group's windows 0.. in current-number order."
+  (let ((ids (sort (all-window-ids)
+                   (lambda (a b) (< (or (window-number a) 999)
+                                    (or (window-number b) 999))))))
+    (let loop ((ids ids) (n 0))
+      (unless (null? ids)
+        (hash-set! %window-numbers (car ids) n)
+        (loop (cdr ids) (+ n 1))))))
+
+(define (echo-windows-string)
+  "StumpWM's `windows` echo: \"0*Term  1-Editor  2 zen\" -- * marks the
+current window, - the previous one (other-window!'s target)."
+  (let ((cur (current-frame-window))
+        (last (group-last-window %active-group))
+        (ids (sort (all-window-ids)
+                   (lambda (a b) (< (or (window-number a) 999)
+                                    (or (window-number b) 999))))))
+    (if (null? ids)
+        "no windows"
+        (string-join
+         (map (lambda (id)
+                (format #f "~a~a~a"
+                        (or (window-number id) "?")
+                        (cond ((equal? id cur) "*")
+                              ((equal? id last) "-")
+                              (else " "))
+                        (window-title id)))
+              ids)
+         "  "))))
 
 (define (focus-window-by-id! id)
   "Jumps to window ID wherever it lives in the active group: its frame
@@ -565,9 +704,11 @@ round-trip."
 window')."
   (let* ((ids (frame-window-ids %current-frame))
          (n (length ids)))
-    (when (> n 1)
+    ;; n = 1 with nothing shown (after fclear!) should re-show it too.
+    (when (and (> n 0) (or (> n 1) (not (frame-current-window %current-frame))))
       (let* ((cur (frame-current-window %current-frame))
-             (idx (list-index (lambda (i) (equal? i cur)) ids)))
+             ;; cur can be #f after fclear!; start from the front then.
+             (idx (or (list-index (lambda (i) (equal? i cur)) ids) -1)))
         (set-frame-current-window! %current-frame (list-ref ids (modulo (+ idx 1) n))))))
   (sync-frames!))
 
@@ -643,6 +784,190 @@ other frame holds any window."
                   (frame-add-window! %current-frame id))
                 (loop (+ i 1))))))))
   (sync-frames!))
+
+(define (focus-prev-frame!)
+  "Cycles %current-frame to the previous leaf frame in tree order."
+  (let* ((leaves (frame-leaves %frame-tree))
+         (n (length leaves))
+         (idx (list-index (lambda (f) (eq? f %current-frame)) leaves)))
+    (when (and idx (> n 1))
+      (set! %current-frame (list-ref leaves (modulo (- idx 1) n)))))
+  (sync-frames!))
+
+(define (focus-prev-window-in-frame!)
+  "Cycles the current frame's shown window backwards."
+  (let* ((ids (frame-window-ids %current-frame))
+         (n (length ids)))
+    (when (and (> n 0) (or (> n 1) (not (frame-current-window %current-frame))))
+      (let* ((cur (frame-current-window %current-frame))
+             (idx (or (list-index (lambda (i) (equal? i cur)) ids) 1))) ; #f -> wrap to last
+        (set-frame-current-window! %current-frame (list-ref ids (modulo (- idx 1) n))))))
+  (sync-frames!))
+
+(define (focus-prev-window!)
+  "StumpWM's `prev`: focus-next-window! backwards through the group."
+  (let* ((ids (all-window-ids))
+         (n (length ids))
+         (cur (current-frame-window)))
+    (when (> n 0)
+      (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
+             (prev-id (list-ref ids (modulo (- idx 1) n)))
+             (f (frame-of-window prev-id)))
+        (when f
+          (set! %current-frame f)
+          (set-frame-current-window! f prev-id)))))
+  (sync-frames!))
+
+(define (pull-hidden-previous!)
+  "StumpWM's pull-hidden-previous: like pull-hidden-next! but takes the
+last hidden window instead of the first."
+  (let ((hidden (hidden-window-ids)))
+    (unless (null? hidden)
+      (let* ((id (last hidden))
+             (f (frame-of-window id)))
+        (set-frame-window-ids! f (delete id (frame-window-ids f)))
+        (when (equal? (frame-current-window f) id)
+          (set-frame-current-window!
+           f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f)))))
+        (frame-add-window! %current-frame id)
+        (sync-frames!)))))
+
+;; ---------------------------------------------------------------------
+;; Last-window / last-frame toggles (StumpWM other-window / fother)
+;; ---------------------------------------------------------------------
+
+(define (other-window!)
+  "Toggles to the group's previously focused window (emacs C-x b RET)."
+  (let ((lw (group-last-window %active-group)))
+    (if (and lw (member lw (all-window-ids)))
+        (focus-window-by-id! lw)
+        (echo "no other window"))))
+
+(define (other-frame!)
+  "Toggles to the previously focused frame (StumpWM fother)."
+  (let ((lf (group-last-frame %active-group)))
+    (when (and lf (memq lf (frame-leaves %frame-tree))
+               (not (eq? lf %current-frame)))
+      (set! %current-frame lf)
+      (sync-frames!))))
+
+;; ---------------------------------------------------------------------
+;; Directional navigation (StumpWM move-focus / move-window /
+;; exchange-direction)
+;; ---------------------------------------------------------------------
+
+;; The leaf frame adjacent to %current-frame in direction DIR ('left
+;; 'right 'up 'down), or #f at the edge. The tree tiles exactly, so
+;; adjacency is exact edge equality; among frames sharing that edge the
+;; one with the largest perpendicular overlap wins.
+(define (frame-in-direction dir)
+  (let* ((f %current-frame)
+         (x (frame-x f)) (y (frame-y f)) (w (frame-w f)) (h (frame-h f)))
+    (define (overlap a1 a2 b1 b2) (- (min a2 b2) (max a1 b1)))
+    (let loop ((cands (frame-leaves %frame-tree)) (best #f) (best-ov 0))
+      (if (null? cands)
+          best
+          (let* ((c (car cands))
+                 (adjacent?
+                  (and (not (eq? c f))
+                       (case dir
+                         ((left)  (= (+ (frame-x c) (frame-w c)) x))
+                         ((right) (= (frame-x c) (+ x w)))
+                         ((up)    (= (+ (frame-y c) (frame-h c)) y))
+                         ((down)  (= (frame-y c) (+ y h))))))
+                 (ov (and adjacent?
+                          (if (memq dir '(left right))
+                              (overlap y (+ y h) (frame-y c) (+ (frame-y c) (frame-h c)))
+                              (overlap x (+ x w) (frame-x c) (+ (frame-x c) (frame-w c)))))))
+            (if (and ov (> ov best-ov))
+                (loop (cdr cands) c ov)
+                (loop (cdr cands) best best-ov)))))))
+
+(define (move-focus! dir)
+  "Focuses the frame in direction DIR. A no-op at the screen edge."
+  (let ((target (frame-in-direction dir)))
+    (when target
+      (set! %current-frame target)
+      (sync-frames!))))
+
+;; Removes ID from FRAME's list, promoting the next window if it was
+;; current. (The window is expected to be re-added elsewhere.)
+(define (take-window-out! frame id)
+  (set-frame-window-ids! frame (delete id (frame-window-ids frame)))
+  (when (equal? (frame-current-window frame) id)
+    (set-frame-current-window!
+     frame
+     (if (null? (frame-window-ids frame)) #f (car (frame-window-ids frame))))))
+
+(define (move-window! dir)
+  "Moves the current window into the frame in direction DIR and follows
+it with the focus."
+  (let ((target (frame-in-direction dir))
+        (id (current-frame-window)))
+    (when (and target id)
+      (take-window-out! %current-frame id)
+      (frame-add-window! target id)
+      (set! %current-frame target)
+      (sync-frames!))))
+
+(define (exchange-windows! dir)
+  "Swaps the current window with the one shown in the frame in direction
+DIR (StumpWM exchange-direction). With an empty neighbor this is just a
+move; focus follows the current window."
+  (let ((target (frame-in-direction dir))
+        (id (current-frame-window)))
+    (when (and target id)
+      (let ((other (frame-current-window target))
+            (source %current-frame))
+        (take-window-out! source id)
+        (frame-add-window! target id)
+        (when other
+          (take-window-out! target other)
+          (frame-add-window! source other))
+        (set! %current-frame target)
+        (sync-frames!)))))
+
+;; ---------------------------------------------------------------------
+;; Frame commands: only / fclear / split-equally
+;; ---------------------------------------------------------------------
+
+(define (only!)
+  "Collapses the tree to one full-area frame keeping every window, the
+current one visible (StumpWM only)."
+  (apply-layout-spec! 'leaf))
+
+(define (fclear!)
+  "Hides the current frame's shown window (it stays in the frame's list;
+the frame shows empty -- StumpWM fclear)."
+  (set-frame-current-window! %current-frame #f)
+  (sync-frames!))
+
+;; Replaces the current frame by N equal frames in a row/column. The
+;; current frame's windows stay in the first of them.
+(define (split-equally! orientation n)
+  (when (> n 1)
+    (let* ((f %current-frame)
+           (rect (list (frame-x f) (frame-y f) (frame-w f) (frame-h f)))
+           (first-leaf (make-frame 0 0 1 1 (frame-window-ids f)
+                                   (frame-current-window f)))
+           (subtree
+            (let chain ((k n) (leaf first-leaf))
+              (if (= k 1)
+                  leaf
+                  (make-split orientation (/ 1 k) leaf
+                              (chain (- k 1) (make-frame 0 0 1 1 '() #f)))))))
+      (if (eq? f %frame-tree)
+          (set! %frame-tree subtree)
+          (let-values (((parent side) (find-parent %frame-tree f)))
+            (if (eq? side 'a)
+                (set-split-child-a! parent subtree)
+                (set-split-child-b! parent subtree))))
+      (apply resize-subtree! subtree rect)
+      (set! %current-frame first-leaf)
+      (sync-frames!))))
+
+(define (hsplit-equally! n) (split-equally! 'horizontal n))
+(define (vsplit-equally! n) (split-equally! 'vertical n))
 
 (define (close-current-window!)
   "Requests the current frame's current window be closed."
@@ -726,6 +1051,19 @@ input focus to the current frame's current window."
         ;; Empty current frame: drop keyboard focus so a hidden/unmapped
         ;; window doesn't keep receiving keys.
         (wm-clear-focus)))
+  ;; Remember the previous focus for the other-window!/other-frame!
+  ;; toggles: whatever was shown at the end of the last sync becomes
+  ;; "last" the moment something else is shown.
+  (let ((g %active-group)
+        (cur (current-frame-window)))
+    (let ((shown (group-shown-window g)))
+      (when (and shown (not (equal? shown cur)))
+        (set-group-last-window! g shown)))
+    (set-group-shown-window! g cur)
+    (let ((shownf (group-shown-frame g)))
+      (when (and shownf (not (eq? shownf %current-frame)))
+        (set-group-last-frame! g shownf)))
+    (set-group-shown-frame! g %current-frame))
   (when %sync-hook (%sync-hook)))
 
 ;; ---------------------------------------------------------------------
@@ -741,6 +1079,7 @@ input focus to the current frame's current window."
 (define (handle-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window."
   (remember-window-title! id title app-id)
+  (assign-window-number! id %frame-tree)
   (frame-add-window! %current-frame id)
   (sync-frames!))
 

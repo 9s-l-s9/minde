@@ -70,7 +70,17 @@ Prefix map (see `scheme/init.scm`):
 | `w` | voice dictate | | `i` | eww widgets |
 | `A` | agents submap (c/d/o/p) | | `P` | misc submap (s/w/a) |
 | `s` | resize mode (iresize) | | `F` | apply layout (prompt) |
+| `0`–`9` | select window by number | | `C-0`–`C-9` | pull window by number |
+| arrows | move focus directionally | | `M-`arrows | move window directionally |
+| `S-`arrows | swap with neighbor frame | | `Tab` / `S-Tab` | last window / last frame |
+| `u` | last group (gother) | | `W` | numbered window list echo |
+| `C` | only (collapse splits) | | `Delete` | fclear (empty this frame) |
+| `C-f` `C-p` `C-n` `C-o` | reverse of f/p/n/o | | | |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit |
+
+Keymap keys accept StumpWM-style modifier prefixes: `C-` (ctrl), `M-`
+(alt), `S-` (shift), `s-` (super), e.g. `(bind-prefix-key! "M-Left" ...)`.
+A modifier-prefixed binding wins over the bare keysym name.
 
 `super+q` also quits. Groups " I ", " II ", " III " exist at startup.
 The window model is StumpWM's (emacs-like): frames are panes, the group's

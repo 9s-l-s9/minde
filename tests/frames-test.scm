@@ -219,6 +219,99 @@
 
 (remove-split!)
 (handle-window-unmap! 3)
+(forget-window-number! 3)
+
+;; ---------------------------------------------------------------------
+;; Window numbers: smallest free per group, reuse after unmap.
+;; ---------------------------------------------------------------------
+
+(handle-window-map! 10 "alpha" "a")
+(handle-window-map! 11 "beta" "b")
+(handle-window-map! 12 "gamma" "c")
+(check "numbers assigned in map order" (map window-number (list 10 11 12)) (list 0 1 2))
+(handle-window-unmap! 11)
+(forget-window-number! 11)
+(handle-window-map! 13 "delta" "d")
+(check "freed number is reused" (window-number 13) 1)
+
+;; ---------------------------------------------------------------------
+;; Directional navigation on a 2x2 grid.
+;; ---------------------------------------------------------------------
+
+(apply-layout-spec! '(vsplit 1/2 (hsplit 1/2 leaf leaf) (hsplit 1/2 leaf leaf)))
+;; Windows: current (13) -> top-left, then 10 -> top-right, 12 -> bottom-left.
+(check "current window in top-left after grid" (hash-ref %placements 13) (list 3 3 634 354))
+(check "window 10 in top-right" (hash-ref %placements 10) (list 643 3 634 354))
+(check "window 12 in bottom-left" (hash-ref %placements 12) (list 3 363 634 354))
+
+(move-focus! 'right)
+(check "move-focus right lands on top-right's window" %focused 10)
+(move-focus! 'up) ; edge: no-op
+(check "move-focus at the edge is a no-op" %focused 10)
+
+(move-window! 'down)
+(check "move-window moved window 10 to bottom-right" (hash-ref %placements 10) (list 643 363 634 354))
+(check "focus followed the moved window" %focused 10)
+
+(exchange-windows! 'left)
+(check "exchange put window 10 into bottom-left" (hash-ref %placements 10) (list 3 363 634 354))
+(check "exchange put window 12 into bottom-right" (hash-ref %placements 12) (list 643 363 634 354))
+(check "focus still on window 10 after exchange" %focused 10)
+
+;; ---------------------------------------------------------------------
+;; other-window! toggle + echo string markers.
+;; ---------------------------------------------------------------------
+
+(other-window!)
+(check "other-window! toggles back to the previously focused window" %focused 13)
+(let ((s (echo-windows-string)))
+  (check-true "echo-windows marks current with *" (string-contains s "*delta"))
+  (check-true "echo-windows marks last with -" (string-contains s "-alpha")))
+
+;; ---------------------------------------------------------------------
+;; select / pull by number.
+;; ---------------------------------------------------------------------
+
+(select-window-by-number! 0)
+(check "select-window-by-number! 0 focused window 10" %focused 10)
+(pull-window-by-number! 2)
+(check "pull-window-by-number! brought window 12 here" %focused 12)
+(check "pulled window shown in the current (bottom-left) frame"
+       (hash-ref %placements 12) (list 3 363 634 354))
+
+;; ---------------------------------------------------------------------
+;; only / fclear / hsplit-equally.
+;; ---------------------------------------------------------------------
+
+(only!)
+(check "only! keeps every window" (frame-tree-window-count) 3)
+(let ((cur (current-frame-window)))
+  (check "only!'s current window fills the screen"
+         (hash-ref %placements cur) (list 3 3 1274 714)))
+
+(fclear!)
+(check "fclear! empties the frame's shown window" (current-frame-window) #f)
+(check "fclear! keeps the windows tracked" (frame-tree-window-count) 3)
+
+(hsplit-equally! 3)
+(check "hsplit-equally! made three columns; first column current"
+       (car (list (frame-tree-window-count))) 3)
+(focus-next-window-in-frame!) ; show something in column 1 again
+(let ((cur (current-frame-window)))
+  (check-true "a window is visible again in column 1" cur)
+  (check "column 1 geometry is a third of the screen"
+         (hash-ref %placements cur) (list 3 3 421 714)))
+
+;; Reverse cycling sanity.
+(focus-prev-window-in-frame!)
+(focus-prev-window!)
+(focus-prev-frame!)
+(pull-hidden-previous!)
+(check "reverse cycling kept all windows" (frame-tree-window-count) 3)
+
+(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+          (list 10 12 13))
+(only!)
 
 ;; ---------------------------------------------------------------------
 

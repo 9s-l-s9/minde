@@ -126,6 +126,18 @@ MODS (possibly '())."
 (define (modifier-keysym? name)
   (member name %modifier-keysyms))
 
+;; StumpWM-style modifier-prefixed key specs for keymap bindings:
+;; "M-Left", "C-0", "S-Right", "s-x" (C-=ctrl M-=alt S-=shift s-=super).
+;; Prefixes are generated in this fixed order, so bind "C-M-x", never
+;; "M-C-x". Shifted letters already arrive as their uppercase keysym
+;; ("W"), so letter bindings don't need "S-".
+(define (key-spec mods-bitmask keysym-name)
+  (string-append (if (logtest mods-bitmask 4) "C-" "")
+                 (if (logtest mods-bitmask 8) "M-" "")
+                 (if (logtest mods-bitmask 1) "S-" "")
+                 (if (logtest mods-bitmask 64) "s-" "")
+                 keysym-name))
+
 (define (wm-handle-key mods-bitmask keysym keysym-name . rest)
   "Called from Rust on every key press (4th argument: the UTF-8 text the
 key produces under the active keymap, empty for Return/BackSpace/...).
@@ -160,7 +172,11 @@ focused client), #f otherwise."
        ((modifier-keysym? keysym-name)
         #f) ; stay put; let the client see the modifier
        (else
-        (let ((binding (hash-ref %key-state keysym-name)))
+        ;; Modifier-prefixed spec ("M-Left") wins over the bare name, so
+        ;; e.g. arrows and M-arrows can coexist in one keymap.
+        (let ((binding (or (and (positive? mods-bitmask)
+                                (hash-ref %key-state (key-spec mods-bitmask keysym-name)))
+                           (hash-ref %key-state keysym-name))))
           (set-key-state! 'normal)
           (cond
            ;; A nested keymap: keep waiting, now in the submap.
@@ -269,6 +285,50 @@ focused client), #f otherwise."
                                     "no window")))))
 (bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
 (bind-prefix-key! "Q" (lambda () (wm-quit)))
+
+;; ---------------------------------------------------------------------
+;; Window numbers + navigation (StumpWM parity, conflict-free keys)
+;; ---------------------------------------------------------------------
+
+;; 0-9: jump to window by number; C-0..C-9: pull it here instead.
+(for-each
+ (lambda (n)
+   (let ((k (number->string n)))
+     (bind-prefix-key! k (lambda () (select-window-by-number! n)))
+     (bind-prefix-key! (string-append "C-" k)
+                       (lambda () (pull-window-by-number! n)))))
+ (iota 10))
+
+;; Arrows: directional frame focus; M-arrows move the window along;
+;; S-arrows swap windows with the neighbor frame.
+(for-each
+ (lambda (pair)
+   (let ((name (car pair)) (dir (cdr pair)))
+     (bind-prefix-key! name (lambda () (move-focus! dir)))
+     (bind-prefix-key! (string-append "M-" name) (lambda () (move-window! dir)))
+     (bind-prefix-key! (string-append "S-" name) (lambda () (exchange-windows! dir)))))
+ '(("Left" . left) ("Right" . right) ("Up" . up) ("Down" . down)))
+
+;; Tab: toggle to the previously focused window (emacs C-x b RET);
+;; S-Tab (keysym ISO_Left_Tab): toggle to the previous frame; u: toggle
+;; to the previous group (StumpWM gother).
+(bind-prefix-key! "Tab" (lambda () (other-window!)))
+(bind-prefix-key! "ISO_Left_Tab" (lambda () (other-frame!)))
+(bind-prefix-key! "u" (lambda () (gother!)))
+
+;; W: StumpWM `windows` -- echo the numbered window list.
+(bind-prefix-key! "W" (lambda () (echo (echo-windows-string))))
+
+;; C: StumpWM `only` -- collapse all splits, keep every window;
+;; Delete: fclear -- show this frame empty (its windows stay, hidden).
+(bind-prefix-key! "C" (lambda () (only!)))
+(bind-prefix-key! "Delete" (lambda () (fclear!)))
+
+;; Reverse cycling, mirroring f/p/n/o forwards.
+(bind-prefix-key! "C-f" (lambda () (focus-prev-window!)))
+(bind-prefix-key! "C-p" (lambda () (pull-hidden-previous!)))
+(bind-prefix-key! "C-n" (lambda () (focus-prev-frame!)))
+(bind-prefix-key! "C-o" (lambda () (focus-prev-window-in-frame!)))
 
 ;; ---------------------------------------------------------------------
 ;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
@@ -476,7 +536,11 @@ focused client), #f otherwise."
 ;; l: windowlist -- title prompt with completion; exact title wins, else
 ;; first prefix match.
 (define (windowlist!)
-  (let ((pairs (window-ids-with-titles)))
+  (let ((pairs (map (lambda (p)
+                      (cons (car p)
+                            (format #f "~a: ~a"
+                                    (or (window-number (car p)) "?") (cdr p))))
+                    (window-ids-with-titles))))
     (if (null? pairs)
         (echo "no windows")
         (read-one-line "window: "

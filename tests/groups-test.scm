@@ -202,6 +202,34 @@
 (clear-placement-rules!)
 
 ;; ---------------------------------------------------------------------
+;; (g) gother! toggles between the last two groups.
+;; ---------------------------------------------------------------------
+
+;; We're in III (followed window 5 there). The previous group was I.
+(check "still in group III" (current-group-name) " III ")
+(gother!)
+(check "gother! goes back to the previous group (I)" (current-group-name) " I ")
+(gother!)
+(check "gother! toggles forward again (III)" (current-group-name) " III ")
+
+;; ---------------------------------------------------------------------
+;; (h) Window numbers stay unique within a group across moves.
+;; ---------------------------------------------------------------------
+
+;; III currently holds windows 5 and 6.
+(check-true "numbers in III are distinct"
+            (not (equal? (window-number 5) (window-number 6))))
+;; Move 6 (current) into the next group and make sure its number doesn't
+;; collide there.
+(move-window-to-next-group!)
+(let* ((moved 6)
+       (n (window-number moved)))
+  (check-true "moved window still has a number" n))
+
+(check-true "echo-windows-string marks the current window"
+            (string-contains (echo-windows-string) "*"))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

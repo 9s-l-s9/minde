@@ -88,6 +88,16 @@ xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "iresize errored (see log)"
 ok "iresize mode"
 
+# Navigation sprint: directional focus, last-window toggle, select by
+# number, windows echo -- none may error.
+xdotool key Print; sleep 0.2; xdotool key Down; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key Tab; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key 0; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key shift+w; sleep 0.5
+import -window root "$OUT/windows-echo.png"
+loggrep "error in keybinding" && fail "navigation keys errored (see log)"
+ok "navigation: arrows / Tab / 0 / W"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))
