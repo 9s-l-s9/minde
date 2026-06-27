@@ -209,6 +209,59 @@
 (check-true "W echoed the window list" (pair? %messages))
 
 ;; ---------------------------------------------------------------------
+;; Sprint 2: which-key (?), describe-key, colon eval prompt,
+;; quit-confirm, lastmsg, marks keys.
+;; ---------------------------------------------------------------------
+
+;; ? echoes the armed keymap and STAYS armed.
+(set! %messages '())
+(wm-handle-key ctrl-bit #f "t")
+(check "? in prefix state is consumed" (wm-handle-key 1 #f "question") #t)
+(check-true "? echoed the binding docs" (and (pair? %messages)
+                                             (string-contains (car %messages) "vsplit")))
+(check "still armed after ?: v runs vsplit" (wm-handle-key 0 #f "v") #t)
+
+;; describe-key: F1 arms it, the next key is described, not dispatched.
+(set! %messages '())
+(wm-handle-key ctrl-bit #f "t")
+(check "F1 is consumed" (wm-handle-key 0 #f "F1") #t)
+(check "described key is consumed" (wm-handle-key 0 #f "v") #t)
+(check-true "describe-key reported the v binding"
+            (string-contains (car %messages) "vsplit"))
+
+;; colon eval prompt: type (+ 1 2), get 3 echoed.
+(set! %messages '())
+(wm-handle-key ctrl-bit #f "t")
+(check "colon opens the eval prompt" (wm-handle-key 0 #f "colon") #t)
+(for-each (lambda (c) (wm-handle-key 0 #f (string c) (string c)))
+          (string->list "(+ 1 2)"))
+(wm-handle-key 0 #f "Return" "")
+(check-true "eval echoed the result 3"
+            (find (lambda (m) (string-contains m "3")) %messages))
+
+;; quit-confirm: Q prompts; n keeps running, yes quits.
+(set! %quit? #f)
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "Q")
+(wm-handle-key 0 #f "n" "n")
+(wm-handle-key 0 #f "Return" "")
+(check "answering n does not quit" %quit? #f)
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "Q")
+(for-each (lambda (c) (wm-handle-key 0 #f (string c) (string c)))
+          (string->list "yes"))
+(wm-handle-key 0 #f "Return" "")
+(check "answering yes quits" %quit? #t)
+
+;; lastmsg + marks keys dispatch without error.
+(wm-handle-key ctrl-bit #f "t")
+(check "C-m (lastmsg) consumed" (wm-handle-key 4 #f "m") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "x (mark) consumed" (wm-handle-key 0 #f "x") #t)
+(wm-handle-key ctrl-bit #f "t")
+(check "M-x (pull-marked) consumed" (wm-handle-key 8 #f "x") #t)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

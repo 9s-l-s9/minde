@@ -230,6 +230,35 @@
             (string-contains (echo-windows-string) "*"))
 
 ;; ---------------------------------------------------------------------
+;; (i) grename! / gkill! / gmove-and-follow! / focus-group hook.
+;; ---------------------------------------------------------------------
+
+(use-modules (minde hooks))
+(define %focused-groups '())
+(add-hook!* 'focus-group (lambda (name) (set! %focused-groups (cons name %focused-groups))))
+
+(grename! "Work")
+(check "grename! renamed the current group" (current-group-name) " Work ")
+
+;; gmove-and-follow!: current window travels and we switch with it.
+(let ((id (current-frame-window)))
+  (check-true "a window is current before gmove-and-follow!" id)
+  (gmove-and-follow!)
+  (check-true "gmove-and-follow! switched groups" (not (string=? (current-group-name) " Work ")))
+  (check "the window came along and is focused" (current-frame-window) id)
+  (check-true "focus-group hook fired" (pair? %focused-groups)))
+
+;; gkill!: the current group dies, its windows land in the next group.
+(let ((doomed (current-group-name))
+      (id (current-frame-window))
+      (n-before (length (group-names))))
+  (gkill!)
+  (check "gkill! removed a group" (length (group-names)) (- n-before 1))
+  (check-true "killed group is gone" (not (member doomed (group-names))))
+  (check-true "its window survived into another group"
+              (find (lambda (g) (group-has-window? g id)) (group-names))))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

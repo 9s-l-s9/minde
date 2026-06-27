@@ -15,6 +15,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
   #:use-module (srfi srfi-11)
+  #:use-module (minde hooks)
   #:export (split-frame-horizontal!
             split-frame-vertical!
             remove-split!
@@ -45,6 +46,11 @@
             renumber-window!
             repack-window-numbers!
             echo-windows-string
+            last-message
+            mark-window-toggle!
+            marked-windows
+            clear-marks!
+            pull-marked!
             sync-frames!
             handle-window-map!
             handle-window-unmap!
@@ -256,10 +262,19 @@
 
 (define (wm-place-window id x y w h) (rust-call 'wm-place-window id x y w h))
 
+;; The most recent echoes, newest first (StumpWM lastmsg).
+(define %message-history '())
+
+(define (last-message)
+  (and (pair? %message-history) (car %message-history)))
+
 (define (echo text)
   "Shows TEXT in the compositor's message overlay (StumpWM's message
 window), falling back to the log when running against a binary without
 wm-message (or under the test stubs)."
+  (set! %message-history (cons text (take %message-history
+                                           (min 19 (length %message-history)))))
+  (run-hook!* 'message text)
   (let ((mod (resolve-module '(guile-user) #:ensure #f)))
     (if (and mod (module-variable mod 'wm-message))
         (rust-call 'wm-message text)
@@ -833,6 +848,48 @@ last hidden window instead of the first."
         (sync-frames!)))))
 
 ;; ---------------------------------------------------------------------
+;; Window marks (StumpWM mark / pull-marked): tag several windows, then
+;; pull them all into the current frame at once.
+;; ---------------------------------------------------------------------
+
+(define %marked-windows '())
+
+(define (marked-windows) %marked-windows)
+
+(define (mark-window-toggle!)
+  "Toggles the mark on the current window and echoes the result."
+  (let ((id (current-frame-window)))
+    (when id
+      (if (member id %marked-windows)
+          (begin (set! %marked-windows (delete id %marked-windows))
+                 (echo (format #f "unmarked ~a" (window-title id))))
+          (begin (set! %marked-windows (cons id %marked-windows))
+                 (echo (format #f "marked ~a" (window-title id))))))))
+
+(define (clear-marks!)
+  (set! %marked-windows '())
+  (echo "marks cleared"))
+
+(define (pull-marked!)
+  "Pulls every marked window of the active group into the current frame
+and clears the marks."
+  (let ((here (filter (lambda (id) (member id (all-window-ids)))
+                      %marked-windows)))
+    (if (null? here)
+        (echo "no marked windows")
+        (begin
+          (for-each
+           (lambda (id)
+             (let ((f (frame-of-window id)))
+               (unless (eq? f %current-frame)
+                 (take-window-out! f id)
+                 (frame-add-window! %current-frame id))))
+           (reverse here))
+          (set! %marked-windows
+                (lset-difference equal? %marked-windows here))
+          (sync-frames!)))))
+
+;; ---------------------------------------------------------------------
 ;; Last-window / last-frame toggles (StumpWM other-window / fother)
 ;; ---------------------------------------------------------------------
 
@@ -1057,12 +1114,16 @@ input focus to the current frame's current window."
   (let ((g %active-group)
         (cur (current-frame-window)))
     (let ((shown (group-shown-window g)))
-      (when (and shown (not (equal? shown cur)))
-        (set-group-last-window! g shown)))
+      (unless (equal? shown cur)
+        (when shown (set-group-last-window! g shown))
+        (run-hook!* 'focus-window cur)))
     (set-group-shown-window! g cur)
     (let ((shownf (group-shown-frame g)))
-      (when (and shownf (not (eq? shownf %current-frame)))
-        (set-group-last-frame! g shownf)))
+      (unless (eq? shownf %current-frame)
+        (when shownf (set-group-last-frame! g shownf))
+        (run-hook!* 'focus-frame
+                    (frame-x %current-frame) (frame-y %current-frame)
+                    (frame-w %current-frame) (frame-h %current-frame))))
     (set-group-shown-frame! g %current-frame))
   (when %sync-hook (%sync-hook)))
 
@@ -1081,6 +1142,7 @@ input focus to the current frame's current window."
   (remember-window-title! id title app-id)
   (assign-window-number! id %frame-tree)
   (frame-add-window! %current-frame id)
+  (run-hook!* 'new-window id title app-id)
   (sync-frames!))
 
 (define (handle-window-unmap! id)

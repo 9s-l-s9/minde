@@ -15,6 +15,7 @@
 (define-module (minde groups)
   #:use-module (srfi srfi-1)
   #:use-module (ice-9 optargs)
+  #:use-module (minde hooks)
   #:use-module (minde frames)
   #:export (switch-to-group!
             gother!
@@ -25,7 +26,10 @@
             gprev!
             gnew!
             gnew-auto!
+            grename!
+            gkill!
             move-window-to-next-group!
+            gmove-and-follow!
             wm-on-window-map
             wm-on-window-unmap
             wm-on-output-geometry
@@ -98,6 +102,7 @@ or clearing focus)."
       (park-group-windows! (current-group))
       (activate-group! target)
       (sync-frames!)
+      (run-hook!* 'focus-group (group-name target))
       (echo (group-list-string)))))
 
 ;; The group that was current before the last switch (StumpWM gother).
@@ -165,6 +170,37 @@ or clearing focus)."
 %groups. Does not switch to it."
   (gnew! (string-append " " (integer->roman (+ 1 (length %groups))) " ")))
 
+(define (grename! name)
+  "Renames the current group (StumpWM grename). Group names are stored
+padded (\" I \"); NAME is padded the same way."
+  (unless (string-null? name)
+    (set-group-name! (current-group) (string-append " " (string-trim-both name) " "))
+    (echo (group-list-string))))
+
+(define (gkill!)
+  "Deletes the current group; its windows move to the previous (or next)
+group, which becomes current (StumpWM gkill). A no-op with one group."
+  (let ((g (current-group)) (n (length %groups)))
+    (when (> n 1)
+      (let* ((idx (current-group-index))
+             (fallback (list-ref %groups (modulo (+ idx 1) n)))
+             (ids (group-window-ids g)))
+        ;; Adopt the doomed group's windows into the fallback group's
+        ;; current frame (numbers re-uniquified there), parked off-screen
+        ;; until that group is shown.
+        (for-each
+         (lambda (id)
+           (remove-window-from-tree-in!
+            (if (eq? g (current-group)) (current-tree) (group-tree g)) id)
+           (hide-window! id)
+           (ensure-unique-window-number! id (group-tree fallback))
+           (frame-add-window! (group-current-frame fallback) id))
+         ids)
+        (switch-to-group! (group-name fallback))
+        (set! %groups (delq g %groups))
+        (when (eq? %last-group g) (set! %last-group #f))
+        (echo (group-list-string))))))
+
 ;; ---------------------------------------------------------------------
 ;; Moving windows between groups
 ;; ---------------------------------------------------------------------
@@ -227,6 +263,7 @@ group or the current frame has no window."
     (remember-window-title! id title app-id)
     (assign-window-number! id tree)
     (frame-add-window! leaf id)
+    (run-hook!* 'new-window id title app-id)
     (if active?
         (sync-frames!)
         (begin
@@ -266,6 +303,17 @@ group or the current frame has no window."
 
 (set-sync-hook! write-status!)
 
+(define (gmove-and-follow!)
+  "Moves the current window to the next group and switches there with it
+(StumpWM gmove-and-follow)."
+  (let ((idx (current-group-index)) (n (length %groups))
+        (id (current-frame-window)))
+    (when (and idx (> n 1) id)
+      (let ((next (list-ref %groups (modulo (+ idx 1) n))))
+        (move-window-to-next-group!)
+        (switch-to-group! (group-name next))
+        (focus-window-by-id! id)))))
+
 ;; ---------------------------------------------------------------------
 ;; Rust-facing hooks (looked up by name in (guile-user) -- see
 ;; frames.scm's rust-call comment for why these must be plain top-level
@@ -287,6 +335,7 @@ a sync since nothing hidden is on-screen)."
     (find (lambda (g) (remove-window-from-tree-in! (group-tree g) id)) %groups))
   (forget-window-title! id)
   (forget-window-number! id)
+  (run-hook!* 'destroy-window id)
   #t)
 
 (define (wm-on-output-geometry x y width height)

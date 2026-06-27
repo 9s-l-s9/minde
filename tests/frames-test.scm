@@ -314,6 +314,59 @@
 (only!)
 
 ;; ---------------------------------------------------------------------
+;; Hooks fire on map/focus; message hook + lastmsg ring.
+;; ---------------------------------------------------------------------
+
+(use-modules (minde hooks))
+
+(define %hook-events '())
+(define (record-event . args) (set! %hook-events (cons args %hook-events)))
+(add-hook!* 'new-window (lambda (id title app-id) (record-event 'new id)))
+(add-hook!* 'focus-window (lambda (id) (record-event 'focus id)))
+(add-hook!* 'message (lambda (text) (record-event 'msg text)))
+
+(handle-window-map! 20 "hooked" "app")
+(check-true "new-window hook fired" (member (list 'new 20) %hook-events))
+(check-true "focus-window hook fired" (member (list 'focus 20) %hook-events))
+
+;; A hook that throws must not break the event path.
+(add-hook!* 'message (lambda (text) (error "boom")))
+(echo "still alive")
+(check "echo survives a throwing hook" (last-message) "still alive")
+(check-true "message hook saw the echo" (member (list 'msg "still alive") %hook-events))
+
+;; ---------------------------------------------------------------------
+;; Marks: mark two windows elsewhere, pull them into the current frame.
+;; ---------------------------------------------------------------------
+
+(handle-window-map! 21 "m1" "a")
+(handle-window-map! 22 "m2" "b")
+(split-frame-vertical!)
+;; current frame (top) holds 20/21/22 with 22 shown; mark 22, cycle and
+;; mark 21, move to the empty bottom frame and pull both.
+(mark-window-toggle!)
+(focus-next-window-in-frame!)
+(check "cycled to another window" (current-frame-window) 20)
+(focus-next-window-in-frame!)
+(check "cycled to window 21" (current-frame-window) 21)
+(mark-window-toggle!)
+(check "two windows marked" (length (marked-windows)) 2)
+(focus-next-frame!)
+(pull-marked!)
+(check "marks cleared after pull" (marked-windows) '())
+(check-true "pulled window visible in the bottom frame"
+            (member (current-frame-window) (list 21 22)))
+(check "all windows still tracked" (frame-tree-window-count) 3)
+
+(mark-window-toggle!)
+(clear-marks!)
+(check "clear-marks! empties the set" (marked-windows) '())
+
+(remove-split!)
+(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+          (list 20 21 22))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

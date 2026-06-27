@@ -20,7 +20,8 @@
 (use-modules (minde frames)
              (minde groups)
              (minde input)
-             (minde layouts))
+             (minde layouts)
+             (minde hooks))
 
 ;; ---------------------------------------------------------------------
 ;; Keybinding table
@@ -56,12 +57,50 @@ modifier list MODS (e.g. '(super)) to THUNK, a zero-argument procedure run
 when the binding fires. Global binding, always active."
   (hash-set! %keybindings (cons (mods->bitmask mods) key) thunk))
 
-(define (bind-prefix-key! key thunk)
+;; keymap object -> (key -> one-line doc), fed by the optional doc
+;; argument of bind-prefix-key!; the ? which-key echo and describe-key
+;; read it.
+(define %binding-docs (make-hash-table))
+
+(define (set-binding-doc! keymap key doc)
+  (let ((tbl (or (hash-ref %binding-docs keymap)
+                 (let ((t (make-hash-table)))
+                   (hash-set! %binding-docs keymap t)
+                   t))))
+    (hash-set! tbl key doc)))
+
+(define (binding-doc keymap key)
+  (let ((tbl (hash-ref %binding-docs keymap)))
+    (and tbl (hash-ref tbl key))))
+
+(define* (bind-prefix-key! key thunk #:optional doc)
   "Bind KEY (e.g. \"s\", \"S\", \"c\") to THUNK, run when KEY is pressed
 right after the prefix key (C-t). THUNK may also be a keymap made with
 `make-keymap` (StumpWM-style nested map): the next keypress is then looked
-up in it."
-  (hash-set! %prefix-bindings key thunk))
+up in it. DOC, when given, is a one-line description shown by the ?
+which-key echo and describe-key."
+  (hash-set! %prefix-bindings key thunk)
+  (when doc (set-binding-doc! %prefix-bindings key doc)))
+
+(define (keymap-help-string km)
+  "The which-key text for KM: one 'key  doc' line per documented binding,
+then one line listing the undocumented keys."
+  (let ((documented '()) (bare '()))
+    (hash-for-each
+     (lambda (k v)
+       (let ((d (binding-doc km k)))
+         (if d
+             (set! documented (cons (cons k d) documented))
+             (set! bare (cons k bare)))))
+     km)
+    (string-join
+     (append
+      (map (lambda (p) (format #f "~a  ~a" (car p) (cdr p)))
+           (sort documented (lambda (a b) (string<? (car a) (car b)))))
+      (if (null? bare)
+          '()
+          (list (string-append "also: " (string-join (sort bare string<?) " ")))))
+     "\n")))
 
 (define (make-keymap . bindings)
   "Builds a nested keymap from KEY THUNK pairs, bindable under a prefix
@@ -138,6 +177,27 @@ MODS (possibly '())."
                  (if (logtest mods-bitmask 64) "s-" "")
                  keysym-name))
 
+;; When set, the next key press is described instead of dispatched
+;; (StumpWM describe-key); see the first branch of wm-handle-key.
+(define %describe-next-key #f)
+
+(define (describe-key!)
+  (echo "describe: press a key...")
+  (set! %describe-next-key
+        (lambda (mods name)
+          (let* ((spec (key-spec mods name))
+                 (binding (or (hash-ref %prefix-bindings spec)
+                              (hash-ref %prefix-bindings name)))
+                 (shown (if (hash-ref %prefix-bindings spec) spec name)))
+            (echo (cond
+                   ((hash-table? binding)
+                    (format #f "~a is a submap (prefix map)" shown))
+                   (binding
+                    (format #f "~a runs: ~a" shown
+                            (or (binding-doc %prefix-bindings shown) "a binding")))
+                   (else
+                    (format #f "~a is not bound in the prefix map" spec))))))))
+
 (define (wm-handle-key mods-bitmask keysym keysym-name . rest)
   "Called from Rust on every key press (4th argument: the UTF-8 text the
 key produces under the active keymap, empty for Return/BackSpace/...).
@@ -145,6 +205,13 @@ Returns #t if the key was consumed (and should not be forwarded to the
 focused client), #f otherwise."
   (define utf8 (if (pair? rest) (car rest) ""))
   (cond
+   ;; describe-key armed: report on the next real key instead of
+   ;; dispatching it.
+   ((and %describe-next-key (not (modifier-keysym? keysym-name)))
+    (let ((report %describe-next-key))
+      (set! %describe-next-key #f)
+      (report mods-bitmask keysym-name))
+    #t)
    ;; A native input prompt is open: it owns the keyboard.
    ((input-active?)
     (if (modifier-keysym? keysym-name)
@@ -171,6 +238,13 @@ focused client), #f otherwise."
         #f)
        ((modifier-keysym? keysym-name)
         #f) ; stay put; let the client see the modifier
+       ;; ? echoes the armed keymap's bindings (which-key) and stays
+       ;; armed, so you can look and then still press the key.
+       ((string=? keysym-name "question")
+        (let ((km %key-state))
+          (set-key-state! km)
+          (echo (keymap-help-string km)))
+        #t)
        (else
         ;; Modifier-prefixed spec ("M-Left") wins over the bare name, so
         ;; e.g. arrows and M-arrows can coexist in one keymap.
@@ -331,6 +405,81 @@ focused client), #f otherwise."
 (bind-prefix-key! "C-o" (lambda () (focus-prev-window-in-frame!)))
 
 ;; ---------------------------------------------------------------------
+;; Help, eval prompt, message history, marks, group management
+;; (StumpWM parity sprint 2)
+;; ---------------------------------------------------------------------
+
+;; While the prefix (or a submap) is armed, ? echoes its bindings and
+;; stays armed -- docs for the existing map so that's actually useful:
+(for-each
+ (lambda (p) (set-binding-doc! %prefix-bindings (car p) (cdr p)))
+ '(("Return" . "terminal") ("r" . "run program (prompt)")
+   ("b" . "browser") ("e" . "lem") ("E" . "emacsclient")
+   ("v" . "vsplit") ("h" . "hsplit") ("c" . "remove split")
+   ("n" . "next frame") ("f" . "next window (group)")
+   ("p" . "pull hidden window") ("o" . "next window in frame")
+   ("k" . "close window") ("d" . "close window")
+   ("g" . "next group") ("G" . "new group (prompt)")
+   ("m" . "move window to next group") ("y" . "window info")
+   ("l" . "windowlist (prompt)") ("a" . "ask AI (prompt)")
+   ("T" . "add TODO (prompt)") ("w" . "voice dictate")
+   ("i" . "eww widgets") ("A" . "agents submap") ("P" . "misc submap")
+   ("R" . "reload init.scm") ("L" . "lock screen") ("Q" . "quit (asks)")
+   ("s" . "resize mode") ("F" . "apply layout (prompt)")
+   ("Tab" . "last window") ("ISO_Left_Tab" . "last frame")
+   ("u" . "last group") ("W" . "window list echo")
+   ("C" . "only: collapse splits") ("Delete" . "fclear: empty frame")))
+
+;; F1: describe-key -- press it, then any key, get told what it does.
+(bind-prefix-key! "F1" (lambda () (describe-key!)) "describe next key")
+
+;; colon: eval a Scheme expression in the compositor (StumpWM's colon /
+;; eval-line rolled into one -- our commands ARE Scheme).
+(define (eval-prompt!)
+  (read-one-line "eval: "
+    (lambda (s)
+      (unless (string-null? s)
+        (catch #t
+          (lambda ()
+            (echo (format #f "~s" (eval (with-input-from-string s read)
+                                        (interaction-environment)))))
+          (lambda (key . args)
+            (echo (format #f "error: ~a ~s" key args))))))
+    #:history 'eval))
+(bind-prefix-key! "colon" (lambda () (eval-prompt!)) "eval scheme (prompt)")
+
+;; C-m: re-show the last message (StumpWM lastmsg).
+(bind-prefix-key! "C-m"
+  (lambda () (echo (or (last-message) "no messages")))
+  "last message again")
+
+;; Q now asks before quitting (StumpWM quit-confirm).
+(bind-prefix-key! "Q"
+  (lambda ()
+    (read-one-line "quit minde? (yes/n) "
+      (lambda (a) (when (member a '("y" "yes")) (wm-quit)))))
+  "quit (asks)")
+
+;; Marks: tag windows, then pull them all here at once. (Not on "t":
+;; that must stay free as the literal-forward escape for the default
+;; C-t prefix.)
+(bind-prefix-key! "x" (lambda () (mark-window-toggle!)) "mark/unmark window")
+(bind-prefix-key! "M-x" (lambda () (pull-marked!)) "pull marked windows here")
+(bind-prefix-key! "C-x" (lambda () (clear-marks!)) "clear marks")
+
+;; Group management: M-g select by name, M-m move-and-follow; grename /
+;; gkill live in the P submap (see below).
+(define (gselect!)
+  (read-one-line "group: "
+    (lambda (name)
+      (unless (string-null? name)
+        (switch-to-group! (string-append " " (string-trim-both name) " "))))
+    #:completions (lambda () (map string-trim-both (group-names)))
+    #:history 'group))
+(bind-prefix-key! "M-g" (lambda () (gselect!)) "switch group (prompt)")
+(bind-prefix-key! "M-m" (lambda () (gmove-and-follow!)) "move window + follow")
+
+;; ---------------------------------------------------------------------
 ;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
 ;; Arrows/hjkl move the nearest split divider by %resize-step pixels,
 ;; b/= balances all frames, Return/Escape leaves the mode. The mode works
@@ -466,6 +615,12 @@ focused client), #f otherwise."
                (save-layout! name)))
            #:completions layout-names
            #:history 'layout))
+   ;; r: rename the current group; k: delete it (windows move on).
+   "r" (lambda ()
+         (read-one-line "rename group: "
+           (lambda (name) (grename! name))
+           #:history 'group))
+   "k" (lambda () (gkill!))
    "w" (lambda ()
          (wm-spawn (string-append "pkill swaybg; " %wallpaper-cmd)))
    "a" (lambda ()

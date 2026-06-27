@@ -98,6 +98,17 @@ import -window root "$OUT/windows-echo.png"
 loggrep "error in keybinding" && fail "navigation keys errored (see log)"
 ok "navigation: arrows / Tab / 0 / W"
 
+# Sprint 2: which-key, describe-key, eval prompt, marks -- no errors.
+xdotool key Print; sleep 0.2; xdotool key question; sleep 0.3
+xdotool key Escape; sleep 0.2 # leave the armed prefix
+xdotool key Print; sleep 0.2; xdotool key F1; sleep 0.2; xdotool key v; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key colon; sleep 0.3
+xdotool type --delay 40 "(+ 1 2)"; sleep 0.2; xdotool key Return; sleep 0.5
+import -window root "$OUT/eval.png"
+xdotool key Print; sleep 0.2; xdotool key x; sleep 0.3
+loggrep "error in keybinding" && fail "sprint-2 keys errored (see log)"
+ok "which-key / describe-key / eval / marks"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

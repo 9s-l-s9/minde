@@ -75,8 +75,23 @@ Prefix map (see `scheme/init.scm`):
 | `S-`arrows | swap with neighbor frame | | `Tab` / `S-Tab` | last window / last frame |
 | `u` | last group (gother) | | `W` | numbered window list echo |
 | `C` | only (collapse splits) | | `Delete` | fclear (empty this frame) |
-| `C-f` `C-p` `C-n` `C-o` | reverse of f/p/n/o | | | |
-| `R` | reload init.scm | | `L` / `Q` | lock / quit |
+| `C-f` `C-p` `C-n` `C-o` | reverse of f/p/n/o | | `?` | which-key: list bindings |
+| `F1` | describe next key | | `colon` | eval Scheme (prompt) |
+| `C-m` | last message again | | `x` / `M-x` / `C-x` | mark / pull marked / clear |
+| `M-g` | switch group (prompt) | | `M-m` | move window + follow |
+| `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
+
+`?` works while the prefix or any submap is armed and keeps it armed.
+`Print P r` renames the current group, `Print P k` deletes it (its
+windows move to the next group).
+
+## Hooks
+
+`(minde hooks)` gives user configs StumpWM-style event hooks:
+`(add-hook!* 'focus-window (lambda (id) ...))`. Fired hooks:
+`new-window (id title app-id)`, `destroy-window (id)`, `focus-window
+(id-or-#f)`, `focus-frame (x y w h)`, `focus-group (name)`, `message
+(text)`. A throwing hook is logged and skipped, never fatal.
 
 Keymap keys accept StumpWM-style modifier prefixes: `C-` (ctrl), `M-`
 (alt), `S-` (shift), `s-` (super), e.g. `(bind-prefix-key! "M-Left" ...)`.
