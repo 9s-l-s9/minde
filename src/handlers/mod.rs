@@ -46,7 +46,27 @@ impl SeatHandler for MindeState {
 //
 
 impl SelectionHandler for MindeState {
-    type SelectionUserData = ();
+    /// Compositor-owned selections carry their text as user data
+    /// (`wm-set-clipboard`); client-owned selections never see this.
+    type SelectionUserData = String;
+
+    fn send_selection(
+        &mut self,
+        _ty: smithay::wayland::selection::SelectionTarget,
+        _mime_type: String,
+        fd: std::os::fd::OwnedFd,
+        _seat: Seat<Self>,
+        user_data: &Self::SelectionUserData,
+    ) {
+        // Write on a detached thread so a slow/stalled reader can't block
+        // the event loop.
+        let text = user_data.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut f = std::fs::File::from(fd);
+            let _ = f.write_all(text.as_bytes());
+        });
+    }
 }
 
 impl DataDeviceHandler for MindeState {
@@ -78,6 +98,42 @@ impl WaylandDndGrabHandler for MindeState {
                 // smallvil lacks touch handling
                 source.cancel();
             }
+        }
+    }
+}
+
+//
+// Xdg Activation (urgency)
+//
+
+use smithay::wayland::xdg_activation::{
+    XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
+};
+
+impl XdgActivationHandler for MindeState {
+    fn activation_state(&mut self) -> &mut XdgActivationState {
+        &mut self.xdg_activation_state
+    }
+
+    /// A client asked for a surface to be activated. We never grant focus
+    /// from here (focus stays Scheme-driven); instead this is surfaced as
+    /// StumpWM-style urgency via `(wm-on-urgent id)`.
+    fn request_activation(
+        &mut self,
+        token: XdgActivationToken,
+        _token_data: XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
+        self.xdg_activation_state.remove_token(&token);
+        let id = self
+            .windows
+            .iter()
+            .find(|(_, w)| {
+                w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+            })
+            .map(|(id, _)| *id);
+        if let Some(id) = id {
+            crate::guile::on_urgent(id);
         }
     }
 }

@@ -46,6 +46,22 @@ pub enum WmCommand {
     ClearMessage,
     /// Focus-border color (prefix-state indicator).
     BorderColor { rgba: [f32; 4] },
+    /// One-shot timer: after `ms`, call `(wm-on-timer token)` on the main
+    /// thread. The Scheme side keeps the token->thunk table.
+    RunAfter { ms: u64, token: i64 },
+    /// Set/unset xdg fullscreen state on a window; Scheme re-syncs frame
+    /// geometry itself when unsetting.
+    Fullscreen { id: u64, on: bool },
+    /// Force-kill: drop the window's client connection (StumpWM
+    /// kill-window, vs. the polite `Close`).
+    Kill { id: u64 },
+    /// Warp the pointer to a global logical position (banish/ratwarp).
+    WarpPointer { x: i32, y: i32 },
+    /// Read the current clipboard selection; delivers the text to Scheme
+    /// via `(wm-on-paste text)` when it arrives.
+    Paste,
+    /// Own the clipboard selection with this text (StumpWM putsel).
+    SetClipboard { text: String },
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -345,6 +361,42 @@ unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
     from_bool(send_command(WmCommand::FocusRect { x, y, w, h }))
 }
 
+/// `(wm-run-after-ms ms token)` -- see `wm-run-after` in init.scm for the
+/// thunk-keeping wrapper.
+unsafe extern "C" fn wm_run_after_ms(ms: Scm, token: Scm) -> Scm {
+    let ms = to_i64(ms).max(0) as u64;
+    let token = to_i64(token);
+    from_bool(send_command(WmCommand::RunAfter { ms, token }))
+}
+
+unsafe extern "C" fn wm_set_fullscreen(id: Scm, on: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    let on = to_bool(on);
+    from_bool(send_command(WmCommand::Fullscreen { id, on }))
+}
+
+unsafe extern "C" fn wm_kill_window(id: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    from_bool(send_command(WmCommand::Kill { id }))
+}
+
+unsafe extern "C" fn wm_warp_pointer(x: Scm, y: Scm) -> Scm {
+    let x = to_i64(x) as i32;
+    let y = to_i64(y) as i32;
+    from_bool(send_command(WmCommand::WarpPointer { x, y }))
+}
+
+unsafe extern "C" fn wm_request_paste() -> Scm {
+    from_bool(send_command(WmCommand::Paste))
+}
+
+unsafe extern "C" fn wm_set_clipboard(text: Scm) -> Scm {
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::SetClipboard { text }))
+}
+
 unsafe extern "C" fn wm_output_geometry() -> Scm {
     let x = OUTPUT_X.load(Ordering::SeqCst) as i64;
     let y = OUTPUT_Y.load(Ordering::SeqCst) as i64;
@@ -419,6 +471,28 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_output_geometry));
+        register_gsubr("wm-run-after-ms", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_run_after_ms));
+        register_gsubr("wm-set-fullscreen", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_set_fullscreen));
+        register_gsubr("wm-kill-window", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_kill_window));
+        register_gsubr("wm-warp-pointer", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_warp_pointer));
+        // Gsubr is exactly the zero-arg signature; no transmute needed.
+        register_gsubr("wm-request-paste", 0, 0, 0, wm_request_paste);
+        register_gsubr("wm-set-clipboard", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_set_clipboard));
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
@@ -497,6 +571,24 @@ pub fn on_output_geometry(x: i32, y: i32, width: u32, height: u32) {
         from_i64(width as i64),
         from_i64(height as i64),
     );
+}
+
+/// Calls `(wm-on-timer token)` if bound; fired by `WmCommand::RunAfter`'s
+/// calloop timer on the main (Guile) thread.
+pub fn on_timer(token: i64) {
+    call_named_1("wm-on-timer", from_i64(token));
+}
+
+/// Calls `(wm-on-paste text)` if bound, delivering clipboard contents
+/// requested via `wm-request-paste`.
+pub fn on_paste(text: &str) {
+    call_named_1("wm-on-paste", from_str(text));
+}
+
+/// Calls `(wm-on-urgent id)` if bound (xdg-activation request for a
+/// mapped toplevel; StumpWM urgency).
+pub fn on_urgent(id: u64) {
+    call_named_1("wm-on-urgent", from_i64(id as i64));
 }
 
 /// Calls `(wm-on-startup)` if bound, once the first output is up and

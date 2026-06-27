@@ -367,6 +367,49 @@
           (list 20 21 22))
 
 ;; ---------------------------------------------------------------------
+;; Sprint 3: fullscreen freeze, urgency bookkeeping
+;; ---------------------------------------------------------------------
+
+(define %fullscreen-calls '())
+(define (wm-set-fullscreen id on)
+  (set! %fullscreen-calls (cons (cons id on) %fullscreen-calls))
+  #t)
+
+(handle-window-map! 30 "term" "foot")
+(fullscreen!)
+(check "fullscreen! set window 30 fullscreen" (car %fullscreen-calls) '(30 . #t))
+(check "fullscreen-window records the id" (fullscreen-window) 30)
+;; While fullscreen, sync is frozen: mapping another window must not
+;; issue placements.
+(hash-clear! %placements)
+(handle-window-map! 31 "editor" "lem")
+(check "sync-frames! is a no-op while fullscreen" (hash-count (const #t) %placements) 0)
+(fullscreen!)
+(check "second fullscreen! unset it" (car %fullscreen-calls) '(30 . #f))
+(check "fullscreen flag cleared" (fullscreen-window) #f)
+(check-true "leaving fullscreen re-synced placements"
+            (> (hash-count (const #t) %placements) 0))
+;; Unmapping the fullscreen window clears the flag too.
+(fullscreen!)
+(clear-fullscreen-if-window! 31)
+(check "flag cleared when the fullscreen window unmaps" (fullscreen-window) #f)
+
+;; Urgency list: add, focus-clears, ordering.
+(add-urgent-window! 30)
+(add-urgent-window! 31)
+(check "urgent windows queue in order" (urgent-windows) '(30 31))
+(add-urgent-window! 30)
+(check "re-adding an urgent window does not duplicate" (urgent-windows) '(30 31))
+;; Focusing window 30 (via sync) clears its urgency.
+(focus-window-by-id! 30)
+(check "focusing a window clears its urgency" (urgent-windows) '(31))
+(clear-urgent! 31)
+(check "clear-urgent! empties the list" (urgent-windows) '())
+
+(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+          (list 30 31))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

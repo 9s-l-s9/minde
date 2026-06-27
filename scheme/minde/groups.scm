@@ -30,6 +30,7 @@
             gkill!
             move-window-to-next-group!
             gmove-and-follow!
+            next-urgent!
             wm-on-window-map
             wm-on-window-unmap
             wm-on-output-geometry
@@ -327,10 +328,29 @@ group or the current frame has no window."
         (place-by-rule! rule id title app-id)
         (handle-window-map! id title app-id))))
 
+(define (next-urgent!)
+  "Jumps to the oldest urgent window (StumpWM next-urgent), switching to
+its group if needed."
+  (let ((urgent (urgent-windows)))
+    (if (null? urgent)
+        (echo "No urgent windows")
+        (let* ((id (car urgent))
+               (g (find (lambda (g) (group-has-window? (group-name g) id))
+                        %groups)))
+          (clear-urgent! id)
+          (cond
+           ((not g) (next-urgent!)) ; window vanished meanwhile: try the next
+           (else
+            (unless (eq? g (current-group))
+              (switch-to-group! (group-name g)))
+            (focus-window-by-id! id)))))))
+
 (define (wm-on-window-unmap id)
   "Removes ID from whichever group's tree currently holds it -- the active
 group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen)."
+  (clear-fullscreen-if-window! id)
+  (clear-urgent! id)
   (unless (remove-window-from-active-tree! id)
     (find (lambda (g) (remove-window-from-tree-in! (group-tree g) id)) %groups))
   (forget-window-title! id)

@@ -109,6 +109,27 @@ xdotool key Print; sleep 0.2; xdotool key x; sleep 0.3
 loggrep "error in keybinding" && fail "sprint-2 keys errored (see log)"
 ok "which-key / describe-key / eval / marks"
 
+# Sprint 3: timer subr, fullscreen toggle, banish, frame flash, clipboard.
+scripts/minde-cmd '(wm-run-after 100 (lambda () (wm-log "e2e-timer-ok")))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-timer-ok" || fail "wm-run-after timer round-trip"
+xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
+xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
+xdotool key Print; sleep 0.2; xdotool key shift+b; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key ctrl+c; sleep 0.6
+loggrep "error in keybinding" && fail "sprint-3 keys errored (see log)"
+loggrep "error in timer" && fail "a timer thunk errored (see log)"
+# Clipboard: own the selection compositor-side, paste it into the eval
+# prompt with C-y, evaluate.
+scripts/minde-cmd '(set-clipboard! "(+ 2 3)")' >/dev/null 2>&1 || true
+sleep 0.5
+xdotool key Print; sleep 0.2; xdotool key colon; sleep 0.3
+xdotool key ctrl+y; sleep 0.5
+xdotool key Return; sleep 0.5
+import -window root "$OUT/paste.png"
+loggrep "error in keybinding" && fail "clipboard paste errored (see log)"
+ok "timer / fullscreen / banish / flash / clipboard paste"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

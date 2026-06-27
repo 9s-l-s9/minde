@@ -14,6 +14,7 @@
   #:export (read-one-line
             input-active?
             input-handle-key!
+            input-paste!
             input-abort!))
 
 ;; ---------------------------------------------------------------------
@@ -123,6 +124,17 @@ prefix matches). HISTORY names the history list (C-p/C-n)."
                 (else (let eat ((p p))
                         (if (and (> p 0) (word-char? (string-ref buf (- p 1))))
                             (eat (- p 1)) p))))))))
+
+(define (input-paste! text)
+  "Inserts TEXT (clipboard contents delivered async by Rust via
+wm-on-paste) at point. No-op if the prompt closed in the meantime;
+newlines collapse to spaces since the prompt is a single line."
+  (when (and %current text (not (string-null? text)))
+    (insert! (string-map (lambda (c) (if (or (eqv? c #\newline)
+                                             (eqv? c #\return))
+                                         #\space c))
+                         text))
+    (redraw!)))
 
 (define (kill-region! start end)
   (let* ((i %current) (buf (in-buffer i)))
@@ -244,6 +256,14 @@ prefix matches). HISTORY names the history list (C-p/C-n)."
       (set-in-cursor! i 0) (redraw!))
      ((or (string=? keysym-name "End") (equal? key "C-e"))
       (set-in-cursor! i (string-length buf)) (redraw!))
+     ;; Clipboard: C-y (StumpWM/Emacs yank) or C-v requests the current
+     ;; selection from Rust; the text arrives asynchronously via
+     ;; wm-on-paste -> input-paste!. M-w copies the buffer.
+     ((or (equal? key "C-y") (equal? key "C-v"))
+      (rust-call 'wm-request-paste))
+     ((equal? meta-key "M-w")
+      (rust-call 'wm-set-clipboard buf)
+      (redraw!))
      ((equal? key "C-k") (kill-region! pos (string-length buf)) (redraw!))
      ((equal? key "C-u") (kill-region! 0 pos) (redraw!))
      ((or (string=? keysym-name "Up") (equal? key "C-p")) (history-move! 1) (redraw!))

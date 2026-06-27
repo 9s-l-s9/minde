@@ -20,6 +20,10 @@
 (define (wm-output-geometry) (list 0 0 1280 720))
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 (define (wm-clear-message) (set! %cleared (+ %cleared 1)) #t)
+(define %paste-requests 0)
+(define (wm-request-paste) (set! %paste-requests (+ %paste-requests 1)) #t)
+(define %clipboard #f)
+(define (wm-set-clipboard text) (set! %clipboard text) #t)
 
 (fluid-set! %file-port-name-canonicalization 'absolute)
 (primitive-load (canonicalize-path
@@ -114,6 +118,31 @@
 (read-one-line "x: " (lambda (s) #f) #:on-abort (lambda () (set! %aborted #t)))
 (ckey "g")
 (check-true "C-g abort callback" %aborted)
+
+;; ---------------------------------------------------------------------
+;; Clipboard: C-y/C-v request a paste, wm-on-paste inserts at point,
+;; M-w copies the buffer.
+;; ---------------------------------------------------------------------
+
+(define %submitted2 #f)
+(read-one-line "p: " (lambda (s) (set! %submitted2 s)))
+(key "a" "a")
+(ckey "y")
+(check "C-y requested a paste" %paste-requests 1)
+(wm-handle-key ctrl #f "v" "")
+(check "C-v requested a paste too" %paste-requests 2)
+(wm-on-paste "XY\nZ")
+(check "paste inserted at point, newline collapsed" (car %messages) "p: aXY Z|")
+(key "Left" "")
+(wm-on-paste "-")
+(check "paste lands at the cursor" (car %messages) "p: aXY -|Z")
+(wm-handle-key 8 #f "w" "")
+(check "M-w copied the buffer" %clipboard "aXY -Z")
+(key "Return" "")
+(check "buffer with pasted text submitted" %submitted2 "aXY -Z")
+;; A paste arriving after the prompt closed is a silent no-op.
+(wm-on-paste "late")
+(check-true "late paste ignored" (not (input-active?)))
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

@@ -79,6 +79,9 @@ Prefix map (see `scheme/init.scm`):
 | `F1` | describe next key | | `colon` | eval Scheme (prompt) |
 | `C-m` | last message again | | `x` / `M-x` / `C-x` | mark / pull marked / clear |
 | `M-g` | switch group (prompt) | | `M-m` | move window + follow |
+| `M-f` | fullscreen toggle | | `K` | kill window (force, drops client) |
+| `B` | banish pointer | | `C-c` | flash current frame |
+| `C-u` | jump to urgent window | | `M-c` | copy last message |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
 `?` works while the prefix or any submap is armed and keeps it armed.
@@ -152,7 +155,8 @@ current frame's window when they close.
 keys (StumpWM `*input-map*` subset): BackSpace, `C-d`/Delete, `C-f`/`C-b`
 (Right/Left), `M-f`/`M-b` (words), `C-a`/`C-e` (Home/End), `C-k`, `C-u`,
 `M-d`/`M-BackSpace` (kill words), `C-p`/`C-n` (Up/Down: history), TAB /
-Shift-TAB (prefix-completion cycle), RET submit, `C-g`/ESC abort. Known
+Shift-TAB (prefix-completion cycle), `C-y`/`C-v` (paste the clipboard),
+`M-w` (copy the buffer), RET submit, `C-g`/ESC abort. Known
 limitation: no key auto-repeat inside the prompt (Wayland repeat is
 client-side). While the prefix key is armed, the focus border turns red
 (`wm-border-color`, colors configurable in init.scm).

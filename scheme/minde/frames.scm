@@ -47,6 +47,16 @@
             repack-window-numbers!
             echo-windows-string
             last-message
+            fullscreen!
+            fullscreen-window
+            clear-fullscreen-if-window!
+            kill-current-window!
+            ratwarp!
+            banish!
+            current-frame-rect
+            urgent-windows
+            add-urgent-window!
+            clear-urgent!
             mark-window-toggle!
             marked-windows
             clear-marks!
@@ -1080,7 +1090,7 @@ and re-syncs the active group."
 (define %sync-hook #f)
 (define (set-sync-hook! proc) (set! %sync-hook proc))
 
-(define (sync-frames!)
+(define (sync-frames-now!)
   "Walks the frame tree, placing each frame's current window at its frame's
 pixel geometry, moving every other (hidden) window off-screen, and setting
 input focus to the current frame's current window."
@@ -1113,6 +1123,7 @@ input focus to the current frame's current window."
   ;; "last" the moment something else is shown.
   (let ((g %active-group)
         (cur (current-frame-window)))
+    (when cur (clear-urgent! cur))
     (let ((shown (group-shown-window g)))
       (unless (equal? shown cur)
         (when shown (set-group-last-window! g shown))
@@ -1126,6 +1137,86 @@ input focus to the current frame's current window."
                     (frame-w %current-frame) (frame-h %current-frame))))
     (set-group-shown-frame! g %current-frame))
   (when %sync-hook (%sync-hook)))
+
+(define (sync-frames!)
+  "Like sync-frames-now!, but a no-op while a fullscreen window is active,
+so incidental re-syncs (hooks, geometry echoes) don't fight the
+fullscreen geometry. Leaving fullscreen clears the flag first and then
+syncs, restoring the frame layout."
+  (unless %fullscreen-window
+    (sync-frames-now!)))
+
+;; ---------------------------------------------------------------------
+;; Fullscreen, force kill, pointer control, urgency (sprint 3)
+;; ---------------------------------------------------------------------
+
+;; Window id currently fullscreen, or #f. Only ever one at a time.
+(define %fullscreen-window #f)
+
+(define (fullscreen-window) %fullscreen-window)
+
+(define (fullscreen!)
+  "Toggles fullscreen on the current window (StumpWM fullscreen). While
+active the frame layout is frozen; toggling off re-syncs it."
+  (if %fullscreen-window
+      (begin
+        (rust-call 'wm-set-fullscreen %fullscreen-window #f)
+        (set! %fullscreen-window #f)
+        (sync-frames!))
+      (let ((id (current-frame-window)))
+        (if id
+            (begin
+              (set! %fullscreen-window id)
+              (rust-call 'wm-set-fullscreen id #t))
+            (echo "No window to fullscreen")))))
+
+(define (clear-fullscreen-if-window! id)
+  "Drops the fullscreen flag if ID owns it (window unmapped) and re-syncs."
+  (when (equal? %fullscreen-window id)
+    (set! %fullscreen-window #f)
+    (sync-frames!)))
+
+(define (kill-current-window!)
+  "Force-kills the current window's client connection (StumpWM
+kill-window) -- vs. close-current-window!'s polite xdg close."
+  (let ((id (current-frame-window)))
+    (if id
+        (rust-call 'wm-kill-window id)
+        (echo "No window to kill"))))
+
+(define (ratwarp! x y)
+  "Warps the pointer to global position X Y (StumpWM ratwarp)."
+  (rust-call 'wm-warp-pointer x y))
+
+(define (banish!)
+  "Warps the pointer to the bottom-right corner of the usable area
+(StumpWM banish)."
+  (ratwarp! (- (+ %last-output-x %last-output-w) 2)
+            (- (+ %last-output-y %last-output-h) 2)))
+
+(define (current-frame-rect)
+  "The current frame's (x y w h), for the frame-flash indicator."
+  (list (frame-x %current-frame) (frame-y %current-frame)
+        (frame-w %current-frame) (frame-h %current-frame)))
+
+;; Urgent windows (xdg-activation requests), oldest first. Focusing a
+;; window clears it (see sync-frames-now!); next-urgent! lives in
+;; (minde groups) since the window may be parked in a hidden group.
+(define %urgent-windows '())
+
+(define (urgent-windows) %urgent-windows)
+
+(define (add-urgent-window! id)
+  "Records ID as urgent, fires the 'urgent-window hook, and echoes it.
+Called from Rust as (wm-on-urgent id) via init.scm."
+  (unless (member id %urgent-windows)
+    (set! %urgent-windows (append %urgent-windows (list id))))
+  (run-hook!* 'urgent-window id)
+  (echo (string-append "Urgent: " (or (window-title id)
+                                      (number->string id)))))
+
+(define (clear-urgent! id)
+  (set! %urgent-windows (delete id %urgent-windows)))
 
 ;; ---------------------------------------------------------------------
 ;; Event hooks

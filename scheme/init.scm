@@ -480,6 +480,78 @@ focused client), #f otherwise."
 (bind-prefix-key! "M-m" (lambda () (gmove-and-follow!)) "move window + follow")
 
 ;; ---------------------------------------------------------------------
+;; Timers, fullscreen, force kill, banish, urgency, clipboard
+;; (StumpWM parity sprint 3)
+;; ---------------------------------------------------------------------
+
+;; One-shot timers: Rust arms a calloop timer and calls (wm-on-timer
+;; token) back on the main thread; the token->thunk table lives here.
+(define %timers (make-hash-table))
+(define %next-timer-token 0)
+
+(define (wm-run-after ms thunk)
+  "Runs THUNK after MS milliseconds on the compositor's main thread
+(StumpWM run-with-timer, one-shot)."
+  (let ((token %next-timer-token))
+    (set! %next-timer-token (+ token 1))
+    (hash-set! %timers token thunk)
+    ;; Tolerate a binary older than this config (subr not registered).
+    (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+           (var (and mod (module-variable mod 'wm-run-after-ms))))
+      (if var
+          ((variable-ref var) ms token)
+          (hash-remove! %timers token)))))
+
+(define (wm-on-timer token)
+  (let ((thunk (hash-ref %timers token)))
+    (hash-remove! %timers token)
+    (when thunk
+      (catch #t
+        thunk
+        (lambda (key . args)
+          (wm-log (format #f "error in timer: ~a ~a" key args)))))))
+
+;; Fullscreen / force kill / banish (see (minde frames)).
+(bind-prefix-key! "M-f" (lambda () (fullscreen!)) "fullscreen toggle")
+(bind-prefix-key! "K" (lambda () (kill-current-window!)) "kill window (force)")
+(bind-prefix-key! "B" (lambda () (banish!)) "banish pointer")
+
+;; Frame indicator (StumpWM curframe): echo the frame geometry and pulse
+;; the focus border bright for a moment.
+(define (flash-current-frame!)
+  (let ((r (current-frame-rect)))
+    (echo (format #f "current frame: ~ax~a at ~a,~a"
+                  (caddr r) (cadddr r) (car r) (cadr r))))
+  (set-border-color! "#fabd2f")
+  ;; set-key-state! re-derives the correct color for whatever state the
+  ;; key machine is in by then.
+  (wm-run-after 400 (lambda () (set-key-state! %key-state))))
+(bind-prefix-key! "C-c" (lambda () (flash-current-frame!)) "flash current frame")
+
+;; Urgency: Rust calls (wm-on-urgent id) on xdg-activation requests.
+(define (wm-on-urgent id) (add-urgent-window! id))
+(bind-prefix-key! "C-u" (lambda () (next-urgent!)) "jump to urgent window")
+
+;; Clipboard. Paste is asynchronous: wm-request-paste (fired from the
+;; prompt's C-y/C-v) makes Rust read the selection and call (wm-on-paste
+;; text) when it has arrived; route it into the active prompt.
+(define (wm-on-paste text)
+  (if (and (string? text) (string-null? text))
+      (when (input-active?) (echo "clipboard empty"))
+      (input-paste! text)))
+
+(define (set-clipboard! text)
+  "Owns the clipboard selection with TEXT (StumpWM putsel)."
+  (wm-set-clipboard text))
+
+(define (copy-last-message!)
+  (let ((m (last-message)))
+    (if m
+        (begin (set-clipboard! m) (echo "copied last message"))
+        (echo "no messages"))))
+(bind-prefix-key! "M-c" (lambda () (copy-last-message!)) "copy last message")
+
+;; ---------------------------------------------------------------------
 ;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
 ;; Arrows/hjkl move the nearest split divider by %resize-step pixels,
 ;; b/= balances all frames, Return/Escape leaves the mode. The mode works

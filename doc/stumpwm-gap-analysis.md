@@ -54,13 +54,13 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 
 | Feature | StumpWM | Rust work |
 |---|---|---|
-| **Fullscreen** | `fullscreen` | set xdg fullscreen state + render above layout (state.rs place path). |
-| **Force kill** | `kill-window` | close is polite `xdg close`; kill = drop the client connection. |
-| **Pointer control** | `banish`, `ratwarp`, `ratclick` | pointer warp via seat; banish = warp to corner. StumpWM users hit `banish` a lot. |
-| **Urgency** | `next-urgent`, `*urgent-window-hook*` | xdg-activation protocol → hook + echo. |
+| **Fullscreen** | `fullscreen` | ✅ sprint 3: `fullscreen!` (Print M-f), layout frozen while active. |
+| **Force kill** | `kill-window` | ✅ sprint 3: `kill-current-window!` (Print K) drops the client connection. |
+| **Pointer control** | `banish`, `ratwarp`, `ratclick` | ✅ sprint 3: `banish!` (Print B) + `ratwarp!` (ratclick still ❌). |
+| **Urgency** | `next-urgent`, `*urgent-window-hook*` | ✅ sprint 3: xdg-activation → 'urgent-window hook + `next-urgent!` (Print C-u). |
 | **Send string to window** | `window-send-string` | synthesize keyboard events to the focused surface. |
 | **Always on top** | `toggle-always-on-top` | render order tweak. |
-| **Frame indicator** | `curframe`, `*suppress-frame-indicator*` | flash a rect overlay (we have border infra; a timed full-frame flash needs a small render addition or can reuse wm-message placement). Could be done Scheme-side with border color pulse. |
+| **Frame indicator** | `curframe`, `*suppress-frame-indicator*` | ✅ sprint 3: `flash-current-frame!` (Print C-c) border pulse + geometry echo. |
 
 ## Missing — major projects (probably post-1.0 or explicit 1.0 goals)
 
@@ -71,9 +71,9 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **Dynamic groups** (master/stack, i3-ish) | `gnew-dynamic`, `rotate-windows`, `exchange-with-master`, ... | StumpWM ships it, but it's a separate paradigm; layouts cover much of the need. Post-1.0. |
 | **Key remapping per app** | `define-remapped-keys` (e.g. C-n→Down in browser) | Requires rewriting forwarded keys per focused app-id in input.rs. Medium Rust. |
 | **Xwayland** | (implicit in X11) | Not a StumpWM feature per se, but the biggest real-world app gap (X-only emacs, etc.). Smithay has xwayland support at the pinned rev. |
-| **Selection/clipboard commands** | `putsel`, `getsel` | wl-clipboard covers it externally (`P a` already uses it). 🚫 probably fine to exclude. |
+| **Selection/clipboard commands** | `putsel`, `getsel` | ✅ sprint 3: `set-clipboard!` (putsel), prompt paste C-y/C-v + copy M-w, `copy-last-message!` (Print M-c). |
 | **Menus (select-from-menu)** | multi-line navigable menu with j/k/search | Our prompt is single-line with inline completion cycling; a list-rendered menu needs multi-line message layout (message area already wraps; mostly Scheme + formatting). |
-| **Timers** | `run-with-timer`, `idle-hook` | needs a calloop-backed timer subr (wm-run-after ms thunk); useful for which-key and frame indicator too. |
+| **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer (idle-hook still ❌). |
 | **Minor modes / modules ecosystem** | `load-module`, minor-modes | Guile modules already load from user config dir; formal minor-mode machinery unnecessary for 1.0. |
 
 ## Suggested 1.0.0 scope

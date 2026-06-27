@@ -49,6 +49,7 @@ pub struct MindeState {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
+    pub xdg_activation_state: smithay::wayland::xdg_activation::XdgActivationState,
     pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
     pub popups: PopupManager,
 
@@ -110,6 +111,8 @@ impl MindeState {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let xdg_decoration_state =
             smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
+        let xdg_activation_state =
+            smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(&dh);
         let layer_shell_state =
             smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
 
@@ -160,6 +163,7 @@ impl MindeState {
             seat_state,
             data_device_state,
             xdg_decoration_state,
+            xdg_activation_state,
             layer_shell_state,
             popups,
             seat,
@@ -328,6 +332,151 @@ impl MindeState {
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_close();
                 }
+            }
+            WmCommand::RunAfter { ms, token } => {
+                let timer = smithay::reexports::calloop::timer::Timer::from_duration(
+                    std::time::Duration::from_millis(ms),
+                );
+                let _ = self.handle.insert_source(timer, move |_, _, _| {
+                    guile::on_timer(token);
+                    smithay::reexports::calloop::timer::TimeoutAction::Drop
+                });
+            }
+            WmCommand::Fullscreen { id, on } => {
+                let Some(window) = self.window_by_id(id) else {
+                    tracing::warn!(id, "wm-set-fullscreen: unknown window id");
+                    return;
+                };
+                let Some(toplevel) = window.toplevel() else {
+                    return;
+                };
+                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+                if on {
+                    // Full output geometry, not the usable area: fullscreen
+                    // covers reserved bar space (though Top-layer surfaces
+                    // still render above; documented limitation).
+                    let geo = self
+                        .space
+                        .outputs()
+                        .next()
+                        .and_then(|o| self.space.output_geometry(o))
+                        .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()));
+                    toplevel.with_pending_state(|state| {
+                        state.states.set(XdgState::Fullscreen);
+                        state.size = Some(geo.size);
+                    });
+                    toplevel.send_pending_configure();
+                    self.space.map_element(window.clone(), geo.loc, false);
+                    self.space.raise_element(&window, true);
+                } else {
+                    // Scheme re-syncs the frame geometry right after.
+                    toplevel.with_pending_state(|state| {
+                        state.states.unset(XdgState::Fullscreen);
+                    });
+                    toplevel.send_pending_configure();
+                }
+            }
+            WmCommand::Kill { id } => {
+                let Some(window) = self.window_by_id(id) else {
+                    tracing::warn!(id, "wm-kill-window: unknown window id");
+                    return;
+                };
+                if let Some(toplevel) = window.toplevel() {
+                    use smithay::reexports::wayland_server::Resource;
+                    if let Ok(client) = self.display_handle.get_client(toplevel.wl_surface().id()) {
+                        tracing::info!(id, "wm-kill-window: dropping client connection");
+                        self.display_handle
+                            .backend_handle()
+                            .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+                    }
+                }
+            }
+            WmCommand::WarpPointer { x, y } => {
+                let pos = self.clamp_to_outputs((x as f64, y as f64).into());
+                self.pointer_location = pos;
+                let under = self.surface_under(pos);
+                if let Some(pointer) = self.seat.get_pointer() {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let time = self.start_time.elapsed().as_millis() as u32;
+                    pointer.motion(
+                        self,
+                        under,
+                        &smithay::input::pointer::MotionEvent { location: pos, serial, time },
+                    );
+                    pointer.frame(self);
+                }
+            }
+            WmCommand::Paste => self.request_paste(),
+            WmCommand::SetClipboard { text } => {
+                smithay::wayland::selection::data_device::set_data_device_selection(
+                    &self.display_handle,
+                    &self.seat,
+                    vec![
+                        "text/plain;charset=utf-8".to_string(),
+                        "text/plain".to_string(),
+                        "UTF8_STRING".to_string(),
+                    ],
+                    text,
+                );
+            }
+        }
+    }
+
+    /// Reads the current clipboard selection and delivers it to Scheme via
+    /// `(wm-on-paste text)`. A client-owned selection is piped through a
+    /// calloop source (never blocking the loop); a compositor-owned one
+    /// short-circuits to its stored text.
+    fn request_paste(&mut self) {
+        use smithay::reexports::rustix;
+        use smithay::wayland::selection::data_device::{
+            SelectionRequestError, current_data_device_selection_userdata,
+            request_data_device_client_selection,
+        };
+
+        let (read_fd, write_fd) = match rustix::pipe::pipe() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(%e, "wm-request-paste: pipe failed");
+                return;
+            }
+        };
+        match request_data_device_client_selection(
+            &self.seat,
+            "text/plain;charset=utf-8".to_string(),
+            write_fd,
+        ) {
+            Ok(()) => {
+                let mut acc: Vec<u8> = Vec::new();
+                let source = Generic::new(read_fd, Interest::READ, Mode::Level);
+                let _ = self.handle.insert_source(source, move |_, fd, _| {
+                    let mut buf = [0u8; 4096];
+                    match rustix::io::read(&**fd, &mut buf) {
+                        Ok(n) if n > 0 => {
+                            // Cap pastes at 64 KiB; the prompt is one line.
+                            if acc.len() < 64 * 1024 {
+                                acc.extend_from_slice(&buf[..n]);
+                            }
+                            Ok(PostAction::Continue)
+                        }
+                        _ => {
+                            let text = String::from_utf8_lossy(&acc).into_owned();
+                            guile::on_paste(&text);
+                            Ok(PostAction::Remove)
+                        }
+                    }
+                });
+            }
+            Err(SelectionRequestError::ServerSideSelection) => {
+                // We own the clipboard; its text is the selection user data.
+                let text =
+                    current_data_device_selection_userdata(&self.seat).map(|t| t.clone());
+                if let Some(text) = text {
+                    guile::on_paste(&text);
+                }
+            }
+            Err(e) => {
+                tracing::info!(%e, "wm-request-paste: no usable selection");
+                guile::on_paste("");
             }
         }
     }

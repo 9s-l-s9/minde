@@ -26,6 +26,21 @@
 (define (wm-output-geometry) (list 0 0 1280 720))
 (define %messages '())
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
+;; Sprint-3 subrs (recording fakes).
+(define %timer-calls '())
+(define (wm-run-after-ms ms token)
+  (set! %timer-calls (cons (cons ms token) %timer-calls)) #t)
+(define %fullscreen-calls '())
+(define (wm-set-fullscreen id on) (set! %fullscreen-calls (cons (cons id on) %fullscreen-calls)) #t)
+(define %killed '())
+(define (wm-kill-window id) (set! %killed (cons id %killed)) #t)
+(define %warps '())
+(define (wm-warp-pointer x y) (set! %warps (cons (cons x y) %warps)) #t)
+(define %paste-requests 0)
+(define (wm-request-paste) (set! %paste-requests (+ %paste-requests 1)) #t)
+(define %clipboard #f)
+(define (wm-set-clipboard text) (set! %clipboard text) #t)
+(define (wm-border-color hex) #t)
 
 ;; Load init.scm by its full canonical path. init.scm's own top-level code
 ;; calls (current-filename) (to find scheme/ for add-to-load-path), which
@@ -260,6 +275,88 @@
 (check "x (mark) consumed" (wm-handle-key 0 #f "x") #t)
 (wm-handle-key ctrl-bit #f "t")
 (check "M-x (pull-marked) consumed" (wm-handle-key 8 #f "x") #t)
+
+;; ---------------------------------------------------------------------
+;; Sprint 3: timers, fullscreen, kill, banish, flash, urgency, clipboard.
+;; ---------------------------------------------------------------------
+
+;; wm-run-after stores a thunk that wm-on-timer runs.
+(define %fired #f)
+(wm-run-after 5 (lambda () (set! %fired #t)))
+(check-true "wm-run-after armed the Rust timer" (pair? %timer-calls))
+(wm-on-timer (cdar %timer-calls))
+(check "wm-on-timer ran the stored thunk" %fired #t)
+;; A throwing thunk must not propagate.
+(wm-run-after 5 (lambda () (error "boom")))
+(check "a throwing timer thunk is caught"
+       (begin (wm-on-timer (cdar %timer-calls)) #t)
+       #t)
+
+;; Map a window so fullscreen/kill have a target.
+(wm-on-window-map 1 "term" "foot")
+
+(wm-handle-key ctrl-bit #f "t")
+(check "M-f (fullscreen) consumed" (wm-handle-key 8 #f "f") #t)
+(check "fullscreen set on window 1" (car %fullscreen-calls) '(1 . #t))
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 8 #f "f")
+(check "second M-f toggles fullscreen off" (car %fullscreen-calls) '(1 . #f))
+
+(wm-handle-key ctrl-bit #f "t")
+(check "K (force kill) consumed" (wm-handle-key 1 #f "K") #t)
+(check "kill targeted window 1" %killed '(1))
+
+(wm-handle-key ctrl-bit #f "t")
+(check "B (banish) consumed" (wm-handle-key 1 #f "B") #t)
+(check-true "banish warped the pointer" (pair? %warps))
+
+(set! %timer-calls '())
+(wm-handle-key ctrl-bit #f "t")
+(check "C-c (flash frame) consumed" (wm-handle-key 4 #f "c") #t)
+(check-true "flash armed a restore timer" (pair? %timer-calls))
+(check "flash restore timer runs without error"
+       (begin (wm-on-timer (cdar %timer-calls)) #t)
+       #t)
+
+;; Urgency: wm-on-urgent echoes and C-u jumps.
+(set! %messages '())
+(wm-on-urgent 1)
+(check-true "urgent window echoed"
+            (and (pair? %messages) (string-contains (car %messages) "Urgent")))
+(wm-handle-key ctrl-bit #f "t")
+(check "C-u (next-urgent) consumed" (wm-handle-key 4 #f "u") #t)
+(wm-handle-key ctrl-bit #f "t")
+(set! %messages '())
+(wm-handle-key 4 #f "u")
+(check-true "second C-u reports no urgent windows"
+            (and (pair? %messages)
+                 (string-contains (car %messages) "No urgent")))
+
+;; Clipboard: paste routes into the open prompt; C-y requests, M-w copies.
+(set! %messages '())
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "colon")
+(wm-on-paste "(+ 1 2)")
+(wm-handle-key 0 #f "Return" "")
+(check-true "pasted expression evaluated to 3"
+            (find (lambda (m) (string-contains m "3")) %messages))
+
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "colon")
+(for-each (lambda (c) (wm-handle-key 0 #f (string c) (string c)))
+          (string->list "abc"))
+(check "C-y in the prompt is consumed" (wm-handle-key 4 #f "y" "") #t)
+(check "C-y requested a paste" %paste-requests 1)
+(check "M-w in the prompt is consumed" (wm-handle-key 8 #f "w" "") #t)
+(check "M-w copied the prompt buffer" %clipboard "abc")
+(wm-handle-key 0 #f "Escape" "")
+
+;; M-c: copy the last message.
+(echo "hello from the message ring")
+(wm-handle-key ctrl-bit #f "t")
+(check "M-c (copy last message) consumed" (wm-handle-key 8 #f "c") #t)
+(check "M-c put the last message on the clipboard"
+       %clipboard "hello from the message ring")
 
 ;; ---------------------------------------------------------------------
 
