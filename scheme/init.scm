@@ -384,6 +384,16 @@ focused client), #f otherwise."
    "o" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/open-code-guix.scm"))
    "p" (lambda () (wm-spawn "alacritty -e ~/Projects/System/scripts/pi-guix.scm"))))
 
+;; Random wallpaper via swaybg. Picks only files whose magic bytes say
+;; real PNG/JPEG: mixed folders often hold webp-named-.png, READMEs,
+;; videos... and one bad pick makes swaybg exit with no wallpaper at all.
+(define %wallpaper-cmd
+  (string-append
+   "img=$(for f in ~/Projects/images/*; do "
+   "case \"$(head -c 4 \"$f\" 2>/dev/null | od -An -tx1 | tr -d ' \\n')\" in "
+   "89504e47|ffd8ff*) echo \"$f\";; esac; done | shuf -n1); "
+   "[ -n \"$img\" ] && swaybg -m fill -i \"$img\""))
+
 ;; P: misc submap, like StumpWM's *misc-map*. Wayland substitutions:
 ;; swaybg for feh (wallpaper), wl-paste/wl-copy for xsel (clipboard).
 (bind-prefix-key! "P"
@@ -397,7 +407,7 @@ focused client), #f otherwise."
            #:completions layout-names
            #:history 'layout))
    "w" (lambda ()
-         (wm-spawn "pkill swaybg; swaybg -m fill -i \"$(ls ~/Projects/images/* | shuf -n1)\""))
+         (wm-spawn (string-append "pkill swaybg; " %wallpaper-cmd)))
    "a" (lambda ()
          (wm-spawn "sel=$(wl-paste); [ -n \"$sel\" ] && ASK_AI_SYSTEM='You are a copy editor. Improve grammar, clarity and flow. Keep the meaning and the original language. Output only the revised text.' ~/Projects/System/scripts/ask-ai.scm \"$sel\" | wl-copy && minde-msg 'clipboard updated'"))))
 
