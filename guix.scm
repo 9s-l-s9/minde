@@ -24,6 +24,7 @@
              (gnu packages admin)
              (gnu packages freedesktop)
              (gnu packages xdisorg)
+             (gnu packages xorg)
              (gnu packages gl)
              (gnu packages linux)
              (gnu packages bash))
@@ -176,6 +177,10 @@ Type=Application
          libseat
          mesa
          libglvnd))
+  ;; smithay execs "Xwayland" from PATH at runtime; propagation puts it
+  ;; into the same profile as minde (system profile via SDDM).
+  (propagated-inputs
+   (list xorg-server-xwayland))
   (home-page "https://github.com/s-l-s/minde")
   (synopsis "StumpWM-style Wayland compositor scripted in Guile Scheme")
   (description

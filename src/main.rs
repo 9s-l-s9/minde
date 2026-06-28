@@ -80,6 +80,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Embedded Xwayland: spawns lazily-managed X server; X11 apps become
+    // ordinary managed windows (src/handlers/xwayland.rs). Safe after
+    // backend init (needs the loop handle + display only).
+    state.start_xwayland();
+
     // Set WAYLAND_DISPLAY to our socket name so child processes (spawned
     // via `wm-spawn`) connect to us. This must happen only AFTER the
     // backend has been picked: if winit sees this variable, it opens our

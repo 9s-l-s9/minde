@@ -1,3 +1,4 @@
+use smithay::wayland::seat::WaylandFocus;
 use std::{ffi::OsString, sync::Arc};
 
 use smithay::{
@@ -50,6 +51,11 @@ pub struct MindeState {
     pub data_device_state: DataDeviceState,
     pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
     pub xdg_activation_state: smithay::wayland::xdg_activation::XdgActivationState,
+    pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+    /// The X11 window manager connection, once Xwayland is up.
+    pub xwm: Option<smithay::xwayland::X11Wm>,
+    /// The X display number (":N") Xwayland serves, once ready.
+    pub xdisplay: Option<u32>,
     pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
     pub popups: PopupManager,
 
@@ -116,6 +122,8 @@ impl MindeState {
             smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
         let xdg_activation_state =
             smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(&dh);
+        let xwayland_shell_state =
+            smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
         let layer_shell_state =
             smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
 
@@ -167,6 +175,9 @@ impl MindeState {
             data_device_state,
             xdg_decoration_state,
             xdg_activation_state,
+            xwayland_shell_state,
+            xwm: None,
+            xdisplay: None,
             layer_shell_state,
             popups,
             seat,
@@ -257,6 +268,9 @@ impl MindeState {
                         state.states.set(XdgState::TiledBottom);
                     });
                     toplevel.send_pending_configure();
+                } else if let Some(x11) = window.x11_surface() {
+                    tracing::debug!(id, x, y, w, h, "x11 place");
+                    let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
                 }
                 self.space.map_element(window, (x, y), false);
             }
@@ -265,11 +279,12 @@ impl MindeState {
                     tracing::warn!(id, "wm-focus-window: unknown window id");
                     return;
                 };
-                let Some(toplevel) = window.toplevel() else {
+                // Both window kinds expose a wl_surface (X11 ones once the
+                // xwayland-shell association happened).
+                let Some(surface) = window.wl_surface().map(|s| s.into_owned()) else {
                     return;
                 };
                 let serial = SERIAL_COUNTER.next_serial();
-                let surface = toplevel.wl_surface().clone();
                 if let Some(keyboard) = self.seat.get_keyboard() {
                     keyboard.set_focus(self, Some(surface), serial);
                 }
@@ -335,6 +350,8 @@ impl MindeState {
                 };
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_close();
+                } else if let Some(x11) = window.x11_surface() {
+                    let _ = x11.close();
                 }
             }
             WmCommand::RunAfter { ms, token } => {
@@ -351,10 +368,27 @@ impl MindeState {
                     tracing::warn!(id, "wm-set-fullscreen: unknown window id");
                     return;
                 };
+                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+                // X11 windows: set the fullscreen hint and let the shared
+                // full-rect placement below apply through configure.
+                if let Some(x11) = window.x11_surface() {
+                    let _ = x11.set_fullscreen(on);
+                    if on {
+                        let geo = self
+                            .space
+                            .outputs()
+                            .next()
+                            .and_then(|o| self.space.output_geometry(o))
+                            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()));
+                        let _ = x11.configure(geo);
+                        self.space.map_element(window.clone(), geo.loc, false);
+                        self.space.raise_element(&window, true);
+                    }
+                    return;
+                }
                 let Some(toplevel) = window.toplevel() else {
                     return;
                 };
-                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
                 if on {
                     // Full geometry of the output showing the window (not
                     // the usable area): fullscreen covers reserved bar
@@ -404,6 +438,12 @@ impl MindeState {
                             .backend_handle()
                             .kill_client(client.id(), DisconnectReason::ConnectionClosed);
                     }
+                } else if let Some(x11) = window.x11_surface() {
+                    // Every X11 app shares the one Xwayland client;
+                    // dropping that connection would take down all of
+                    // them. Polite close is the best per-window kill.
+                    tracing::info!(id, "wm-kill-window: X11 window, closing politely");
+                    let _ = x11.close();
                 }
             }
             WmCommand::WarpPointer { x, y } => {
@@ -421,6 +461,7 @@ impl MindeState {
                     pointer.frame(self);
                 }
             }
+            WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => {
                 smithay::wayland::selection::data_device::set_data_device_selection(
@@ -546,6 +587,69 @@ impl MindeState {
             .unwrap();
 
         socket_name
+    }
+
+    /// Spawns the embedded Xwayland server (anvil's `start_xwayland`,
+    /// trimmed): once it reports Ready, an X11 window manager connection
+    /// is attached (see `XwmHandler` in handlers/xwayland.rs) and
+    /// DISPLAY is exported for children. Failure to start is logged and
+    /// the compositor runs on without X11 support.
+    pub fn start_xwayland(&mut self) {
+        use smithay::xwayland::{X11Wm, XWayland, XWaylandEvent};
+
+        if std::env::var_os("MINDE_NO_XWAYLAND").is_some() {
+            tracing::info!("MINDE_NO_XWAYLAND set; skipping Xwayland");
+            return;
+        }
+
+        let spawn_result = XWayland::spawn(
+            &self.display_handle,
+            None,
+            std::iter::empty::<(String, String)>(),
+            std::iter::empty::<String>(),
+            true,
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+            |_| (),
+        );
+        let (xwayland, client) = match spawn_result {
+            Ok(x) => x,
+            Err(err) => {
+                tracing::warn!(%err, "failed to start Xwayland; X11 apps unavailable");
+                return;
+            }
+        };
+
+        let display_handle = self.display_handle.clone();
+        let ret = self.handle.insert_source(xwayland, move |event, _, state| match event {
+            XWaylandEvent::Ready { x11_socket, display_number } => {
+                match X11Wm::start_wm(state.handle.clone(), &display_handle, x11_socket, client.clone()) {
+                    Ok(wm) => {
+                        tracing::info!(display_number, "xwayland ready");
+                        state.xwm = Some(wm);
+                        state.xdisplay = Some(display_number);
+                        // Children get DISPLAY via wm-spawn (X11_DISPLAY).
+                        // NEVER set it process-wide: in nested (winit)
+                        // mode the compositor is itself an X client, and
+                        // mesa/EGL lazily open X connections from
+                        // $DISPLAY -- pointing that at our own Xwayland
+                        // deadlocks eglSwapBuffers against ourselves
+                        // (same class as the WAYLAND_DISPLAY/winit
+                        // startup deadlock).
+                        let _ = guile::X11_DISPLAY.set(format!(":{display_number}"));
+                    }
+                    Err(err) => {
+                        tracing::warn!(%err, "failed to attach the X11 window manager");
+                    }
+                }
+            }
+            XWaylandEvent::Error => {
+                tracing::warn!("Xwayland crashed on startup; X11 apps unavailable");
+            }
+        });
+        if let Err(err) = ret {
+            tracing::warn!(%err, "failed to insert the Xwayland event source");
+        }
     }
 
     /// The stable id of OUTPUT, assigning the next free one on first use.

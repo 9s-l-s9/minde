@@ -85,6 +85,15 @@ Prefix map (see `scheme/init.scm`):
 | `S` | next head (monitor) | | `M-s` | last head (monitor) |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
+Xwayland: an embedded X server starts automatically; X11-only apps
+(X-built emacs, xterm, legacy tools) appear as ordinary managed windows
+— frames, numbers, placement rules and hooks treat them identically
+(their X11 class is the app-id). `DISPLAY` is exported to children.
+Copying on the Wayland side (including `set-clipboard!`) pastes into X11
+apps. Caveats: `kill-window!` politely closes X11 windows (all X apps
+share one client connection), and X11 primary selection/DnD are not
+synced.
+
 Multi-monitor: every group has a frame tree per head (StumpWM style);
 `Print S` cycles heads, `Print M-s` toggles, and directional focus
 (`Print` arrows) crosses monitor edges. Unplugging a monitor moves its

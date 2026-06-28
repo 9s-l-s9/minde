@@ -2,6 +2,7 @@ mod compositor;
 mod layer_shell;
 mod xdg_decoration;
 mod xdg_shell;
+mod xwayland;
 
 use crate::MindeState;
 
@@ -49,6 +50,21 @@ impl SelectionHandler for MindeState {
     /// Compositor-owned selections carry their text as user data
     /// (`wm-set-clipboard`); client-owned selections never see this.
     type SelectionUserData = String;
+
+    /// Mirror new Wayland-side selections into the X11 world so X apps
+    /// can paste them (anvil does the same).
+    fn new_selection(
+        &mut self,
+        ty: smithay::wayland::selection::SelectionTarget,
+        source: Option<smithay::wayland::selection::SelectionSource>,
+        _seat: Seat<Self>,
+    ) {
+        if let Some(xwm) = self.xwm.as_mut()
+            && let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types()))
+        {
+            tracing::warn!(?err, ?ty, "failed to mirror selection into Xwayland");
+        }
+    }
 
     fn send_selection(
         &mut self,

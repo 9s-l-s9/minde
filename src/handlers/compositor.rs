@@ -1,3 +1,4 @@
+use smithay::wayland::seat::WaylandFocus;
 use crate::{MindeState, grabs::resize_grab, state::ClientState};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
@@ -22,6 +23,11 @@ impl CompositorHandler for MindeState {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+        // The Xwayland connection is created by smithay itself and
+        // carries XWaylandClientData instead of our ClientState.
+        if let Some(state) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &state.compositor_state;
+        }
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
 
@@ -35,7 +41,7 @@ impl CompositorHandler for MindeState {
             if let Some(window) = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == &root)
+                .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
             {
                 window.on_commit();
             }

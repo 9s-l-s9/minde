@@ -70,7 +70,7 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **Floating windows/groups** | `gnew-float`, `float-this`, `unfloat-this`, `flatten-floats` | New layer in the window model + move/resize grabs (grabs/ dir already has smallvil's move/resize code as a starting point). User's StumpWM config used `F` float-this. |
 | **Dynamic groups** (master/stack, i3-ish) | `gnew-dynamic`, `rotate-windows`, `exchange-with-master`, ... | StumpWM ships it, but it's a separate paradigm; layouts cover much of the need. Post-1.0. |
 | **Key remapping per app** | `define-remapped-keys` (e.g. C-n→Down in browser) | Requires rewriting forwarded keys per focused app-id in input.rs. Medium Rust. |
-| **Xwayland** | (implicit in X11) | Not a StumpWM feature per se, but the biggest real-world app gap (X-only emacs, etc.). Smithay has xwayland support at the pinned rev. |
+| **Xwayland** | (implicit in X11) | ✅ sprint 5: embedded Xwayland; X11 apps are ordinary managed windows (title/class → title/app-id), DISPLAY exported, Wayland→X clipboard mirrored. Kill = polite close for X11 (shared client). |
 | **Selection/clipboard commands** | `putsel`, `getsel` | ✅ sprint 3: `set-clipboard!` (putsel), prompt paste C-y/C-v + copy M-w, `copy-last-message!` (Print M-c). |
 | **Menus (select-from-menu)** | multi-line navigable menu with j/k/search | Our prompt is single-line with inline completion cycling; a list-rendered menu needs multi-line message layout (message area already wraps; mostly Scheme + formatting). |
 | **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer (idle-hook still ❌). |

@@ -62,6 +62,12 @@ pub enum WmCommand {
     Paste,
     /// Own the clipboard selection with this text (StumpWM putsel).
     SetClipboard { text: String },
+    /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
+    /// fork from the calling thread: forking from the Guile REPL
+    /// server thread wedged mesa/llvmpipe in the parent (the main
+    /// thread froze inside eglSwapBuffers with the software
+    /// rasterizer spinning forever).
+    Spawn { cmd: String },
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -269,22 +275,36 @@ pub fn to_string_lossy(v: Scm) -> Option<String> {
 /// "Failed to initialize GTK" on the TTY).
 pub static SOCKET_NAME: OnceLock<String> = OnceLock::new();
 
+/// Xwayland's ":N", set once it reports Ready -- same motivation as
+/// SOCKET_NAME: children spawned before/around the env export must still
+/// see the right DISPLAY.
+pub static X11_DISPLAY: OnceLock<String> = OnceLock::new();
+
 unsafe extern "C" fn wm_spawn(cmd: Scm) -> Scm {
     if let Some(cmd) = to_string_lossy(cmd) {
         tracing::info!(%cmd, "wm-spawn");
-        let mut command = std::process::Command::new("sh");
-        command.arg("-c").arg(&cmd);
-        if let Some(socket) = SOCKET_NAME.get() {
-            command.env("WAYLAND_DISPLAY", socket);
-        }
-        let result = command.spawn();
-        if let Err(e) = result {
-            tracing::warn!(%cmd, error = %e, "wm-spawn failed");
-            return from_bool(false);
-        }
-        from_bool(true)
+        // Enqueue instead of spawning right here: this subr may run on
+        // the REPL server thread, and forking from there deadlocked the
+        // main thread's GL swap (see WmCommand::Spawn).
+        from_bool(send_command(WmCommand::Spawn { cmd }))
     } else {
         from_bool(false)
+    }
+}
+
+/// Actually spawns a child; called from `apply_wm_command`, i.e. on the
+/// main thread only.
+pub fn spawn_on_main_thread(cmd: &str) {
+    let mut command = std::process::Command::new("sh");
+    command.arg("-c").arg(cmd);
+    if let Some(socket) = SOCKET_NAME.get() {
+        command.env("WAYLAND_DISPLAY", socket);
+    }
+    if let Some(display) = X11_DISPLAY.get() {
+        command.env("DISPLAY", display);
+    }
+    if let Err(e) = command.spawn() {
+        tracing::warn!(%cmd, error = %e, "wm-spawn failed");
     }
 }
 

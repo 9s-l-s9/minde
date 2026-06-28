@@ -26,5 +26,8 @@
    "libxi"
    "libxcursor"
    "libxrandr"
+   ;; embedded X server for X11 clients (spawned from PATH at runtime;
+   ;; also exercised by the e2e X11 block together with xterm)
+   "xorg-server-xwayland"
    ;; misc
    "git"))

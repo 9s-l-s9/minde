@@ -1,3 +1,4 @@
+use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     desktop::{PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
@@ -96,7 +97,7 @@ impl XdgShellHandler for MindeState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -128,7 +129,7 @@ impl XdgShellHandler for MindeState {
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
+                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
                 .unwrap()
                 .clone();
             let initial_window_location = self.space.element_location(&window).unwrap();
@@ -219,7 +220,7 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
     // Handle toplevel commits.
     if let Some(window) = space
         .elements()
-        .find(|w| w.toplevel().unwrap().wl_surface() == surface)
+        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
         .cloned()
     {
         let initial_configure_sent = with_states(surface, |states| {
@@ -232,8 +233,10 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
                 .initial_configure_sent
         });
 
-        if !initial_configure_sent {
-            window.toplevel().unwrap().send_configure();
+        if !initial_configure_sent
+            && let Some(toplevel) = window.toplevel()
+        {
+            toplevel.send_configure();
         }
     }
 
@@ -261,7 +264,7 @@ impl MindeState {
         let Some(window) = self
             .space
             .elements()
-            .find(|w| w.toplevel().unwrap().wl_surface() == &root)
+            .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
         else {
             return;
         };

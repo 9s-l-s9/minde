@@ -322,7 +322,9 @@ impl ResizeSurfaceState {
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
     let window = space
         .elements()
-        .find(|w| w.toplevel().unwrap().wl_surface() == surface)
+        // Pointer resize grabs only ever start on xdg toplevels; X11
+        // windows (toplevel() == None) can't match here.
+        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
         .cloned()?;
 
     let mut window_loc = space.element_location(&window)?;

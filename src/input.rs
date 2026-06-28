@@ -1,3 +1,4 @@
+use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend,
@@ -162,18 +163,22 @@ impl MindeState {
                         .map(|(w, l)| (w.clone(), l))
                     {
                         self.space.raise_element(&window, true);
-                        keyboard.set_focus(
-                            self,
-                            Some(window.toplevel().unwrap().wl_surface().clone()),
-                            serial,
-                        );
+                        // X11-backed windows expose a wl_surface too (once
+                        // the xwayland-shell association happened).
+                        if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
+                            keyboard.set_focus(self, Some(surface), serial);
+                        }
                         self.space.elements().for_each(|window| {
-                            window.toplevel().unwrap().send_pending_configure();
+                            if let Some(t) = window.toplevel() {
+                                t.send_pending_configure();
+                            }
                         });
                     } else {
                         self.space.elements().for_each(|window| {
                             window.set_activated(false);
-                            window.toplevel().unwrap().send_pending_configure();
+                            if let Some(t) = window.toplevel() {
+                                t.send_pending_configure();
+                            }
                         });
                         keyboard.set_focus(self, Option::<WlSurface>::None, serial);
                     }

@@ -34,6 +34,9 @@ features = [
     "use_system_lib",
     "renderer_gl",
     "renderer_multi",
+    # embedded Xwayland server + X11 window management (src/handlers/xwayland.rs)
+    "xwayland",
+    "x11rb_event_source",
 ]
 
 # Only for DrmScanner (connector hotplug bookkeeping); the display-info

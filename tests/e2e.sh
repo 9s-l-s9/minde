@@ -6,7 +6,8 @@
 # for eyeballing.
 #
 # Run inside the dev shell with the extra tools:
-#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot -- tests/e2e.sh
+#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm -- tests/e2e.sh
+# (xterm exercises the Xwayland block; it is skipped when absent.)
 #
 # NOTE: this cannot exercise the udev/DRM backend (no seat/DRM headless);
 # TTY changes still need a live `./debug-tty.sh` run from a spare VT.
@@ -139,6 +140,28 @@ scripts/minde-cmd '(wm-log (format #f "e2e-outputs ~s" (wm-outputs)))' >/dev/nul
 sleep 1
 loggrep "e2e-outputs ((0 " || fail "wm-outputs did not report the winit head"
 ok "head keys + wm-outputs (single head)"
+
+# Xwayland: an X11 client (xterm) must map as a managed window, with the
+# 'new-window hook seeing its class as the app-id. Skips cleanly when
+# Xwayland/xterm aren't in the shell.
+if command -v Xwayland >/dev/null 2>&1 && command -v xterm >/dev/null 2>&1; then
+  scripts/minde-cmd '(begin
+    (use-modules (minde hooks))
+    (add-hook!* (quote new-window)
+      (lambda (id title app-id) (wm-log (format #f "e2e-x11-map ~a" app-id))))
+    (wm-spawn "xterm"))' >/dev/null 2>&1 || true
+  i=0
+  until loggrep "e2e-x11-map.*[Xx][Tt]erm"; do
+    i=$((i + 1))
+    [ "$i" -le 15 ] || fail "xterm did not map via Xwayland within 15s"
+    sleep 1
+  done
+  import -window root "$OUT/x11.png"
+  loggrep "error in keybinding" && fail "x11 block errored (see log)"
+  ok "xwayland: xterm mapped as a managed window"
+else
+  echo "skip - Xwayland/xterm not in the shell; X11 e2e block skipped"
+fi
 
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
