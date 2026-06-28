@@ -23,6 +23,31 @@ impl XWaylandShellHandler for MindeState {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         &mut self.xwayland_shell_state
     }
+
+    fn surface_associated(
+        &mut self,
+        _xwm: XwmId,
+        wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        surface: X11Surface,
+    ) {
+        // Scheme may have focused this window at map time, before its
+        // wl_surface existed (the association lags the map). Apply the
+        // deferred keyboard focus now, or the client never receives
+        // wl_keyboard.enter -> no X FocusIn -> apps like emacs render
+        // their unfocused state (hollow cursor).
+        let is_focused = self
+            .focused_window
+            .as_ref()
+            .and_then(|w| w.x11_surface())
+            .map(|x| x == &surface)
+            .unwrap_or(false);
+        if is_focused
+            && let Some(keyboard) = self.seat.get_keyboard()
+        {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            keyboard.set_focus(self, Some(wl_surface), serial);
+        }
+    }
 }
 
 impl MindeState {

@@ -279,14 +279,17 @@ impl MindeState {
                     tracing::warn!(id, "wm-focus-window: unknown window id");
                     return;
                 };
-                // Both window kinds expose a wl_surface (X11 ones once the
-                // xwayland-shell association happened).
-                let Some(surface) = window.wl_surface().map(|s| s.into_owned()) else {
-                    return;
-                };
-                let serial = SERIAL_COUNTER.next_serial();
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    keyboard.set_focus(self, Some(surface), serial);
+                // Both window kinds expose a wl_surface -- X11 ones only
+                // once the xwayland-shell association happened, which can
+                // lag the map. Still record/raise/activate in that case;
+                // the keyboard focus is applied retroactively in
+                // `surface_associated` (handlers/xwayland.rs), or emacs &
+                // co. think they're unfocused (hollow cursor) forever.
+                if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    if let Some(keyboard) = self.seat.get_keyboard() {
+                        keyboard.set_focus(self, Some(surface), serial);
+                    }
                 }
                 self.space.raise_element(&window, true);
                 // Let clients render their focused/unfocused state.
@@ -624,8 +627,19 @@ impl MindeState {
         let ret = self.handle.insert_source(xwayland, move |event, _, state| match event {
             XWaylandEvent::Ready { x11_socket, display_number } => {
                 match X11Wm::start_wm(state.handle.clone(), &display_handle, x11_socket, client.clone()) {
-                    Ok(wm) => {
+                    Ok(mut wm) => {
                         tracing::info!(display_number, "xwayland ready");
+                        // Default X11 root cursor: without this, hovering an
+                        // X11 window that sets no cursor of its own shows a
+                        // hollow box (anvil sets one too). Reuse the embedded
+                        // fallback arrow (64x64 RGBA, hotspot at the tip).
+                        if let Err(err) = wm.set_cursor(
+                            crate::render::FALLBACK_CURSOR_RGBA,
+                            smithay::utils::Size::from((64u16, 64u16)),
+                            smithay::utils::Point::from((0u16, 0u16)),
+                        ) {
+                            tracing::warn!(%err, "failed to set the Xwayland default cursor");
+                        }
                         state.xwm = Some(wm);
                         state.xdisplay = Some(display_number);
                         // Children get DISPLAY via wm-spawn (X11_DISPLAY).

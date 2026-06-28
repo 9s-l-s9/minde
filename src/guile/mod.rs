@@ -302,6 +302,13 @@ pub fn spawn_on_main_thread(cmd: &str) {
     }
     if let Some(display) = X11_DISPLAY.get() {
         command.env("DISPLAY", display);
+        // With DISPLAY set, dual-stack toolkits (Firefox/zen, GTK apps)
+        // would default to X11 -- through Xwayland their CSD shadow
+        // margins aren't compensated (the old zen gap bug). Prefer
+        // Wayland; X11-only apps ignore these. A user command can still
+        // override with its own VAR=... prefix.
+        command.env("MOZ_ENABLE_WAYLAND", "1");
+        command.env("GDK_BACKEND", "wayland,x11");
     }
     if let Err(e) = command.spawn() {
         tracing::warn!(%cmd, error = %e, "wm-spawn failed");
