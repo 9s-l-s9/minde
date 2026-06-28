@@ -62,6 +62,17 @@ pub enum WmCommand {
     Paste,
     /// Own the clipboard selection with this text (StumpWM putsel).
     SetClipboard { text: String },
+    /// Place a floating window: same as `Place` but without the Tiled*
+    /// states (floats keep their CSD shadows/rounded corners) and with a
+    /// raise, so a newly-floated window pops above the tiling.
+    PlaceFloat { id: u64, x: i32, y: i32, w: i32, h: i32 },
+    /// Raise a window to the top of the stacking order without focusing
+    /// it (raise is otherwise only a side effect of `Focus`).
+    Raise { id: u64 },
+    /// Mark/unmark a window as floating on the Rust side; gates the
+    /// super+drag move/resize grabs in `input.rs`. Scheme's `%floating`
+    /// table remains the authority on float geometry.
+    SetFloating { id: u64, on: bool },
     /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
     /// fork from the calling thread: forking from the Guile REPL
     /// server thread wedged mesa/llvmpipe in the parent (the main
@@ -202,6 +213,10 @@ pub fn call4(proc: Scm, a: Scm, b: Scm, c: Scm, d: Scm) -> Option<Scm> {
     protected_call(move || unsafe { ffi::scm_call_4(proc, a, b, c, d) })
 }
 
+pub fn call5(proc: Scm, a: Scm, b: Scm, c: Scm, d: Scm, e: Scm) -> Option<Scm> {
+    protected_call(move || unsafe { ffi::scm_call_5(proc, a, b, c, d, e) })
+}
+
 /// Looks up NAME fresh and calls it with one argument, if bound. Mirrors
 /// `handle_key`'s "missing definition = no-op" behavior.
 fn call_named_1(name: &str, a: Scm) -> Option<Scm> {
@@ -218,6 +233,10 @@ fn call_named_3(name: &str, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
 
 fn call_named_4(name: &str, a: Scm, b: Scm, c: Scm, d: Scm) -> Option<Scm> {
     call4(lookup(name)?, a, b, c, d)
+}
+
+fn call_named_5(name: &str, a: Scm, b: Scm, c: Scm, d: Scm, e: Scm) -> Option<Scm> {
+    call5(lookup(name)?, a, b, c, d, e)
 }
 
 /// Converts a Scheme integer to `i64`. Only call this on values expected to
@@ -338,6 +357,26 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
     let w = to_i64(w) as i32;
     let h = to_i64(h) as i32;
     from_bool(send_command(WmCommand::Place { id, x, y, w, h }))
+}
+
+unsafe extern "C" fn wm_place_float(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    let x = to_i64(x) as i32;
+    let y = to_i64(y) as i32;
+    let w = to_i64(w) as i32;
+    let h = to_i64(h) as i32;
+    from_bool(send_command(WmCommand::PlaceFloat { id, x, y, w, h }))
+}
+
+unsafe extern "C" fn wm_raise_window(id: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    from_bool(send_command(WmCommand::Raise { id }))
+}
+
+unsafe extern "C" fn wm_set_floating(id: Scm, on: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    let on = to_bool(on);
+    from_bool(send_command(WmCommand::SetFloating { id, on }))
 }
 
 unsafe extern "C" fn wm_focus_window(id: Scm) -> Scm {
@@ -563,6 +602,18 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn(Scm) -> Scm,
             ffi::Gsubr,
         >(wm_set_clipboard));
+        register_gsubr("wm-place-float", 5, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_place_float));
+        register_gsubr("wm-raise-window", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_raise_window));
+        register_gsubr("wm-set-floating", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_set_floating));
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
@@ -697,6 +748,20 @@ pub fn on_timer(token: i64) {
 /// requested via `wm-request-paste`.
 pub fn on_paste(text: &str) {
     call_named_1("wm-on-paste", from_str(text));
+}
+
+/// Calls `(wm-on-window-moved id x y w h)` if bound; fired when a
+/// super+drag move/resize grab releases, so Scheme's `%floating` table
+/// tracks the user-dragged geometry.
+pub fn on_window_moved(id: u64, x: i32, y: i32, w: i32, h: i32) {
+    call_named_5(
+        "wm-on-window-moved",
+        from_i64(id as i64),
+        from_i64(x as i64),
+        from_i64(y as i64),
+        from_i64(w as i64),
+        from_i64(h as i64),
+    );
 }
 
 /// Calls `(wm-on-urgent id)` if bound (xdg-activation request for a

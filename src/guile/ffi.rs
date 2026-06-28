@@ -57,6 +57,7 @@ unsafe extern "C" {
     pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
     pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
     pub fn scm_call_4(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm) -> Scm;
+    pub fn scm_call_5(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm, arg5: Scm) -> Scm;
 
     pub fn scm_from_utf8_string(s: *const c_char) -> Scm;
     /// Returns a malloc'd, NUL-terminated UTF-8 buffer; caller must free() it.

@@ -62,9 +62,14 @@ impl ResizeSurfaceGrab {
     ) -> Self {
         let initial_rect = initial_window_rect;
 
-        ResizeSurfaceState::with(window.toplevel().unwrap().wl_surface(), |state| {
-            *state = ResizeSurfaceState::Resizing { edges, initial_rect };
-        });
+        // The commit-time reposition state only applies to xdg toplevels;
+        // X11 windows (super+drag on a floated one) are resized by direct
+        // configure and never enter the commit dance.
+        if let Some(toplevel) = window.toplevel() {
+            ResizeSurfaceState::with(toplevel.wl_surface(), |state| {
+                *state = ResizeSurfaceState::Resizing { edges, initial_rect };
+            });
+        }
 
         Self {
             start_data,
@@ -108,12 +113,15 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
-        let (min_size, max_size) =
-            compositor::with_states(self.window.toplevel().unwrap().wl_surface(), |states| {
+        let (min_size, max_size) = match self.window.toplevel() {
+            Some(toplevel) => compositor::with_states(toplevel.wl_surface(), |states| {
                 let mut guard = states.cached_state.get::<SurfaceCachedState>();
                 let data = guard.current();
                 (data.min_size, data.max_size)
-            });
+            }),
+            // X11 windows: no cached xdg min/max; clamp to >= 1 below.
+            None => (Size::default(), Size::default()),
+        };
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
@@ -126,13 +134,19 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
             new_window_height.max(min_height).min(max_height),
         ));
 
-        let xdg = self.window.toplevel().unwrap();
-        xdg.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Resizing);
-            state.size = Some(self.last_window_size);
-        });
-
-        xdg.send_pending_configure();
+        if let Some(xdg) = self.window.toplevel() {
+            xdg.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Resizing);
+                state.size = Some(self.last_window_size);
+            });
+            xdg.send_pending_configure();
+        } else if let Some(x11) = self.window.x11_surface() {
+            let loc = data
+                .space
+                .element_location(&self.window)
+                .unwrap_or(self.initial_rect.loc);
+            let _ = x11.configure(Rectangle::new(loc, self.last_window_size));
+        }
     }
 
     fn relative_motion(
@@ -153,28 +167,42 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
     ) {
         handle.button(data, event);
 
-        // The button is a button code as defined in the
-        // Linux kernel's linux/input-event-codes.h header file, e.g. BTN_LEFT.
-        const BTN_LEFT: u32 = 0x110;
-
-        if !handle.current_pressed().contains(&BTN_LEFT) {
-            // No more buttons are pressed, release the grab.
+        // Release once no buttons are held (client-side resizes start on
+        // left, super+drag resize on right).
+        if handle.current_pressed().is_empty() {
             handle.unset_grab(self, data, event.serial, event.time, true);
 
-            let xdg = self.window.toplevel().unwrap();
-            xdg.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Resizing);
-                state.size = Some(self.last_window_size);
-            });
+            if let Some(xdg) = self.window.toplevel() {
+                xdg.with_pending_state(|state| {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                    state.size = Some(self.last_window_size);
+                });
 
-            xdg.send_pending_configure();
+                xdg.send_pending_configure();
 
-            ResizeSurfaceState::with(xdg.wl_surface(), |state| {
-                *state = ResizeSurfaceState::WaitingForLastCommit {
-                    edges: self.edges,
-                    initial_rect: self.initial_rect,
-                };
-            });
+                ResizeSurfaceState::with(xdg.wl_surface(), |state| {
+                    *state = ResizeSurfaceState::WaitingForLastCommit {
+                        edges: self.edges,
+                        initial_rect: self.initial_rect,
+                    };
+                });
+            }
+
+            // Report the final geometry so Scheme's `%floating` table
+            // stays authoritative (same as move_grab).
+            if let Some(id) = data.id_for_window(&self.window) {
+                let loc = data
+                    .space
+                    .element_location(&self.window)
+                    .unwrap_or(self.initial_rect.loc);
+                crate::guile::on_window_moved(
+                    id,
+                    loc.x,
+                    loc.y,
+                    self.last_window_size.w,
+                    self.last_window_size.h,
+                );
+            }
         }
     }
 

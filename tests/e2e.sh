@@ -163,6 +163,46 @@ else
   echo "skip - Xwayland/xterm not in the shell; X11 e2e block skipped"
 fi
 
+# Floating: F floats the focused window (geometry lands in %floating),
+# F again unfloats. Assert via a REPL log marker; the geometry must
+# persist across a focus cycle.
+xdotool key Print; sleep 0.2; xdotool key shift+f; sleep 0.5
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (wm-log (format #f "e2e-float ~s ~s"
+                  (window-floating? (focused-window-id))
+                  (float-geometry (focused-window-id)))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-float #t (" || fail "float-this did not float the window"
+xdotool key Print; sleep 0.2; xdotool key f; sleep 0.3
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (wm-log (format #f "e2e-float-still ~s"
+                  (pair? (group-floats (current-group))))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-float-still #t" || fail "float lost across a focus cycle"
+import -window root "$OUT/float.png"
+# Unfloat via the REPL (key-cycling back onto the float would depend on
+# how many windows earlier blocks left open).
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (unfloat-window! (car (group-floats (current-group))))
+  (wm-log (format #f "e2e-unfloat ~s"
+                  (null? (group-floats (current-group))))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-unfloat #t" || fail "unfloat did not clear the float list"
+loggrep "error in keybinding" && fail "float keys errored (see log)"
+ok "float-this: float + persistence + unfloat"
+
+# Menu: the windowlist is now a navigable menu; C-n + Return must focus
+# a window without keybinding errors.
+xdotool key Print; sleep 0.2; xdotool key l; sleep 0.5
+import -window root "$OUT/menu.png"
+xdotool key ctrl+n; sleep 0.2
+xdotool key Return; sleep 0.5
+loggrep "error in keybinding" && fail "menu windowlist errored (see log)"
+ok "menu windowlist: open / navigate / select"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

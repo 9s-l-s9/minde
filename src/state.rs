@@ -66,6 +66,10 @@ pub struct MindeState {
     /// this id (see `wm-place-window` &c. in `guile::mod`).
     pub windows: Vec<(u64, Window)>,
     pub next_window_id: u64,
+    /// Ids Scheme marked floating (`wm-set-floating`); gates the
+    /// super+drag move/resize grabs in `input.rs`. Float geometry itself
+    /// lives on the Scheme side (`%floating`).
+    pub floating_ids: std::collections::HashSet<u64>,
     /// Window last focused via `wm-focus-window`; gets the border drawn
     /// around it in the render pass.
     pub focused_window: Option<Window>,
@@ -184,6 +188,7 @@ impl MindeState {
 
             windows: Vec::new(),
             next_window_id: 0,
+            floating_ids: std::collections::HashSet::new(),
             focused_window: None,
             focus_rect: None,
             message: None,
@@ -273,6 +278,43 @@ impl MindeState {
                     let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
                 }
                 self.space.map_element(window, (x, y), false);
+            }
+            WmCommand::PlaceFloat { id, x, y, w, h } => {
+                let Some(window) = self.window_by_id(id) else {
+                    tracing::warn!(id, "wm-place-float: unknown window id");
+                    return;
+                };
+                // No Tiled* states: a floating window keeps its CSD
+                // shadows/rounding; exact-size obedience matters less
+                // since nothing tiles around it.
+                if let Some(toplevel) = window.toplevel() {
+                    toplevel.with_pending_state(|state| {
+                        state.size = Some((w, h).into());
+                        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+                        state.states.unset(XdgState::TiledLeft);
+                        state.states.unset(XdgState::TiledRight);
+                        state.states.unset(XdgState::TiledTop);
+                        state.states.unset(XdgState::TiledBottom);
+                    });
+                    toplevel.send_pending_configure();
+                } else if let Some(x11) = window.x11_surface() {
+                    let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
+                }
+                self.space.map_element(window, (x, y), false);
+            }
+            WmCommand::Raise { id } => {
+                let Some(window) = self.window_by_id(id) else {
+                    tracing::warn!(id, "wm-raise-window: unknown window id");
+                    return;
+                };
+                self.space.raise_element(&window, false);
+            }
+            WmCommand::SetFloating { id, on } => {
+                if on {
+                    self.floating_ids.insert(id);
+                } else {
+                    self.floating_ids.remove(&id);
+                }
             }
             WmCommand::Focus { id } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -544,6 +586,11 @@ impl MindeState {
         self.windows.iter().find(|(wid, _)| *wid == id).map(|(_, w)| w.clone())
     }
 
+    /// The registered id of WINDOW, if any (reverse of `window_by_id`).
+    pub fn id_for_window(&self, window: &Window) -> Option<u64> {
+        self.windows.iter().find(|(_, w)| w == window).map(|(id, _)| *id)
+    }
+
     /// Registers a newly-mapped toplevel window and returns its assigned id.
     pub fn register_window(&mut self, window: Window) -> u64 {
         let id = self.next_window_id;
@@ -559,7 +606,9 @@ impl MindeState {
             self.focused_window = None;
         }
         let pos = self.windows.iter().position(|(_, w)| w == window)?;
-        Some(self.windows.remove(pos).0)
+        let id = self.windows.remove(pos).0;
+        self.floating_ids.remove(&id);
+        Some(id)
     }
 
     fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {

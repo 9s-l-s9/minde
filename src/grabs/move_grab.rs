@@ -57,13 +57,19 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
     ) {
         handle.button(data, event);
 
-        // The button is a button code as defined in the
-        // Linux kernel's linux/input-event-codes.h header file, e.g. BTN_LEFT.
-        const BTN_LEFT: u32 = 0x110;
-
-        if !handle.current_pressed().contains(&BTN_LEFT) {
-            // No more buttons are pressed, release the grab.
+        // Release once no buttons are held (the grab may have been started
+        // by any button: client titlebar drags use left, super+drag resize
+        // uses right).
+        if handle.current_pressed().is_empty() {
             handle.unset_grab(self, data, event.serial, event.time, true);
+            // Tell Scheme where the drag ended, so `%floating` geometry
+            // stays authoritative across syncs.
+            if let (Some(id), Some(geo)) = (
+                data.id_for_window(&self.window),
+                data.space.element_geometry(&self.window),
+            ) {
+                crate::guile::on_window_moved(id, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+            }
         }
     }
 

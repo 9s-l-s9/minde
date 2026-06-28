@@ -20,6 +20,7 @@
 (use-modules (minde frames)
              (minde groups)
              (minde input)
+             (minde menu)
              (minde layouts)
              (minde hooks))
 
@@ -217,6 +218,11 @@ focused client), #f otherwise."
     (if (modifier-keysym? keysym-name)
         #t
         (input-handle-key! mods-bitmask keysym-name utf8)))
+   ;; A menu is open (select-from-menu): same deal.
+   ((menu-active?)
+    (if (modifier-keysym? keysym-name)
+        #t
+        (menu-handle-key! mods-bitmask keysym-name utf8)))
    (else (dispatch-key mods-bitmask keysym-name))))
 
 (define (dispatch-key mods-bitmask keysym-name)
@@ -425,7 +431,8 @@ focused client), #f otherwise."
    ("T" . "add TODO (prompt)") ("w" . "voice dictate")
    ("i" . "eww widgets") ("A" . "agents submap") ("P" . "misc submap")
    ("R" . "reload init.scm") ("L" . "lock screen") ("Q" . "quit (asks)")
-   ("s" . "resize mode") ("F" . "apply layout (prompt)")
+   ("s" . "resize mode") ("F" . "float/unfloat window")
+   ("M-F" . "apply layout (prompt)")
    ("Tab" . "last window") ("ISO_Left_Tab" . "last frame")
    ("u" . "last group") ("W" . "window list echo")
    ("C" . "only: collapse splits") ("Delete" . "fclear: empty frame")))
@@ -470,12 +477,10 @@ focused client), #f otherwise."
 ;; Group management: M-g select by name, M-m move-and-follow; grename /
 ;; gkill live in the P submap (see below).
 (define (gselect!)
-  (read-one-line "group: "
-    (lambda (name)
-      (unless (string-null? name)
-        (switch-to-group! (string-append " " (string-trim-both name) " "))))
-    #:completions (lambda () (map string-trim-both (group-names)))
-    #:history 'group))
+  (select-from-menu
+   (map (lambda (name) (cons (string-trim-both name) name)) (group-names))
+   switch-to-group!
+   #:prompt "groups:"))
 (bind-prefix-key! "M-g" (lambda () (gselect!)) "switch group (prompt)")
 (bind-prefix-key! "M-m" (lambda () (gmove-and-follow!)) "move window + follow")
 
@@ -648,7 +653,10 @@ focused client), #f otherwise."
     #:completions layout-names
     #:history 'layout))
 
-(bind-prefix-key! "F" (lambda () (layout-prompt!)))
+;; F floats/unfloats (the user's old StumpWM float-this binding); the
+;; layout prompt moved to M-F.
+(bind-prefix-key! "F" (lambda () (float-this!)) "float/unfloat window")
+(bind-prefix-key! "M-F" (lambda () (layout-prompt!)) "apply layout (prompt)")
 
 ;; ---------------------------------------------------------------------
 ;; Placement rules: route windows to a group/frame by app-id or title
@@ -770,32 +778,27 @@ focused client), #f otherwise."
                      (sh-quote (string-append "added: " todo))))))
       #:history 'todo)))
 
-;; l: windowlist -- title prompt with completion; exact title wins, else
-;; first prefix match.
+;; l: windowlist -- navigable menu (C-n/C-p/digits/Return; typing
+;; filters by title), StumpWM select-window style.
 (define (windowlist!)
-  (let ((pairs (map (lambda (p)
-                      (cons (car p)
-                            (format #f "~a: ~a"
-                                    (or (window-number (car p)) "?") (cdr p))))
+  (let ((items (map (lambda (p)
+                      (cons (format #f "~a~a ~a"
+                                    (or (window-number (car p)) "?")
+                                    (cond ((equal? (car p) (focused-window-id)) "*")
+                                          ((window-floating? (car p)) "~")
+                                          (else " "))
+                                    (cdr p))
+                            (car p)))
                     (window-ids-with-titles))))
-    (if (null? pairs)
+    (if (null? items)
         (echo "no windows")
-        (read-one-line "window: "
-          (lambda (sel)
-            (let ((hit (or (find (lambda (p) (string=? (cdr p) sel)) pairs)
-                           (find (lambda (p) (string-prefix? sel (cdr p))) pairs))))
-              (if hit
-                  (focus-window-by-id! (car hit))
-                  (echo (string-append "no window: " sel)))))
-          #:completions (map cdr pairs)
-          #:history 'window))))
+        (select-from-menu items focus-window-by-id! #:prompt "windows:"))))
 
 (bind-prefix-key! "l" (lambda () (windowlist!)))
 
 ;; Not ported yet (missing infrastructure), from StumpWM:
 ;;   D/t dashboards -- interactive terminal scripts; run them in a
 ;;                     terminal yourself, or bind alacritty -e wrappers
-;;   F  float-this             -- no floating layer
 ;;   z  zen (gaps + mode line) -- no gaps/mode-line
 ;;   S  screenshot map         -- needs wlr-screencopy (grim) support
 

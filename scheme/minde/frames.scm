@@ -57,6 +57,20 @@
             urgent-windows
             add-urgent-window!
             clear-urgent!
+            all-window-ids
+            float-this!
+            float-window!
+            unfloat-window!
+            window-floating?
+            float-geometry
+            focused-window-id
+            place-floats!
+            handle-window-moved!
+            remove-float!
+            group-floats
+            set-group-floats!
+            group-float?
+            set-group-float?!
             mark-window-toggle!
             marked-windows
             clear-marks!
@@ -156,7 +170,7 @@
 (define-record-type <group>
   (%make-group name tree current-frame
                last-window shown-window last-frame shown-frame
-               heads loaded-head)
+               heads loaded-head floats float?)
   group?
   (name group-name set-group-name!)
   (tree group-tree set-group-tree!)
@@ -173,13 +187,19 @@
   ;; (tree . current-frame) pair is stashed in the heads hash (head id ->
   ;; pair). See load-head-into-group!.
   (heads group-heads)
-  (loaded-head group-loaded-head set-group-loaded-head!))
+  (loaded-head group-loaded-head set-group-loaded-head!)
+  ;; Floating windows of this group, most-recently-raised first (the
+  ;; list order doubles as stacking order, top first). Geometry lives in
+  ;; the global %floating table. float? marks a gnew-float group: every
+  ;; window mapped into it floats automatically.
+  (floats group-floats set-group-floats!)
+  (float? group-float? set-group-float?!))
 
 ;; Public 3-argument constructor (the last/shown fields start empty; the
 ;; head table starts with just the tree given, on the current head).
 (define (make-group name tree current-frame)
   (%make-group name tree current-frame #f #f #f #f
-               (make-hash-table) %current-head-id))
+               (make-hash-table) %current-head-id '() #f))
 
 ;; ---------------------------------------------------------------------
 ;; State
@@ -416,6 +436,7 @@ and 'span (one tree over the union of all monitors)."
                          groups
                          (cons %active-group groups))))
     (set! %heads new)
+    (clamp-floats-to-heads! new)
     (unless (memv %current-head-id new-ids)
       (set! %current-head-id (car new-ids)))
     (unless (memv %last-head-id new-ids)
@@ -466,12 +487,21 @@ and 'span (one tree over the union of all monitors)."
      (for-each
       (lambda (id) (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
       (frame-window-ids frame)))
-   (append-map frame-leaves (group-all-trees g))))
+   (append-map frame-leaves (group-all-trees g)))
+  ;; Park the group's floats too (keeping their size; wm-place-float so
+  ;; they don't pick up tiled states while hidden).
+  (for-each
+   (lambda (id)
+     (let ((r (hash-ref %floating id)))
+       (rust-call 'wm-place-float id %offscreen-x %offscreen-y
+                  (if r (caddr r) 100) (if r (cadddr r) 100))))
+   (group-floats g)))
 
 ;; Total window count tracked by G (active or not), across all heads.
 (define (group-window-count g)
-  (apply + (map (lambda (f) (length (frame-window-ids f)))
-                (append-map frame-leaves (group-all-trees g)))))
+  (+ (length (group-floats g))
+     (apply + (map (lambda (f) (length (frame-window-ids f)))
+                   (append-map frame-leaves (group-all-trees g))))))
 
 ;; Parks a single window off-screen -- used when a window is moved out of
 ;; the active group's tree into a hidden group (so it doesn't linger
@@ -640,16 +670,19 @@ fresh one -- for windows moved between groups."
 (define (pull-window-by-number! n)
   "Pulls the active group's window number N into the current frame."
   (let ((id (window-id-by-number n)))
-    (if id
-        (let ((f (frame-of-window id)))
-          (unless (eq? f %current-frame)
-            (set-frame-window-ids! f (delete id (frame-window-ids f)))
-            (when (equal? (frame-current-window f) id)
-              (set-frame-current-window!
-               f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f))))))
-          (frame-add-window! %current-frame id)
-          (sync-frames!))
-        (echo (format #f "no window ~a" n)))))
+    (cond
+     ((not id) (echo (format #f "no window ~a" n)))
+     ;; Pulling a float = unfloat it into the current frame.
+     ((window-floating? id) (unfloat-window! id))
+     (else
+      (let ((f (frame-of-window id)))
+        (unless (eq? f %current-frame)
+          (set-frame-window-ids! f (delete id (frame-window-ids f)))
+          (when (equal? (frame-current-window f) id)
+            (set-frame-current-window!
+             f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f))))))
+        (frame-add-window! %current-frame id)
+        (sync-frames!))))))
 
 (define (renumber-window! n)
   "Gives the current window the number N; if another window of the group
@@ -675,7 +708,7 @@ holds N, the two swap (StumpWM renumber)."
 (define (echo-windows-string)
   "StumpWM's `windows` echo: \"0*Term  1-Editor  2 zen\" -- * marks the
 current window, - the previous one (other-window!'s target)."
-  (let ((cur (current-frame-window))
+  (let ((cur (focused-window-id))
         (last (group-last-window %active-group))
         (ids (sort (all-window-ids)
                    (lambda (a b) (< (or (window-number a) 999)
@@ -695,17 +728,25 @@ current window, - the previous one (other-window!'s target)."
 
 (define (focus-window-by-id! id)
   "Jumps to window ID wherever it lives in the active group -- switching
-heads if needed: its frame becomes current and it is raised."
-  (let ((hid (head-of-window id)))
-    (when hid
-      (unless (eqv? hid %current-head-id)
-        (focus-head! hid))
-      (let ((f (find (lambda (fr) (member id (frame-window-ids fr)))
-                     (frame-leaves %frame-tree))))
-        (when f
-          (set! %current-frame f)
-          (set-frame-current-window! f id)
-          (sync-frames!))))))
+heads if needed: its frame becomes current and it is raised. A floating
+window just gets float focus (and comes to the top of the float stack)."
+  (if (window-floating? id)
+      (when (member id (group-floats %active-group))
+        (set-group-floats! %active-group
+                           (cons id (delete id (group-floats %active-group))))
+        (set! %focused-float id)
+        (sync-frames!))
+      (let ((hid (head-of-window id)))
+        (when hid
+          (unless (eqv? hid %current-head-id)
+            (focus-head! hid))
+          (let ((f (find (lambda (fr) (member id (frame-window-ids fr)))
+                         (frame-leaves %frame-tree))))
+            (when f
+              (clear-float-focus!)
+              (set! %current-frame f)
+              (set-frame-current-window! f id)
+              (sync-frames!)))))))
 
 (define (frame-add-window! frame id)
   (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
@@ -738,6 +779,136 @@ heads if needed: its frame becomes current and it is raised."
 
 (define (current-frame-window)
   (frame-current-window %current-frame))
+
+;; ---------------------------------------------------------------------
+;; Floating windows (StumpWM float-this / unfloat-this / gnew-float).
+;; A floated window leaves the frame tree entirely: it keeps arbitrary
+;; geometry in %floating, renders above the tiling (place-floats!
+;; re-raises after every sync), and can be moved/resized with
+;; super+drag (Rust reports the result via wm-on-window-moved).
+;; ---------------------------------------------------------------------
+
+;; id -> (x y w h), the authoritative float geometry.
+(define %floating (make-hash-table))
+
+;; The float that currently has keyboard focus, or #f when focus is in
+;; the frame tree. Checked against the active group's float list, so a
+;; stale id (unmapped, moved to another group) falls back to the frames.
+(define %focused-float #f)
+
+(define (window-floating? id)
+  (and (hash-ref %floating id) #t))
+
+(define (float-geometry id)
+  (hash-ref %floating id))
+
+(define (focused-window-id)
+  "The window that effectively has focus: the focused float if there is
+one in the active group, else the current frame's current window."
+  (if (and %focused-float (member %focused-float (group-floats %active-group)))
+      %focused-float
+      (current-frame-window)))
+
+(define (clear-float-focus!)
+  (set! %focused-float #f))
+
+;; Default float rect: centered over the current frame at 2/3 size.
+(define (default-float-rect)
+  (let* ((r (frame-display-rect %current-frame))
+         (w (max 100 (quotient (* 2 (caddr r)) 3)))
+         (h (max 80 (quotient (* 2 (cadddr r)) 3))))
+    (list (+ (car r) (quotient (- (caddr r) w) 2))
+          (+ (cadr r) (quotient (- (cadddr r) h) 2))
+          w h)))
+
+(define (add-float! g id rect)
+  "Registers ID as a float of G at RECT (bookkeeping + the Rust flag;
+callers sync)."
+  (hash-set! %floating id rect)
+  (set-group-floats! g (cons id (delete id (group-floats g))))
+  (rust-call 'wm-set-floating id #t))
+
+(define (remove-float! g id)
+  "Drops ID from G's float list and the geometry table (and the Rust
+flag). Returns #t if it was floating there. Callers re-add it to a
+frame and/or sync as appropriate."
+  (and (member id (group-floats g))
+       (begin
+         (set-group-floats! g (delete id (group-floats g)))
+         (hash-remove! %floating id)
+         (rust-call 'wm-set-floating id #f)
+         (when (equal? %focused-float id) (set! %focused-float #f))
+         #t)))
+
+(define* (float-window! id #:optional (rect #f))
+  "Takes ID out of the active group's frame trees and floats it."
+  (unless (window-floating? id)
+    (let ((r (or rect (default-float-rect))))
+      (any (lambda (t) (remove-window-from-tree-in! t id))
+           (group-all-trees %active-group))
+      (add-float! %active-group id r)
+      (set! %focused-float id)
+      (sync-frames!))))
+
+(define (unfloat-window! id)
+  "Puts floating window ID back into the current frame."
+  (when (remove-float! %active-group id)
+    (frame-add-window! %current-frame id)
+    (sync-frames!)))
+
+(define (float-this!)
+  "Toggles floating on the focused window (StumpWM float-this /
+unfloat-this collapsed into one command)."
+  (let ((id (focused-window-id)))
+    (cond
+     ((not id) (echo "no window"))
+     ((window-floating? id)
+      (unfloat-window! id)
+      (echo (format #f "unfloated ~a" (window-title id))))
+     (else
+      (float-window! id)
+      (echo (format #f "floated ~a" (window-title id)))))))
+
+(define (place-floats!)
+  "Places and raises the active group's floats, bottom of the stacking
+order first so the head of the floats list ends up on top. Called at
+the end of every sync (after the focus step, whose raise would
+otherwise put a tiled window above the floats)."
+  (for-each
+   (lambda (id)
+     (let ((r (hash-ref %floating id)))
+       (when r
+         (rust-call 'wm-place-float id (car r) (cadr r) (caddr r) (cadddr r))
+         (rust-call 'wm-raise-window id))))
+   (reverse (group-floats %active-group))))
+
+(define (handle-window-moved! id x y w h)
+  "Rust reports where a super+drag move/resize ended; keep %floating
+authoritative and treat the dragged float as focused/topmost."
+  (when (window-floating? id)
+    (hash-set! %floating id (list x y w h))
+    (when (member id (group-floats %active-group))
+      (set-group-floats! %active-group
+                         (cons id (delete id (group-floats %active-group))))
+      (set! %focused-float id))))
+
+;; Clamps every float rect to the union of the given head rects (called
+;; from apply-effective-heads! so unplugging a monitor doesn't strand
+;; floats off-screen).
+(define (clamp-floats-to-heads! heads)
+  (unless (null? heads)
+    (let* ((x1 (apply min (map cadr heads)))
+           (y1 (apply min (map caddr heads)))
+           (x2 (apply max (map (lambda (r) (+ (cadr r) (cadddr r))) heads)))
+           (y2 (apply max (map (lambda (r) (+ (caddr r) (car (cddddr r)))) heads))))
+      (hash-for-each
+       (lambda (id r)
+         (let* ((w (min (caddr r) (- x2 x1)))
+                (h (min (cadddr r) (- y2 y1)))
+                (x (max x1 (min (car r) (- x2 w))))
+                (y (max y1 (min (cadr r) (- y2 h)))))
+           (hash-set! %floating id (list x y w h))))
+       %floating))))
 
 ;; ---------------------------------------------------------------------
 ;; Splitting / removing
@@ -961,6 +1132,7 @@ round-trip."
 
 (define (focus-next-frame!)
   "Cycles %current-frame to the next leaf frame in tree order."
+  (clear-float-focus!)
   (let* ((leaves (frame-leaves %frame-tree))
          (n (length leaves))
          (idx (list-index (lambda (f) (eq? f %current-frame)) leaves)))
@@ -971,6 +1143,7 @@ round-trip."
 (define (focus-next-window-in-frame!)
   "Cycles the current window shown within the current frame ('other
 window')."
+  (clear-float-focus!)
   (let* ((ids (frame-window-ids %current-frame))
          (n (length ids)))
     ;; n = 1 with nothing shown (after fclear!) should re-show it too.
@@ -984,7 +1157,8 @@ window')."
 ;; All window ids in the active group, in frame order. This is the
 ;; "buffer list" that focus-next-window!/pull-hidden-next! cycle through.
 (define (all-window-ids)
-  (append-map frame-window-ids (active-leaves)))
+  (append (append-map frame-window-ids (active-leaves))
+          (group-floats %active-group)))
 
 ;; The leaf frame a window currently lives in (any head of the active
 ;; group), or #f.
@@ -1014,7 +1188,7 @@ wherever the next window lives -- its frame becomes current and the window
 is raised in it if it was hidden."
   (let* ((ids (all-window-ids))
          (n (length ids))
-         (cur (current-frame-window)))
+         (cur (focused-window-id)))
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) -1))
              (next-id (list-ref ids (modulo (+ idx 1) n))))
@@ -1070,6 +1244,7 @@ other frame holds any window."
 
 (define (focus-prev-frame!)
   "Cycles %current-frame to the previous leaf frame in tree order."
+  (clear-float-focus!)
   (let* ((leaves (frame-leaves %frame-tree))
          (n (length leaves))
          (idx (list-index (lambda (f) (eq? f %current-frame)) leaves)))
@@ -1079,6 +1254,7 @@ other frame holds any window."
 
 (define (focus-prev-window-in-frame!)
   "Cycles the current frame's shown window backwards."
+  (clear-float-focus!)
   (let* ((ids (frame-window-ids %current-frame))
          (n (length ids)))
     (when (and (> n 0) (or (> n 1) (not (frame-current-window %current-frame))))
@@ -1091,7 +1267,7 @@ other frame holds any window."
   "StumpWM's `prev`: focus-next-window! backwards through the group."
   (let* ((ids (all-window-ids))
          (n (length ids))
-         (cur (current-frame-window)))
+         (cur (focused-window-id)))
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
              (prev-id (list-ref ids (modulo (- idx 1) n))))
@@ -1123,7 +1299,7 @@ last hidden window instead of the first."
 
 (define (mark-window-toggle!)
   "Toggles the mark on the current window and echoes the result."
-  (let ((id (current-frame-window)))
+  (let ((id (focused-window-id)))
     (when id
       (if (member id %marked-windows)
           (begin (set! %marked-windows (delete id %marked-windows))
@@ -1145,10 +1321,14 @@ and clears the marks."
         (begin
           (for-each
            (lambda (id)
-             (let ((f (frame-of-window id)))
-               (unless (eq? f %current-frame)
-                 (take-window-out! f id)
-                 (frame-add-window! %current-frame id))))
+             (if (window-floating? id)
+                 ;; Pulling a marked float = unfloat into the frame.
+                 (when (remove-float! %active-group id)
+                   (frame-add-window! %current-frame id))
+                 (let ((f (frame-of-window id)))
+                   (unless (eq? f %current-frame)
+                     (take-window-out! f id)
+                     (frame-add-window! %current-frame id)))))
            (reverse here))
           (set! %marked-windows
                 (lset-difference equal? %marked-windows here))
@@ -1167,6 +1347,7 @@ and clears the marks."
 
 (define (other-frame!)
   "Toggles to the previously focused frame (StumpWM fother)."
+  (clear-float-focus!)
   (let ((lf (group-last-frame %active-group)))
     (when (and lf (memq lf (frame-leaves %frame-tree))
                (not (eq? lf %current-frame)))
@@ -1208,6 +1389,7 @@ and clears the marks."
 (define (move-focus! dir)
   "Focuses the frame in direction DIR; at a screen edge, crosses to the
 next head in that direction if there is one."
+  (clear-float-focus!)
   (let ((target (frame-in-direction dir)))
     (cond
      (target
@@ -1303,8 +1485,9 @@ the frame shows empty -- StumpWM fclear)."
 (define (vsplit-equally! n) (split-equally! 'vertical n))
 
 (define (close-current-window!)
-  "Requests the current frame's current window be closed."
-  (let ((id (current-frame-window)))
+  "Requests the focused window (float or current frame's window) be
+closed."
+  (let ((id (focused-window-id)))
     (when id
       (wm-close-window id))))
 
@@ -1391,12 +1574,14 @@ frame's current window."
   ;; frame itself (visible even when the frame is empty).
   (let ((rect (frame-display-rect %current-frame)))
     (apply wm-focus-rect rect))
-  (let ((id (current-frame-window)))
+  (let ((id (focused-window-id)))
     (if id
         (wm-focus-window id)
         ;; Empty current frame: drop keyboard focus so a hidden/unmapped
         ;; window doesn't keep receiving keys.
         (wm-clear-focus)))
+  ;; Floats go on top of everything the placement/focus steps raised.
+  (place-floats!)
   ;; Remember the previous focus for the other-window!/other-frame!
   ;; toggles: whatever was shown at the end of the last sync becomes
   ;; "last" the moment something else is shown.
@@ -1442,7 +1627,7 @@ active the frame layout is frozen; toggling off re-syncs it."
         (rust-call 'wm-set-fullscreen %fullscreen-window #f)
         (set! %fullscreen-window #f)
         (sync-frames!))
-      (let ((id (current-frame-window)))
+      (let ((id (focused-window-id)))
         (if id
             (begin
               (set! %fullscreen-window id)
@@ -1458,7 +1643,7 @@ active the frame layout is frozen; toggling off re-syncs it."
 (define (kill-current-window!)
   "Force-kills the current window's client connection (StumpWM
 kill-window) -- vs. close-current-window!'s polite xdg close."
-  (let ((id (current-frame-window)))
+  (let ((id (focused-window-id)))
     (if id
         (rust-call 'wm-kill-window id)
         (echo "No window to kill"))))
@@ -1508,10 +1693,15 @@ Called from Rust as (wm-on-urgent id) via init.scm."
 ;; single-group-tree half of that work.
 
 (define (handle-window-map! id title app-id)
-  "Adds ID to the active group's current frame as its new current window."
+  "Adds ID to the active group's current frame as its new current window
+-- or floats it right away if the active group is a float group."
   (remember-window-title! id title app-id)
   (assign-window-number! id (group-all-trees %active-group))
-  (frame-add-window! %current-frame id)
+  (if (group-float? %active-group)
+      (begin
+        (add-float! %active-group id (default-float-rect))
+        (set! %focused-float id))
+      (frame-add-window! %current-frame id))
   (run-hook!* 'new-window id title app-id)
   (sync-frames!))
 

@@ -162,6 +162,68 @@ impl MindeState {
                         .element_under(pointer.current_location())
                         .map(|(w, l)| (w.clone(), l))
                     {
+                        // Super+drag on a floating window: left = move,
+                        // right = resize from the bottom-right corner.
+                        // The grab consumes the click (Focus::Clear) but
+                        // the press is still forwarded through
+                        // pointer.button below so current_pressed()
+                        // tracks the drag button.
+                        const BTN_LEFT: u32 = 0x110;
+                        const BTN_RIGHT: u32 = 0x111;
+                        let floating = self
+                            .id_for_window(&window)
+                            .map(|id| self.floating_ids.contains(&id))
+                            .unwrap_or(false);
+                        if floating
+                            && keyboard.modifier_state().logo
+                            && (button == BTN_LEFT || button == BTN_RIGHT)
+                        {
+                            let start_data = smithay::input::pointer::GrabStartData {
+                                focus: None,
+                                button,
+                                location: pointer.current_location(),
+                            };
+                            self.space.raise_element(&window, true);
+                            if let Some(rect) = self.space.element_geometry(&window) {
+                                if button == BTN_LEFT {
+                                    let grab = crate::grabs::MoveSurfaceGrab {
+                                        start_data,
+                                        window,
+                                        initial_window_location: rect.loc,
+                                    };
+                                    pointer.set_grab(
+                                        self,
+                                        grab,
+                                        serial,
+                                        smithay::input::pointer::Focus::Clear,
+                                    );
+                                } else {
+                                    let grab = crate::grabs::ResizeSurfaceGrab::start(
+                                        start_data,
+                                        window,
+                                        crate::grabs::ResizeEdge::BOTTOM_RIGHT,
+                                        rect,
+                                    );
+                                    pointer.set_grab(
+                                        self,
+                                        grab,
+                                        serial,
+                                        smithay::input::pointer::Focus::Clear,
+                                    );
+                                }
+                            }
+                            pointer.button(
+                                self,
+                                &ButtonEvent {
+                                    button,
+                                    state: button_state,
+                                    serial,
+                                    time: event.time_msec(),
+                                },
+                            );
+                            pointer.frame(self);
+                            return;
+                        }
                         self.space.raise_element(&window, true);
                         // X11-backed windows expose a wl_surface too (once
                         // the xwayland-shell association happened).

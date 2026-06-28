@@ -63,13 +63,14 @@ Prefix map (see `scheme/init.scm`):
 | `v` / `h` | vsplit / hsplit | | `c` | remove split |
 | `n` | next frame | | `f` | next window (group-wide) |
 | `p` | pull next hidden window | | `o` | next window in this frame |
-| `k` / `d` | close window | | `l` | windowlist (native prompt) |
+| `k` / `d` | close window | | `l` | windowlist (menu) |
 | `g` | next group | | `G` | new group |
 | `m` | move window to next group | | `y` | window info echo |
 | `a` | ask AI (prompt + echo) | | `T` | add TODO (prompt) |
 | `w` | voice dictate | | `i` | eww widgets |
 | `A` | agents submap (c/d/o/p) | | `P` | misc submap (s/w/a) |
-| `s` | resize mode (iresize) | | `F` | apply layout (prompt) |
+| `s` | resize mode (iresize) | | `F` | float/unfloat window |
+| `M-F` | apply layout (prompt) | | `M-g` | switch group (menu) |
 | `0`–`9` | select window by number | | `C-0`–`C-9` | pull window by number |
 | arrows | move focus directionally | | `M-`arrows | move window directionally |
 | `S-`arrows | swap with neighbor frame | | `Tab` / `S-Tab` | last window / last frame |
@@ -78,7 +79,7 @@ Prefix map (see `scheme/init.scm`):
 | `C-f` `C-p` `C-n` `C-o` | reverse of f/p/n/o | | `?` | which-key: list bindings |
 | `F1` | describe next key | | `colon` | eval Scheme (prompt) |
 | `C-m` | last message again | | `x` / `M-x` / `C-x` | mark / pull marked / clear |
-| `M-g` | switch group (prompt) | | `M-m` | move window + follow |
+| `M-m` | move window + follow | | | |
 | `M-f` | fullscreen toggle | | `K` | kill window (force, drops client) |
 | `B` | banish pointer | | `C-c` | flash current frame |
 | `C-u` | jump to urgent window | | `M-c` | copy last message |
@@ -93,6 +94,19 @@ Copying on the Wayland side (including `set-clipboard!`) pastes into X11
 apps. Caveats: `kill-window!` politely closes X11 windows (all X apps
 share one client connection), and X11 primary selection/DnD are not
 synced.
+
+Floating windows: `Print F` toggles the focused window between tiled
+and floating (StumpWM float-this/unfloat-this). Floats keep arbitrary
+geometry, render above the tiling, and move/resize with
+**super+left-drag** / **super+right-drag**. `(gnew-float! "name")`
+creates a group where every window floats on map. Floats stay in the
+windowlist/number/cycling rotation; pulling one (`C-0`–`C-9`,
+pull-marked) re-tiles it into the current frame.
+
+Menus: `select-from-menu` renders a multi-line list in the message
+area — `C-n`/`C-p`/arrows navigate, digits jump, typing filters,
+`Return` selects, `C-g` aborts. The windowlist (`l`) and group switcher
+(`M-g`) use it.
 
 Multi-monitor: every group has a frame tree per head (StumpWM style);
 `Print S` cycles heads, `Print M-s` toggles, and directional focus

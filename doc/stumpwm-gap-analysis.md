@@ -67,12 +67,12 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | Feature | StumpWM | Assessment |
 |---|---|---|
 | **Multi-output (heads/screens)** | `snext`, `sprev`, `sother`, `refresh-heads`, per-head frame trees | ✅ sprint 4: per-head trees per group, `snext!`/`sprev!`/`sother!` (Print S / M-s), directional focus crosses bezels, hotplug adopts windows, `(set-head-mode! 'span)` for one spanning tree. |
-| **Floating windows/groups** | `gnew-float`, `float-this`, `unfloat-this`, `flatten-floats` | New layer in the window model + move/resize grabs (grabs/ dir already has smallvil's move/resize code as a starting point). User's StumpWM config used `F` float-this. |
+| **Floating windows/groups** | `gnew-float`, `float-this`, `unfloat-this`, `flatten-floats` | ✅ sprint 6: `float-this!` toggle (Print F), `gnew-float!`, super+drag move/resize, floats above tiling, geometry survives group switches/hotplug (flatten-floats still ❌). |
 | **Dynamic groups** (master/stack, i3-ish) | `gnew-dynamic`, `rotate-windows`, `exchange-with-master`, ... | StumpWM ships it, but it's a separate paradigm; layouts cover much of the need. Post-1.0. |
 | **Key remapping per app** | `define-remapped-keys` (e.g. C-n→Down in browser) | Requires rewriting forwarded keys per focused app-id in input.rs. Medium Rust. |
 | **Xwayland** | (implicit in X11) | ✅ sprint 5: embedded Xwayland; X11 apps are ordinary managed windows (title/class → title/app-id), DISPLAY exported, Wayland→X clipboard mirrored. Kill = polite close for X11 (shared client). |
 | **Selection/clipboard commands** | `putsel`, `getsel` | ✅ sprint 3: `set-clipboard!` (putsel), prompt paste C-y/C-v + copy M-w, `copy-last-message!` (Print M-c). |
-| **Menus (select-from-menu)** | multi-line navigable menu with j/k/search | Our prompt is single-line with inline completion cycling; a list-rendered menu needs multi-line message layout (message area already wraps; mostly Scheme + formatting). |
+| **Menus (select-from-menu)** | multi-line navigable menu with j/k/search | ✅ sprint 6: `(select-from-menu items on-select)` -- C-n/C-p/digits/typing-filters/Return/C-g; windowlist (Print l) and gselect (Print M-g) use it. |
 | **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer (idle-hook still ❌). |
 | **Minor modes / modules ecosystem** | `load-module`, minor-modes | Guile modules already load from user config dir; formal minor-mode machinery unnecessary for 1.0. |
 
