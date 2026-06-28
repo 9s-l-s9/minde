@@ -4,9 +4,10 @@
 //! README for the exact upstream revision this mirrors.
 //!
 //! Trimmed vs. anvil, per this compositor's needs:
-//! - single output policy: the first connected connector wins; any others
-//!   (whether on the same device or a hotplugged one) are logged and
-//!   skipped, rather than anvil's full multi-output desktop layout.
+//! - multi-output: every connected connector becomes an output, laid out
+//!   left-to-right in connection order (anvil's policy); hotplug adds and
+//!   removes outputs at runtime via `DrmScanner`, and Scheme is told
+//!   through `update_usable_area` -> `wm-on-heads-changed`.
 //! - primary GPU only: no `all_gpus`/multi-GPU render-node handling beyond
 //!   what's needed to keep the `GpuManager`/`MultiRenderer` plumbing
 //!   working (anvil's structure is kept here since fighting the API to
@@ -14,9 +15,6 @@
 //! - no DRM leasing, no fps/debug overlays, no screencopy/wlr protocols,
 //!   no profiling, no presentation-time feedback (this compositor doesn't
 //!   expose `wp_presentation`, so DRM output user-data is just `()`).
-//! - hotplug: device add/change/remove events are handled defensively
-//!   (logged, world doesn't crash) but do not attempt to promote a second
-//!   connector to "the" output if the first is later removed.
 
 use std::{collections::HashMap, path::Path, time::Duration};
 
@@ -51,7 +49,7 @@ use smithay::{
             EventLoop, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        drm::control::{Device as ControlDevice, ModeTypeFlags, connector, crtc},
+        drm::control::{ModeTypeFlags, connector, crtc},
         input::Libinput,
         rustix::fs::OFlags,
         wayland_server::{DisplayHandle, backend::GlobalId},
@@ -59,6 +57,7 @@ use smithay::{
     utils::{DeviceFd, Transform},
     wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
 };
+use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{error, info, warn};
 
 use crate::render::{BorderBuffers, MindeRenderElements};
@@ -85,11 +84,9 @@ const SUPPORTED_FORMATS: &[Fourcc] = &[
     Fourcc::Argb8888,
 ];
 
-/// The single output we ever create; `None` until the first connected
-/// connector has been scanned.
+/// One output: a connected connector driving a CRTC. Lives in its
+/// device's `surfaces` map.
 struct OutputSurface {
-    node: DrmNode,
-    crtc: crtc::Handle,
     output: Output,
     global: Option<GlobalId>,
     dh: DisplayHandle,
@@ -114,6 +111,8 @@ impl Drop for OutputSurface {
 struct DeviceData {
     drm_output_manager: GbmDrmOutputManager,
     registration_token: RegistrationToken,
+    drm_scanner: DrmScanner,
+    surfaces: HashMap<crtc::Handle, OutputSurface>,
 }
 
 /// State private to the udev backend, held inside `MindeState` for the
@@ -123,7 +122,8 @@ pub struct UdevBackendData {
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     devices: HashMap<DrmNode, DeviceData>,
-    output: Option<OutputSurface>,
+    /// Whether `wm-on-startup` has fired (once, on the first output).
+    started: bool,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
 }
 
@@ -198,7 +198,7 @@ pub fn init_udev(
         primary_gpu,
         gpus,
         devices: HashMap::new(),
-        output: None,
+        started: false,
         dmabuf_state: None,
     });
 
@@ -232,35 +232,35 @@ pub fn init_udev(
                 if libinput_context.resume().is_err() {
                     error!("failed to resume libinput context");
                 }
+                let mut to_repaint = Vec::new();
                 if let Some(udev) = state.udev_data.as_mut() {
-                    for device in udev.devices.values_mut() {
+                    for (node, device) in udev.devices.iter_mut() {
                         let _ = device.drm_output_manager.lock().activate(false);
+                        for crtc in device.surfaces.keys() {
+                            to_repaint.push((*node, *crtc));
+                        }
                     }
-                    if let Some(surface) = udev.output.as_ref() {
-                        let (node, crtc) = (surface.node, surface.crtc);
-                        state.handle_repaint_now(node, crtc);
-                    }
+                }
+                for (node, crtc) in to_repaint {
+                    state.handle_repaint_now(node, crtc);
                 }
             }
         })?;
 
-    // Bring up every device udev already knows about; the first connector
-    // that yields a connected mode wins as our single output.
+    // Bring up every device udev already knows about; each connected
+    // connector becomes an output.
     for (device_id, path) in udev_backend.device_list() {
         if let Ok(node) = DrmNode::from_dev_id(device_id) {
             if let Err(err) = device_added(state, node, path) {
                 warn!(?err, ?node, "skipping drm device");
             }
         }
-        if state.udev_data.as_ref().unwrap().output.is_some() {
-            break;
-        }
     }
 
-    if let Some(udev) = state.udev_data.as_ref() {
-        if udev.output.is_none() {
-            warn!("no connected DRM output found at startup; waiting for hotplug");
-        }
+    if let Some(udev) = state.udev_data.as_ref()
+        && !udev.started
+    {
+        warn!("no connected DRM output found at startup; waiting for hotplug");
     }
 
     setup_dmabuf_global(state);
@@ -370,6 +370,8 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
         DeviceData {
             drm_output_manager,
             registration_token,
+            drm_scanner: DrmScanner::new(),
+            surfaces: HashMap::new(),
         },
     );
 
@@ -377,70 +379,46 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
     Ok(())
 }
 
-/// Scans `node` for connected connectors. If we don't have an output yet,
-/// the first connected connector with a CRTC becomes our single output;
-/// any further connectors (on this device or any other) are logged and
-/// skipped, per the single-output policy.
+/// Scans `node` for connector changes and creates/tears down an output
+/// per (dis)connected connector (anvil's multi-output policy).
 fn scan_connectors(state: &mut MindeState, node: DrmNode) {
-    if state.udev_data.as_ref().unwrap().output.is_some() {
-        return;
-    }
-
-    // Collect connected connector info (with a resolved crtc) first, then
-    // drop all borrows of `state`/`udev` before calling into
-    // `try_setup_output`, which needs its own mutable access.
-    let mut candidates: Vec<(connector::Info, crtc::Handle)> = Vec::new();
-    {
-        let udev = state.udev_data.as_ref().unwrap();
-        let Some(device) = udev.devices.get(&node) else {
+    let scan_result = {
+        let udev = state.udev_data.as_mut().unwrap();
+        let Some(device) = udev.devices.get_mut(&node) else {
             return;
         };
-        let drm_device = device.drm_output_manager.device();
-
-        let Ok(resources) = drm_device.resource_handles() else {
-            return;
-        };
-
-        for &conn_handle in resources.connectors() {
-            let Ok(info) = drm_device.get_connector(conn_handle, false) else {
-                continue;
-            };
-            if info.state() != connector::State::Connected {
-                continue;
-            }
-            let crtc = info
-                .current_encoder()
-                .and_then(|enc| drm_device.get_encoder(enc).ok())
-                .and_then(|enc| enc.crtc())
-                .or_else(|| {
-                    info.encoders().iter().find_map(|&enc_handle| {
-                        let enc = drm_device.get_encoder(enc_handle).ok()?;
-                        resources.filter_crtcs(enc.possible_crtcs()).into_iter().next()
-                    })
-                });
-            if let Some(crtc) = crtc {
-                candidates.push((info, crtc));
+        match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
+            Ok(scan) => scan,
+            Err(err) => {
+                warn!(?err, "failed to scan connectors");
+                return;
             }
         }
-    }
+    };
 
-    for (info, crtc) in &candidates {
-        if try_setup_output(state, node, info, *crtc) {
-            return;
+    for event in scan_result {
+        match event {
+            DrmScanEvent::Connected { connector, crtc: Some(crtc) } => {
+                if !connector_connected(state, node, &connector, crtc) {
+                    warn!(?node, ?crtc, "failed to set up connected connector");
+                }
+            }
+            DrmScanEvent::Disconnected { connector, crtc: Some(crtc) } => {
+                connector_disconnected(state, node, &connector, crtc);
+            }
+            _ => {}
         }
     }
-
-    info!(?node, "no connected connector with a usable mode on this device");
 }
 
-fn try_setup_output(state: &mut MindeState, node: DrmNode, info: &connector::Info, crtc: crtc::Handle) -> bool {
+fn connector_connected(state: &mut MindeState, node: DrmNode, info: &connector::Info, crtc: crtc::Handle) -> bool {
     let udev = state.udev_data.as_mut().unwrap();
     let Some(device) = udev.devices.get_mut(&node) else {
         return false;
     };
 
     let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
-    info!(?crtc, %output_name, "setting up connector as the compositor's single output");
+    info!(?crtc, %output_name, "setting up connector as an output");
 
     let mode_id = info
         .modes()
@@ -465,9 +443,19 @@ fn try_setup_output(state: &mut MindeState, node: DrmNode, info: &connector::Inf
         },
     );
     let global = output.create_global::<MindeState>(&state.display_handle);
+    // Lay outputs out left-to-right in connection order (anvil's policy).
+    let position_x = state
+        .space
+        .outputs()
+        .fold(0, |acc, o| acc + state.space.output_geometry(o).map(|g| g.size.w).unwrap_or(0));
     output.set_preferred(wl_mode);
-    output.change_current_state(Some(wl_mode), Some(Transform::Normal), None, Some((0, 0).into()));
-    state.space.map_output(&output, (0, 0));
+    output.change_current_state(
+        Some(wl_mode),
+        Some(Transform::Normal),
+        None,
+        Some((position_x, 0).into()),
+    );
+    state.space.map_output(&output, (position_x, 0));
 
     let mut renderer = match udev.gpus.single_renderer(&udev.primary_gpu) {
         Ok(r) => r,
@@ -498,21 +486,45 @@ fn try_setup_output(state: &mut MindeState, node: DrmNode, info: &connector::Inf
         }
     };
 
-    udev.output = Some(OutputSurface {
-        node,
+    device.surfaces.insert(
         crtc,
-        output,
-        global: Some(global),
-        dh: state.display_handle.clone(),
-        drm_output,
-        border_buffers: BorderBuffers::default(),
-    });
+        OutputSurface {
+            output,
+            global: Some(global),
+            dh: state.display_handle.clone(),
+            drm_output,
+            border_buffers: BorderBuffers::default(),
+        },
+    );
+
+    let first_output = !udev.started;
+    udev.started = true;
 
     state.update_usable_area();
-    guile::on_startup();
+    if first_output {
+        guile::on_startup();
+    }
 
     state.render_now(node, crtc);
     true
+}
+
+fn connector_disconnected(state: &mut MindeState, node: DrmNode, info: &connector::Info, crtc: crtc::Handle) {
+    let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
+    info!(?crtc, %output_name, "connector disconnected; removing its output");
+    let Some(udev) = state.udev_data.as_mut() else {
+        return;
+    };
+    let Some(device) = udev.devices.get_mut(&node) else {
+        return;
+    };
+    if let Some(surface) = device.surfaces.remove(&crtc) {
+        // OutputSurface::drop removes the global; unmap first.
+        state.space.unmap_output(&surface.output);
+        drop(surface);
+        state.space.refresh();
+        state.update_usable_area();
+    }
 }
 
 fn device_changed(state: &mut MindeState, node: DrmNode) {
@@ -529,16 +541,24 @@ fn device_changed(state: &mut MindeState, node: DrmNode) {
 
 fn device_removed(state: &mut MindeState, node: DrmNode) {
     let handle = state.handle.clone();
+    // Tear down every output this device was driving.
+    let connectors: Vec<(connector::Info, crtc::Handle)> = state
+        .udev_data
+        .as_mut()
+        .and_then(|u| u.devices.get_mut(&node))
+        .map(|d| {
+            d.drm_scanner
+                .crtcs()
+                .map(|(info, crtc)| (info.clone(), crtc))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (info, crtc) in connectors {
+        connector_disconnected(state, node, &info, crtc);
+    }
     let Some(udev) = state.udev_data.as_mut() else {
         return;
     };
-    if let Some(output) = udev.output.as_ref() {
-        if output.node == node {
-            warn!(?node, "the DRM device backing our only output was removed");
-            state.space.unmap_output(&output.output);
-            udev.output = None;
-        }
-    }
     if let Some(device) = udev.devices.remove(&node) {
         handle.remove(device.registration_token);
     }
@@ -553,12 +573,11 @@ impl MindeState {
         let Some(device) = udev.devices.get_mut(&node) else {
             return;
         };
-        if let Some(output) = udev.output.as_mut() {
-            if output.node == node && output.crtc == crtc {
-                let _ = output.drm_output.frame_submitted();
-            }
+        if let Some(surface) = device.surfaces.get_mut(&crtc) {
+            let _ = surface.drm_output.frame_submitted();
+        } else {
+            return; // output vanished (unplug); don't reschedule repaints
         }
-        let _ = device;
 
         // Schedule the next repaint roughly one frame out.
         self.handle.insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
@@ -598,15 +617,14 @@ impl MindeState {
         let udev = self.udev_data.as_mut().ok_or(SwapBuffersError::AlreadySwapped)?;
         let primary_gpu = udev.primary_gpu;
 
-        let Some(output_surface) = udev.output.as_mut() else {
+        // Split borrows: the surface lives in `devices`, the renderer in
+        // `gpus` -- disjoint fields of the same UdevBackendData.
+        let UdevBackendData { gpus, devices, .. } = udev;
+        let Some(output_surface) = devices.get_mut(&node).and_then(|d| d.surfaces.get_mut(&crtc)) else {
             return Ok(false);
         };
-        if output_surface.node != node || output_surface.crtc != crtc {
-            return Ok(false);
-        }
 
-        let mut renderer = udev
-            .gpus
+        let mut renderer = gpus
             .single_renderer(&primary_gpu)
             .map_err(|_| SwapBuffersError::AlreadySwapped)?;
 
@@ -624,8 +642,14 @@ impl MindeState {
             custom.extend(self.cursor_state.render_elements(&mut renderer, cursor_phys, scale));
         }
 
-        // Message overlay, centered (below the cursor, above windows).
-        if let Some(msg) = self.message.as_ref() {
+        // Message overlay, centered (below the cursor, above windows) --
+        // on the output holding the current frame only (StumpWM shows
+        // messages on the current head).
+        let message_here = self
+            .focus_rect
+            .map(|r| output_geo.contains(r.loc))
+            .unwrap_or(true);
+        if let Some(msg) = self.message.as_ref().filter(|_| message_here) {
             if let Some(elem) = crate::render::message_element(
                 &mut renderer,
                 msg,
@@ -665,28 +689,43 @@ impl MindeState {
         custom.extend(layer_elements!(upper));
 
         // Border around the selected frame (falling back to the focused
-        // window before the first sync).
+        // window before the first sync). Rects are global; this output's
+        // framebuffer is output-local, so shift by the output origin and
+        // only draw when the frame is (partly) on this output.
         if let Some(geo) = self.focus_rect.or_else(|| {
             self.focused_window
                 .as_ref()
                 .and_then(|w| self.space.element_geometry(w))
         }) {
-            custom.extend(
-                output_surface
-                    .border_buffers
-                    .elements(geo, output.current_scale().integer_scale(), self.border_color),
-            );
+            if geo.overlaps(output_geo) {
+                let mut local = geo;
+                local.loc -= output_geo.loc;
+                custom.extend(output_surface.border_buffers.elements(
+                    local,
+                    output.current_scale().integer_scale(),
+                    self.border_color,
+                ));
+            }
         }
 
         // Window surfaces, front-to-back (custom elements above are drawn
         // first, i.e. on top; `space.elements()` yields back-to-front, so
-        // walk it in reverse).
+        // walk it in reverse). Skip windows entirely off this output and
+        // shift the rest into output-local coordinates.
         let mut all_elements: Vec<MindeRenderElements<UdevRenderer<'_>>> = custom;
         for window in self.space.elements().rev() {
             let Some(loc) = self.space.element_location(window) else {
                 continue;
             };
-            let phys_loc = loc.to_physical_precise_round(scale);
+            if !self
+                .space
+                .element_geometry(window)
+                .map(|g| g.overlaps(output_geo))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let phys_loc = (loc - output_geo.loc).to_physical_precise_round(scale);
             all_elements.extend(smithay::backend::renderer::element::AsRenderElements::<
                 UdevRenderer<'_>,
             >::render_elements(
@@ -722,10 +761,28 @@ impl MindeState {
                 .map_err(Into::<SwapBuffersError>::into)?;
         }
 
+        // Frame callbacks: windows on this output, plus -- from the first
+        // output's pass only -- windows parked offscreen (they overlap no
+        // output but must keep receiving callbacks or they stall while
+        // hidden). Avoids double-firing clients once per head.
+        let is_first_output = self.space.outputs().next() == Some(&output);
         self.space.elements().for_each(|window| {
-            window.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
-                Some(output.clone())
-            });
+            let geo = self.space.element_geometry(window);
+            let on_this = geo.map(|g| g.overlaps(output_geo)).unwrap_or(false);
+            let parked = geo
+                .map(|g| {
+                    !self
+                        .space
+                        .outputs()
+                        .filter_map(|o| self.space.output_geometry(o))
+                        .any(|og| g.overlaps(og))
+                })
+                .unwrap_or(true);
+            if on_this || (parked && is_first_output) {
+                window.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
+                    Some(output.clone())
+                });
+            }
         });
         // Layer surfaces need frame callbacks too, or clients like fuzzel
         // draw once and then wait forever before rendering typed input.

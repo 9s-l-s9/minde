@@ -1251,6 +1251,7 @@ dependencies = [
  "fontdue",
  "pkg-config",
  "smithay",
+ "smithay-drm-extras",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
@@ -1426,6 +1427,14 @@ dependencies = [
  "wayland-protocols-wlr",
  "wayland-scanner",
  "xkeysym",
+]
+
+[[package]]
+name = "smithay-drm-extras"
+version = "0.1.0"
+source = "git+https://github.com/Smithay/Smithay?rev=3021f619e2ae4dab8bfb1e21f3f210923b9b6582#3021f619e2ae4dab8bfb1e21f3f210923b9b6582"
+dependencies = [
+ "drm",
 ]
 
 [[package]]

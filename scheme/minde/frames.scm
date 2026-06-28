@@ -62,6 +62,18 @@
             clear-marks!
             pull-marked!
             sync-frames!
+            heads
+            head-mode
+            current-head-id
+            heads-changed!
+            set-heads-mode!
+            focus-head!
+            snext!
+            sprev!
+            sother!
+            head-of-window
+            group-all-trees
+            group-heads
             handle-window-map!
             handle-window-unmap!
             handle-output-geometry!
@@ -143,7 +155,8 @@
 ;; it. See activate-group!.
 (define-record-type <group>
   (%make-group name tree current-frame
-               last-window shown-window last-frame shown-frame)
+               last-window shown-window last-frame shown-frame
+               heads loaded-head)
   group?
   (name group-name set-group-name!)
   (tree group-tree set-group-tree!)
@@ -154,19 +167,46 @@
   (last-window group-last-window set-group-last-window!)
   (shown-window group-shown-window set-group-shown-window!)
   (last-frame group-last-frame set-group-last-frame!)
-  (shown-frame group-shown-frame set-group-shown-frame!))
+  (shown-frame group-shown-frame set-group-shown-frame!)
+  ;; Multi-head state: the tree/current-frame fields above always refer
+  ;; to ONE head's tree -- the one in loaded-head; every other head's
+  ;; (tree . current-frame) pair is stashed in the heads hash (head id ->
+  ;; pair). See load-head-into-group!.
+  (heads group-heads)
+  (loaded-head group-loaded-head set-group-loaded-head!))
 
-;; Public 3-argument constructor (the last/shown fields start empty).
+;; Public 3-argument constructor (the last/shown fields start empty; the
+;; head table starts with just the tree given, on the current head).
 (define (make-group name tree current-frame)
-  (%make-group name tree current-frame #f #f #f #f))
+  (%make-group name tree current-frame #f #f #f #f
+               (make-hash-table) %current-head-id))
 
 ;; ---------------------------------------------------------------------
 ;; State
 ;; ---------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------
+;; Heads (outputs/monitors). Each head is (id x y w h) -- its usable
+;; rect in global coordinates. %raw-heads is what the backend reported;
+;; %heads is what the frame layer works with ('span mode collapses the
+;; raw list into one synthetic head covering the union).
+;; ---------------------------------------------------------------------
+
+(define %raw-heads (list (list 0 0 0 1280 720)))
+(define %heads (list (list 0 0 0 1280 720)))
+(define %head-mode 'per-head) ; 'per-head | 'span
+(define %current-head-id 0)
+(define %last-head-id 0)
+
+(define (heads) %heads)
+(define (head-mode) %head-mode)
+(define (current-head-id) %current-head-id)
+(define (head-rect hid) (assv hid %heads))
+
 ;; The root of the frame tree -- either a <frame> or a <split> whose leaves
-;; are (transitively) <frame>s. This is always the ACTIVE group's tree;
-;; other groups' trees live in their own <group> record until activated.
+;; are (transitively) <frame>s. This is always the ACTIVE group's tree ON
+;; THE CURRENT HEAD; other groups' (and other heads') trees live in their
+;; <group> records until activated/focused.
 (define %frame-tree
   (make-frame 0 0 1280 720 '() #f))
 
@@ -217,27 +257,221 @@
 (define (activate-group! g)
   (unless (eq? g %active-group)
     (flush-active-group!)
+    (load-head-into-group! g %current-head-id)
     (set! %frame-tree (group-tree g))
     (set! %current-frame (group-current-frame g))
     (set! %active-group g)
     (resize-subtree! %frame-tree %last-output-x %last-output-y
                      %last-output-w %last-output-h)))
 
+;; ---------------------------------------------------------------------
+;; Multi-head plumbing
+;; ---------------------------------------------------------------------
+
+;; Every tree of G, across all heads (the live/loaded one first).
+(define (group-all-trees g)
+  (cons (if (eq? g %active-group) %frame-tree (group-tree g))
+        (hash-map->list (lambda (hid pair) (car pair)) (group-heads g))))
+
+;; (rect . tree) pairs for every head tree of the ACTIVE group, where
+;; rect is that head's (x y w h) -- used by sync-frames-now! so gap
+;; math sees the right screen bounds per head.
+(define (active-head-trees)
+  (cons (cons (cdr (or (head-rect %current-head-id)
+                       (list 0 %last-output-x %last-output-y
+                             %last-output-w %last-output-h)))
+              %frame-tree)
+        (hash-map->list (lambda (hid pair)
+                          (cons (cdr (or (head-rect hid)
+                                         (list hid 0 0 1280 720)))
+                                (car pair)))
+                        (group-heads %active-group))))
+
+(define (active-leaves)
+  (append-map frame-leaves (group-all-trees %active-group)))
+
+(define (set-last-output-from-head!)
+  (let ((r (head-rect %current-head-id)))
+    (when r
+      (set! %last-output-x (cadr r))
+      (set! %last-output-y (caddr r))
+      (set! %last-output-w (cadddr r))
+      (set! %last-output-h (car (cddddr r))))))
+
+;; Makes G's tree/current-frame fields refer to head HID, stashing the
+;; previously loaded head's pair in the heads hash. A head no group has
+;; touched yet gets a fresh full-rect frame lazily.
+(define (load-head-into-group! g hid)
+  (when (and (head-rect hid) (not (eqv? (group-loaded-head g) hid)))
+    (let ((h (group-heads g)))
+      ;; Stash even if the old head no longer exists: heads-changed!'s
+      ;; adoption pass picks removed heads' windows out of the hash.
+      (hash-set! h (group-loaded-head g)
+                 (cons (group-tree g) (group-current-frame g)))
+      (let ((pair (or (hash-ref h hid)
+                      (let* ((r (head-rect hid))
+                             (f (make-frame (cadr r) (caddr r) (cadddr r)
+                                            (car (cddddr r)) '() #f)))
+                        (cons f f)))))
+        (hash-remove! h hid)
+        (set-group-tree! g (car pair))
+        (set-group-current-frame! g (cdr pair))
+        (set-group-loaded-head! g hid)))))
+
+(define (focus-head! hid)
+  "Makes head HID the current one: the active group's tree on that head
+becomes the live tree (StumpWM screen focus)."
+  (when (and (head-rect hid) (not (eqv? hid %current-head-id)))
+    (flush-active-group!)
+    (set! %last-head-id %current-head-id)
+    (set! %current-head-id hid)
+    (load-head-into-group! %active-group hid)
+    (set! %frame-tree (group-tree %active-group))
+    (set! %current-frame (group-current-frame %active-group))
+    (set-last-output-from-head!)
+    (sync-frames!)))
+
+(define (sorted-head-ids)
+  (map car (sort %heads (lambda (a b)
+                          (or (< (cadr a) (cadr b))
+                              (and (= (cadr a) (cadr b))
+                                   (< (caddr a) (caddr b))))))))
+
+(define (shift-head! dir)
+  (let* ((ids (sorted-head-ids))
+         (n (length ids)))
+    (if (< n 2)
+        (echo "only one head")
+        (let ((idx (or (list-index (lambda (i) (eqv? i %current-head-id)) ids)
+                       0)))
+          (focus-head! (list-ref ids (modulo (+ idx dir) n)))))))
+
+(define (snext!) (shift-head! 1))
+(define (sprev!) (shift-head! -1))
+
+(define (sother!)
+  "Toggles to the previously focused head (StumpWM sother)."
+  (if (eqv? %last-head-id %current-head-id)
+      (echo "only one head")
+      (focus-head! %last-head-id)))
+
+;; The head beyond the current one in DIR, best perpendicular overlap
+;; wins -- lets directional focus cross monitor bezels.
+(define (head-in-direction dir)
+  (let* ((r (head-rect %current-head-id))
+         (x (cadr r)) (y (caddr r)) (w (cadddr r)) (h (car (cddddr r))))
+    (define (overlap a1 a2 b1 b2) (- (min a2 b2) (max a1 b1)))
+    (let loop ((cands %heads) (best #f) (best-ov 0))
+      (if (null? cands)
+          best
+          (let* ((c (car cands))
+                 (cx (cadr c)) (cy (caddr c)) (cw (cadddr c)) (ch (car (cddddr c)))
+                 (beyond? (and (not (eqv? (car c) %current-head-id))
+                               (case dir
+                                 ((left)  (<= (+ cx cw) x))
+                                 ((right) (>= cx (+ x w)))
+                                 ((up)    (<= (+ cy ch) y))
+                                 ((down)  (>= cy (+ y h))))))
+                 (ov (and beyond?
+                          (if (memq dir '(left right))
+                              (overlap y (+ y h) cy (+ cy ch))
+                              (overlap x (+ x w) cx (+ cx cw))))))
+            (if (and ov (> ov best-ov))
+                (loop (cdr cands) (car c) ov)
+                (loop (cdr cands) best best-ov)))))))
+
+;; The union bounding box of RAW heads, as a single head reusing the
+;; first raw head's id (so that head's trees survive a mode switch).
+(define (effective-heads raw)
+  (if (or (eq? %head-mode 'per-head) (null? raw) (null? (cdr raw)))
+      raw
+      (let ((x1 (apply min (map cadr raw)))
+            (y1 (apply min (map caddr raw)))
+            (x2 (apply max (map (lambda (r) (+ (cadr r) (cadddr r))) raw)))
+            (y2 (apply max (map (lambda (r) (+ (caddr r) (car (cddddr r)))) raw))))
+        (list (list (caar raw) x1 y1 (- x2 x1) (- y2 y1))))))
+
+(define (heads-changed! raw groups)
+  "The backend's head list changed (hotplug, resize, exclusive zones).
+RAW is ((id x y w h) ...) usable rects; GROUPS is every group (the
+active one may be omitted -- it is included automatically). New heads
+get lazy empty trees; removed heads' windows are adopted into each
+group's surviving current head; survivors are resized."
+  (unless (null? raw)
+    (set! %raw-heads raw)
+    (apply-effective-heads! (effective-heads raw) groups)))
+
+(define (set-heads-mode! mode groups)
+  "Switches between 'per-head (a frame tree per monitor, StumpWM style)
+and 'span (one tree over the union of all monitors)."
+  (set! %head-mode mode)
+  (apply-effective-heads! (effective-heads %raw-heads) groups))
+
+(define (apply-effective-heads! new groups)
+  (flush-active-group!)
+  (let* ((old-ids (map car %heads))
+         (new-ids (map car new))
+         (removed (filter (lambda (i) (not (memv i new-ids))) old-ids))
+         (all-groups (if (memq %active-group groups)
+                         groups
+                         (cons %active-group groups))))
+    (set! %heads new)
+    (unless (memv %current-head-id new-ids)
+      (set! %current-head-id (car new-ids)))
+    (unless (memv %last-head-id new-ids)
+      (set! %last-head-id %current-head-id))
+    (for-each
+     (lambda (g)
+       ;; Reconcile the loaded pair onto a surviving head first, then
+       ;; adopt windows stranded on removed heads into it.
+       (load-head-into-group! g %current-head-id)
+       (for-each
+        (lambda (hid)
+          (let ((pair (hash-ref (group-heads g) hid)))
+            (when pair
+              (hash-remove! (group-heads g) hid)
+              (let ((ids (tree-window-ids (car pair)))
+                    (target (group-current-frame g)))
+                (for-each
+                 (lambda (id)
+                   (set-frame-window-ids!
+                    target (append (frame-window-ids target) (list id))))
+                 ids)
+                (when (and (pair? ids) (not (frame-current-window target)))
+                  (set-frame-current-window! target (car ids)))))))
+        removed)
+       ;; Resize every surviving tree to its head's (new) rect.
+       (hash-for-each
+        (lambda (hid pair)
+          (let ((r (head-rect hid)))
+            (when r
+              (apply resize-subtree! (car pair) (cdr r)))))
+        (group-heads g))
+       (let ((r (head-rect (group-loaded-head g))))
+         (when r
+           (apply resize-subtree! (group-tree g) (cdr r)))))
+     all-groups)
+    ;; The active group's record may have been reloaded above; refresh
+    ;; the live globals and the current-head compat vars, then sync.
+    (set! %frame-tree (group-tree %active-group))
+    (set! %current-frame (group-current-frame %active-group))
+    (set-last-output-from-head!)
+    (sync-frames!)))
+
 ;; Moves every window tracked by G (active or not) off-screen, without
 ;; touching focus. Used when a group is about to be hidden.
 (define (park-group-windows! g)
-  (let ((tree (if (eq? g %active-group) %frame-tree (group-tree g))))
-    (for-each
-     (lambda (frame)
-       (for-each
-        (lambda (id) (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
-        (frame-window-ids frame)))
-     (frame-leaves tree))))
+  (for-each
+   (lambda (frame)
+     (for-each
+      (lambda (id) (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
+      (frame-window-ids frame)))
+   (append-map frame-leaves (group-all-trees g))))
 
-;; Total window count tracked by G (active or not).
+;; Total window count tracked by G (active or not), across all heads.
 (define (group-window-count g)
-  (let ((tree (if (eq? g %active-group) %frame-tree (group-tree g))))
-    (apply + (map (lambda (f) (length (frame-window-ids f))) (frame-leaves tree)))))
+  (apply + (map (lambda (f) (length (frame-window-ids f)))
+                (append-map frame-leaves (group-all-trees g)))))
 
 ;; Parks a single window off-screen -- used when a window is moved out of
 ;; the active group's tree into a hidden group (so it doesn't linger
@@ -362,8 +596,12 @@ wm-message (or under the test stubs)."
 (define (window-number id)
   (hash-ref %window-numbers id))
 
+;; TREE may also be a LIST of trees (e.g. group-all-trees output), so
+;; number bookkeeping can span a group's heads.
 (define (tree-window-ids tree)
-  (append-map frame-window-ids (frame-leaves tree)))
+  (if (or (null? tree) (pair? tree))
+      (append-map tree-window-ids tree)
+      (append-map frame-window-ids (frame-leaves tree))))
 
 (define (used-numbers-in tree except-id)
   (filter-map (lambda (id)
@@ -456,13 +694,18 @@ current window, - the previous one (other-window!'s target)."
          "  "))))
 
 (define (focus-window-by-id! id)
-  "Jumps to window ID wherever it lives in the active group: its frame
-becomes current and it is raised. Used by the fuzzel windowlist."
-  (let ((f (frame-of-window id)))
-    (when f
-      (set! %current-frame f)
-      (set-frame-current-window! f id)
-      (sync-frames!))))
+  "Jumps to window ID wherever it lives in the active group -- switching
+heads if needed: its frame becomes current and it is raised."
+  (let ((hid (head-of-window id)))
+    (when hid
+      (unless (eqv? hid %current-head-id)
+        (focus-head! hid))
+      (let ((f (find (lambda (fr) (member id (frame-window-ids fr)))
+                     (frame-leaves %frame-tree))))
+        (when f
+          (set! %current-frame f)
+          (set-frame-current-window! f id)
+          (sync-frames!))))))
 
 (define (frame-add-window! frame id)
   (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
@@ -485,10 +728,11 @@ becomes current and it is raised. Used by the fuzzel windowlist."
      (frame-leaves tree))
     found))
 
-;; Removes ID from the active group's tree only. Returns #t if found, in
-;; which case the active group is re-synced.
+;; Removes ID from the active group's trees (any head). Returns #t if
+;; found, in which case the active group is re-synced.
 (define (remove-window-from-active-tree! id)
-  (let ((found (remove-window-from-tree-in! %frame-tree id)))
+  (let ((found (any (lambda (t) (remove-window-from-tree-in! t id))
+                    (group-all-trees %active-group))))
     (when found (sync-frames!))
     found))
 
@@ -740,12 +984,28 @@ window')."
 ;; All window ids in the active group, in frame order. This is the
 ;; "buffer list" that focus-next-window!/pull-hidden-next! cycle through.
 (define (all-window-ids)
-  (append-map frame-window-ids (frame-leaves %frame-tree)))
+  (append-map frame-window-ids (active-leaves)))
 
-;; The leaf frame a window currently lives in, or #f.
+;; The leaf frame a window currently lives in (any head of the active
+;; group), or #f.
 (define (frame-of-window id)
   (find (lambda (f) (member id (frame-window-ids f)))
-        (frame-leaves %frame-tree)))
+        (active-leaves)))
+
+;; The head id whose tree holds window ID in the active group, or #f.
+(define (head-of-window id)
+  (if (find (lambda (f) (member id (frame-window-ids f)))
+            (frame-leaves %frame-tree))
+      %current-head-id
+      (let ((found #f))
+        (hash-for-each
+         (lambda (hid pair)
+           (when (and (not found)
+                      (find (lambda (f) (member id (frame-window-ids f)))
+                            (frame-leaves (car pair))))
+             (set! found hid)))
+         (group-heads %active-group))
+        found)))
 
 (define (focus-next-window!)
   "StumpWM's `next`: cycles through ALL windows of the group (the way
@@ -757,11 +1017,9 @@ is raised in it if it was hidden."
          (cur (current-frame-window)))
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) -1))
-             (next-id (list-ref ids (modulo (+ idx 1) n)))
-             (f (frame-of-window next-id)))
-        (when f
-          (set! %current-frame f)
-          (set-frame-current-window! f next-id)))))
+             (next-id (list-ref ids (modulo (+ idx 1) n))))
+        ;; focus-window-by-id! handles a window on another head.
+        (focus-window-by-id! next-id))))
   (sync-frames!))
 
 ;; Windows not currently visible: everything that isn't its frame's
@@ -771,7 +1029,7 @@ is raised in it if it was hidden."
    (lambda (f)
      (filter (lambda (id) (not (equal? id (frame-current-window f))))
              (frame-window-ids f)))
-   (frame-leaves %frame-tree)))
+   (active-leaves)))
 
 (define (pull-hidden-next!)
   "StumpWM's `pull` (pull-hidden-next): moves the next HIDDEN window of
@@ -836,11 +1094,8 @@ other frame holds any window."
          (cur (current-frame-window)))
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
-             (prev-id (list-ref ids (modulo (- idx 1) n)))
-             (f (frame-of-window prev-id)))
-        (when f
-          (set! %current-frame f)
-          (set-frame-current-window! f prev-id)))))
+             (prev-id (list-ref ids (modulo (- idx 1) n))))
+        (focus-window-by-id! prev-id))))
   (sync-frames!))
 
 (define (pull-hidden-previous!)
@@ -951,11 +1206,14 @@ and clears the marks."
                 (loop (cdr cands) best best-ov)))))))
 
 (define (move-focus! dir)
-  "Focuses the frame in direction DIR. A no-op at the screen edge."
+  "Focuses the frame in direction DIR; at a screen edge, crosses to the
+next head in that direction if there is one."
   (let ((target (frame-in-direction dir)))
-    (when target
+    (cond
+     (target
       (set! %current-frame target)
-      (sync-frames!))))
+      (sync-frames!))
+     ((head-in-direction dir) => focus-head!))))
 
 ;; Removes ID from FRAME's list, promoting the next window if it was
 ;; current. (The window is expected to be re-added elsewhere.)
@@ -967,15 +1225,23 @@ and clears the marks."
      (if (null? (frame-window-ids frame)) #f (car (frame-window-ids frame))))))
 
 (define (move-window! dir)
-  "Moves the current window into the frame in direction DIR and follows
-it with the focus."
+  "Moves the current window into the frame in direction DIR (crossing to
+the next head at a screen edge) and follows it with the focus."
   (let ((target (frame-in-direction dir))
         (id (current-frame-window)))
-    (when (and target id)
+    (cond
+     ((not id) #f)
+     (target
       (take-window-out! %current-frame id)
       (frame-add-window! target id)
       (set! %current-frame target)
-      (sync-frames!))))
+      (sync-frames!))
+     ((head-in-direction dir)
+      => (lambda (hid)
+           (take-window-out! %current-frame id)
+           (focus-head! hid)
+           (frame-add-window! %current-frame id)
+           (sync-frames!))))))
 
 (define (exchange-windows! dir)
   "Swaps the current window with the one shown in the frame in direction
@@ -1091,23 +1357,36 @@ and re-syncs the active group."
 (define (set-sync-hook! proc) (set! %sync-hook proc))
 
 (define (sync-frames-now!)
-  "Walks the frame tree, placing each frame's current window at its frame's
-pixel geometry, moving every other (hidden) window off-screen, and setting
-input focus to the current frame's current window."
+  "Walks every head's frame tree of the active group, placing each
+frame's current window at its frame's pixel geometry, moving every other
+(hidden) window off-screen, and setting input focus to the current
+frame's current window."
   (for-each
-   (lambda (frame)
-     (let ((cur (frame-current-window frame))
-           (rect (frame-display-rect frame)))
+   (lambda (rect+tree)
+     ;; Bind the gap/outer-edge bounds to this tree's head while its
+     ;; frames are placed (frame-display-rect reads %last-output-*).
+     (let ((saved (list %last-output-x %last-output-y
+                        %last-output-w %last-output-h))
+           (r (car rect+tree)))
+       (set! %last-output-x (car r)) (set! %last-output-y (cadr r))
+       (set! %last-output-w (caddr r)) (set! %last-output-h (cadddr r))
        (for-each
-        (lambda (id)
-          (if (equal? id cur)
-              (let ((bw %border-width))
-                (wm-place-window id
-                                 (+ (car rect) bw) (+ (cadr rect) bw)
-                                 (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))))
-              (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
-        (frame-window-ids frame))))
-   (frame-leaves %frame-tree))
+        (lambda (frame)
+          (let ((cur (frame-current-window frame))
+                (rect (frame-display-rect frame)))
+            (for-each
+             (lambda (id)
+               (if (equal? id cur)
+                   (let ((bw %border-width))
+                     (wm-place-window id
+                                      (+ (car rect) bw) (+ (cadr rect) bw)
+                                      (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))))
+                   (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
+             (frame-window-ids frame))))
+        (frame-leaves (cdr rect+tree)))
+       (set! %last-output-x (car saved)) (set! %last-output-y (cadr saved))
+       (set! %last-output-w (caddr saved)) (set! %last-output-h (cadddr saved))))
+   (active-head-trees))
   ;; Tell Rust where the selected frame is, so the focus border marks the
   ;; frame itself (visible even when the frame is empty).
   (let ((rect (frame-display-rect %current-frame)))
@@ -1231,7 +1510,7 @@ Called from Rust as (wm-on-urgent id) via init.scm."
 (define (handle-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window."
   (remember-window-title! id title app-id)
-  (assign-window-number! id %frame-tree)
+  (assign-window-number! id (group-all-trees %active-group))
   (frame-add-window! %current-frame id)
   (run-hook!* 'new-window id title app-id)
   (sync-frames!))
@@ -1243,14 +1522,8 @@ groups' trees themselves via remove-window-from-tree-in!."
   (remove-window-from-active-tree! id))
 
 (define (handle-output-geometry! x y width height)
-  "Called on output init/resize and whenever layer-shell exclusive zones
-change the usable area (X Y is its origin -- e.g. below a docked bar).
-Resizes the active group's frame tree to the new rect and remembers it so
-newly activated groups get the current geometry too."
+  "Single-head compatibility shim: treats the whole world as one head
+with id 0. (minde groups)' wm-on-output-geometry routes here only for
+old binaries/tests; multi-head backends call wm-on-heads-changed."
   (when (and (> width 0) (> height 0))
-    (set! %last-output-x x)
-    (set! %last-output-y y)
-    (set! %last-output-w width)
-    (set! %last-output-h height)
-    (resize-subtree! %frame-tree x y width height)
-    (sync-frames!)))
+    (heads-changed! (list (list 0 x y width height)) '())))

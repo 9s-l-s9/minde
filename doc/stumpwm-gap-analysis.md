@@ -66,7 +66,7 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 
 | Feature | StumpWM | Assessment |
 |---|---|---|
-| **Multi-output (heads/screens)** | `snext`, `sprev`, `sother`, `refresh-heads`, per-head frame trees | Largest structural gap: udev.rs is single-output; Space supports more. Decide: 1.0 = explicitly single-output, or invest. |
+| **Multi-output (heads/screens)** | `snext`, `sprev`, `sother`, `refresh-heads`, per-head frame trees | ✅ sprint 4: per-head trees per group, `snext!`/`sprev!`/`sother!` (Print S / M-s), directional focus crosses bezels, hotplug adopts windows, `(set-head-mode! 'span)` for one spanning tree. |
 | **Floating windows/groups** | `gnew-float`, `float-this`, `unfloat-this`, `flatten-floats` | New layer in the window model + move/resize grabs (grabs/ dir already has smallvil's move/resize code as a starting point). User's StumpWM config used `F` float-this. |
 | **Dynamic groups** (master/stack, i3-ish) | `gnew-dynamic`, `rotate-windows`, `exchange-with-master`, ... | StumpWM ships it, but it's a separate paradigm; layouts cover much of the need. Post-1.0. |
 | **Key remapping per app** | `define-remapped-keys` (e.g. C-n→Down in browser) | Requires rewriting forwarded keys per focused app-id in input.rs. Medium Rust. |

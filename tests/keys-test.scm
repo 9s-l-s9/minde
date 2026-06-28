@@ -351,6 +351,22 @@
 (check "M-w copied the prompt buffer" %clipboard "abc")
 (wm-handle-key 0 #f "Escape" "")
 
+;; Head keys: with one head, S/M-S echo "only one head" without error;
+;; with a second synthetic head, S switches.
+(set! %messages '())
+(wm-handle-key ctrl-bit #f "t")
+(check "S (snext) consumed" (wm-handle-key 1 #f "S") #t)
+(check-true "single head echoed" (and (pair? %messages)
+                                      (string-contains (car %messages) "one head")))
+(wm-on-heads-changed '((0 0 0 1280 720) (1 1280 0 1280 720)))
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 1 #f "S")
+(check "snext! switched to head 1" (current-head-id) 1)
+(wm-handle-key ctrl-bit #f "t")
+(check "M-s (sother) consumed" (wm-handle-key 8 #f "s") #t)
+(check "sother! back on head 0" (current-head-id) 0)
+(wm-on-heads-changed '((0 0 0 1280 720))) ; back to one head
+
 ;; M-c: copy the last message.
 (echo "hello from the message ring")
 (wm-handle-key ctrl-bit #f "t")

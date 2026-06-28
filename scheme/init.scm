@@ -552,6 +552,16 @@ focused client), #f otherwise."
 (bind-prefix-key! "M-c" (lambda () (copy-last-message!)) "copy last message")
 
 ;; ---------------------------------------------------------------------
+;; Multi-head (multi-monitor): each group has a frame tree per head;
+;; S cycles heads, M-S toggles to the last one. Directional focus
+;; (Print arrows) also crosses monitor edges. Users who prefer one big
+;; tree spanning all monitors can (set-head-mode! 'span).
+;; ---------------------------------------------------------------------
+
+(bind-prefix-key! "S" (lambda () (snext!)) "next head (monitor)")
+(bind-prefix-key! "M-s" (lambda () (sother!)) "last head (monitor)")
+
+;; ---------------------------------------------------------------------
 ;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
 ;; Arrows/hjkl move the nearest split divider by %resize-step pixels,
 ;; b/= balances all frames, Return/Escape leaves the mode. The mode works

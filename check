@@ -25,7 +25,7 @@ sh tests/lint-borrows.sh
 echo "ok - no double layer_map borrows"
 
 echo "== guile suites =="
-for t in keys input frames groups layouts next-pull; do
+for t in keys input frames groups layouts next-pull heads; do
   out=$(guile -L scheme "tests/$t-test.scm" 2>/dev/null | tail -1)
   echo "$t: $out"
   [ "$out" = "all tests passed" ] || exit 1

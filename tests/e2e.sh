@@ -130,6 +130,16 @@ import -window root "$OUT/paste.png"
 loggrep "error in keybinding" && fail "clipboard paste errored (see log)"
 ok "timer / fullscreen / banish / flash / clipboard paste"
 
+# Multi-head keys: with the single nested head they must echo "only one
+# head" rather than erroring; wm-outputs must return the winit head.
+xdotool key Print; sleep 0.2; xdotool key shift+s; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key alt+s; sleep 0.3
+loggrep "error in keybinding" && fail "head keys errored (see log)"
+scripts/minde-cmd '(wm-log (format #f "e2e-outputs ~s" (wm-outputs)))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-outputs ((0 " || fail "wm-outputs did not report the winit head"
+ok "head keys + wm-outputs (single head)"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

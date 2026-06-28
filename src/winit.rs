@@ -67,7 +67,7 @@ pub fn init_winit(
                 );
                 // Re-derive the usable area from the new size (layer
                 // exclusive zones re-arranged inside).
-                state.usable_area = None;
+                state.reported_heads.clear();
                 state.update_usable_area();
             }
             WinitEvent::Input(event) => state.process_input_event(event),

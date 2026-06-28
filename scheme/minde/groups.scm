@@ -31,6 +31,8 @@
             move-window-to-next-group!
             gmove-and-follow!
             next-urgent!
+            wm-on-heads-changed
+            set-head-mode!
             wm-on-window-map
             wm-on-window-unmap
             wm-on-output-geometry
@@ -85,7 +87,7 @@
 
 (define (group-window-ids g)
   (append-map frame-window-ids
-              (frame-leaves (if (eq? g (current-group)) (current-tree) (group-tree g)))))
+              (append-map frame-leaves (group-all-trees g))))
 
 ;; ---------------------------------------------------------------------
 ;; Switching
@@ -191,10 +193,10 @@ group, which becomes current (StumpWM gkill). A no-op with one group."
         ;; until that group is shown.
         (for-each
          (lambda (id)
-           (remove-window-from-tree-in!
-            (if (eq? g (current-group)) (current-tree) (group-tree g)) id)
+           (find (lambda (t) (remove-window-from-tree-in! t id))
+                 (group-all-trees g))
            (hide-window! id)
-           (ensure-unique-window-number! id (group-tree fallback))
+           (ensure-unique-window-number! id (group-all-trees fallback))
            (frame-add-window! (group-current-frame fallback) id))
          ids)
         (switch-to-group! (group-name fallback))
@@ -216,9 +218,10 @@ group or the current frame has no window."
       (let ((id (current-frame-window)))
         (when id
           (let ((next (list-ref %groups (modulo (+ idx 1) n))))
-            (remove-window-from-tree-in! (current-tree) id)
+            (find (lambda (t) (remove-window-from-tree-in! t id))
+                  (group-all-trees (current-group)))
             (hide-window! id)
-            (ensure-unique-window-number! id (group-tree next))
+            (ensure-unique-window-number! id (group-all-trees next))
             (frame-add-window! (group-current-frame next) id)
             (sync-frames!)))))))
 
@@ -262,7 +265,7 @@ group or the current frame has no window."
          (leaf (list-ref leaves (min (max 0 (caddr rule))
                                      (- (length leaves) 1)))))
     (remember-window-title! id title app-id)
-    (assign-window-number! id tree)
+    (assign-window-number! id (group-all-trees g))
     (frame-add-window! leaf id)
     (run-hook!* 'new-window id title app-id)
     (if active?
@@ -352,11 +355,26 @@ a sync since nothing hidden is on-screen)."
   (clear-fullscreen-if-window! id)
   (clear-urgent! id)
   (unless (remove-window-from-active-tree! id)
-    (find (lambda (g) (remove-window-from-tree-in! (group-tree g) id)) %groups))
+    (find (lambda (g)
+            (any (lambda (t) (remove-window-from-tree-in! t id))
+                 (group-all-trees g)))
+          %groups))
   (forget-window-title! id)
   (forget-window-number! id)
   (run-hook!* 'destroy-window id)
   #t)
 
 (define (wm-on-output-geometry x y width height)
-  (handle-output-geometry! x y width height))
+  "Single-head compatibility path (old binaries / winit-era configs)."
+  (when (and (> width 0) (> height 0))
+    (heads-changed! (list (list 0 x y width height)) %groups)))
+
+(define (wm-on-heads-changed heads)
+  "Multi-head backends report the full usable-rect list here:
+((id x y w h) ...)."
+  (heads-changed! heads %groups))
+
+(define (set-head-mode! mode)
+  "'per-head (a frame tree per monitor, StumpWM style) or 'span (one
+tree over the union of all monitors)."
+  (set-heads-mode! mode %groups))

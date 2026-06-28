@@ -70,13 +70,28 @@ pub enum WmCommand {
 /// `MindeState`.
 static COMMAND_SENDER: OnceLock<Sender<WmCommand>> = OnceLock::new();
 
-/// Last known usable area (output minus layer-shell exclusive zones).
-/// Stored outside `MindeState` so `(wm-output-geometry)` is callable from
-/// any thread, including the REPL.
+/// Last known usable area (union of all outputs minus layer-shell
+/// exclusive zones). Stored outside `MindeState` so
+/// `(wm-output-geometry)` is callable from any thread, including the REPL.
 static OUTPUT_X: AtomicI32 = AtomicI32::new(0);
 static OUTPUT_Y: AtomicI32 = AtomicI32::new(0);
 static OUTPUT_W: AtomicU32 = AtomicU32::new(0);
 static OUTPUT_H: AtomicU32 = AtomicU32::new(0);
+
+/// One head (output/monitor) as reported to Scheme: stable id + usable
+/// rect (global coordinates) + connector name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeadInfo {
+    pub id: u64,
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    pub name: String,
+}
+
+/// Current head list, readable from any thread for `(wm-outputs)`.
+static HEADS: std::sync::Mutex<Vec<HeadInfo>> = std::sync::Mutex::new(Vec::new());
 
 pub fn set_command_sender(sender: Sender<WmCommand>) {
     let _ = COMMAND_SENDER.set(sender);
@@ -405,6 +420,33 @@ unsafe extern "C" fn wm_output_geometry() -> Scm {
     unsafe { ffi::scm_list_4(from_i64(x), from_i64(y), from_i64(w), from_i64(h)) }
 }
 
+/// Builds a proper list from a slice of SCM values.
+fn scm_list(items: &[Scm]) -> Scm {
+    items
+        .iter()
+        .rev()
+        .fold(ffi::SCM_EOL, |tail, &head| unsafe { ffi::scm_cons(head, tail) })
+}
+
+/// `(wm-outputs)` -> `((id x y w h name) ...)`, usable rects.
+unsafe extern "C" fn wm_outputs() -> Scm {
+    let heads = HEADS.lock().unwrap().clone();
+    let entries: Vec<Scm> = heads
+        .iter()
+        .map(|head| {
+            scm_list(&[
+                from_i64(head.id as i64),
+                from_i64(head.x as i64),
+                from_i64(head.y as i64),
+                from_i64(head.w as i64),
+                from_i64(head.h as i64),
+                from_str(&head.name),
+            ])
+        })
+        .collect();
+    scm_list(&entries)
+}
+
 fn register_gsubr(name: &str, req: i32, opt: i32, rst: i32, f: ffi::Gsubr) {
     let c = to_cstring(name);
     unsafe {
@@ -489,6 +531,7 @@ pub fn init(loop_signal: LoopSignal) {
         >(wm_warp_pointer));
         // Gsubr is exactly the zero-arg signature; no transmute needed.
         register_gsubr("wm-request-paste", 0, 0, 0, wm_request_paste);
+        register_gsubr("wm-outputs", 0, 0, 0, wm_outputs);
         register_gsubr("wm-set-clipboard", 1, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn(Scm) -> Scm,
             ffi::Gsubr,
@@ -571,6 +614,50 @@ pub fn on_output_geometry(x: i32, y: i32, width: u32, height: u32) {
         from_i64(width as i64),
         from_i64(height as i64),
     );
+}
+
+/// Reports the full head list (usable rects) to Scheme:
+/// `(wm-on-heads-changed ((id x y w h) ...))`. Also refreshes the
+/// `(wm-output-geometry)` union and the `(wm-outputs)` registry. Falls
+/// back to the legacy single-head `wm-on-output-geometry` when the new
+/// entry point isn't bound (older user configs).
+pub fn on_heads_changed(heads: Vec<HeadInfo>) {
+    if heads.is_empty() {
+        return;
+    }
+    // Union of the usable rects, for the legacy geometry query.
+    let x1 = heads.iter().map(|h| h.x).min().unwrap();
+    let y1 = heads.iter().map(|h| h.y).min().unwrap();
+    let x2 = heads.iter().map(|h| h.x + h.w as i32).max().unwrap();
+    let y2 = heads.iter().map(|h| h.y + h.h as i32).max().unwrap();
+    set_output_geometry(x1, y1, (x2 - x1).max(0) as u32, (y2 - y1).max(0) as u32);
+
+    let first = heads[0].clone();
+    *HEADS.lock().unwrap() = heads.clone();
+
+    if let Some(proc) = lookup("wm-on-heads-changed") {
+        let entries: Vec<Scm> = heads
+            .iter()
+            .map(|h| {
+                scm_list(&[
+                    from_i64(h.id as i64),
+                    from_i64(h.x as i64),
+                    from_i64(h.y as i64),
+                    from_i64(h.w as i64),
+                    from_i64(h.h as i64),
+                ])
+            })
+            .collect();
+        call1(proc, scm_list(&entries));
+    } else {
+        call_named_4(
+            "wm-on-output-geometry",
+            from_i64(first.x as i64),
+            from_i64(first.y as i64),
+            from_i64(first.w as i64),
+            from_i64(first.h as i64),
+        );
+    }
 }
 
 /// Calls `(wm-on-timer token)` if bound; fired by `WmCommand::RunAfter`'s

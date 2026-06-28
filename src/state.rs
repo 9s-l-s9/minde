@@ -72,9 +72,12 @@ pub struct MindeState {
     /// clearing a newer message.
     pub message: Option<crate::render::MessageState>,
     pub message_generation: u64,
-    /// Last usable area (output minus layer-shell exclusive zones) sent to
-    /// Scheme, to avoid re-announcing an unchanged rect on every commit.
-    pub usable_area: Option<Rectangle<i32, Logical>>,
+    /// Last head list (usable rects) sent to Scheme, to avoid
+    /// re-announcing unchanged geometry on every commit.
+    pub reported_heads: Vec<guile::HeadInfo>,
+    /// Monotonic source of stable per-output ids (stored in each
+    /// `Output`'s user data as `OutputId`).
+    pub next_output_id: u64,
     /// Focus border color; Scheme flips it while the prefix key is armed
     /// (StumpWM's pointer-box equivalent).
     pub border_color: [f32; 4],
@@ -174,7 +177,8 @@ impl MindeState {
             focus_rect: None,
             message: None,
             message_generation: 0,
-            usable_area: None,
+            reported_heads: Vec::new(),
+            next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
 
             pointer_location: (0.0, 0.0).into(),
@@ -352,13 +356,24 @@ impl MindeState {
                 };
                 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
                 if on {
-                    // Full output geometry, not the usable area: fullscreen
-                    // covers reserved bar space (though Top-layer surfaces
-                    // still render above; documented limitation).
+                    // Full geometry of the output showing the window (not
+                    // the usable area): fullscreen covers reserved bar
+                    // space (though Top-layer surfaces still render above;
+                    // documented limitation).
+                    let window_center = self
+                        .space
+                        .element_geometry(&window)
+                        .map(|g| Point::from((g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2)));
                     let geo = self
                         .space
                         .outputs()
-                        .next()
+                        .find(|o| {
+                            match (window_center, self.space.output_geometry(o)) {
+                                (Some(c), Some(g)) => g.contains(c),
+                                _ => false,
+                            }
+                        })
+                        .or_else(|| self.space.outputs().next())
                         .and_then(|o| self.space.output_geometry(o))
                         .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()));
                     toplevel.with_pending_state(|state| {
@@ -533,34 +548,68 @@ impl MindeState {
         socket_name
     }
 
-    /// Recomputes the usable area (output geometry minus layer-shell
-    /// exclusive zones) and tells Scheme when it changed, so the frame
-    /// tree shrinks around docked panels (eww bars etc.). Call after any
-    /// layer surface maps, unmaps, or commits, and on output init/resize.
-    pub fn update_usable_area(&mut self) {
-        let Some(output) = self.space.outputs().next().cloned() else {
-            return;
-        };
-        let zone = {
-            let mut map = smithay::desktop::layer_map_for_output(&output);
-            map.arrange();
-            map.non_exclusive_zone()
-        };
-        if self.usable_area != Some(zone) {
-            self.usable_area = Some(zone);
-            guile::on_output_geometry(
-                zone.loc.x,
-                zone.loc.y,
-                zone.size.w.max(0) as u32,
-                zone.size.h.max(0) as u32,
-            );
+    /// The stable id of OUTPUT, assigning the next free one on first use.
+    pub fn output_id(&mut self, output: &smithay::output::Output) -> u64 {
+        if let Some(id) = output.user_data().get::<OutputId>() {
+            return id.0;
         }
+        let id = self.next_output_id;
+        self.next_output_id += 1;
+        output.user_data().insert_if_missing(|| OutputId(id));
+        id
+    }
+
+    /// Recomputes every output's usable area (geometry minus layer-shell
+    /// exclusive zones) and tells Scheme when anything changed, so the
+    /// frame trees shrink around docked panels (eww bars etc.). Call
+    /// after any layer surface maps, unmaps, or commits, and on output
+    /// init/resize/hotplug.
+    pub fn update_usable_area(&mut self) {
+        let outputs: Vec<_> = self.space.outputs().cloned().collect();
+        let mut heads = Vec::new();
+        for output in outputs {
+            let Some(geo) = self.space.output_geometry(&output) else {
+                continue;
+            };
+            // The non-exclusive zone is in output-local coordinates;
+            // heads are reported in global ones.
+            let zone = {
+                let mut map = smithay::desktop::layer_map_for_output(&output);
+                map.arrange();
+                map.non_exclusive_zone()
+            };
+            heads.push(guile::HeadInfo {
+                id: self.output_id(&output),
+                x: geo.loc.x + zone.loc.x,
+                y: geo.loc.y + zone.loc.y,
+                w: zone.size.w.max(0) as u32,
+                h: zone.size.h.max(0) as u32,
+                name: output.name(),
+            });
+        }
+        if heads.is_empty() || heads == self.reported_heads {
+            return;
+        }
+        self.reported_heads = heads.clone();
+        guile::on_heads_changed(heads);
     }
 
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
         use smithay::wayland::shell::wlr_layer::Layer;
 
-        let output = self.space.outputs().next()?;
+        // The output under the pointer owns the layer surfaces there;
+        // fall back to the first output (e.g. pointer parked on a dead
+        // zone between differently-sized heads).
+        let output = self
+            .space
+            .outputs()
+            .find(|o| {
+                self.space
+                    .output_geometry(o)
+                    .map(|g| g.to_f64().contains(pos))
+                    .unwrap_or(false)
+            })
+            .or_else(|| self.space.outputs().next())?;
         let output_geo = self.space.output_geometry(output).unwrap();
         let layers = smithay::desktop::layer_map_for_output(output);
         let local = pos - output_geo.loc.to_f64();
@@ -587,6 +636,11 @@ impl MindeState {
             .or_else(|| layer_surface_under(&[Layer::Bottom, Layer::Background]))
     }
 }
+
+/// Stable per-output id handed to Scheme, stored in the `Output`'s user
+/// data (survives as long as the output does; a re-plugged monitor gets
+/// a fresh id).
+struct OutputId(u64);
 
 /// Data associated with a wayland client that connects to us.
 /// One instance of this type per client.

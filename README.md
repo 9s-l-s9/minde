@@ -82,7 +82,15 @@ Prefix map (see `scheme/init.scm`):
 | `M-f` | fullscreen toggle | | `K` | kill window (force, drops client) |
 | `B` | banish pointer | | `C-c` | flash current frame |
 | `C-u` | jump to urgent window | | `M-c` | copy last message |
+| `S` | next head (monitor) | | `M-s` | last head (monitor) |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
+
+Multi-monitor: every group has a frame tree per head (StumpWM style);
+`Print S` cycles heads, `Print M-s` toggles, and directional focus
+(`Print` arrows) crosses monitor edges. Unplugging a monitor moves its
+windows into the surviving head. Prefer one big tree spanning all
+monitors? `(set-head-mode! 'span)` in init.scm (`'per-head` to go back);
+`(wm-outputs)` lists heads as `(id x y w h name)`.
 
 `?` works while the prefix or any submap is armed and keeps it armed.
 `Print P r` renames the current group, `Print P k` deletes it (its

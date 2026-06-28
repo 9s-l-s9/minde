@@ -22,6 +22,8 @@ pub const SCM_BOOL_T: Scm = Scm(0x404 as *mut c_void);
 /// Passed by Guile for a missing optional gsubr argument (iflag 9, see
 /// libguile/tags.h; same encoding scheme as the booleans above).
 pub const SCM_UNDEFINED: Scm = Scm(0x904 as *mut c_void);
+/// The empty list `'()` (SCM_EOL: iflag 3, same encoding scheme).
+pub const SCM_EOL: Scm = Scm(0x304 as *mut c_void);
 
 pub fn scm_from_bool_inline(x: bool) -> Scm {
     if x { SCM_BOOL_T } else { SCM_BOOL_F }
@@ -68,6 +70,8 @@ unsafe extern "C" {
     /// Builds a two-element list `(a b)`.
     pub fn scm_list_2(a: Scm, b: Scm) -> Scm;
     pub fn scm_list_4(a: Scm, b: Scm, c: Scm, d: Scm) -> Scm;
+    /// `(cons a b)` -- for building lists of arbitrary length from Rust.
+    pub fn scm_cons(a: Scm, b: Scm) -> Scm;
 
     /// Looks up a top-level variable object by name (throws if unbound).
     pub fn scm_c_lookup(name: *const c_char) -> Scm;
