@@ -22,7 +22,7 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | groups: `gnew`, `gnext`, `gprev`, `gmove` | ✅ |
 | `resize-direction` (iresize) + `balance-frames` | ✅ Print s mode |
 | `dump-group-to-file` / `restore-from-file` | ✅ (minde layouts) — group-level only |
-| `define-frame-preference` / `place-existing-windows` on map | 🟡 `add-placement-rule!` (no "place existing", no lock/raise flags) |
+| `define-frame-preference` / `place-existing-windows` on map | ✅ sprint 7: `place-existing-windows!` (Print P p); lock/raise flags still 🚫 (follow? covers the common case). |
 | `run-shell-command` | ✅ wm-spawn + run prompt |
 | `loadrc` / `reload` | ✅ Print R (init.scm only; modules need re-login) |
 | REPL (`stumpish`/slime) | ✅ REPL socket + minde-cmd |
@@ -47,7 +47,7 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **`lastmsg` / `copy-last-message`** | re-show / copy last message | keep a message ring in Scheme. |
 | **Marks** | `mark`, `gmove-marked`, `pull-marked`, `clear-window-marks` | batch window ops. |
 | **`quit-confirm`** | y/n prompt before quit | one read-one-line. |
-| **`title` (rename window), `echo-date`** | trivial | |
+| **`title` (rename window), `echo-date`** | ✅ sprint 7: `rename-window!` (Print P n); echo-date = `(echo (strftime ...))` one-liner. |
 | **`command-mode`** | prefix-less modal bindings | the keymap-return re-arm mechanism from iresize already implements this pattern. |
 
 ## Missing — needs Rust support (small, contained)
@@ -56,10 +56,10 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 |---|---|---|
 | **Fullscreen** | `fullscreen` | ✅ sprint 3: `fullscreen!` (Print M-f), layout frozen while active. |
 | **Force kill** | `kill-window` | ✅ sprint 3: `kill-current-window!` (Print K) drops the client connection. |
-| **Pointer control** | `banish`, `ratwarp`, `ratclick` | ✅ sprint 3: `banish!` (Print B) + `ratwarp!` (ratclick still ❌). |
+| **Pointer control** | `banish`, `ratwarp`, `ratclick` | ✅ sprint 3: `banish!` (Print B) + `ratwarp!`; sprint 7: `ratclick!`. |
 | **Urgency** | `next-urgent`, `*urgent-window-hook*` | ✅ sprint 3: xdg-activation → 'urgent-window hook + `next-urgent!` (Print C-u). |
-| **Send string to window** | `window-send-string` | synthesize keyboard events to the focused surface. |
-| **Always on top** | `toggle-always-on-top` | render order tweak. |
+| **Send string to window** | `window-send-string` | ✅ sprint 7: `(window-send-string text)` -- synthesized key events; chars must exist at shift level 0/1 of the active layout. |
+| **Always on top** | `toggle-always-on-top` | ✅ sprint 7: `toggle-always-on-top!` (Print P t), re-raised above floats every sync. |
 | **Frame indicator** | `curframe`, `*suppress-frame-indicator*` | ✅ sprint 3: `flash-current-frame!` (Print C-c) border pulse + geometry echo. |
 
 ## Missing — major projects (probably post-1.0 or explicit 1.0 goals)
@@ -71,9 +71,9 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **Dynamic groups** (master/stack, i3-ish) | `gnew-dynamic`, `rotate-windows`, `exchange-with-master`, ... | StumpWM ships it, but it's a separate paradigm; layouts cover much of the need. Post-1.0. |
 | **Key remapping per app** | `define-remapped-keys` (e.g. C-n→Down in browser) | Requires rewriting forwarded keys per focused app-id in input.rs. Medium Rust. |
 | **Xwayland** | (implicit in X11) | ✅ sprint 5: embedded Xwayland; X11 apps are ordinary managed windows (title/class → title/app-id), DISPLAY exported, Wayland→X clipboard mirrored. Kill = polite close for X11 (shared client). |
-| **Selection/clipboard commands** | `putsel`, `getsel` | ✅ sprint 3: `set-clipboard!` (putsel), prompt paste C-y/C-v + copy M-w, `copy-last-message!` (Print M-c). |
+| **Selection/clipboard commands** | `putsel`, `getsel` | ✅ sprint 3: `set-clipboard!` (putsel), prompt paste C-y/C-v + copy M-w, `copy-last-message!` (Print M-c); sprint 7: X11→Wayland clipboard direction synced too. |
 | **Menus (select-from-menu)** | multi-line navigable menu with j/k/search | ✅ sprint 6: `(select-from-menu items on-select)` -- C-n/C-p/digits/typing-filters/Return/C-g; windowlist (Print l) and gselect (Print M-g) use it. |
-| **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer (idle-hook still ❌). |
+| **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer; sprint 7: `(idle-ms)` primitive for building idle timers. |
 | **Minor modes / modules ecosystem** | `load-module`, minor-modes | Guile modules already load from user config dir; formal minor-mode machinery unnecessary for 1.0. |
 
 ## Suggested 1.0.0 scope

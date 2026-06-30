@@ -73,6 +73,13 @@ pub enum WmCommand {
     /// super+drag move/resize grabs in `input.rs`. Scheme's `%floating`
     /// table remains the authority on float geometry.
     SetFloating { id: u64, on: bool },
+    /// Type TEXT into the focused window (StumpWM window-send-string):
+    /// synthesized key press/release pairs looked up in the active
+    /// keymap (chars not reachable at shift level 0/1 are skipped).
+    SendString { text: String },
+    /// Synthesize a pointer click at the current location (StumpWM
+    /// ratclick); BUTTON is 1=left 2=middle 3=right.
+    Click { button: u32 },
     /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
     /// fork from the calling thread: forking from the Guile REPL
     /// server thread wedged mesa/llvmpipe in the parent (the main
@@ -359,6 +366,39 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
     from_bool(send_command(WmCommand::Place { id, x, y, w, h }))
 }
 
+/// Unix-epoch millis of the last user input event (key or pointer),
+/// updated from `process_input_event`; `(wm-idle-ms)` reads it so
+/// Scheme can implement idle timers (StumpWM *idle-hook* style).
+static LAST_ACTIVITY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub fn note_activity() {
+    LAST_ACTIVITY_MS.store(now_ms(), Ordering::Relaxed);
+}
+
+unsafe extern "C" fn wm_idle_ms() -> Scm {
+    let last = LAST_ACTIVITY_MS.load(Ordering::Relaxed);
+    from_i64(if last == 0 { 0 } else { now_ms().saturating_sub(last) as i64 })
+}
+
+unsafe extern "C" fn wm_send_string(text: Scm) -> Scm {
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::SendString { text }))
+}
+
+unsafe extern "C" fn wm_click(button: Scm) -> Scm {
+    let button = to_i64(button).clamp(1, 3) as u32;
+    from_bool(send_command(WmCommand::Click { button }))
+}
+
 unsafe extern "C" fn wm_place_float(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
     let id = to_i64(id) as u64;
     let x = to_i64(x) as i32;
@@ -614,6 +654,15 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn(Scm, Scm) -> Scm,
             ffi::Gsubr,
         >(wm_set_floating));
+        register_gsubr("wm-send-string", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_send_string));
+        register_gsubr("wm-click", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_click));
+        register_gsubr("wm-idle-ms", 0, 0, 0, wm_idle_ms);
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >

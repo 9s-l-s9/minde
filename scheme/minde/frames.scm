@@ -58,6 +58,14 @@
             add-urgent-window!
             clear-urgent!
             all-window-ids
+            flatten-floats!
+            toggle-always-on-top!
+            ontop-windows
+            clear-ontop!
+            rename-window!
+            window-send-string
+            ratclick!
+            idle-ms
             float-this!
             float-window!
             unfloat-window!
@@ -892,6 +900,78 @@ authoritative and treat the dragged float as focused/topmost."
                          (cons id (delete id (group-floats %active-group))))
       (set! %focused-float id))))
 
+(define (flatten-floats!)
+  "Unfloats every float of the active group into the current frame
+(StumpWM flatten-floats)."
+  (let ((ids (list-copy (group-floats %active-group))))
+    (if (null? ids)
+        (echo "no floats")
+        (begin
+          (for-each
+           (lambda (id)
+             (when (remove-float! %active-group id)
+               (frame-add-window! %current-frame id)))
+           ids)
+          (sync-frames!)
+          (echo (format #f "flattened ~a float(s)" (length ids)))))))
+
+;; ---------------------------------------------------------------------
+;; Always-on-top (StumpWM toggle-always-on-top): re-raised at the very
+;; end of every sync, above the floats.
+;; ---------------------------------------------------------------------
+
+(define %ontop-windows '())
+
+(define (ontop-windows) %ontop-windows)
+
+(define (toggle-always-on-top!)
+  "Toggles the focused window's always-on-top flag."
+  (let ((id (focused-window-id)))
+    (if (not id)
+        (echo "no window")
+        (begin
+          (if (member id %ontop-windows)
+              (begin (set! %ontop-windows (delete id %ontop-windows))
+                     (echo (format #f "~a: no longer on top" (window-title id))))
+              (begin (set! %ontop-windows (append %ontop-windows (list id)))
+                     (echo (format #f "~a: always on top" (window-title id)))))
+          (sync-frames!)))))
+
+(define (clear-ontop! id)
+  (set! %ontop-windows (delete id %ontop-windows)))
+
+(define (raise-ontop!)
+  (for-each
+   (lambda (id)
+     (when (member id (all-window-ids))
+       (rust-call 'wm-raise-window id)))
+   %ontop-windows))
+
+;; ---------------------------------------------------------------------
+;; Small StumpWM leftovers: rename window, send string, ratclick, idle
+;; ---------------------------------------------------------------------
+
+(define (rename-window! name)
+  "Overrides the focused window's remembered title (StumpWM title)."
+  (let ((id (focused-window-id)))
+    (when (and id (not (string-null? name)))
+      (hash-set! %window-titles id name)
+      (sync-frames!)   ; status line shows the title
+      (echo (format #f "renamed to ~a" name)))))
+
+(define (window-send-string text)
+  "Types TEXT into the focused window (StumpWM window-send-string)."
+  (rust-call 'wm-send-string text))
+
+(define (ratclick! button)
+  "Synthesizes a pointer click at the current position (1=left 2=middle
+3=right)."
+  (rust-call 'wm-click button))
+
+(define (idle-ms)
+  "Milliseconds since the last user input event (0 before any input)."
+  (or (rust-call 'wm-idle-ms) 0))
+
 ;; Clamps every float rect to the union of the given head rects (called
 ;; from apply-effective-heads! so unplugging a monitor doesn't strand
 ;; floats off-screen).
@@ -1580,8 +1660,10 @@ frame's current window."
         ;; Empty current frame: drop keyboard focus so a hidden/unmapped
         ;; window doesn't keep receiving keys.
         (wm-clear-focus)))
-  ;; Floats go on top of everything the placement/focus steps raised.
+  ;; Floats go on top of everything the placement/focus steps raised;
+  ;; always-on-top windows above even those.
   (place-floats!)
+  (raise-ontop!)
   ;; Remember the previous focus for the other-window!/other-frame!
   ;; toggles: whatever was shown at the end of the last sync becomes
   ;; "last" the moment something else is shown.

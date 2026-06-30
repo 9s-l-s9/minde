@@ -103,6 +103,15 @@ creates a group where every window floats on map. Floats stay in the
 windowlist/number/cycling rotation; pulling one (`C-0`–`C-9`,
 pull-marked) re-tiles it into the current frame.
 
+Odds and ends: `Print P n` renames the focused window (StumpWM
+`title`), `Print P p` re-applies placement rules to existing windows,
+`Print P f` flattens this group's floats back into the frame, `Print P
+t` toggles always-on-top. From Scheme: `(window-send-string "text")`
+types into the focused window (chars must exist at shift level 0/1 of
+the active layout), `(ratclick! 1)` clicks, `(idle-ms)` returns
+milliseconds since the last input (build idle timers with
+`wm-run-after`). The clipboard now syncs both directions with X11 apps.
+
 Menus: `select-from-menu` renders a multi-line list in the message
 area — `C-n`/`C-p`/arrows navigate, digits jump, typing filters,
 `Return` selects, `C-g` aborts. The windowlist (`l`) and group switcher

@@ -32,6 +32,11 @@
 (define (wm-message text . rest) #t)
 (define (wm-clear-message) #t)
 (define (wm-log msg) #t)
+(define %sent-strings '())
+(define %clicks '())
+(define (wm-send-string text) (set! %sent-strings (cons text %sent-strings)) #t)
+(define (wm-click button) (set! %clicks (cons button %clicks)) #t)
+(define (wm-idle-ms) 1234)
 
 (use-modules (minde frames) (minde groups))
 
@@ -153,6 +158,47 @@
 (check-true "window 2 floating again" (window-floating? 2))
 (pull-window-by-number! (window-number 2))
 (check-false "pull unfloats" (window-floating? 2))
+
+;; ---------------------------------------------------------------------
+;; Sprint 7 polish: flatten-floats, always-on-top, rename, place
+;; existing, send-string/ratclick/idle wrappers
+;; ---------------------------------------------------------------------
+
+(float-window! 1)
+(float-window! 2)
+(check "two floats before flatten" (length (group-floats (current-group))) 2)
+(flatten-floats!)
+(check "flatten leaves no floats" (group-floats (current-group)) '())
+(check-false "window 1 no longer floating" (window-floating? 1))
+(check "both back in the tree" (frame-tree-window-count) 2)
+
+;; Always-on-top: after a sync the ontop window is the last raise.
+(focus-window-by-id! 1)
+(toggle-always-on-top!)
+(check-true "window 1 marked ontop" (member 1 (ontop-windows)))
+(set! %raised '())
+(sync-frames!)
+(check "ontop raised last in sync" (and (pair? %raised) (car %raised)) 1)
+(toggle-always-on-top!)
+(check-false "ontop toggles off" (member 1 (ontop-windows)))
+
+;; Rename (StumpWM title).
+(rename-window! "my-editor")
+(check "rename-window! overrides the title" (window-title 1) "my-editor")
+
+;; place-existing-windows! re-applies rules to mapped windows.
+(add-placement-rule! "two" #:group " II ")
+(place-existing-windows!)
+(check-false "rule moved window 2 out of I" (group-has-window? " I " 2))
+(check-true "window 2 now tracked by II" (group-has-window? " II " 2))
+(clear-placement-rules!)
+
+;; Thin wrappers round-trip to the Rust stubs.
+(window-send-string "hello")
+(check "window-send-string forwards" %sent-strings '("hello"))
+(ratclick! 1)
+(check "ratclick forwards" %clicks '(1))
+(check "idle-ms reads the subr" (idle-ms) 1234)
 
 (if (zero? %failures)
     (format #t "all tests passed~%")

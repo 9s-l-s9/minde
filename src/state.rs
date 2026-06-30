@@ -506,6 +506,26 @@ impl MindeState {
                     pointer.frame(self);
                 }
             }
+            WmCommand::SendString { text } => self.send_string(&text),
+            WmCommand::Click { button } => {
+                // 1=left 2=middle 3=right, as StumpWM ratclick counts them.
+                const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
+                let code = CODES[(button.clamp(1, 3) - 1) as usize];
+                if let Some(pointer) = self.seat.get_pointer() {
+                    let time = self.start_time.elapsed().as_millis() as u32;
+                    for state in [
+                        smithay::backend::input::ButtonState::Pressed,
+                        smithay::backend::input::ButtonState::Released,
+                    ] {
+                        let serial = SERIAL_COUNTER.next_serial();
+                        pointer.button(
+                            self,
+                            &smithay::input::pointer::ButtonEvent { button: code, state, serial, time },
+                        );
+                    }
+                    pointer.frame(self);
+                }
+            }
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => {
@@ -517,8 +537,84 @@ impl MindeState {
                         "text/plain".to_string(),
                         "UTF8_STRING".to_string(),
                     ],
-                    text,
+                    crate::handlers::SelectionOwner::Text(text),
                 );
+            }
+        }
+    }
+
+    /// Types TEXT into the focused window (StumpWM window-send-string) by
+    /// synthesizing key press/release pairs. Characters are looked up in
+    /// the active layout's first two shift levels; anything deeper
+    /// (AltGr etc.) is skipped with a log.
+    fn send_string(&mut self, text: &str) {
+        use smithay::backend::input::KeyState;
+        use smithay::input::keyboard::xkb;
+
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+
+        // One keymap scan builds char -> (keycode, needs-shift) plus the
+        // keycode of Shift_L itself.
+        let (table, shift_key) = keyboard.with_xkb_state(self, |ctx| {
+            let guard = ctx.xkb().lock().unwrap();
+            // Safety: the refs don't outlive the lock guard.
+            let keymap = unsafe { guard.keymap() }.clone();
+            let layout = guard.active_layout().0;
+            let mut table: std::collections::HashMap<char, (xkb::Keycode, bool)> =
+                std::collections::HashMap::new();
+            let mut shift_key = None;
+            for raw in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+                let kc = xkb::Keycode::new(raw);
+                for level in 0..2u32 {
+                    for sym in keymap.key_get_syms_by_level(kc, layout, level) {
+                        if level == 0 && sym.raw() == xkb::keysyms::KEY_Shift_L {
+                            shift_key = Some(kc);
+                        }
+                        let cp = xkb::keysym_to_utf32(*sym);
+                        if cp != 0
+                            && let Some(ch) = char::from_u32(cp)
+                        {
+                            // Prefer the unshifted level when both exist.
+                            let entry = (kc, level == 1);
+                            table.entry(ch).or_insert(entry);
+                            if level == 0 {
+                                table.insert(ch, entry);
+                            }
+                        }
+                    }
+                }
+            }
+            (table, shift_key)
+        });
+
+        for ch in text.chars() {
+            let Some(&(kc, shifted)) = table.get(&ch) else {
+                tracing::debug!(?ch, "wm-send-string: no key for char in the active layout");
+                continue;
+            };
+            let press = |state_self: &mut Self, code: xkb::Keycode, state: KeyState| {
+                let serial = SERIAL_COUNTER.next_serial();
+                let time = state_self.start_time.elapsed().as_millis() as u32;
+                keyboard.input::<(), _>(state_self, code, state, serial, time, |_, _, _| {
+                    smithay::input::keyboard::FilterResult::Forward
+                });
+            };
+            match (shifted, shift_key) {
+                (true, Some(shift)) => {
+                    press(self, shift, KeyState::Pressed);
+                    press(self, kc, KeyState::Pressed);
+                    press(self, kc, KeyState::Released);
+                    press(self, shift, KeyState::Released);
+                }
+                (true, None) => {
+                    tracing::debug!(?ch, "wm-send-string: no Shift key found; skipping");
+                }
+                (false, _) => {
+                    press(self, kc, KeyState::Pressed);
+                    press(self, kc, KeyState::Released);
+                }
             }
         }
     }
@@ -546,33 +642,33 @@ impl MindeState {
             "text/plain;charset=utf-8".to_string(),
             write_fd,
         ) {
-            Ok(()) => {
-                let mut acc: Vec<u8> = Vec::new();
-                let source = Generic::new(read_fd, Interest::READ, Mode::Level);
-                let _ = self.handle.insert_source(source, move |_, fd, _| {
-                    let mut buf = [0u8; 4096];
-                    match rustix::io::read(&**fd, &mut buf) {
-                        Ok(n) if n > 0 => {
-                            // Cap pastes at 64 KiB; the prompt is one line.
-                            if acc.len() < 64 * 1024 {
-                                acc.extend_from_slice(&buf[..n]);
-                            }
-                            Ok(PostAction::Continue)
-                        }
-                        _ => {
-                            let text = String::from_utf8_lossy(&acc).into_owned();
-                            guile::on_paste(&text);
-                            Ok(PostAction::Remove)
+            Ok(()) => self.deliver_pipe_to_scheme(read_fd),
+            Err(SelectionRequestError::ServerSideSelection) => {
+                // We registered the selection ourselves: either literal
+                // text (wm-set-clipboard) or a mirror of an X11 copy.
+                let owner = current_data_device_selection_userdata(&self.seat).map(|o| o.clone());
+                match owner {
+                    Some(crate::handlers::SelectionOwner::Text(text)) => guile::on_paste(&text),
+                    Some(crate::handlers::SelectionOwner::X11) => {
+                        // The first pipe's write end was consumed by the
+                        // failed request; use a fresh one for Xwayland.
+                        let forwarded = rustix::pipe::pipe().ok().and_then(|(r, w)| {
+                            let ok = self.xwm.as_mut().is_some_and(|xwm| {
+                                xwm.send_selection(
+                                    smithay::wayland::selection::SelectionTarget::Clipboard,
+                                    "text/plain;charset=utf-8".to_string(),
+                                    w,
+                                )
+                                .is_ok()
+                            });
+                            ok.then_some(r)
+                        });
+                        match forwarded {
+                            Some(r) => self.deliver_pipe_to_scheme(r),
+                            None => guile::on_paste(""),
                         }
                     }
-                });
-            }
-            Err(SelectionRequestError::ServerSideSelection) => {
-                // We own the clipboard; its text is the selection user data.
-                let text =
-                    current_data_device_selection_userdata(&self.seat).map(|t| t.clone());
-                if let Some(text) = text {
-                    guile::on_paste(&text);
+                    None => guile::on_paste(""),
                 }
             }
             Err(e) => {
@@ -580,6 +676,31 @@ impl MindeState {
                 guile::on_paste("");
             }
         }
+    }
+
+    /// Streams READ_FD through a calloop source and delivers the collected
+    /// text to Scheme via `(wm-on-paste text)` once the writer closes.
+    fn deliver_pipe_to_scheme(&mut self, read_fd: std::os::fd::OwnedFd) {
+        use smithay::reexports::rustix;
+        let mut acc: Vec<u8> = Vec::new();
+        let source = Generic::new(read_fd, Interest::READ, Mode::Level);
+        let _ = self.handle.insert_source(source, move |_, fd, _| {
+            let mut buf = [0u8; 4096];
+            match rustix::io::read(&**fd, &mut buf) {
+                Ok(n) if n > 0 => {
+                    // Cap pastes at 64 KiB; the prompt is one line.
+                    if acc.len() < 64 * 1024 {
+                        acc.extend_from_slice(&buf[..n]);
+                    }
+                    Ok(PostAction::Continue)
+                }
+                _ => {
+                    let text = String::from_utf8_lossy(&acc).into_owned();
+                    guile::on_paste(&text);
+                    Ok(PostAction::Remove)
+                }
+            }
+        });
     }
 
     fn window_by_id(&self, id: u64) -> Option<Window> {

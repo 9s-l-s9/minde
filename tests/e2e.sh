@@ -203,6 +203,22 @@ xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "menu windowlist errored (see log)"
 ok "menu windowlist: open / navigate / select"
 
+# Polish sprint: send-string / ratclick / idle / rename / ontop /
+# flatten must all execute without erroring (send-string types into
+# whatever is focused; we only assert the round-trip).
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (window-send-string "echo hi")
+  (ratclick! 1)
+  (rename-window! "e2e-renamed")
+  (toggle-always-on-top!)
+  (toggle-always-on-top!)
+  (wm-log (format #f "e2e-polish idle=~a" (>= (idle-ms) 0))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-polish idle=#t" || fail "polish commands round-trip"
+loggrep "error in keybinding" && fail "polish block errored (see log)"
+ok "send-string / ratclick / rename / ontop / idle"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

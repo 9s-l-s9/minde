@@ -161,6 +161,95 @@ impl XwmHandler for MindeState {
         }
     }
 
+    // Clipboard, X11 side. Wayland->X11 is handled by
+    // SelectionHandler::new_selection mirroring ownership via
+    // xwm.new_selection; these four complete the loop:
+    // - an X11 app PASTES: send_selection asks the real Wayland owner
+    //   (or writes our own wm-set-clipboard text),
+    // - an X11 app COPIES: new_selection registers a compositor-side
+    //   selection tagged SelectionOwner::X11, which
+    //   SelectionHandler::send_selection routes back through Xwayland
+    //   when a Wayland client pastes.
+    fn allow_selection_access(
+        &mut self,
+        _xwm: XwmId,
+        selection: smithay::wayland::selection::SelectionTarget,
+    ) -> bool {
+        // No primary-selection protocol state; clipboard only.
+        matches!(selection, smithay::wayland::selection::SelectionTarget::Clipboard)
+    }
+
+    fn send_selection(
+        &mut self,
+        _xwm: XwmId,
+        selection: smithay::wayland::selection::SelectionTarget,
+        mime_type: String,
+        fd: std::os::fd::OwnedFd,
+    ) {
+        use smithay::wayland::selection::SelectionTarget;
+        use smithay::wayland::selection::data_device::{
+            current_data_device_selection_userdata, request_data_device_client_selection,
+        };
+        if !matches!(selection, SelectionTarget::Clipboard) {
+            return;
+        }
+        // Check ownership before requesting: a compositor-registered
+        // selection would make the request fail with the fd already
+        // consumed, dropping the paste.
+        match current_data_device_selection_userdata(&self.seat).map(|o| o.clone()) {
+            Some(super::SelectionOwner::Text(text)) => {
+                // wm-set-clipboard text: write it ourselves.
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    let mut f = std::fs::File::from(fd);
+                    let _ = f.write_all(text.as_bytes());
+                });
+            }
+            Some(super::SelectionOwner::X11) => {
+                // An X11 mirror asking X11 back would loop; drop it.
+            }
+            None => {
+                // A Wayland client owns the selection: ask it.
+                if let Err(err) = request_data_device_client_selection(&self.seat, mime_type, fd) {
+                    tracing::warn!(?err, "failed to hand the Wayland selection to an X11 paste");
+                }
+            }
+        }
+    }
+
+    fn new_selection(
+        &mut self,
+        _xwm: XwmId,
+        selection: smithay::wayland::selection::SelectionTarget,
+        mime_types: Vec<String>,
+    ) {
+        use smithay::wayland::selection::SelectionTarget;
+        if matches!(selection, SelectionTarget::Clipboard) {
+            smithay::wayland::selection::data_device::set_data_device_selection(
+                &self.display_handle,
+                &self.seat,
+                mime_types,
+                super::SelectionOwner::X11,
+            );
+        }
+    }
+
+    fn cleared_selection(
+        &mut self,
+        _xwm: XwmId,
+        selection: smithay::wayland::selection::SelectionTarget,
+    ) {
+        use smithay::wayland::selection::SelectionTarget;
+        use smithay::wayland::selection::data_device::{
+            clear_data_device_selection, current_data_device_selection_userdata,
+        };
+        if matches!(selection, SelectionTarget::Clipboard)
+            && current_data_device_selection_userdata(&self.seat).is_some()
+        {
+            clear_data_device_selection(&self.display_handle, &self.seat);
+        }
+    }
+
     // The frame tree owns geometry: refuse client-initiated state
     // changes, mirroring the xdg-shell handlers.
     fn maximize_request(&mut self, _xwm: XwmId, _window: X11Surface) {}

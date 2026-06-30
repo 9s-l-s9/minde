@@ -711,6 +711,15 @@ focused client), #f otherwise."
            (lambda (name) (grename! name))
            #:history 'group))
    "k" (lambda () (gkill!))
+   ;; n: rename the current window (StumpWM title).
+   "n" (lambda ()
+         (read-one-line "window name: "
+           (lambda (name) (rename-window! name))))
+   ;; p: re-apply placement rules to existing windows.
+   "p" (lambda () (place-existing-windows!))
+   ;; f: unfloat every float of this group; t: always-on-top toggle.
+   "f" (lambda () (flatten-floats!))
+   "t" (lambda () (toggle-always-on-top!))
    "w" (lambda ()
          (wm-spawn (string-append "pkill swaybg; " %wallpaper-cmd)))
    "a" (lambda ()

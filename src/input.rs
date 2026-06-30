@@ -37,6 +37,7 @@ fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
 
 impl MindeState {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        guile::note_activity();
         match event {
             InputEvent::Keyboard { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();

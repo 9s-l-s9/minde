@@ -46,10 +46,17 @@ impl SeatHandler for MindeState {
 // Wl Data Device
 //
 
+/// Who backs a compositor-registered selection: literal text
+/// (`wm-set-clipboard`) or an X11 client whose copy was mirrored onto
+/// the Wayland side (`XwmHandler::new_selection`).
+#[derive(Debug, Clone)]
+pub enum SelectionOwner {
+    Text(String),
+    X11,
+}
+
 impl SelectionHandler for MindeState {
-    /// Compositor-owned selections carry their text as user data
-    /// (`wm-set-clipboard`); client-owned selections never see this.
-    type SelectionUserData = String;
+    type SelectionUserData = SelectionOwner;
 
     /// Mirror new Wayland-side selections into the X11 world so X apps
     /// can paste them (anvil does the same).
@@ -68,20 +75,33 @@ impl SelectionHandler for MindeState {
 
     fn send_selection(
         &mut self,
-        _ty: smithay::wayland::selection::SelectionTarget,
-        _mime_type: String,
+        ty: smithay::wayland::selection::SelectionTarget,
+        mime_type: String,
         fd: std::os::fd::OwnedFd,
         _seat: Seat<Self>,
         user_data: &Self::SelectionUserData,
     ) {
-        // Write on a detached thread so a slow/stalled reader can't block
-        // the event loop.
-        let text = user_data.clone();
-        std::thread::spawn(move || {
-            use std::io::Write;
-            let mut f = std::fs::File::from(fd);
-            let _ = f.write_all(text.as_bytes());
-        });
+        match user_data {
+            SelectionOwner::Text(text) => {
+                // Write on a detached thread so a slow/stalled reader
+                // can't block the event loop.
+                let text = text.clone();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    let mut f = std::fs::File::from(fd);
+                    let _ = f.write_all(text.as_bytes());
+                });
+            }
+            SelectionOwner::X11 => {
+                // A Wayland client pastes something an X11 app copied:
+                // ask Xwayland to write the data (X11 -> Wayland).
+                if let Some(xwm) = self.xwm.as_mut()
+                    && let Err(err) = xwm.send_selection(ty, mime_type, fd)
+                {
+                    tracing::warn!(?err, "failed to forward X11 selection to Wayland");
+                }
+            }
+        }
     }
 }
 

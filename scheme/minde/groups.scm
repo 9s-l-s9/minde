@@ -21,6 +21,7 @@
             gother!
             add-placement-rule!
             clear-placement-rules!
+            place-existing-windows!
             status-line
             gnext!
             gprev!
@@ -308,6 +309,37 @@ group or the current frame has no window."
           (when (cadddr rule)
             (switch-to-group! (group-name g)))))))
 
+(define (place-existing-windows!)
+  "Re-applies the placement rules to every already-mapped window of the
+active group (StumpWM place-existing-windows). Floats keep floating and
+are left alone; a window already in its rule's target frame stays put."
+  (let ((moved 0))
+    (for-each
+     (lambda (id)
+       (unless (window-floating? id)
+         (let* ((title (window-title id))
+                (rule (find (lambda (r) (rule-matches? r title title))
+                            %placement-rules)))
+           (when rule
+             (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
+                    (active? (eq? g (current-group)))
+                    (tree (if active? (current-tree) (group-tree g)))
+                    (leaves (frame-leaves tree))
+                    (leaf (list-ref leaves (min (max 0 (caddr rule))
+                                                (- (length leaves) 1)))))
+               (unless (member id (frame-window-ids leaf))
+                 (set! moved (+ moved 1))
+                 (find (lambda (gg)
+                         (any (lambda (t) (remove-window-from-tree-in! t id))
+                              (group-all-trees gg)))
+                       %groups)
+                 (ensure-unique-window-number! id (group-all-trees g))
+                 (frame-add-window! leaf id)
+                 (unless active? (hide-window! id))))))))
+     (all-window-ids))
+    (sync-frames!)
+    (echo (format #f "placed ~a window(s)" moved))))
+
 ;; ---------------------------------------------------------------------
 ;; Status line for external bars (eww etc.): written to
 ;; $XDG_RUNTIME_DIR/minde-status whenever it changes, via the
@@ -385,6 +417,7 @@ group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen)."
   (clear-fullscreen-if-window! id)
   (clear-urgent! id)
+  (clear-ontop! id)
   (let ((fg (find (lambda (g) (remove-float! g id)) %groups)))
     (cond
      (fg (when (eq? fg (current-group)) (sync-frames!)))
