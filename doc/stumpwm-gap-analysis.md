@@ -48,7 +48,7 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **Marks** | `mark`, `gmove-marked`, `pull-marked`, `clear-window-marks` | batch window ops. |
 | **`quit-confirm`** | y/n prompt before quit | one read-one-line. |
 | **`title` (rename window), `echo-date`** | ✅ sprint 7: `rename-window!` (Print P n); echo-date = `(echo (strftime ...))` one-liner. |
-| **`command-mode`** | prefix-less modal bindings | the keymap-return re-arm mechanism from iresize already implements this pattern. |
+| **`command-mode`** | prefix-less modal bindings | ✅ post-sprint-7: `command-mode!` (Print z); every key acts as a prefix key until Return/C-g/Escape. |
 
 ## Missing — needs Rust support (small, contained)
 

@@ -374,6 +374,23 @@
 (check "M-c put the last message on the clipboard"
        %clipboard "hello from the message ring")
 
+;; Command mode: C-t z arms the prefix map for every key until RET/C-g.
+(wm-handle-key ctrl-bit #f "t")
+(check "z (command mode) consumed" (wm-handle-key 0 #f "z") #t)
+(check "command mode: bare v runs the vsplit binding" (wm-handle-key 0 #f "v") #t)
+(check "command mode: stays armed for the next key" (wm-handle-key 0 #f "v") #t)
+(set! %messages '())
+(check "command mode: unbound key swallowed" (wm-handle-key 0 #f "odiaeresis") #t)
+(check-true "unbound key echoed" (and (pair? %messages)
+                                      (string-contains (car %messages) "not bound")))
+(check "Return leaves command mode" (wm-handle-key 0 #f "Return") #t)
+(check "after exit: bare v is forwarded again" (wm-handle-key 0 #f "v") #f)
+;; C-g exit path too.
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "z")
+(check "C-g leaves command mode" (wm-handle-key ctrl-bit #f "g") #t)
+(check "after C-g: bare v forwarded" (wm-handle-key 0 #f "v") #f)
+
 ;; ---------------------------------------------------------------------
 
 (if (zero? %failures)

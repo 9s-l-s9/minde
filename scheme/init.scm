@@ -178,6 +178,22 @@ MODS (possibly '())."
                  (if (logtest mods-bitmask 64) "s-" "")
                  keysym-name))
 
+;; Command mode (StumpWM command-mode): while on, the prefix map stays
+;; armed for EVERY key -- no prefix needed -- until Return/C-g/Escape
+;; leaves it. Implemented by re-arming %prefix-bindings after each
+;; dispatch (the same mechanism iresize uses for its own map).
+(define %command-mode #f)
+
+(define (command-mode!)
+  (set! %command-mode #t)
+  (set-key-state! %prefix-bindings)
+  (echo "command mode: keys act as prefix keys (RET / C-g exits)"))
+
+(define (leave-command-mode!)
+  (set! %command-mode #f)
+  (set-key-state! 'normal)
+  (echo "command mode off"))
+
 ;; When set, the next key press is described instead of dispatched
 ;; (StumpWM describe-key); see the first branch of wm-handle-key.
 (define %describe-next-key #f)
@@ -228,6 +244,14 @@ focused client), #f otherwise."
 (define (dispatch-key mods-bitmask keysym-name)
   (if (hash-table? %key-state)
       (cond
+       ;; Command mode ends on Return / C-g / Escape, whatever keymap
+       ;; is currently armed.
+       ((and %command-mode
+             (or (string=? keysym-name "Return")
+                 (string=? keysym-name "Escape")
+                 (equal? (key-spec mods-bitmask keysym-name) "C-g")))
+        (leave-command-mode!)
+        #t)
        ;; Pressing the prefix key's keysym again while awaiting a key
        ;; (e.g. C-t t) is StumpWM's "send this key literally" escape:
        ;; reset to normal state and forward the keypress to the focused
@@ -279,6 +303,10 @@ focused client), #f otherwise."
            (else
             ;; Unbound key: swallow it and echo, like StumpWM.
             (echo (format #f "~a is not bound" keysym-name))))
+          ;; Command mode: whatever just ran, stay armed in the prefix
+          ;; map (unless the binding armed a submap/mode of its own).
+          (when (and %command-mode (not (hash-table? %key-state)))
+            (set-key-state! %prefix-bindings))
           #t)))
       (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
           (begin
@@ -435,10 +463,14 @@ focused client), #f otherwise."
    ("M-F" . "apply layout (prompt)")
    ("Tab" . "last window") ("ISO_Left_Tab" . "last frame")
    ("u" . "last group") ("W" . "window list echo")
-   ("C" . "only: collapse splits") ("Delete" . "fclear: empty frame")))
+   ("C" . "only: collapse splits") ("Delete" . "fclear: empty frame")
+   ("z" . "command mode (RET/C-g exits)")))
 
 ;; F1: describe-key -- press it, then any key, get told what it does.
 (bind-prefix-key! "F1" (lambda () (describe-key!)) "describe next key")
+
+;; z: command mode -- every key acts as a prefix key until RET/C-g.
+(bind-prefix-key! "z" (lambda () (command-mode!)) "command mode (RET/C-g exits)")
 
 ;; colon: eval a Scheme expression in the compositor (StumpWM's colon /
 ;; eval-line rolled into one -- our commands ARE Scheme).
@@ -808,6 +840,7 @@ focused client), #f otherwise."
 ;; Not ported yet (missing infrastructure), from StumpWM:
 ;;   D/t dashboards -- interactive terminal scripts; run them in a
 ;;                     terminal yourself, or bind alacritty -e wrappers
+;;   (command-mode is Print z)
 ;;   z  zen (gaps + mode line) -- no gaps/mode-line
 ;;   S  screenshot map         -- needs wlr-screencopy (grim) support
 

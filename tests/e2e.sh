@@ -219,6 +219,14 @@ loggrep "e2e-polish idle=#t" || fail "polish commands round-trip"
 loggrep "error in keybinding" && fail "polish block errored (see log)"
 ok "send-string / ratclick / rename / ontop / idle"
 
+# Command mode: Print z, then prefix keys work bare until Return.
+xdotool key Print; sleep 0.2; xdotool key z; sleep 0.3
+xdotool key v; sleep 0.3          # bare vsplit
+xdotool key c; sleep 0.3          # bare remove-split
+xdotool key Return; sleep 0.3     # leave command mode
+loggrep "error in keybinding" && fail "command mode errored (see log)"
+ok "command mode: enter / bare keys / exit"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

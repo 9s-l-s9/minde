@@ -84,6 +84,7 @@ Prefix map (see `scheme/init.scm`):
 | `B` | banish pointer | | `C-c` | flash current frame |
 | `C-u` | jump to urgent window | | `M-c` | copy last message |
 | `S` | next head (monitor) | | `M-s` | last head (monitor) |
+| `z` | command mode (`RET`/`C-g` exits) | | | |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
 Xwayland: an embedded X server starts automatically; X11-only apps
