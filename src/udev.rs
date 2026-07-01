@@ -725,7 +725,15 @@ impl MindeState {
             {
                 continue;
             }
-            let phys_loc = (loc - output_geo.loc).to_physical_precise_round(scale);
+            // The space stores the element location as the window
+            // GEOMETRY origin; the buffer's top-left is geometry.loc
+            // further up/left (CSD shadow margins live in that fringe).
+            // Rendering at `loc` directly shifts CSD clients (GTK: zen,
+            // inkscape, gimp) into the frame by their shadow width --
+            // smithay's own space renderer subtracts this too
+            // (render_location, desktop/space/mod.rs).
+            let phys_loc =
+                (loc - window.geometry().loc - output_geo.loc).to_physical_precise_round(scale);
             all_elements.extend(smithay::backend::renderer::element::AsRenderElements::<
                 UdevRenderer<'_>,
             >::render_elements(
