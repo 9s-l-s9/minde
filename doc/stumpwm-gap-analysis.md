@@ -76,6 +76,66 @@ Legend: ✅ have (parity or deliberate equivalent) · 🟡 partial ·
 | **Timers** | `run-with-timer`, `idle-hook` | ✅ sprint 3: `(wm-run-after ms thunk)` one-shot calloop timer; sprint 7: `(idle-ms)` primitive for building idle timers. |
 | **Minor modes / modules ecosystem** | `load-module`, minor-modes | Guile modules already load from user config dir; formal minor-mode machinery unnecessary for 1.0. |
 
+## Road to 1.0 (2026-07-12 audit against the full 164-defcommand
+## inventory from the StumpWM 24.11 store sources)
+
+Decision: v1 = full StumpWM feature equivalence, excluding the
+mode-line/tray (eww owns that) and `restart-hard` (a Wayland
+compositor cannot restart under its clients the way an X WM can;
+`restart-soft` = config reload exists as Print R).
+
+### Sprint 8 — group & window management parity (pure Scheme)
+`gnewbg` / `gnewbg-float` (our gnew! already doesn't switch; add the
+official names + a switching gnew), `gnext-with-window` /
+`gprev-with-window`, `gmerge`, `gkill-other`,
+`kill-windows-current-group` / `kill-windows-other`, `gmove-marked`,
+`groups` / `vgroups` echoes, `toggle-always-show` (sticky window,
+visible in every group), `select-floating-window` (menu over floats),
+`frame-windowlist` / `echo-frame-windows`, `windowlist-by-class`,
+`pull-from-windowlist`, `select-window-by-name`,
+`list-window-properties` / `show-window-properties` (app-id / title /
+geometry echo), `echo-date`, `version`, `modifiers`, `redisplay` /
+`refresh`.
+
+### Sprint 9 — frames & placement parity (small Rust: fselect overlays)
+`fselect` (frame-number overlays drawn in every frame — Rust gains
+multi-position message elements; everything else reuses them),
+`sibling`, `gravity` + `unmaximize` (placement of windows that cannot
+fill their frame), `expose` (temporary grid layout + menu pick +
+restore), `remember` / `forget` + `dump-window-placement-rules` /
+`restore-window-placement-rules` (rule persistence, layouts-file
+pattern) + the rule `lock`/`raise` flags, `dump-desktop-to-file` /
+`dump-screen-to-file` / `restore-from-file` over all groups & heads
+(extend (minde layouts)), `hsplit-uniformly` / `vsplit-uniformly`.
+
+### Sprint 10 — keys & help parity (the real Rust sprint)
+`define-remapped-keys` (per-app-id key translation table in input.rs;
+the synth machinery landed with window-send-string — remaining work is
+the remap table, focused-app gating, and press/release pairing),
+`send-raw-key` / `meta` / `send-escape` (single synthesized key by
+keysym spec), prompt key auto-repeat (compositor-side repeat timer for
+consumed keys, using the seat's repeat rate — closes the documented
+prompt limitation), `describe-command` / `describe-function` /
+`describe-variable` / `commands` (Guile introspection + docstrings),
+`where-is`, `which-key-mode` (auto-echo after a delay, wm-run-after),
+`copy-unhandled-error` (error ring), `load-module` (Guile load-path
+alias), `ratrelwarp`, `restart-soft` alias.
+
+### Sprint 11 — dynamic groups (pure Scheme, closes the list)
+`gnew-dynamic` / `gnewbg-dynamic`, master/stack auto-tiling as a group
+flag driving apply-layout-spec! on every map/unmap/gmove,
+`change-layout` / `change-default-layout`, `change-split-ratio` /
+`change-default-split-ratio`, `rotate-windows` / `rotate-stack`,
+`exchange-with-master`, `hnext` / `hprev`, `fnext-in-head` /
+`fprev-in-head`, `retile`.
+
+### Explicitly out (documented equivalents)
+mode-line + tray (eww + status-line file), `restart-hard`,
+minor-modes machinery (`current-minor-modes` etc. — Guile modules
+already cover extension), `set-contrib-dir`/`init-load-path`
+(MINDE_SCHEME_DIR + add-to-load-path), `refresh-time-zone` (n/a),
+`copy-unhandled-error`'s X-specific parts, `emacs` (a binding, kept).
+
 ## Suggested 1.0.0 scope
 
 1. **Sprint "window numbers + navigation"**: numbers 0–9 with `*`/`-`
