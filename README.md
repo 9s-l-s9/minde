@@ -85,6 +85,10 @@ Prefix map (see `scheme/init.scm`):
 | `C-u` | jump to urgent window | | `M-c` | copy last message |
 | `S` | next head (monitor) | | `M-s` | last head (monitor) |
 | `z` | command mode (`RET`/`C-g` exits) | | | |
+| `C-l` | frame windowlist (menu) | | `M-l` | windowlist by class (menu) |
+| `M-p` | pull from windowlist (menu) | | `M-w` | select window by name (prompt) |
+| `M-t` | select floating window (menu) | | `C-r` | redisplay windows |
+| `M-G` | groups submap (see below) | | | |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
 Xwayland: an embedded X server starts automatically; X11-only apps
@@ -103,6 +107,20 @@ geometry, render above the tiling, and move/resize with
 creates a group where every window floats on map. Floats stay in the
 windowlist/number/cycling rotation; pulling one (`C-0`–`C-9`,
 pull-marked) re-tiles it into the current frame.
+
+Group management (`Print M-G` submap, StumpWM parity): `n`/`N` create a
+tiling/float group in the background (gnewbg/gnewbg-float — `G` and
+`gnew!` now switch, like StumpWM), `m` merges another group's windows
+here (gmerge), `o` kills every other group (gkill-other), `M` moves the
+marked windows to a chosen group (gmove-marked), `f`/`b` take the
+current window to the next/previous group and follow
+(gnext/gprev-with-window), `k`/`K` politely close every window of this
+group / of all other groups, `g` echoes the group list with window
+counts (groups/vgroups). `Print P y` toggles always-show: the window
+follows every group switch (StumpWM toggle-always-show). `Print P i`
+echoes the focused window's properties (id/title/class/number/float
+geometry/flags); `Print P d` echoes the date, `Print P V` the version,
+`Print P M` the modifier layout.
 
 Odds and ends: `Print P n` renames the focused window (StumpWM
 `title`), `Print P p` re-applies placement rules to existing windows,

@@ -43,6 +43,7 @@
             ensure-unique-window-number!
             select-window-by-number!
             pull-window-by-number!
+            pull-window-by-id!
             renumber-window!
             repack-window-numbers!
             echo-windows-string
@@ -66,6 +67,14 @@
             window-send-string
             ratclick!
             idle-ms
+            show-window-properties!
+            toggle-always-show!
+            sticky-windows
+            clear-sticky!
+            unmark-window!
+            window-app-id
+            current-frame
+            current-frame-window-ids
             float-this!
             float-window!
             unfloat-window!
@@ -600,23 +609,30 @@ wm-message (or under the test stubs)."
 ;; Window <-> frame bookkeeping
 ;; ---------------------------------------------------------------------
 
-;; id -> title, remembered from handle-window-map! for the windowlist and
-;; `info`-style echoes. Survives moves between frames/groups; dropped on
-;; unmap.
+;; id -> (title . app-id), remembered from handle-window-map! for the
+;; windowlist and `info`-style echoes. Survives moves between
+;; frames/groups; dropped on unmap.
 (define %window-titles (make-hash-table))
 
 (define (window-title id)
-  (or (hash-ref %window-titles id)
-      (format #f "window ~a" id)))
+  (let ((e (hash-ref %window-titles id)))
+    (if e (car e) (format #f "window ~a" id))))
+
+(define (window-app-id id)
+  "The window's app-id (X11 class), or #f if unknown."
+  (let ((e (hash-ref %window-titles id)))
+    (and e (not (string-null? (cdr e))) (cdr e))))
 
 (define (forget-window-title! id)
   (hash-remove! %window-titles id))
 
 (define (remember-window-title! id title app-id)
-  (hash-set! %window-titles id
-             (if (and (string? title) (not (string-null? title)))
-                 title
-                 (if (string? app-id) app-id ""))))
+  (let ((class (if (string? app-id) app-id "")))
+    (hash-set! %window-titles id
+               (cons (if (and (string? title) (not (string-null? title)))
+                         title
+                         class)
+                     class))))
 
 (define (window-ids-with-titles)
   "All windows of the active group, as (id . title) pairs in frame order."
@@ -675,15 +691,14 @@ fresh one -- for windows moved between groups."
         (focus-window-by-id! id)
         (echo (format #f "no window ~a" n)))))
 
-(define (pull-window-by-number! n)
-  "Pulls the active group's window number N into the current frame."
-  (let ((id (window-id-by-number n)))
-    (cond
-     ((not id) (echo (format #f "no window ~a" n)))
-     ;; Pulling a float = unfloat it into the current frame.
-     ((window-floating? id) (unfloat-window! id))
-     (else
-      (let ((f (frame-of-window id)))
+(define (pull-window-by-id! id)
+  "Pulls window ID (of the active group) into the current frame."
+  (cond
+   ;; Pulling a float = unfloat it into the current frame.
+   ((window-floating? id) (unfloat-window! id))
+   (else
+    (let ((f (frame-of-window id)))
+      (when f
         (unless (eq? f %current-frame)
           (set-frame-window-ids! f (delete id (frame-window-ids f)))
           (when (equal? (frame-current-window f) id)
@@ -691,6 +706,13 @@ fresh one -- for windows moved between groups."
              f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f))))))
         (frame-add-window! %current-frame id)
         (sync-frames!))))))
+
+(define (pull-window-by-number! n)
+  "Pulls the active group's window number N into the current frame."
+  (let ((id (window-id-by-number n)))
+    (if id
+        (pull-window-by-id! id)
+        (echo (format #f "no window ~a" n)))))
 
 (define (renumber-window! n)
   "Gives the current window the number N; if another window of the group
@@ -787,6 +809,15 @@ window just gets float focus (and comes to the top of the float stack)."
 
 (define (current-frame-window)
   (frame-current-window %current-frame))
+
+;; The live current frame itself -- for callers ((minde groups)'
+;; window moves, init.scm's frame-windowlist) that must target it;
+;; the active group's group-current-frame field can be stale between
+;; flushes.
+(define (current-frame) %current-frame)
+
+(define (current-frame-window-ids)
+  (frame-window-ids %current-frame))
 
 ;; ---------------------------------------------------------------------
 ;; Floating windows (StumpWM float-this / unfloat-this / gnew-float).
@@ -948,6 +979,31 @@ authoritative and treat the dragged float as focused/topmost."
    %ontop-windows))
 
 ;; ---------------------------------------------------------------------
+;; Always-show (StumpWM toggle-always-show): a sticky window follows
+;; every group switch -- (minde groups)' switch-to-group! moves the
+;; listed windows into the target group before parking the old one.
+;; ---------------------------------------------------------------------
+
+(define %sticky-windows '())
+
+(define (sticky-windows) %sticky-windows)
+
+(define (toggle-always-show!)
+  "Toggles whether the focused window follows every group switch
+(StumpWM toggle-always-show)."
+  (let ((id (focused-window-id)))
+    (if (not id)
+        (echo "no window")
+        (if (member id %sticky-windows)
+            (begin (set! %sticky-windows (delete id %sticky-windows))
+                   (echo (format #f "~a: no longer always shown" (window-title id))))
+            (begin (set! %sticky-windows (append %sticky-windows (list id)))
+                   (echo (format #f "~a: always shown" (window-title id))))))))
+
+(define (clear-sticky! id)
+  (set! %sticky-windows (delete id %sticky-windows)))
+
+;; ---------------------------------------------------------------------
 ;; Small StumpWM leftovers: rename window, send string, ratclick, idle
 ;; ---------------------------------------------------------------------
 
@@ -955,7 +1011,9 @@ authoritative and treat the dragged float as focused/topmost."
   "Overrides the focused window's remembered title (StumpWM title)."
   (let ((id (focused-window-id)))
     (when (and id (not (string-null? name)))
-      (hash-set! %window-titles id name)
+      (hash-set! %window-titles id
+                 (cons name (let ((e (hash-ref %window-titles id)))
+                              (if e (cdr e) ""))))
       (sync-frames!)   ; status line shows the title
       (echo (format #f "renamed to ~a" name)))))
 
@@ -971,6 +1029,25 @@ authoritative and treat the dragged float as focused/topmost."
 (define (idle-ms)
   "Milliseconds since the last user input event (0 before any input)."
   (or (rust-call 'wm-idle-ms) 0))
+
+(define (show-window-properties!)
+  "Echoes the focused window's properties (StumpWM show-window-properties
+/ list-window-properties collapsed): id, title, class, number, geometry
+source, and flags."
+  (let ((id (focused-window-id)))
+    (if (not id)
+        (echo "no window")
+        (echo (format #f "id: ~a~%title: ~a~%class: ~a~%number: ~a~%~a~a~a~a"
+                      id (window-title id) (or (window-app-id id) "?")
+                      (or (window-number id) "?")
+                      (if (window-floating? id)
+                          (let ((r (float-geometry id)))
+                            (format #f "float: ~ax~a at ~a,~a"
+                                    (caddr r) (cadddr r) (car r) (cadr r)))
+                          "tiled")
+                      (if (member id %marked-windows) ", marked" "")
+                      (if (member id %ontop-windows) ", on top" "")
+                      (if (member id %sticky-windows) ", always shown" ""))))))
 
 ;; Clamps every float rect to the union of the given head rects (called
 ;; from apply-effective-heads! so unplugging a monitor doesn't strand
@@ -1390,6 +1467,9 @@ last hidden window instead of the first."
 (define (clear-marks!)
   (set! %marked-windows '())
   (echo "marks cleared"))
+
+(define (unmark-window! id)
+  (set! %marked-windows (delete id %marked-windows)))
 
 (define (pull-marked!)
   "Pulls every marked window of the active group into the current frame

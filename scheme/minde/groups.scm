@@ -28,6 +28,16 @@
             gnew!
             gnew-auto!
             gnew-float!
+            gnewbg!
+            gnewbg-float!
+            gnext-with-window!
+            gprev-with-window!
+            gmerge!
+            gkill-other!
+            gmove-marked-to!
+            kill-windows-current-group!
+            kill-windows-other!
+            groups-echo-string
             wm-on-window-moved
             grename!
             gkill!
@@ -106,6 +116,15 @@ or clearing focus)."
   (let ((target (resolve-target name-or-index)))
     (when (and target (not (eq? target (current-group))))
       (set! %last-group (current-group))
+      ;; Always-show windows follow the switch: pull each one into the
+      ;; target group (from whichever group holds it) before parking.
+      (for-each
+       (lambda (id)
+         (let ((g (find (lambda (g) (member id (group-window-ids g)))
+                        %groups)))
+           (when (and g (not (eq? g target)))
+             (move-window-between-groups! id g target))))
+       (sticky-windows))
       (park-group-windows! (current-group))
       (activate-group! target)
       (sync-frames!)
@@ -147,12 +166,20 @@ or clearing focus)."
 ;; Creating groups
 ;; ---------------------------------------------------------------------
 
-(define (gnew! name)
+(define (gnewbg! name)
   "Creates a new empty group named NAME (a string), appended to the end of
-%groups, sized to the last known output geometry. Does not switch to it."
+%groups, sized to the last known output geometry. Does not switch to it
+(StumpWM gnewbg)."
   (let* ((size (current-output-size))
          (g (make-empty-group name (car size) (cadr size))))
     (set! %groups (append %groups (list g)))
+    g))
+
+(define (gnew! name)
+  "Creates a new empty group named NAME and switches to it (StumpWM
+gnew)."
+  (let ((g (gnewbg! name)))
+    (switch-to-group! (group-name g))
     g))
 
 ;; Roman numerals for auto-generated group names (I, II, III already
@@ -173,15 +200,21 @@ or clearing focus)."
 
 (define (gnew-auto!)
   "Creates a new group with an auto-generated roman-numeral name (\" IV \",
-\" V \", ... continuing the default groups' naming), appended to
-%groups. Does not switch to it."
+\" V \", ... continuing the default groups' naming) and switches to it."
   (gnew! (string-append " " (integer->roman (+ 1 (length %groups))) " ")))
 
-(define (gnew-float! name)
-  "Creates a new float group (StumpWM gnew-float): every window mapped
-while it is current floats automatically. Does not switch to it."
-  (let ((g (gnew! name)))
+(define (gnewbg-float! name)
+  "Creates a new float group in the background (StumpWM gnewbg-float):
+every window mapped while it is current floats automatically. Does not
+switch to it."
+  (let ((g (gnewbg! name)))
     (set-group-float?! g #t)
+    g))
+
+(define (gnew-float! name)
+  "Creates a new float group and switches to it (StumpWM gnew-float)."
+  (let ((g (gnewbg-float! name)))
+    (switch-to-group! (group-name g))
     g))
 
 (define (grename! name)
@@ -231,31 +264,153 @@ group or the current frame has no window."
     (when (and idx (> n 1))
       (let ((id (focused-window-id)))
         (when id
-          (let ((next (list-ref %groups (modulo (+ idx 1) n))))
-            (if (window-floating? id)
-                ;; A float stays floating: move it between the groups'
-                ;; float lists (geometry kept) and park it.
-                (let ((r (float-geometry id)))
-                  (set-group-floats! (current-group)
-                                     (delete id (group-floats (current-group))))
-                  (set-group-floats! next (cons id (group-floats next)))
-                  (rust-call-place-float-offscreen id r))
-                (begin
-                  (find (lambda (t) (remove-window-from-tree-in! t id))
-                        (group-all-trees (current-group)))
-                  (hide-window! id)
-                  (frame-add-window! (group-current-frame next) id)))
-            (ensure-unique-window-number! id (group-all-trees next))
-            (sync-frames!)))))))
+          (move-window-between-groups!
+           id (current-group) (list-ref %groups (modulo (+ idx 1) n)))
+          (sync-frames!))))))
+
+(define (gshift-with-window! dir)
+  (let ((idx (current-group-index)) (n (length %groups))
+        (id (focused-window-id)))
+    (when (and idx (> n 1) id)
+      (let ((target (list-ref %groups (modulo (+ idx dir) n))))
+        (move-window-between-groups! id (current-group) target)
+        (switch-to-group! (group-name target))
+        (focus-window-by-id! id)))))
+
+(define (gnext-with-window!)
+  "Moves the current window to the next group and follows it (StumpWM
+gnext-with-window)."
+  (gshift-with-window! 1))
+
+(define (gprev-with-window!)
+  "Moves the current window to the previous group and follows it (StumpWM
+gprev-with-window)."
+  (gshift-with-window! -1))
+
+;; Adopts every window of G into the current group and deletes G. The
+;; shared core of gmerge! and gkill-other!; callers sync and echo.
+(define (merge-group-into-current! g)
+  (when (and (not (eq? g (current-group))) (memq g %groups))
+    (for-each
+     (lambda (id) (move-window-between-groups! id g (current-group)))
+     (group-window-ids g))
+    (set! %groups (delq g %groups))
+    (when (eq? %last-group g) (set! %last-group #f))))
+
+(define (gmerge! name-or-index)
+  "Merges the group named NAME-OR-INDEX into the current one: all its
+windows (floats stay floating) move here and the emptied group is
+deleted (StumpWM gmerge)."
+  (let ((g (resolve-target name-or-index)))
+    (cond
+     ((not g) (echo "no such group"))
+     ((eq? g (current-group)) (echo "already the current group"))
+     (else
+      (merge-group-into-current! g)
+      (sync-frames!)
+      (echo (group-list-string))))))
+
+(define (gkill-other!)
+  "Deletes every group except the current one, merging all their windows
+into it (StumpWM gkill-other)."
+  (for-each merge-group-into-current! (list-copy %groups))
+  (sync-frames!)
+  (echo (group-list-string)))
+
+(define (gmove-marked-to! name-or-index)
+  "Moves every marked window of the current group into the given group
+and clears their marks (StumpWM gmove-marked)."
+  (let ((target (resolve-target name-or-index)))
+    (if (or (not target) (eq? target (current-group)))
+        (echo "no such group")
+        (let ((ids (filter (lambda (id)
+                             (member id (group-window-ids (current-group))))
+                           (marked-windows))))
+          (if (null? ids)
+              (echo "no marked windows")
+              (begin
+                (for-each
+                 (lambda (id)
+                   (move-window-between-groups! id (current-group) target)
+                   (unmark-window! id))
+                 ids)
+                (sync-frames!)
+                (echo (format #f "moved ~a window(s) to~a"
+                              (length ids) (group-name target)))))))))
+
+;; ---------------------------------------------------------------------
+;; Group-wide window closing
+;; ---------------------------------------------------------------------
+
+(define (kill-windows-current-group!)
+  "Politely closes every window of the current group (StumpWM
+kill-windows-current-group)."
+  (let ((ids (group-window-ids (current-group))))
+    (for-each (lambda (id) (rust-call 'wm-close-window id)) ids)
+    (echo (format #f "closing ~a window(s)" (length ids)))))
+
+(define (kill-windows-other!)
+  "Politely closes every window of every group except the current one
+(StumpWM kill-windows-other)."
+  (let ((n 0))
+    (for-each
+     (lambda (g)
+       (unless (eq? g (current-group))
+         (for-each (lambda (id)
+                     (set! n (+ n 1))
+                     (rust-call 'wm-close-window id))
+                   (group-window-ids g))))
+     %groups)
+    (echo (format #f "closing ~a window(s)" n))))
+
+(define (groups-echo-string)
+  "The group list one per line with window counts, the current group
+marked * (StumpWM groups/vgroups)."
+  (string-join
+   (map (lambda (g)
+          (format #f "~a~a (~a)"
+                  (if (eq? g (current-group)) "*" " ")
+                  (string-trim-both (group-name g))
+                  (group-window-count g)))
+        %groups)
+   "\n"))
+
+;; Same dynamic (guile-user) lookup as frames.scm's rust-call (see the
+;; long comment there): a missing subr (old binary, test stubs) is a
+;; no-op.
+(define (rust-call name . args)
+  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+         (var (and mod (module-variable mod name))))
+    (when var (apply (variable-ref var) args))))
 
 ;; Parks a float off-screen without disturbing its remembered geometry
 ;; (hide-window! would place it with tiled states).
 (define (rust-call-place-float-offscreen id r)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod 'wm-place-float))))
-    (when var
-      ((variable-ref var) id -10000 -10000
-       (if r (caddr r) 100) (if r (cadddr r) 100)))))
+  (rust-call 'wm-place-float id -10000 -10000
+             (if r (caddr r) 100) (if r (cadddr r) 100)))
+
+;; The workhorse behind every window-between-groups operation (gmove,
+;; gmerge, sticky windows, gnext-with-window): moves ID from group FROM
+;; into TO, keeping float status and geometry, parked until TO is
+;; shown. Callers sync/switch as appropriate.
+(define (move-window-between-groups! id from to)
+  (unless (eq? from to)
+    (if (window-floating? id)
+        (when (member id (group-floats from))
+          (let ((r (float-geometry id)))
+            (set-group-floats! from (delete id (group-floats from)))
+            (set-group-floats! to (cons id (group-floats to)))
+            (rust-call-place-float-offscreen id r)))
+        (when (find (lambda (t) (remove-window-from-tree-in! t id))
+                    (group-all-trees from))
+          ;; The active group's record fields can be stale between
+          ;; flushes; target the live current frame instead.
+          (if (eq? to (current-group))
+              (frame-add-window! (current-frame) id)
+              (begin
+                (hide-window! id)
+                (frame-add-window! (group-current-frame to) id)))))
+    (ensure-unique-window-number! id (group-all-trees to))))
 
 ;; ---------------------------------------------------------------------
 ;; Placement rules (StumpWM define-frame-preference): route a newly
@@ -318,7 +473,8 @@ are left alone; a window already in its rule's target frame stays put."
      (lambda (id)
        (unless (window-floating? id)
          (let* ((title (window-title id))
-                (rule (find (lambda (r) (rule-matches? r title title))
+                (rule (find (lambda (r)
+                              (rule-matches? r title (window-app-id id)))
                             %placement-rules)))
            (when rule
              (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
@@ -418,6 +574,8 @@ a sync since nothing hidden is on-screen)."
   (clear-fullscreen-if-window! id)
   (clear-urgent! id)
   (clear-ontop! id)
+  (clear-sticky! id)
+  (unmark-window! id)
   (let ((fg (find (lambda (g) (remove-float! g id)) %groups)))
     (cond
      (fg (when (eq? fg (current-group)) (sync-frames!)))

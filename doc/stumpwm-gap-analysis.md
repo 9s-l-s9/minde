@@ -84,7 +84,7 @@ mode-line/tray (eww owns that) and `restart-hard` (a Wayland
 compositor cannot restart under its clients the way an X WM can;
 `restart-soft` = config reload exists as Print R).
 
-### Sprint 8 — group & window management parity (pure Scheme)
+### Sprint 8 — group & window management parity (pure Scheme) ✅ DONE
 `gnewbg` / `gnewbg-float` (our gnew! already doesn't switch; add the
 official names + a switching gnew), `gnext-with-window` /
 `gprev-with-window`, `gmerge`, `gkill-other`,

@@ -749,9 +749,16 @@ focused client), #f otherwise."
            (lambda (name) (rename-window! name))))
    ;; p: re-apply placement rules to existing windows.
    "p" (lambda () (place-existing-windows!))
-   ;; f: unfloat every float of this group; t: always-on-top toggle.
+   ;; f: unfloat every float of this group; t: always-on-top toggle;
+   ;; y: always-show (sticky, follows every group switch).
    "f" (lambda () (flatten-floats!))
    "t" (lambda () (toggle-always-on-top!))
+   "y" (lambda () (toggle-always-show!))
+   ;; i: window properties echo; d: date; V: version; M: modifiers.
+   "i" (lambda () (show-window-properties!))
+   "d" (lambda () (echo-date!))
+   "V" (lambda () (version!))
+   "M" (lambda () (modifiers!))
    "w" (lambda ()
          (wm-spawn (string-append "pkill swaybg; " %wallpaper-cmd)))
    "a" (lambda ()
@@ -836,6 +843,160 @@ focused client), #f otherwise."
         (select-from-menu items focus-window-by-id! #:prompt "windows:"))))
 
 (bind-prefix-key! "l" (lambda () (windowlist!)))
+
+;; ---------------------------------------------------------------------
+;; Group & window management parity (StumpWM sprint 8)
+;; ---------------------------------------------------------------------
+
+;; Windowlist variants: current frame only, by class, pull instead of
+;; jump. All reuse the select-from-menu machinery.
+(define (window-label id)
+  (format #f "~a~a ~a"
+          (or (window-number id) "?")
+          (cond ((equal? id (focused-window-id)) "*")
+                ((window-floating? id) "~")
+                (else " "))
+          (window-title id)))
+
+(define (frame-windowlist!)
+  (let ((items (map (lambda (id) (cons (window-label id) id))
+                    (current-frame-window-ids))))
+    (if (null? items)
+        (echo "no windows in this frame")
+        (select-from-menu items focus-window-by-id! #:prompt "frame windows:"))))
+
+(define (echo-frame-windows!)
+  (let ((ids (current-frame-window-ids)))
+    (echo (if (null? ids)
+              "no windows in this frame"
+              (string-join (map window-label ids) "\n")))))
+
+(define (windowlist-by-class!)
+  (let* ((ids (sort (all-window-ids)
+                    (lambda (a b)
+                      (string<? (or (window-app-id a) "?")
+                                (or (window-app-id b) "?")))))
+         (items (map (lambda (id)
+                       (cons (format #f "~a | ~a"
+                                     (or (window-app-id id) "?")
+                                     (window-title id))
+                             id))
+                     ids)))
+    (if (null? items)
+        (echo "no windows")
+        (select-from-menu items focus-window-by-id! #:prompt "windows by class:"))))
+
+(define (pull-from-windowlist!)
+  (let ((items (map (lambda (id) (cons (window-label id) id))
+                    (all-window-ids))))
+    (if (null? items)
+        (echo "no windows")
+        (select-from-menu items pull-window-by-id! #:prompt "pull window:"))))
+
+(define (select-floating-window!)
+  (let ((items (map (lambda (id) (cons (window-title id) id))
+                    (group-floats (current-group)))))
+    (if (null? items)
+        (echo "no floating windows")
+        (select-from-menu items focus-window-by-id! #:prompt "floats:"))))
+
+;; Exact title match wins over the first substring match, like StumpWM's
+;; select-window-by-name.
+(define (select-window-by-name!)
+  (read-one-line "select window: "
+    (lambda (name)
+      (unless (string-null? name)
+        (let* ((ids (all-window-ids))
+               (id (or (find (lambda (i) (string=? (window-title i) name)) ids)
+                       (find (lambda (i) (string-contains (window-title i) name))
+                             ids))))
+          (if id
+              (focus-window-by-id! id)
+              (echo (format #f "no window matching ~s" name))))))
+    #:completions (lambda () (map window-title (all-window-ids)))
+    #:history 'window))
+
+;; Group prompts over the menu, targeting any group but the current one.
+(define (other-group-menu prompt action)
+  (let ((items (filter-map
+                (lambda (name)
+                  (and (not (string=? name (current-group-name)))
+                       (cons (string-trim-both name) name)))
+                (group-names))))
+    (if (null? items)
+        (echo "no other groups")
+        (select-from-menu items action #:prompt prompt))))
+
+(define (gmerge-prompt!) (other-group-menu "merge group here:" gmerge!))
+(define (gmove-marked-prompt!)
+  (other-group-menu "move marked to:" gmove-marked-to!))
+
+(define (gnewbg-prompt!)
+  (read-one-line "new background group: "
+    (lambda (name)
+      (unless (string-null? name)
+        (gnewbg! (string-append " " name " "))
+        (echo (groups-echo-string))))
+    #:history 'group))
+
+(define (gnewbg-float-prompt!)
+  (read-one-line "new background float group: "
+    (lambda (name)
+      (unless (string-null? name)
+        (gnewbg-float! (string-append " " name " "))
+        (echo (groups-echo-string))))
+    #:history 'group))
+
+;; Misc echoes.
+(define (echo-date!)
+  (echo (strftime "%a %d %b %Y %H:%M:%S" (localtime (current-time)))))
+
+(define (version!)
+  (echo "minde 0.1.0"))
+
+(define (modifiers!)
+  (echo (format #f "key spec prefixes: C- control, M- alt, S- shift, s- super~%prefix key: ~a" %prefix-key)))
+
+(define (redisplay!)
+  "Re-places every window of the active group (StumpWM redisplay /
+refresh)."
+  (sync-frames!)
+  (echo "redisplayed"))
+
+;; Bindings: windowlist variants at the top level, group management in
+;; the M-G submap, window odds and ends in the P submap.
+(bind-prefix-key! "C-l" (lambda () (frame-windowlist!)) "frame windowlist (menu)")
+(bind-prefix-key! "M-l" (lambda () (windowlist-by-class!)) "windowlist by class (menu)")
+(bind-prefix-key! "M-p" (lambda () (pull-from-windowlist!)) "pull from windowlist (menu)")
+(bind-prefix-key! "M-w" (lambda () (select-window-by-name!)) "select window by name (prompt)")
+(bind-prefix-key! "M-t" (lambda () (select-floating-window!)) "select floating window (menu)")
+(bind-prefix-key! "C-r" (lambda () (redisplay!)) "redisplay windows")
+
+(bind-prefix-key! "M-G"
+  (make-keymap
+   "n" (lambda () (gnewbg-prompt!))
+   "N" (lambda () (gnewbg-float-prompt!))
+   "m" (lambda () (gmerge-prompt!))
+   "M" (lambda () (gmove-marked-prompt!))
+   "o" (lambda () (gkill-other!))
+   "g" (lambda () (echo (groups-echo-string)))
+   "f" (lambda () (gnext-with-window!))
+   "b" (lambda () (gprev-with-window!))
+   "k" (lambda () (kill-windows-current-group!))
+   "K" (lambda () (kill-windows-other!)))
+  "groups submap")
+(for-each
+ (lambda (p) (set-binding-doc! (hash-ref %prefix-bindings "M-G") (car p) (cdr p)))
+ '(("n" . "new group in background (prompt)")
+   ("N" . "new float group in background (prompt)")
+   ("m" . "merge a group here (menu)")
+   ("M" . "move marked windows to a group (menu)")
+   ("o" . "kill all other groups")
+   ("g" . "group list echo")
+   ("f" . "next group, taking the window")
+   ("b" . "previous group, taking the window")
+   ("k" . "close all windows in this group")
+   ("K" . "close all windows in other groups")))
 
 ;; Not ported yet (missing infrastructure), from StumpWM:
 ;;   D/t dashboards -- interactive terminal scripts; run them in a

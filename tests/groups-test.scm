@@ -259,6 +259,86 @@
               (find (lambda (g) (group-has-window? g id)) (group-names))))
 
 ;; ---------------------------------------------------------------------
+;; Sprint 8: gnewbg / switching gnew, *-with-window, gmerge, gkill-other,
+;; gmove-marked, kill-windows, always-show, groups echo
+;; ---------------------------------------------------------------------
+
+;; Clean slate: collapse everything into one group named A.
+(gkill-other!)
+(grename! "A")
+(check "gkill-other! left a single group" (length (group-names)) 1)
+
+(gnewbg! " B ")
+(check "gnewbg! does not switch" (current-group-name) " A ")
+(check-true "gnewbg! created B" (and (member " B " (group-names)) #t))
+
+(gnew! " C ")
+(check "gnew! switches to the new group" (current-group-name) " C ")
+
+(let ((g (gnewbg-float! " F ")))
+  (check-true "gnewbg-float! creates a float group" (group-float? g))
+  (check "gnewbg-float! does not switch" (current-group-name) " C "))
+
+;; gnext/gprev-with-window!: the window travels and stays focused.
+(wm-on-window-map 71 "traveler" "foot")
+(gnext-with-window!)
+(check-true "gnext-with-window! left C" (not (string=? (current-group-name) " C ")))
+(check-true "the window came along" (group-has-window? (current-group-name) 71))
+(check "and is focused" (focused-window-id) 71)
+(gprev-with-window!)
+(check "gprev-with-window! went back to C" (current-group-name) " C ")
+(check-true "the window came back too" (group-has-window? " C " 71))
+
+;; gmerge!: B's window moves here, B dies.
+(switch-to-group! " B ")
+(wm-on-window-map 72 "b-window" "foot")
+(switch-to-group! " C ")
+(let ((n (length (group-names))))
+  (gmerge! " B ")
+  (check "gmerge! deleted the source group" (length (group-names)) (- n 1))
+  (check-true "its window landed here" (group-has-window? " C " 72)))
+
+;; gmove-marked-to!: both windows marked, moved to F, marks cleared.
+(focus-window-by-id! 71)
+(mark-window-toggle!)
+(focus-window-by-id! 72)
+(mark-window-toggle!)
+(gmove-marked-to! " F ")
+(check-true "71 moved to F" (group-has-window? " F " 71))
+(check-true "72 moved to F" (group-has-window? " F " 72))
+(check "marks cleared by the move" (marked-windows) '())
+
+;; kill-windows: other groups' windows close, the current group's don't
+;; -- and vice versa.
+(wm-on-window-map 73 "local" "foot")
+(set! %closed '())
+(kill-windows-other!)
+(check-true "kill-windows-other! closed 71" (and (member 71 %closed) #t))
+(check-true "kill-windows-other! closed 72" (and (member 72 %closed) #t))
+(check-true "kill-windows-other! spared the current group"
+            (not (member 73 %closed)))
+(set! %closed '())
+(kill-windows-current-group!)
+(check-true "kill-windows-current-group! closed 73" (and (member 73 %closed) #t))
+
+;; Always-show: the sticky window follows every switch until toggled off.
+(focus-window-by-id! 73)
+(toggle-always-show!)
+(switch-to-group! " A ")
+(check-true "sticky window followed the switch" (group-has-window? " A " 73))
+(check-true "and left its old group" (not (group-has-window? " C " 73)))
+(switch-to-group! " C ")
+(check-true "it follows back" (group-has-window? " C " 73))
+(focus-window-by-id! 73)
+(toggle-always-show!)
+(switch-to-group! " A ")
+(check-true "after toggling off it stays put" (group-has-window? " C " 73))
+
+;; groups echo: current group marked *, one line per group with count.
+(check-true "groups-echo-string marks the current group"
+            (and (string-contains (groups-echo-string) "*A") #t))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

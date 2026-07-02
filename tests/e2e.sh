@@ -227,6 +227,35 @@ xdotool key Return; sleep 0.3     # leave command mode
 loggrep "error in keybinding" && fail "command mode errored (see log)"
 ok "command mode: enter / bare keys / exit"
 
+# Sprint 8: gnewbg (created, not switched), sticky follows a group
+# switch, and the pull-from-windowlist menu -- all via REPL markers.
+scripts/minde-cmd '(begin
+  (use-modules (minde frames) (minde groups))
+  (let ((before (current-group-name)))
+    (gnewbg! " e2eBG ")
+    (wm-log (format #f "e2e-gnewbg ~s ~s"
+                    (and (member " e2eBG " (group-names)) #t)
+                    (string=? (current-group-name) before)))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-gnewbg #t #t" || fail "gnewbg did not create in the background"
+scripts/minde-cmd '(begin
+  (use-modules (minde frames) (minde groups))
+  (toggle-always-show!)
+  (switch-to-group! " e2eBG ")
+  (wm-log (format #f "e2e-sticky ~s"
+                  (and (focused-window-id)
+                       (group-has-window? " e2eBG " (focused-window-id))
+                       #t)))
+  (toggle-always-show!)
+  (gother!))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-sticky #t" || fail "sticky window did not follow the group switch"
+# pull-from-windowlist: open the menu (Print M-p), take the first entry.
+xdotool key Print; sleep 0.2; xdotool key alt+p; sleep 0.5
+xdotool key Return; sleep 0.5
+loggrep "error in keybinding" && fail "pull-from-windowlist errored (see log)"
+ok "gnewbg / always-show / pull-from-windowlist"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))
