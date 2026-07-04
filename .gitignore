@@ -1,2 +1,5 @@
 /target
 /vendor
+/tty.log
+/.cache
+/build

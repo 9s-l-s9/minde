@@ -1,0 +1,13 @@
+minde license
+================
+
+Unless a file says otherwise, minde is free software licensed under the
+GNU General Public License, version 3 or (at your option) any later version.
+See LICENSES/GPL-3.0-or-later.txt.
+
+Files carrying `SPDX-License-Identifier: MIT` are adapted from the Smithay
+smallvil or anvil examples and remain available under the MIT license. See
+LICENSES/MIT.txt and NOTICE for their copyright and exact provenance.
+
+Vendored dependencies under vendor/ retain their own license files and are
+not covered by this notice.

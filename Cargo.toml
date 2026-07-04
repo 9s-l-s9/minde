@@ -3,7 +3,11 @@ name = "minde"
 version = "0.1.0"
 edition = "2024"
 description = "StumpWM-inspired Guile Scheme Wayland compositor, built on Smithay"
-license = "MIT"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/9s-l-s9/minde"
+readme = "README.md"
+keywords = ["wayland", "compositor", "guile", "scheme"]
+categories = ["gui"]
 
 [[bin]]
 name = "minde"

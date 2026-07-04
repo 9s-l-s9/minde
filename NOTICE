@@ -1,0 +1,43 @@
+minde copyright and provenance notices
+===========================================
+
+Project-owned work
+------------------
+
+Copyright (C) 2026 Samuel Schmidt
+
+Licensed under GPL-3.0-or-later. See COPYING and
+LICENSES/GPL-3.0-or-later.txt.
+
+Smithay example-derived work
+----------------------------
+
+The following files contain code adapted from Smithay's `smallvil` example:
+
+  src/state.rs
+  src/winit.rs
+  src/input.rs
+  src/handlers/*.rs
+  src/grabs/*.rs
+
+The following files also contain code adapted from Smithay's `anvil` example:
+
+  src/render.rs
+  src/udev.rs
+  src/handlers/layer_shell.rs
+
+Upstream project: https://github.com/Smithay/Smithay
+Pinned revision: 3021f619e2ae4dab8bfb1e21f3f210923b9b6582
+Upstream license: MIT
+Upstream copyright: Copyright (c) 2017 Drakulix (Victor Berger)
+
+Those files carry an SPDX MIT identifier and remain available under the MIT
+license in LICENSES/MIT.txt. Changes and wholly new files in this repository
+are GPL-3.0-or-later unless marked otherwise.
+
+Embedded font
+-------------
+
+resources/DejaVuSansMono.ttf is from the DejaVu Fonts project. Its license is
+embedded in the font and permits redistribution. It is not relicensed by the
+minde license.
