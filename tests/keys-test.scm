@@ -46,6 +46,15 @@
 (define (wm-add-overlay x y text)
   (set! %overlays (cons (list x y text) %overlays)) #t)
 (define (wm-clear-overlays) (set! %overlays '()) #t)
+;; Sprint-10 subrs (recording fakes).
+(define %sent-keys '())
+(define (wm-send-key mods name)
+  (set! %sent-keys (cons (cons mods name) %sent-keys)) #t)
+(define %relwarps '())
+(define (wm-warp-pointer-relative dx dy)
+  (set! %relwarps (cons (cons dx dy) %relwarps)) #t)
+(define %repeat-state 'unset)
+(define (wm-set-key-repeat on) (set! %repeat-state on) #t)
 
 ;; Keep init.scm's load-placement-rules! away from the developer's real
 ;; rules file.
@@ -414,6 +423,114 @@
 (check-true "overlays up again" (pair? %overlays))
 (check "Escape leaves fselect" (wm-handle-key 0 #f "Escape") #t)
 (check "overlays cleared by Escape" %overlays '())
+
+;; ---------------------------------------------------------------------
+;; Sprint 10: send-key, remapped keys, key repeat, which-key, help,
+;; error ring, ratrelwarp
+;; ---------------------------------------------------------------------
+
+;; send-key / meta / send-escape parse specs back into (mods . name).
+(send-key "C-M-x")
+(check "send-key C-M-x -> mods 12, x" (car %sent-keys) '(12 . "x"))
+(send-escape)
+(check "send-escape" (car %sent-keys) '(0 . "Escape"))
+(meta "s-Down")
+(check "meta s-Down -> super bit" (car %sent-keys) '(64 . "Down"))
+
+;; Remapped keys: focused window's app-id gates the translation.
+(define groups-mod (resolve-module '(minde groups)))
+((module-ref groups-mod 'wm-on-window-map) 42 "browser" "zen")
+(define-remapped-keys! '(("zen" ("C-n" . "Down") ("C-p" . "Up"))))
+(set! %sent-keys '())
+(check "remapped C-n consumed" (wm-handle-key ctrl-bit #f "n" "") #t)
+(check "remap synthesized Down" (car %sent-keys) '(0 . "Down"))
+(check "unmapped key still forwarded" (wm-handle-key 0 #f "n" "n") #f)
+(toggle-remapped-keys!)
+(check "toggle off: C-n forwarded" (wm-handle-key ctrl-bit #f "n" "") #f)
+(toggle-remapped-keys!)
+(check "toggle back on: C-n consumed" (wm-handle-key ctrl-bit #f "n" "") #t)
+(unbind-remapped-keys!)
+(check "unbound: C-n forwarded" (wm-handle-key ctrl-bit #f "n" "") #f)
+
+;; Compositor key repeat follows armed keymaps and prompts.
+(wm-handle-key ctrl-bit #f "t")
+(check "repeat on while prefix armed" %repeat-state #t)
+(wm-handle-key 0 #f "v")
+(check "repeat off after resolve" %repeat-state #f)
+(read-one-line "test: " (lambda (s) #f))
+(check "repeat on while prompt open" %repeat-state #t)
+(wm-handle-key 0 #f "Return" "")
+(check "repeat off after submit" %repeat-state #f)
+
+;; which-key-mode: arming a keymap schedules a timer; firing it while
+;; still armed echoes the help text, a stale token echoes nothing.
+(which-key-mode!)
+(set! %timer-calls '())
+(wm-handle-key ctrl-bit #f "t")
+(check-true "which-key scheduled a timer" (pair? %timer-calls))
+(set! %messages '())
+(wm-on-timer (cdr (car %timer-calls)))
+(check-true "which-key echoed the armed map's docs"
+            (and (pair? %messages) (string-contains (car %messages) "vsplit")))
+(wm-handle-key 0 #f "Escape") ; resolve the prefix ("not bound" echo)
+(set! %timer-calls '())
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "v") ; resolve before the timer fires
+(set! %messages '())
+(wm-on-timer (cdr (car %timer-calls)))
+(check "stale which-key timer stays silent" %messages '())
+(which-key-mode!)
+
+;; Error ring + copy-unhandled-error.
+(bind-prefix-key! "F9" (lambda () (error "boom-test")))
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "F9")
+(check-true "binding error recorded"
+            (and %last-unhandled-error
+                 (string-contains %last-unhandled-error "boom-test")))
+(copy-unhandled-error!)
+(check-true "error copied to clipboard"
+            (and %clipboard (string-contains %clipboard "boom-test")))
+
+;; where-is: type a doc substring into the prompt, matching keys echo.
+(check-true "prefix docs exist" (pair? (prefix-doc-pairs)))
+(where-is!)
+(for-each (lambda (c) (wm-handle-key 0 #f c c)) '("f" "r" "a" "m" "e"))
+(set! %messages '())
+(wm-handle-key 0 #f "Return" "")
+(check-true "where-is found frame bindings"
+            (and (pair? %messages) (string-contains (car %messages) "frame")))
+
+;; describe-command completes over the doc strings.
+(describe-command!)
+(for-each (lambda (c) (wm-handle-key 0 #f c c))
+          (map string (string->list "vsplit")))
+(set! %messages '())
+(wm-handle-key 0 #f "Return" "")
+(check-true "describe-command names the key"
+            (and (pair? %messages) (string-contains (car %messages) "bound to")))
+
+;; describe-function / describe-variable introspection helpers.
+(call-with-values (lambda () (lookup-symbol-value "send-key"))
+  (lambda (found? v) (check-true "lookup finds send-key" (and found? (procedure? v)))))
+(call-with-values (lambda () (lookup-symbol-value "no-such-thing-xyz"))
+  (lambda (found? v) (check "lookup misses unbound" found? #f)))
+
+;; ratrelwarp goes through the relative-warp subr.
+(ratrelwarp 5 -3)
+(check "ratrelwarp delta" (car %relwarps) '(5 . -3))
+
+;; send-raw-key!: the next key press is synthesized, not dispatched.
+(set! %sent-keys '())
+(send-raw-key!)
+(check "captured key consumed" (wm-handle-key ctrl-bit #f "q" "") #t)
+(check "captured key synthesized" (car %sent-keys) '(4 . "q"))
+
+;; load-module! pulls in a module at runtime.
+(set! %messages '())
+(load-module! "ice-9 q")
+(check-true "load-module echoed success"
+            (and (pair? %messages) (string-contains (car %messages) "loaded module")))
 
 ;; ---------------------------------------------------------------------
 

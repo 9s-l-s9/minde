@@ -142,12 +142,45 @@ MODS (possibly '())."
     (let ((var (and mod (module-variable mod 'wm-border-color))))
       (when var ((variable-ref var) hex)))))
 
+;; which-key-mode (StumpWM): when on, an armed keymap that stays armed
+;; for %which-key-delay-ms echoes its bindings automatically (the same
+;; text ? shows on demand). The generation counter voids stale timers.
+(define %which-key-mode #f)
+(define %which-key-delay-ms 1000)
+(define %keymap-generation 0)
+
+(define (which-key-mode!)
+  (set! %which-key-mode (not %which-key-mode))
+  (echo (if %which-key-mode "which-key mode on" "which-key mode off")))
+
+(define (set-key-repeat! on)
+  ;; Tolerate a binary older than this config (subr not registered yet).
+  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
+    (let ((var (and mod (module-variable mod 'wm-set-key-repeat))))
+      (when var ((variable-ref var) on)))))
+
 (define (set-key-state! s)
   (set! %key-state s)
+  (set! %keymap-generation (+ %keymap-generation 1))
+  ;; Keys an armed keymap consumes never repeat client-side; ask the
+  ;; compositor to re-fire held keys (prompts toggle this themselves in
+  ;; input.scm/menu.scm).
+  (set-key-repeat! (hash-table? s))
+  (when (and %which-key-mode (hash-table? s))
+    (let ((gen %keymap-generation) (km s))
+      (wm-run-after %which-key-delay-ms
+                    (lambda ()
+                      (when (and (= gen %keymap-generation)
+                                 (eq? %key-state km))
+                        (echo (keymap-help-string km)))))))
   (set-border-color! (cond
                       ((eq? s 'normal) %border-color-normal)
                       ((eq? s %resize-map) %border-color-resize)
                       (else %border-color-prefix))))
+
+;; Last error a keybinding raised, for copy-unhandled-error (StumpWM):
+;; grab it onto the clipboard instead of retyping it from the log.
+(define %last-unhandled-error #f)
 
 (define (run-binding! thunk mods keysym-name)
   ;; Errors from a binding are logged, not fatal -- one bad keybinding
@@ -155,7 +188,9 @@ MODS (possibly '())."
   (catch #t
     thunk
     (lambda (key . args)
-      (wm-log (format #f "error in keybinding ~a ~a: ~a ~a" mods keysym-name key args)))))
+      (set! %last-unhandled-error
+            (format #f "error in keybinding ~a ~a: ~a ~s" mods keysym-name key args))
+      (wm-log %last-unhandled-error))))
 
 ;; Bare modifier presses (e.g. the Shift_L press that precedes typing "S")
 ;; must not be interpreted as the key following the prefix.
@@ -313,11 +348,19 @@ focused client), #f otherwise."
             (set-key-state! %prefix-bindings)
             #t)
           (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
-            (if thunk
-                (begin
-                  (run-binding! thunk mods-bitmask keysym-name)
-                  #t)
-                #f)))))
+            (cond
+             (thunk
+              (run-binding! thunk mods-bitmask keysym-name)
+              #t)
+             ;; Per-app remapped keys (StumpWM define-remapped-keys): a
+             ;; key headed for the client may translate to a different
+             ;; synthesized key for this app-id.
+             ((and (not (modifier-keysym? keysym-name))
+                   (remap-target (key-spec mods-bitmask keysym-name)))
+              => (lambda (target)
+                   (send-key target)
+                   #t))
+             (else #f))))))
 
 ;; ---------------------------------------------------------------------
 ;; Default bindings
@@ -1090,6 +1133,129 @@ refresh)."
 
 ;; Placement rules saved by remember!/forget! in earlier sessions.
 (load-placement-rules!)
+
+;; ---------------------------------------------------------------------
+;; Keys & help parity (StumpWM parity sprint 10)
+;; ---------------------------------------------------------------------
+
+;; send-raw-key: capture the next key press and synthesize it into the
+;; focused window (for keys the wm would otherwise act on).
+(define (send-raw-key!)
+  (echo "send key: press a key...")
+  (set! %describe-next-key
+        (lambda (mods name) (send-key (key-spec mods name)))))
+(bind-prefix-key! "C-q" (lambda () (send-raw-key!)) "send next key to window")
+
+;; Help family: describe-command / where-is work over the binding docs
+;; (%binding-docs); describe-function / describe-variable introspect the
+;; live Guile modules.
+(define (prefix-doc-pairs)
+  (let ((tbl (hash-ref %binding-docs %prefix-bindings)))
+    (if tbl (hash-map->list cons tbl) '())))
+
+(define (commands!)
+  "Echoes every documented prefix binding (StumpWM commands)."
+  (echo (keymap-help-string %prefix-bindings)))
+
+(define (describe-command!)
+  (read-one-line "describe command: "
+    (lambda (s)
+      (let ((hit (find (lambda (p) (string=? (cdr p) s)) (prefix-doc-pairs))))
+        (if hit
+            (echo (format #f "~a -- bound to ~a ~a" (cdr hit) %prefix-key (car hit)))
+            (echo (format #f "no command matching ~s" s)))))
+    #:completions (lambda () (sort (map cdr (prefix-doc-pairs)) string<?))))
+
+(define (where-is!)
+  (read-one-line "where is (doc substring): "
+    (lambda (s)
+      (let ((hits (filter (lambda (p)
+                            (string-contains (string-downcase (cdr p))
+                                             (string-downcase s)))
+                          (prefix-doc-pairs))))
+        (if (null? hits)
+            (echo (format #f "nothing matching ~s" s))
+            (echo (string-join
+                   (map (lambda (p)
+                          (format #f "~a ~a  ~a" %prefix-key (car p) (cdr p)))
+                        (sort hits (lambda (a b) (string<? (car a) (car b)))))
+                   "\n")))))))
+
+(define %describe-modules
+  '((guile-user) (minde frames) (minde groups) (minde input)
+    (minde menu) (minde layouts) (minde hooks)))
+
+(define (lookup-symbol-value name)
+  "Two values: found? and the value of NAME across the wm's modules."
+  (let ((sym (string->symbol name)))
+    (let loop ((mods %describe-modules))
+      (if (null? mods)
+          (values #f #f)
+          (let* ((mod (resolve-module (car mods) #:ensure #f))
+                 (var (and mod (module-variable mod sym))))
+            (if (and var (variable-bound? var))
+                (values #t (variable-ref var))
+                (loop (cdr mods))))))))
+
+(define (truncate-for-echo s)
+  (if (> (string-length s) 400) (string-append (substring s 0 400) "...") s))
+
+(define (describe-function!)
+  (read-one-line "describe function: "
+    (lambda (s)
+      (call-with-values (lambda () (lookup-symbol-value s))
+        (lambda (found? v)
+          (cond
+           ((not found?) (echo (format #f "~a is unbound" s)))
+           ((not (procedure? v))
+            (echo (format #f "~a is not a procedure: ~s" s v)))
+           (else
+            (echo (format #f "~a: ~a" s
+                          (or (procedure-documentation v) "no docstring"))))))))))
+
+(define (describe-variable!)
+  (read-one-line "describe variable: "
+    (lambda (s)
+      (call-with-values (lambda () (lookup-symbol-value s))
+        (lambda (found? v)
+          (if found?
+              (echo (truncate-for-echo (format #f "~a = ~s" s v)))
+              (echo (format #f "~a is unbound" s))))))))
+
+(bind-prefix-key! "F2" (lambda () (describe-command!)) "describe command (prompt)")
+(bind-prefix-key! "F3" (lambda () (commands!)) "list all commands")
+(bind-prefix-key! "F4" (lambda () (describe-function!)) "describe function (prompt)")
+(bind-prefix-key! "F5" (lambda () (where-is!)) "where-is (doc search)")
+(bind-prefix-key! "F6" (lambda () (describe-variable!)) "describe variable (prompt)")
+
+;; copy-unhandled-error: the last keybinding error onto the clipboard.
+(define (copy-unhandled-error!)
+  (if %last-unhandled-error
+      (begin
+        (wm-set-clipboard %last-unhandled-error)
+        (echo "unhandled error copied to clipboard"))
+      (echo "no unhandled error recorded")))
+
+;; StumpWM load-module: pull a Guile module into the wm session at
+;; runtime, e.g. (load-module! "ice-9 format"). add-to-load-path first
+;; if it lives outside the default %load-path.
+(define (load-module! name)
+  (catch #t
+    (lambda ()
+      (module-use! (current-module)
+                   (resolve-interface
+                    (map string->symbol (string-split name #\space))))
+      (echo (format #f "loaded module (~a)" name)))
+    (lambda (key . args)
+      (echo (format #f "load-module failed: ~a ~s" key args)))))
+
+;; StumpWM restart-soft == our in-place init reload.
+(define (restart-soft) (reload-init!))
+
+;; Colon/REPL-callable, unbound by default (like StumpWM): which-key-mode!,
+;; define-remapped-keys!, toggle-remapped-keys!, unbind-remapped-keys!,
+;; send-key / meta / send-escape, ratrelwarp, load-module!,
+;; copy-unhandled-error!, restart-soft.
 
 ;; Not ported yet (missing infrastructure), from StumpWM:
 ;;   D/t dashboards -- interactive terminal scripts; run them in a

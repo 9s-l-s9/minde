@@ -44,9 +44,11 @@ impl MindeState {
                 let time = Event::time_msec(&event);
                 let key_state = event.state();
 
+                let key_code = event.key_code();
+
                 self.seat.get_keyboard().unwrap().input::<(), _>(
                     self,
-                    event.key_code(),
+                    key_code,
                     key_state,
                     serial,
                     time,
@@ -55,6 +57,10 @@ impl MindeState {
                         // repeats always reach the client so held keys don't
                         // get stuck if a binding consumed the press.
                         if key_state == KeyState::Pressed {
+                            // Any new press ends the previous compositor-side
+                            // repeat (prompts/armed keymaps; re-armed below
+                            // if this press is consumed while repeat is on).
+                            data.cancel_key_repeat();
                             let keysym = keysym_handle.modified_sym();
 
                             // VT switching: only meaningful (and only
@@ -84,8 +90,54 @@ impl MindeState {
                             let consumed =
                                 guile::handle_key(mods_bitmask(mods), keysym.raw(), &name, &utf8);
                             if consumed {
+                                // Compositor-side auto-repeat: consumed keys
+                                // never come back from libinput as repeats,
+                                // so while a prompt/mode asked for repeat
+                                // (wm-set-key-repeat) re-fire the handler
+                                // from a timer until the key is released.
+                                if data.key_repeat_enabled {
+                                    let code = key_code.raw();
+                                    let (m, k) = (mods_bitmask(mods), keysym.raw());
+                                    let timer =
+                                        smithay::reexports::calloop::timer::Timer::from_duration(
+                                            std::time::Duration::from_millis(600),
+                                        );
+                                    let n = name.clone();
+                                    let u = utf8.clone();
+                                    let token =
+                                        data.handle.insert_source(timer, move |_, _, state| {
+                                            use smithay::reexports::calloop::timer::TimeoutAction;
+                                            let held = state
+                                                .key_repeat
+                                                .as_ref()
+                                                .is_some_and(|(c, _)| *c == code);
+                                            if state.key_repeat_enabled
+                                                && held
+                                                && guile::handle_key(m, k, &n, &u)
+                                            {
+                                                TimeoutAction::ToDuration(
+                                                    std::time::Duration::from_millis(40),
+                                                )
+                                            } else {
+                                                if held {
+                                                    state.key_repeat = None;
+                                                }
+                                                TimeoutAction::Drop
+                                            }
+                                        });
+                                    if let Ok(token) = token {
+                                        data.key_repeat = Some((code, token));
+                                    }
+                                }
                                 return FilterResult::Intercept(());
                             }
+                        } else if data
+                            .key_repeat
+                            .as_ref()
+                            .is_some_and(|(c, _)| *c == key_code.raw())
+                        {
+                            // The repeated key was released: stop the timer.
+                            data.cancel_key_repeat();
                         }
                         FilterResult::Forward
                     },

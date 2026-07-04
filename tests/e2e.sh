@@ -276,6 +276,37 @@ sleep 1
 loggrep "e2e-remember-ok" || fail "remember/forget round-trip"
 ok "fselect / expose / remember"
 
+# Sprint 10: remapped keys + send-key through the real subr, which-key
+# auto-echo, help prompts.
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (define-remapped-keys! (list (list ".*" (cons "C-F9" "Down"))))
+  (wm-log (format #f "e2e-remap ~s" (remap-target "C-F9")))
+  (send-key "Down")
+  (wm-log "e2e-sendkey-ok"))' >/dev/null 2>&1 || true
+sleep 1
+loggrep 'e2e-remap "Down"' || fail "remap-target did not resolve"
+loggrep "e2e-sendkey-ok" || fail "send-key errored"
+# Exercise the live remap branch (consumed, synthesized, no errors),
+# then drop the table again.
+xdotool key ctrl+F9; sleep 0.3
+scripts/minde-cmd '(begin
+  (use-modules (minde frames))
+  (unbind-remapped-keys!))' >/dev/null 2>&1 || true
+# which-key auto-echo: arm the prefix, wait past the delay, screenshot.
+scripts/minde-cmd '(which-key-mode!)' >/dev/null 2>&1 || true
+xdotool key Print; sleep 1.6
+import -window root "$OUT/whichkey.png"
+xdotool key Escape; sleep 0.3
+scripts/minde-cmd '(which-key-mode!)' >/dev/null 2>&1 || true
+# Help prompts open and abort cleanly.
+xdotool key Print; sleep 0.2; xdotool key F2; sleep 0.4
+xdotool key Escape; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key F5; sleep 0.4
+xdotool key Escape; sleep 0.3
+loggrep "error in keybinding" && fail "sprint-10 keys/help errored (see log)"
+ok "remapped keys / send-key / which-key / help prompts"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

@@ -108,7 +108,7 @@ pattern) + the rule `lock`/`raise` flags, `dump-desktop-to-file` /
 `dump-screen-to-file` / `restore-from-file` over all groups & heads
 (extend (minde layouts)), `hsplit-uniformly` / `vsplit-uniformly`.
 
-### Sprint 10 — keys & help parity (the real Rust sprint)
+### Sprint 10 — keys & help parity (the real Rust sprint) ✅ DONE
 `define-remapped-keys` (per-app-id key translation table in input.rs;
 the synth machinery landed with window-send-string — remaining work is
 the remap table, focused-app gating, and press/release pairing),

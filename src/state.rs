@@ -96,6 +96,14 @@ pub struct MindeState {
     /// (StumpWM's pointer-box equivalent).
     pub border_color: [f32; 4],
 
+    /// Compositor-side auto-repeat for consumed key presses (prompts and
+    /// armed keymaps -- clients repeat held keys themselves, but keys the
+    /// compositor swallows never come back from libinput as repeats).
+    /// Toggled from Scheme via `wm-set-key-repeat`; the active repeat is
+    /// the held raw keycode plus its calloop timer's token.
+    pub key_repeat_enabled: bool,
+    pub key_repeat: Option<(u32, smithay::reexports::calloop::RegistrationToken)>,
+
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
     /// the udev/libinput backend) and used to render the cursor.
@@ -201,6 +209,8 @@ impl MindeState {
             reported_heads: Vec::new(),
             next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
+            key_repeat_enabled: false,
+            key_repeat: None,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -508,21 +518,20 @@ impl MindeState {
                 }
             }
             WmCommand::WarpPointer { x, y } => {
-                let pos = self.clamp_to_outputs((x as f64, y as f64).into());
-                self.pointer_location = pos;
-                let under = self.surface_under(pos);
-                if let Some(pointer) = self.seat.get_pointer() {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    let time = self.start_time.elapsed().as_millis() as u32;
-                    pointer.motion(
-                        self,
-                        under,
-                        &smithay::input::pointer::MotionEvent { location: pos, serial, time },
-                    );
-                    pointer.frame(self);
-                }
+                self.warp_pointer((x as f64, y as f64).into());
+            }
+            WmCommand::WarpPointerRel { dx, dy } => {
+                let pos = self.pointer_location + Point::from((dx as f64, dy as f64));
+                self.warp_pointer(pos);
             }
             WmCommand::SendString { text } => self.send_string(&text),
+            WmCommand::SendKey { mods, keysym } => self.send_key(mods, &keysym),
+            WmCommand::SetKeyRepeat { on } => {
+                self.key_repeat_enabled = on;
+                if !on {
+                    self.cancel_key_repeat();
+                }
+            }
             WmCommand::Click { button } => {
                 // 1=left 2=middle 3=right, as StumpWM ratclick counts them.
                 const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
@@ -556,6 +565,121 @@ impl MindeState {
                     crate::handlers::SelectionOwner::Text(text),
                 );
             }
+        }
+    }
+
+    /// Warps the pointer to a global logical position (clamped to the
+    /// outputs) and emits the matching motion event.
+    fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
+        let pos = self.clamp_to_outputs(pos);
+        self.pointer_location = pos;
+        let under = self.surface_under(pos);
+        if let Some(pointer) = self.seat.get_pointer() {
+            let serial = SERIAL_COUNTER.next_serial();
+            let time = self.start_time.elapsed().as_millis() as u32;
+            pointer.motion(
+                self,
+                under,
+                &smithay::input::pointer::MotionEvent { location: pos, serial, time },
+            );
+            pointer.frame(self);
+        }
+    }
+
+    /// Drops the active compositor-side key-repeat timer, if any.
+    pub fn cancel_key_repeat(&mut self) {
+        if let Some((_, token)) = self.key_repeat.take() {
+            self.handle.remove(token);
+        }
+    }
+
+    /// Synthesizes one key press/release pair, wrapped in the requested
+    /// modifiers (Scheme bitmask: shift=1 ctrl=4 alt=8 super=64), into the
+    /// focused window (send-raw-key / meta / remapped keys).
+    fn send_key(&mut self, mods: u32, keysym_name: &str) {
+        use smithay::backend::input::KeyState;
+        use smithay::input::keyboard::xkb;
+
+        let target = xkb::keysym_from_name(keysym_name, xkb::KEYSYM_NO_FLAGS);
+        if target.raw() == xkb::keysyms::KEY_NoSymbol {
+            tracing::warn!(keysym_name, "wm-send-key: unknown keysym name");
+            return;
+        }
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+
+        // One keymap scan: the target keysym's keycode (preferring the
+        // unshifted level) plus the keycodes of the wrapping modifiers.
+        let (found, shift, ctrl, alt, superk) = keyboard.with_xkb_state(self, |ctx| {
+            let guard = ctx.xkb().lock().unwrap();
+            // Safety: the refs don't outlive the lock guard.
+            let keymap = unsafe { guard.keymap() }.clone();
+            let layout = guard.active_layout().0;
+            let mut found: Option<(xkb::Keycode, bool)> = None;
+            let (mut shift, mut ctrl, mut alt, mut superk) = (None, None, None, None);
+            for raw in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+                let kc = xkb::Keycode::new(raw);
+                for level in 0..2u32 {
+                    for sym in keymap.key_get_syms_by_level(kc, layout, level) {
+                        if level == 0 {
+                            match sym.raw() {
+                                xkb::keysyms::KEY_Shift_L => shift = shift.or(Some(kc)),
+                                xkb::keysyms::KEY_Control_L => ctrl = ctrl.or(Some(kc)),
+                                xkb::keysyms::KEY_Alt_L => alt = alt.or(Some(kc)),
+                                xkb::keysyms::KEY_Super_L => superk = superk.or(Some(kc)),
+                                _ => {}
+                            }
+                        }
+                        if *sym == target
+                            && found.is_none_or(|(_, shifted)| shifted && level == 0)
+                        {
+                            found = Some((kc, level == 1));
+                        }
+                    }
+                }
+            }
+            (found, shift, ctrl, alt, superk)
+        });
+
+        let Some((kc, shifted)) = found else {
+            tracing::warn!(keysym_name, "wm-send-key: keysym not in the active layout");
+            return;
+        };
+        let mut mod_keys: Vec<xkb::Keycode> = Vec::new();
+        for (bit, key) in [(1u32, shift), (4, ctrl), (8, alt), (64, superk)] {
+            if mods & bit != 0 {
+                let Some(kc) = key else {
+                    tracing::warn!(mods, "wm-send-key: modifier key not found in layout");
+                    return;
+                };
+                mod_keys.push(kc);
+            }
+        }
+        // A shift-level keysym ("A", "colon" on some layouts) needs Shift
+        // held even when the caller didn't ask for it.
+        if shifted && mods & 1 == 0 {
+            let Some(s) = shift else {
+                tracing::warn!(keysym_name, "wm-send-key: no Shift key found");
+                return;
+            };
+            mod_keys.push(s);
+        }
+
+        let press = |state_self: &mut Self, code: xkb::Keycode, state: KeyState| {
+            let serial = SERIAL_COUNTER.next_serial();
+            let time = state_self.start_time.elapsed().as_millis() as u32;
+            keyboard.input::<(), _>(state_self, code, state, serial, time, |_, _, _| {
+                smithay::input::keyboard::FilterResult::Forward
+            });
+        };
+        for &m in &mod_keys {
+            press(self, m, KeyState::Pressed);
+        }
+        press(self, kc, KeyState::Pressed);
+        press(self, kc, KeyState::Released);
+        for &m in mod_keys.iter().rev() {
+            press(self, m, KeyState::Released);
         }
     }
 

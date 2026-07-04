@@ -68,6 +68,9 @@ prefix matches). HISTORY names the history list (C-p/C-n)."
         (make-input-state prompt initial (string-length initial)
                           on-submit on-abort completions
                           #f 0 history -1 ""))
+  ;; The prompt consumes every key, so clients never auto-repeat them;
+  ;; have the compositor re-fire held keys until the prompt closes.
+  (rust-call 'wm-set-key-repeat #t)
   (redraw!))
 
 ;; ---------------------------------------------------------------------
@@ -204,12 +207,14 @@ newlines collapse to spaces since the prompt is a single line."
          (cb (in-on-submit i)))
     (history-push! (in-history-key i) line)
     (set! %current #f)
+    (rust-call 'wm-set-key-repeat #f)
     (clear!)
     (cb line)))
 
 (define (input-abort!)
   (let ((cb (and %current (in-on-abort %current))))
     (set! %current #f)
+    (rust-call 'wm-set-key-repeat #f)
     (clear!)
     (when cb (cb))))
 

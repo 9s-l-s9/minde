@@ -80,6 +80,19 @@ pub enum WmCommand {
     /// Synthesize a pointer click at the current location (StumpWM
     /// ratclick); BUTTON is 1=left 2=middle 3=right.
     Click { button: u32 },
+    /// Synthesize one modifier-wrapped key press/release pair into the
+    /// focused window (send-raw-key / meta / remapped keys). MODS is
+    /// the Scheme-side bitmask (shift=1 ctrl=4 alt=8 super=64); KEYSYM
+    /// is an xkb keysym name ("Down", "Escape", "t").
+    SendKey { mods: u32, keysym: String },
+    /// Warp the pointer by a delta from its current position
+    /// (StumpWM ratrelwarp).
+    WarpPointerRel { dx: i32, dy: i32 },
+    /// Enable/disable compositor-side auto-repeat for consumed key
+    /// presses. Wayland clients repeat held keys themselves, but keys
+    /// the compositor swallows (prompts, armed keymaps) never repeat
+    /// unless we re-fire them from a timer (see `input.rs`).
+    SetKeyRepeat { on: bool },
     /// Add a small positioned text overlay (fselect/expose frame-number
     /// labels) at a global logical position. One command per label;
     /// they accumulate until cleared.
@@ -404,6 +417,27 @@ unsafe extern "C" fn wm_click(button: Scm) -> Scm {
     from_bool(send_command(WmCommand::Click { button }))
 }
 
+/// `(wm-send-key mods keysym-name)` -- synthesizes one key press/release
+/// (wrapped in the requested modifiers) into the focused window.
+unsafe extern "C" fn wm_send_key(mods: Scm, keysym: Scm) -> Scm {
+    let mods = to_i64(mods).max(0) as u32;
+    let Some(keysym) = to_string_lossy(keysym) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::SendKey { mods, keysym }))
+}
+
+unsafe extern "C" fn wm_warp_pointer_relative(dx: Scm, dy: Scm) -> Scm {
+    let dx = to_i64(dx) as i32;
+    let dy = to_i64(dy) as i32;
+    from_bool(send_command(WmCommand::WarpPointerRel { dx, dy }))
+}
+
+unsafe extern "C" fn wm_set_key_repeat(on: Scm) -> Scm {
+    let on = to_bool(on);
+    from_bool(send_command(WmCommand::SetKeyRepeat { on }))
+}
+
 /// `(wm-add-overlay x y text)` -- adds a positioned text overlay at a
 /// global logical position (fselect/expose frame labels).
 unsafe extern "C" fn wm_add_overlay(x: Scm, y: Scm, text: Scm) -> Scm {
@@ -687,6 +721,18 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn(Scm) -> Scm,
             ffi::Gsubr,
         >(wm_click));
+        register_gsubr("wm-send-key", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_send_key));
+        register_gsubr("wm-warp-pointer-relative", 2, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_warp_pointer_relative));
+        register_gsubr("wm-set-key-repeat", 1, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_set_key_repeat));
         register_gsubr("wm-idle-ms", 0, 0, 0, wm_idle_ms);
     }
 

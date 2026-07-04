@@ -91,6 +91,9 @@ Prefix map (see `scheme/init.scm`):
 | `M-G` | groups submap (see below) | | | |
 | `j` | fselect: jump to numbered frame | | `M-e` | expose: pick window from grid |
 | `M-o` | sibling frame | | `M-h` / `M-v` | h/vsplit uniformly (prompt) |
+| `C-q` | send next key to window | | `F2` | describe command (prompt) |
+| `F3` | list all commands | | `F4` | describe function (prompt) |
+| `F5` | where-is (doc search) | | `F6` | describe variable (prompt) |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
 Xwayland: an embedded X server starts automatically; X11-only apps
@@ -234,10 +237,34 @@ keys (StumpWM `*input-map*` subset): BackSpace, `C-d`/Delete, `C-f`/`C-b`
 (Right/Left), `M-f`/`M-b` (words), `C-a`/`C-e` (Home/End), `C-k`, `C-u`,
 `M-d`/`M-BackSpace` (kill words), `C-p`/`C-n` (Up/Down: history), TAB /
 Shift-TAB (prefix-completion cycle), `C-y`/`C-v` (paste the clipboard),
-`M-w` (copy the buffer), RET submit, `C-g`/ESC abort. Known
-limitation: no key auto-repeat inside the prompt (Wayland repeat is
-client-side). While the prefix key is armed, the focus border turns red
-(`wm-border-color`, colors configurable in init.scm).
+`M-w` (copy the buffer), RET submit, `C-g`/ESC abort. Held keys
+auto-repeat inside prompts, menus and armed keymaps: Wayland repeat is
+client-side, so the compositor re-fires consumed keys itself
+(`wm-set-key-repeat`, 600 ms delay / 40 ms interval). While the prefix
+key is armed, the focus border turns red (`wm-border-color`, colors
+configurable in init.scm).
+
+## Remapped keys, key synthesis & help
+
+`(define-remapped-keys! '(("zen" ("C-n" . "Down") ("C-p" . "Up"))))`
+translates keys per application (StumpWM `define-remapped-keys`): when
+the focused window's app-id matches the regex and the pressed key isn't
+taken by a binding, the mapped key is synthesized into the window
+instead. `(toggle-remapped-keys!)` / `(unbind-remapped-keys!)` manage
+the table. Building blocks: `(send-key "C-M-x")` / `(meta ...)` /
+`(send-escape)` synthesize any spec into the focused window
+(`wm-send-key` resolves it in the active xkb layout, wrapping modifier
+presses around it); `Print C-q` sends the next pressed key literally.
+`(ratrelwarp dx dy)` warps the pointer relatively.
+
+Help family: `Print F2` describe-command (completes over binding docs),
+`F3` lists all documented bindings, `F4`/`F6` describe a live Guile
+function/variable, `F5` where-is searches docs for a substring, and
+`(which-key-mode!)` auto-echoes an armed keymap's bindings after ~1 s
+(the same text `?` shows on demand). A keybinding error is kept in
+`%last-unhandled-error`; `(copy-unhandled-error!)` puts it on the
+clipboard. `(load-module! "ice-9 format")` pulls a Guile module into
+the session; `(restart-soft)` = reload init.
 
 ## Message area
 

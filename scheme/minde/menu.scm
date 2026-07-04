@@ -72,6 +72,9 @@ item's value; ON-ABORT (if given) on C-g/Escape."
         (begin
           (set! %menu (make-menu-state prompt norm norm 0 0 "" filter?
                                        on-select on-abort))
+          ;; Menus consume every key; let held keys (C-n/C-p paging,
+          ;; BackSpace in the filter) repeat compositor-side.
+          (rust-call 'wm-set-key-repeat #t)
           (redraw!)))))
 
 ;; ---------------------------------------------------------------------
@@ -158,6 +161,7 @@ item's value; ON-ABORT (if given) on C-g/Escape."
 
 (define (close!)
   (set! %menu #f)
+  (rust-call 'wm-set-key-repeat #f)
   (clear!))
 
 (define (menu-abort!)

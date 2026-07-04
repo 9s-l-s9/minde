@@ -15,6 +15,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
   #:use-module (srfi srfi-11)
+  #:use-module (ice-9 regex)
   #:use-module (minde hooks)
   #:export (split-frame-horizontal!
             split-frame-vertical!
@@ -65,6 +66,15 @@
             clear-ontop!
             rename-window!
             window-send-string
+            parse-key-spec
+            send-key
+            meta
+            send-escape
+            define-remapped-keys!
+            unbind-remapped-keys!
+            toggle-remapped-keys!
+            remap-target
+            ratrelwarp
             ratclick!
             idle-ms
             show-window-properties!
@@ -1052,6 +1062,76 @@ authoritative and treat the dragged float as focused/topmost."
 (define (idle-ms)
   "Milliseconds since the last user input event (0 before any input)."
   (or (rust-call 'wm-idle-ms) 0))
+
+;; ---------------------------------------------------------------------
+;; Key synthesis + remapped keys (StumpWM send-raw-key / meta /
+;; define-remapped-keys) -- sprint 10
+;; ---------------------------------------------------------------------
+
+(define (parse-key-spec spec)
+  "Splits a binding spec (\"C-M-x\", \"Down\") into (values mods-bitmask
+keysym-name), using the same prefixes and bit values as init.scm's
+key-spec (C-=ctrl 4, M-=alt 8, S-=shift 1, s-=super 64)."
+  (let loop ((s spec) (mods 0))
+    (cond
+     ((string-prefix? "C-" s) (loop (substring s 2) (logior mods 4)))
+     ((string-prefix? "M-" s) (loop (substring s 2) (logior mods 8)))
+     ((string-prefix? "S-" s) (loop (substring s 2) (logior mods 1)))
+     ((string-prefix? "s-" s) (loop (substring s 2) (logior mods 64)))
+     (else (values mods s)))))
+
+(define (send-key spec)
+  "Synthesizes one key press/release pair for SPEC (\"C-n\", \"Down\")
+into the focused window (StumpWM meta / send-raw-key building block)."
+  (let-values (((mods name) (parse-key-spec spec)))
+    (rust-call 'wm-send-key mods name)))
+
+(define (meta spec)
+  "StumpWM meta: sends SPEC to the focused window."
+  (send-key spec))
+
+(define (send-escape)
+  "Sends a literal Escape to the focused window (StumpWM send-escape)."
+  (send-key "Escape"))
+
+;; Per-application key translation (StumpWM define-remapped-keys): a
+;; list of (app-id-regex (from-spec . to-spec) ...). Consulted by
+;; init.scm's dispatch for keys that reach the focused client.
+(define %remapped-keys '())
+(define %remapped-keys-on #t)
+
+(define (define-remapped-keys! specs)
+  "Replaces the remap table. SPECS: ((app-id-regex (from . to) ...) ...),
+e.g. '((\"zen\" (\"C-n\" . \"Down\") (\"C-p\" . \"Up\")))."
+  (set! %remapped-keys specs))
+
+(define (unbind-remapped-keys!)
+  "Drops all remap rules (StumpWM unbind-remapped-keys)."
+  (set! %remapped-keys '()))
+
+(define (toggle-remapped-keys!)
+  "Toggles remapping on/off without forgetting the table; returns the
+new state."
+  (set! %remapped-keys-on (not %remapped-keys-on))
+  %remapped-keys-on)
+
+(define (remap-target spec)
+  "The spec SPEC translates to for the focused window's app-id, or #f
+(no matching rule, remapping toggled off, or nothing focused)."
+  (and %remapped-keys-on
+       (pair? %remapped-keys)
+       (let ((id (focused-window-id)))
+         (and id
+              (let ((app (window-app-id id)))
+                (and app
+                     (any (lambda (entry)
+                            (and (string-match (car entry) app)
+                                 (assoc-ref (cdr entry) spec)))
+                          %remapped-keys)))))))
+
+(define (ratrelwarp dx dy)
+  "Warps the pointer by a relative delta (StumpWM ratrelwarp)."
+  (rust-call 'wm-warp-pointer-relative dx dy))
 
 (define (show-window-properties!)
   "Echoes the focused window's properties (StumpWM show-window-properties
