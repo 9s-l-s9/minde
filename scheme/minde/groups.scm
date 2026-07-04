@@ -54,6 +54,7 @@
             wm-on-heads-changed
             set-head-mode!
             wm-on-window-map
+            wm-on-window-title
             wm-on-window-unmap
             wm-on-output-geometry
             current-group-name
@@ -565,25 +566,32 @@ are left alone; a window already in its rule's target frame stays put."
                 (rule (find (lambda (r)
                               (rule-matches? r title (window-app-id id)))
                             %placement-rules)))
-           (when rule
-             (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
-                    (active? (eq? g (current-group)))
-                    (tree (if active? (current-tree) (group-tree g)))
-                    (leaves (frame-leaves tree))
-                    (leaf (list-ref leaves (min (max 0 (caddr rule))
-                                                (- (length leaves) 1)))))
-               (unless (member id (frame-window-ids leaf))
-                 (set! moved (+ moved 1))
-                 (find (lambda (gg)
-                         (any (lambda (t) (remove-window-from-tree-in! t id))
-                              (group-all-trees gg)))
-                       %groups)
-                 (ensure-unique-window-number! id (group-all-trees g))
-                 (frame-add-window! leaf id)
-                 (unless active? (hide-window! id))))))))
+           (when (and rule (apply-rule-to-mapped! id rule))
+             (set! moved (+ moved 1))))))
      (all-window-ids))
     (sync-frames!)
     (echo (format #f "placed ~a window(s)" moved))))
+
+(define (apply-rule-to-mapped! id rule)
+  "Moves an already-mapped window into RULE's group/frame (the shared
+core of place-existing-windows! and late app-id arrival). Returns #t if
+the window actually moved; the caller re-syncs."
+  (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
+         (active? (eq? g (current-group)))
+         (tree (if active? (current-tree) (group-tree g)))
+         (leaves (frame-leaves tree))
+         (leaf (list-ref leaves (min (max 0 (caddr rule))
+                                     (- (length leaves) 1)))))
+    (and (not (member id (frame-window-ids leaf)))
+         (begin
+           (find (lambda (gg)
+                   (any (lambda (t) (remove-window-from-tree-in! t id))
+                        (group-all-trees gg)))
+                 %groups)
+           (ensure-unique-window-number! id (group-all-trees g))
+           (frame-add-window! leaf id)
+           (unless active? (hide-window! id))
+           #t))))
 
 ;; ---------------------------------------------------------------------
 ;; Desktop dump/restore (StumpWM dump-desktop-to-file /
@@ -698,6 +706,29 @@ geometries re-applied. Groups not in the dump are left alone."
     (if rule
         (place-by-rule! rule id title app-id)
         (handle-window-map! id title app-id))))
+
+(define (wm-on-window-title id title app-id)
+  "Rust: a mapped toplevel's title/app-id changed. Wayland clients set
+both only after the initial configure, so wm-on-window-map usually saw
+empty strings and the real values arrive here (and again on every
+retitle). Refreshes the bookkeeping (windowlist, remapped keys, rules,
+status line); when the app-id first becomes known, a lock placement
+rule that missed the window at map time is applied now."
+  (let ((first-app-id? (let ((old (window-app-id id)))
+                         (and (or (not old) (string-null? old))
+                              (not (string-null? app-id))))))
+    (update-window-title! id title app-id)
+    (when (and first-app-id? (not (window-floating? id)))
+      (let ((rule (find (lambda (r) (and (rule-lock? r)
+                                         (rule-matches? r title app-id)))
+                        %placement-rules)))
+        (when (and rule (apply-rule-to-mapped! id rule))
+          (if (cadddr rule)   ; follow? flag
+              (switch-to-group!
+               (group-name (or (find-group-loose (cadr rule)) (current-group))))
+              (sync-frames!)))))
+    ;; External bars show the focused window's title.
+    (write-status!)))
 
 (define (next-urgent!)
   "Jumps to the oldest urgent window (StumpWM next-urgent), switching to

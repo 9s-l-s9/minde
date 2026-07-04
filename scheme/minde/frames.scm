@@ -147,6 +147,7 @@
             set-sync-hook!
             window-title
             remember-window-title!
+            update-window-title!
             forget-window-title!
             window-ids-with-titles
             focus-window-by-id!
@@ -650,7 +651,8 @@ wm-message (or under the test stubs)."
     (and e (not (string-null? (cdr e))) (cdr e))))
 
 (define (forget-window-title! id)
-  (hash-remove! %window-titles id))
+  (hash-remove! %window-titles id)
+  (hash-remove! %renamed-windows id))
 
 (define (remember-window-title! id title app-id)
   (let ((class (if (string? app-id) app-id "")))
@@ -659,6 +661,19 @@ wm-message (or under the test stubs)."
                          title
                          class)
                      class))))
+
+;; Windows renamed via rename-window!: their title override sticks over
+;; client-driven title changes (StumpWM title behavior).
+(define %renamed-windows (make-hash-table))
+
+(define (update-window-title! id title app-id)
+  "Client-driven title/app-id change after map (wm-on-window-title):
+refreshes the bookkeeping, keeping a rename-window! title override."
+  (let ((kept (if (and (hash-ref %renamed-windows id)
+                       (hash-ref %window-titles id))
+                  (car (hash-ref %window-titles id))
+                  title)))
+    (remember-window-title! id kept app-id)))
 
 (define (window-ids-with-titles)
   "All windows of the active group, as (id . title) pairs in frame order."
@@ -1047,6 +1062,7 @@ authoritative and treat the dragged float as focused/topmost."
       (hash-set! %window-titles id
                  (cons name (let ((e (hash-ref %window-titles id)))
                               (if e (cdr e) ""))))
+      (hash-set! %renamed-windows id #t)
       (sync-frames!)   ; status line shows the title
       (echo (format #f "renamed to ~a" name)))))
 
@@ -1103,7 +1119,8 @@ into the focused window (StumpWM meta / send-raw-key building block)."
 (define (define-remapped-keys! specs)
   "Replaces the remap table. SPECS: ((app-id-regex (from . to) ...) ...),
 e.g. '((\"zen\" (\"C-n\" . \"Down\") (\"C-p\" . \"Up\")))."
-  (set! %remapped-keys specs))
+  (set! %remapped-keys specs)
+  (echo (format #f "remapped keys: ~a app pattern(s)" (length specs))))
 
 (define (unbind-remapped-keys!)
   "Drops all remap rules (StumpWM unbind-remapped-keys)."

@@ -277,15 +277,22 @@ loggrep "e2e-remember-ok" || fail "remember/forget round-trip"
 ok "fselect / expose / remember"
 
 # Sprint 10: remapped keys + send-key through the real subr, which-key
-# auto-echo, help prompts.
+# auto-echo, help prompts. A fresh Wayland client first: its app-id
+# only arrives after map, via wm-on-window-title.
+scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
+sleep 2
 scripts/minde-cmd '(begin
   (use-modules (minde frames))
   (define-remapped-keys! (list (list ".*" (cons "C-F9" "Down"))))
   (wm-log (format #f "e2e-remap ~s" (remap-target "C-F9")))
+  (wm-log (format #f "e2e-appids ~s"
+                  (map (lambda (id) (window-app-id id)) (all-window-ids))))
   (send-key "Down")
   (wm-log "e2e-sendkey-ok"))' >/dev/null 2>&1 || true
 sleep 1
 loggrep 'e2e-remap "Down"' || fail "remap-target did not resolve"
+# Titles/app-ids must arrive post-map via wm-on-window-title.
+loggrep 'e2e-appids .*foot' || fail "app-ids never arrived (wm-on-window-title)"
 loggrep "e2e-sendkey-ok" || fail "send-key errored"
 # Exercise the live remap branch (consumed, synthesized, no errors),
 # then drop the table again.

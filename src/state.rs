@@ -96,6 +96,12 @@ pub struct MindeState {
     /// (StumpWM's pointer-box equivalent).
     pub border_color: [f32; 4],
 
+    /// Last title/app-id reported to Scheme per window id. Clients set
+    /// them only after the initial commit (so the map-time report is
+    /// usually empty) and retitle at will; the commit handler diffs
+    /// against this and calls `wm-on-window-title` on change.
+    pub reported_titles: std::collections::HashMap<u64, (String, String)>,
+
     /// Compositor-side auto-repeat for consumed key presses (prompts and
     /// armed keymaps -- clients repeat held keys themselves, but keys the
     /// compositor swallows never come back from libinput as repeats).
@@ -209,6 +215,7 @@ impl MindeState {
             reported_heads: Vec::new(),
             next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
+            reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
             key_repeat: None,
 
@@ -869,7 +876,39 @@ impl MindeState {
         let pos = self.windows.iter().position(|(_, w)| w == window)?;
         let id = self.windows.remove(pos).0;
         self.floating_ids.remove(&id);
+        self.reported_titles.remove(&id);
         Some(id)
+    }
+
+    /// Reports a toplevel's title/app-id to Scheme when either changed
+    /// since the last report (see `reported_titles`). Called from the
+    /// commit handler; X11 windows are skipped (their class arrives with
+    /// the map request and doesn't change).
+    pub fn report_title_if_changed(&mut self, window: &Window) {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+        let Some(toplevel) = window.toplevel() else {
+            return;
+        };
+        let Some(id) = self.id_for_window(window) else {
+            return;
+        };
+        let current = with_states(toplevel.wl_surface(), |states| {
+            states.data_map.get::<XdgToplevelSurfaceData>().map(|d| {
+                let d = d.lock().unwrap();
+                (
+                    d.title.clone().unwrap_or_default(),
+                    d.app_id.clone().unwrap_or_default(),
+                )
+            })
+        });
+        let Some(current) = current else {
+            return;
+        };
+        if self.reported_titles.get(&id) != Some(&current) {
+            guile::on_window_title(id, &current.0, &current.1);
+            self.reported_titles.insert(id, current);
+        }
     }
 
     fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {

@@ -338,6 +338,21 @@
 (check-true "groups-echo-string marks the current group"
             (and (string-contains (groups-echo-string) "*A") #t))
 
+;; wm-on-window-title: a window that mapped with empty title/app-id gets
+;; its lock rule applied when the app-id finally arrives.
+(add-placement-rule! "latecomer" #:group " F " #:frame 0)
+(wm-on-window-map 80 "" "")
+(check-true "empty-id window stayed in the current group"
+            (not (group-has-window? " F " 80)))
+(wm-on-window-title 80 "some page" "latecomer")
+(check "late app-id recorded" (window-app-id 80) "latecomer")
+(check-true "lock rule applied on late app-id"
+            (group-has-window? " F " 80))
+;; A later retitle must not re-place or duplicate the window.
+(wm-on-window-title 80 "another page" "latecomer")
+(check-true "retitle keeps it in the rule group"
+            (group-has-window? " F " 80))
+
 ;; ---------------------------------------------------------------------
 
 (if (zero? %failures)

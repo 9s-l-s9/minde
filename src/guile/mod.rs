@@ -794,6 +794,14 @@ pub fn on_window_map(id: u64, title: &str, app_id: &str) {
     call_named_3("wm-on-window-map", from_i64(id as i64), from_str(title), from_str(app_id));
 }
 
+/// Calls `(wm-on-window-title id title app-id)` if bound: a mapped
+/// toplevel's title or app-id changed. Wayland clients set both only
+/// after the initial configure, so `on_window_map` usually reports
+/// empty strings and the real values arrive through here.
+pub fn on_window_title(id: u64, title: &str, app_id: &str) {
+    call_named_3("wm-on-window-title", from_i64(id as i64), from_str(title), from_str(app_id));
+}
+
 /// Calls `(wm-on-window-unmap id)` if bound.
 pub fn on_window_unmap(id: u64) {
     call_named_1("wm-on-window-unmap", from_i64(id as i64));

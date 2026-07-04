@@ -38,12 +38,16 @@ impl CompositorHandler for MindeState {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self
+            let window = self
                 .space
                 .elements()
                 .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
-            {
+                .cloned();
+            if let Some(window) = window {
                 window.on_commit();
+                // Title/app-id arrive (and change) via ordinary commits
+                // after the map-time report, which is usually empty.
+                self.report_title_if_changed(&window);
             }
         };
 
