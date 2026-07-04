@@ -82,6 +82,10 @@ pub struct MindeState {
     /// clearing a newer message.
     pub message: Option<crate::render::MessageState>,
     pub message_generation: u64,
+    /// Positioned text overlays (fselect/expose frame-number labels):
+    /// global logical position -> rasterized label. Accumulated via
+    /// `wm-add-overlay`, dropped via `wm-clear-overlays`.
+    pub overlays: Vec<(Point<i32, Logical>, crate::render::MessageState)>,
     /// Last head list (usable rects) sent to Scheme, to avoid
     /// re-announcing unchanged geometry on every commit.
     pub reported_heads: Vec<guile::HeadInfo>,
@@ -193,6 +197,7 @@ impl MindeState {
             focus_rect: None,
             message: None,
             message_generation: 0,
+            overlays: Vec::new(),
             reported_heads: Vec::new(),
             next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
@@ -384,6 +389,17 @@ impl MindeState {
             }
             WmCommand::ClearMessage => {
                 self.message = None;
+            }
+            WmCommand::AddOverlay { x, y, text } => {
+                // Labels are a couple of characters; a small budget keeps
+                // render_message's wrap math trivial.
+                self.overlays.push((
+                    Point::from((x, y)),
+                    crate::render::render_message(&text, 0, 400, 200),
+                ));
+            }
+            WmCommand::ClearOverlays => {
+                self.overlays.clear();
             }
             WmCommand::BorderColor { rgba } => {
                 self.border_color = rgba;

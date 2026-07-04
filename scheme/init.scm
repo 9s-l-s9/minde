@@ -759,6 +759,28 @@ focused client), #f otherwise."
    "d" (lambda () (echo-date!))
    "V" (lambda () (version!))
    "M" (lambda () (modifiers!))
+   ;; u: unmaximize toggle; g: gravity of the unmaximized window.
+   "u" (lambda () (unmaximize!))
+   "g" (lambda ()
+         (read-one-line "gravity: "
+           (lambda (s)
+             (unless (string-null? s)
+               (set-window-gravity! (string->symbol s))))
+           #:completions %gravity-names))
+   ;; R/F: remember/forget a persistent placement rule for this window.
+   "R" (lambda () (remember!))
+   "F" (lambda () (forget!))
+   ;; D/O: dump / restore the whole desktop (groups + frame layouts).
+   "D" (lambda ()
+         (read-one-line "dump desktop to: "
+           (lambda (path)
+             (unless (string-null? path) (dump-desktop-to-file path)))
+           #:initial (string-append (getenv "HOME") "/.config/minde/desktop.scm")))
+   "O" (lambda ()
+         (read-one-line "restore desktop from: "
+           (lambda (path)
+             (unless (string-null? path) (restore-from-file path)))
+           #:initial (string-append (getenv "HOME") "/.config/minde/desktop.scm")))
    "w" (lambda ()
          (wm-spawn (string-append "pkill swaybg; " %wallpaper-cmd)))
    "a" (lambda ()
@@ -997,6 +1019,77 @@ refresh)."
    ("b" . "previous group, taking the window")
    ("k" . "close all windows in this group")
    ("K" . "close all windows in other groups")))
+
+;; ---------------------------------------------------------------------
+;; Frames & placement parity (StumpWM sprint 9): fselect, expose,
+;; sibling, uniform splits, rules persistence, desktop dump/restore
+;; ---------------------------------------------------------------------
+
+;; fselect: number labels appear in every frame; a digit jumps there.
+;; Works via the same return-a-keymap mechanism as iresize.
+(define %fselect-map
+  (let ((km (make-keymap)))
+    (for-each
+     (lambda (n)
+       (hash-set! km (number->string n)
+                  (lambda ()
+                    (clear-frame-overlays!)
+                    (focus-frame-by-index! n))))
+     (iota 10))
+    (for-each
+     (lambda (k) (hash-set! km k (lambda () (clear-frame-overlays!) #t)))
+     '("Escape" "Return" "C-g"))
+    km))
+
+(define (fselect!)
+  (show-frame-overlays!)
+  %fselect-map)
+
+;; expose: grid of one window per frame, digit picks, layout restored.
+(define %expose-map
+  (let ((km (make-keymap)))
+    (for-each
+     (lambda (n)
+       (hash-set! km (number->string n) (lambda () (expose-pick! n))))
+     (iota 10))
+    (for-each
+     (lambda (k) (hash-set! km k (lambda () (expose-pick! #f) #t)))
+     '("Escape" "Return" "C-g"))
+    km))
+
+(define (expose-mode!)
+  (if (expose-enter!) %expose-map #t))
+
+(bind-prefix-key! "j" (lambda () (fselect!)) "fselect: jump to frame by number")
+(bind-prefix-key! "M-e" (lambda () (expose-mode!)) "expose: pick window from grid")
+(bind-prefix-key! "M-o" (lambda () (sibling!)) "sibling frame")
+
+;; Uniform splits (StumpWM hsplit/vsplit-uniformly): split the current
+;; frame into N equal parts.
+(define (split-uniformly-prompt! orientation)
+  (read-one-line (if (eq? orientation 'horizontal)
+                     "hsplit into n frames: "
+                     "vsplit into n frames: ")
+    (lambda (s)
+      (let ((n (string->number s)))
+        (if (and n (exact-integer? n) (> n 1) (<= n 9))
+            (if (eq? orientation 'horizontal)
+                (hsplit-equally! n)
+                (vsplit-equally! n))
+            (echo "need a count between 2 and 9"))))))
+
+(bind-prefix-key! "M-h"
+  (lambda () (split-uniformly-prompt! 'horizontal)) "hsplit uniformly (prompt)")
+(bind-prefix-key! "M-v"
+  (lambda () (split-uniformly-prompt! 'vertical)) "vsplit uniformly (prompt)")
+
+;; Gravity names for the P g prompt.
+(define %gravity-names
+  '("center" "top" "bottom" "left" "right"
+    "top-left" "top-right" "bottom-left" "bottom-right"))
+
+;; Placement rules saved by remember!/forget! in earlier sessions.
+(load-placement-rules!)
 
 ;; Not ported yet (missing infrastructure), from StumpWM:
 ;;   D/t dashboards -- interactive terminal scripts; run them in a

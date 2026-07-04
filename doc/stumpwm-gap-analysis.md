@@ -97,7 +97,7 @@ visible in every group), `select-floating-window` (menu over floats),
 geometry echo), `echo-date`, `version`, `modifiers`, `redisplay` /
 `refresh`.
 
-### Sprint 9 — frames & placement parity (small Rust: fselect overlays)
+### Sprint 9 — frames & placement parity (small Rust: fselect overlays) ✅ DONE
 `fselect` (frame-number overlays drawn in every frame — Rust gains
 multi-position message elements; everything else reuses them),
 `sibling`, `gravity` + `unmaximize` (placement of windows that cannot

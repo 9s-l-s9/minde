@@ -80,6 +80,11 @@ pub enum WmCommand {
     /// Synthesize a pointer click at the current location (StumpWM
     /// ratclick); BUTTON is 1=left 2=middle 3=right.
     Click { button: u32 },
+    /// Add a small positioned text overlay (fselect/expose frame-number
+    /// labels) at a global logical position. One command per label;
+    /// they accumulate until cleared.
+    AddOverlay { x: i32, y: i32, text: String },
+    ClearOverlays,
     /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
     /// fork from the calling thread: forking from the Guile REPL
     /// server thread wedged mesa/llvmpipe in the parent (the main
@@ -399,6 +404,21 @@ unsafe extern "C" fn wm_click(button: Scm) -> Scm {
     from_bool(send_command(WmCommand::Click { button }))
 }
 
+/// `(wm-add-overlay x y text)` -- adds a positioned text overlay at a
+/// global logical position (fselect/expose frame labels).
+unsafe extern "C" fn wm_add_overlay(x: Scm, y: Scm, text: Scm) -> Scm {
+    let x = to_i64(x) as i32;
+    let y = to_i64(y) as i32;
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::AddOverlay { x, y, text }))
+}
+
+unsafe extern "C" fn wm_clear_overlays() -> Scm {
+    from_bool(send_command(WmCommand::ClearOverlays))
+}
+
 unsafe extern "C" fn wm_place_float(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
     let id = to_i64(id) as u64;
     let x = to_i64(x) as i32;
@@ -607,6 +627,11 @@ pub fn init(loop_signal: LoopSignal) {
             unsafe extern "C" fn() -> Scm,
             ffi::Gsubr,
         >(wm_clear_message));
+        register_gsubr("wm-add-overlay", 3, 0, 0, std::mem::transmute::<
+            unsafe extern "C" fn(Scm, Scm, Scm) -> Scm,
+            ffi::Gsubr,
+        >(wm_add_overlay));
+        register_gsubr("wm-clear-overlays", 0, 0, 0, wm_clear_overlays);
         register_gsubr("wm-border-color", 1, 0, 0, std::mem::transmute::<
             unsafe extern "C" fn(Scm) -> Scm,
             ffi::Gsubr,

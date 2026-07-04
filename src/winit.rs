@@ -100,6 +100,17 @@ pub fn init_winit(
                             custom.insert(0, elem);
                         }
                     }
+                    // Positioned overlays (fselect/expose frame labels).
+                    for (loc, msg) in &state.overlays {
+                        if let Some(elem) = crate::render::overlay_element(
+                            &mut *renderer,
+                            msg,
+                            *loc,
+                            1,
+                        ) {
+                            custom.insert(0, elem);
+                        }
+                    }
                     smithay::desktop::space::render_output::<
                         _,
                         MindeRenderElements<GlesRenderer>,

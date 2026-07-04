@@ -89,6 +89,8 @@ Prefix map (see `scheme/init.scm`):
 | `M-p` | pull from windowlist (menu) | | `M-w` | select window by name (prompt) |
 | `M-t` | select floating window (menu) | | `C-r` | redisplay windows |
 | `M-G` | groups submap (see below) | | | |
+| `j` | fselect: jump to numbered frame | | `M-e` | expose: pick window from grid |
+| `M-o` | sibling frame | | `M-h` / `M-v` | h/vsplit uniformly (prompt) |
 | `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
 
 Xwayland: an embedded X server starts automatically; X11-only apps
@@ -121,6 +123,23 @@ follows every group switch (StumpWM toggle-always-show). `Print P i`
 echoes the focused window's properties (id/title/class/number/float
 geometry/flags); `Print P d` echoes the date, `Print P V` the version,
 `Print P M` the modifier layout.
+
+Frames & placement (StumpWM parity): `Print j` (fselect) draws each
+frame's number in its corner — press the digit to jump. `Print M-e`
+(expose) tiles every window of the head one-per-frame in a numbered
+grid; a digit picks one and the previous layout is restored exactly
+(windows back in their frames). `Print M-o` focuses the sibling frame.
+`Print P u` unmaximizes the focused window (2/3 of its frame, CSD
+corners back); `Print P g` sets its gravity (center/top-left/...).
+`Print P R` **remembers** the focused window — a persistent placement
+rule (app-id → this group + frame) written to
+`~/.config/minde/rules.scm` and reloaded at startup; `Print P F`
+forgets it. `add-placement-rule!` gains `#:lock?` (StumpWM `:lock`,
+default `#t` = apply on map; `#f` rules only fire via
+place-existing-windows) and `#:raise?` (alias of `#:follow?`).
+`Print P D` / `Print P O` dump/restore the whole desktop (groups, frame
+layouts, window assignments, float geometry) to a file. `Print M-h` /
+`Print M-v` split the current frame into N equal parts.
 
 Odds and ends: `Print P n` renames the focused window (StumpWM
 `title`), `Print P p` re-applies placement rules to existing windows,

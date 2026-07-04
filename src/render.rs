@@ -245,6 +245,36 @@ where
     }
 }
 
+/// Builds the render element showing `msg` at an explicit output-local
+/// logical position (fselect/expose frame-number overlays), or `None`
+/// if import fails.
+pub fn overlay_element<R>(
+    renderer: &mut R,
+    msg: &MessageState,
+    loc: Point<i32, Logical>,
+    scale: i32,
+) -> Option<MindeRenderElements<R>>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Send + Clone + 'static,
+{
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        loc.to_physical(scale).to_f64(),
+        &msg.buffer,
+        None,
+        None,
+        None,
+        Kind::Unspecified,
+    ) {
+        Ok(elem) => Some(elem.into()),
+        Err(err) => {
+            tracing::warn!(?err, "failed to render overlay element");
+            None
+        }
+    }
+}
+
 /// Fallback pointer cursor image (a plain 64x64 RGBA arrow), used when no
 /// client has set a surface-based cursor and no xcursor theme lookup is
 /// performed (this compositor always uses the built-in fallback).

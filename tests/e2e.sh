@@ -40,6 +40,7 @@ unset WAYLAND_DISPLAY
 
 cargo build 2>/dev/null || fail "cargo build"
 MINDE_INIT="$PWD/scheme/init.scm" MINDE_SCHEME_DIR="$PWD/scheme" \
+  MINDE_RULES_FILE="$OUT/rules.scm" MINDE_LAYOUTS_FILE="$OUT/layouts.scm" \
   ./target/debug/minde --winit > "$LOG" 2>&1 &
 WM_PID=$!
 
@@ -255,6 +256,25 @@ xdotool key Print; sleep 0.2; xdotool key alt+p; sleep 0.5
 xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "pull-from-windowlist errored (see log)"
 ok "gnewbg / always-show / pull-from-windowlist"
+
+# Sprint 9: fselect (overlays + digit jump), expose in/out, remember +
+# place-existing round-trip.
+xdotool key Print; sleep 0.2; xdotool key j; sleep 0.4
+import -window root "$OUT/fselect.png"
+xdotool key 0; sleep 0.4
+xdotool key Print; sleep 0.2; xdotool key alt+e; sleep 0.5
+import -window root "$OUT/expose.png"
+xdotool key Escape; sleep 0.4
+loggrep "error in keybinding" && fail "fselect/expose errored (see log)"
+scripts/minde-cmd '(begin
+  (use-modules (minde frames) (minde groups))
+  (remember!)
+  (place-existing-windows!)
+  (forget!)
+  (wm-log "e2e-remember-ok"))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-remember-ok" || fail "remember/forget round-trip"
+ok "fselect / expose / remember"
 
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin

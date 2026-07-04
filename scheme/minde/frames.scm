@@ -68,6 +68,21 @@
             ratclick!
             idle-ms
             show-window-properties!
+            sibling!
+            show-frame-overlays!
+            clear-frame-overlays!
+            focus-frame-by-index!
+            dump-frames
+            restore-frames!
+            dump-group-frames
+            restore-group-frames!
+            expose-enter!
+            expose-pick!
+            unmaximize!
+            window-unmaximized?
+            set-window-gravity!
+            clear-unmaximized!
+            set-float-geometry!
             toggle-always-show!
             sticky-windows
             clear-sticky!
@@ -148,6 +163,7 @@
             group-window-count
             frame-leaves
             frame-window-ids
+            frame-current-window
             frame-add-window!
             hide-window!))
 
@@ -841,6 +857,12 @@ window just gets float focus (and comes to the top of the float stack)."
 (define (float-geometry id)
   (hash-ref %floating id))
 
+(define (set-float-geometry! id rect)
+  "Overrides a float's remembered (x y w h) -- desktop restore; callers
+sync."
+  (when (hash-ref %floating id)
+    (hash-set! %floating id rect)))
+
 (define (focused-window-id)
   "The window that effectively has focus: the focused float if there is
 one in the active group, else the current frame's current window."
@@ -882,6 +904,7 @@ frame and/or sync as appropriate."
 (define* (float-window! id #:optional (rect #f))
   "Takes ID out of the active group's frame trees and floats it."
   (unless (window-floating? id)
+    (clear-unmaximized! id) ; floating supersedes the unmaximize rect
     (let ((r (or rect (default-float-rect))))
       (any (lambda (t) (remove-window-from-tree-in! t id))
            (group-all-trees %active-group))
@@ -1265,11 +1288,10 @@ leaves. Windows never get lost -- every id ends up in some leaf."
     (set! %current-frame (car leaves))
     (sync-frames!)))
 
-(define (dump-layout-spec)
-  "The active group's live tree as a layout spec; ratios are derived from
-the actual pixel rectangles so manual resizes survive a dump/apply
-round-trip."
-  (let node->spec ((node %frame-tree))
+(define (tree-spec tree)
+  "TREE as a layout spec; ratios are derived from the actual pixel
+rectangles so manual resizes survive a dump/apply round-trip."
+  (let node->spec ((node tree))
     (if (frame? node)
         'leaf
         (let* ((ra (subtree-rect (split-child-a node)))
@@ -1282,6 +1304,259 @@ round-trip."
                 ratio
                 (node->spec (split-child-a node))
                 (node->spec (split-child-b node)))))))
+
+(define (dump-layout-spec)
+  "The active group's live tree as a layout spec."
+  (tree-spec %frame-tree))
+
+;; ---------------------------------------------------------------------
+;; Frame dumps with windows (StumpWM dump-desktop / expose): a layout
+;; spec plus which windows sat in which leaf. Shared by expose! and
+;; (minde groups)' dump-desktop.
+;; ---------------------------------------------------------------------
+
+(define (dump-tree tree cur-frame)
+  (let ((leaves (frame-leaves tree)))
+    (list (tree-spec tree)
+          (map (lambda (f) (list-copy (frame-window-ids f))) leaves)
+          (map frame-current-window leaves)
+          (or (list-index (lambda (f) (eq? f cur-frame)) leaves) 0))))
+
+(define (dump-frames)
+  "Snapshot of the live tree: (spec leaf-window-lists leaf-currents
+current-frame-index)."
+  (dump-tree %frame-tree %current-frame))
+
+(define (dump-group-frames g)
+  (if (eq? g %active-group)
+      (dump-frames)
+      (dump-tree (group-tree g) (group-current-frame g))))
+
+(define (pad-list lst n fill)
+  (let ((l (if (> (length lst) n) (list-head lst n) lst)))
+    (append l (make-list (- n (length l)) fill))))
+
+;; Rebuilds a tree from a dump-frames snapshot, keeping only window ids
+;; in LIVE (stale ids dropped); LIVE windows the dump doesn't mention
+;; are appended to the first leaf. Returns (values tree current-leaf).
+(define (build-tree-from-dump dump live)
+  (let* ((spec (car dump))
+         (window-lists (cadr dump))
+         (currents (caddr dump))
+         (cur-idx (cadddr dump))
+         (tree (spec->tree spec))
+         (leaves (frame-leaves tree))
+         (placed '()))
+    (resize-subtree! tree %last-output-x %last-output-y
+                     %last-output-w %last-output-h)
+    (for-each
+     (lambda (leaf ids cur)
+       (let ((keep (filter (lambda (id) (member id live)) ids)))
+         (set-frame-window-ids! leaf keep)
+         (set! placed (append placed keep))
+         (set-frame-current-window!
+          leaf (if (and cur (member cur keep))
+                   cur
+                   (if (null? keep) #f (car keep))))))
+     leaves
+     (pad-list window-lists (length leaves) '())
+     (pad-list currents (length leaves) #f))
+    (let ((orphans (filter (lambda (id)
+                             (and (not (member id placed))
+                                  (not (window-floating? id))))
+                           live))
+          (f (car leaves)))
+      (for-each
+       (lambda (id)
+         (set-frame-window-ids! f (append (frame-window-ids f) (list id)))
+         (unless (frame-current-window f)
+           (set-frame-current-window! f id)))
+       orphans))
+    (values tree (list-ref leaves (min cur-idx (- (length leaves) 1))))))
+
+(define (restore-frames! dump)
+  "Replaces the active tree with a dump-frames snapshot (stale window
+ids dropped, new windows appended to the first leaf) and re-syncs."
+  (call-with-values
+      (lambda () (build-tree-from-dump dump (tree-window-ids %frame-tree)))
+    (lambda (tree cur)
+      (set! %frame-tree tree)
+      (set! %current-frame cur)
+      (sync-frames!))))
+
+(define (restore-group-frames! g dump)
+  "restore-frames! for any group: the active one goes through the live
+globals; a hidden one just gets its record fields rebuilt (it is resized
+and synced on activation)."
+  (if (eq? g %active-group)
+      (restore-frames! dump)
+      (call-with-values
+          (lambda () (build-tree-from-dump dump (tree-window-ids (group-tree g))))
+        (lambda (tree cur)
+          (set-group-tree! g tree)
+          (set-group-current-frame! g cur)))))
+
+;; ---------------------------------------------------------------------
+;; Frame-number overlays (fselect / expose) + sibling
+;; ---------------------------------------------------------------------
+
+(define (show-frame-overlays!)
+  "Draws each leaf's index (frame-leaves order, the fselect numbering)
+near its top-left corner."
+  (rust-call 'wm-clear-overlays)
+  (let loop ((leaves (frame-leaves %frame-tree)) (n 0))
+    (unless (null? leaves)
+      (let ((r (frame-display-rect (car leaves))))
+        (rust-call 'wm-add-overlay (+ (car r) 8) (+ (cadr r) 8)
+                   (number->string n)))
+      (loop (cdr leaves) (+ n 1)))))
+
+(define (clear-frame-overlays!)
+  (rust-call 'wm-clear-overlays))
+
+(define (focus-frame-by-index! n)
+  "Focuses leaf N in frame-leaves order (fselect target)."
+  (let ((leaves (frame-leaves %frame-tree)))
+    (if (< n (length leaves))
+        (begin
+          (clear-float-focus!)
+          (set! %current-frame (list-ref leaves n))
+          (sync-frames!))
+        (echo (format #f "no frame ~a" n)))))
+
+(define (sibling!)
+  "Focuses the sibling of the current frame's split (StumpWM sibling)."
+  (clear-float-focus!)
+  (let-values (((parent side) (find-parent %frame-tree %current-frame)))
+    (if (not parent)
+        (echo "no sibling")
+        (let ((sib (if (eq? side 'a)
+                       (split-child-b parent)
+                       (split-child-a parent))))
+          (set! %current-frame (car (frame-leaves sib)))
+          (sync-frames!)))))
+
+;; ---------------------------------------------------------------------
+;; Expose (StumpWM expose): temporarily tile every window of the head
+;; one-per-frame in a numbered grid, pick one, restore the layout.
+;; ---------------------------------------------------------------------
+
+(define %expose-saved #f)
+
+(define (chain-spec orientation k)
+  (if (<= k 1)
+      'leaf
+      (list (if (eq? orientation 'horizontal) 'hsplit 'vsplit)
+            (/ 1 k) 'leaf (chain-spec orientation (- k 1)))))
+
+(define (grid-spec n)
+  (let* ((cols (max 1 (inexact->exact (ceiling (sqrt n)))))
+         (rows (max 1 (inexact->exact (ceiling (/ n cols))))))
+    (let vloop ((r rows))
+      (if (<= r 1)
+          (chain-spec 'horizontal cols)
+          (list 'vsplit (/ 1 r)
+                (chain-spec 'horizontal cols)
+                (vloop (- r 1)))))))
+
+(define (expose-enter!)
+  "Saves the live layout and tiles this head's windows one per frame in
+a numbered grid. Returns the window count, or #f with an echo when
+there is nothing to expose. Callers arm the pick keymap."
+  (let ((ids (tree-window-ids %frame-tree)))
+    (if (null? ids)
+        (begin (echo "no windows") #f)
+        (begin
+          (set! %expose-saved (dump-frames))
+          (let* ((tree (spec->tree (grid-spec (length ids))))
+                 (leaves (frame-leaves tree)))
+            (resize-subtree! tree %last-output-x %last-output-y
+                             %last-output-w %last-output-h)
+            (let loop ((ids ids) (ls leaves))
+              (unless (null? ids)
+                (set-frame-window-ids! (car ls) (list (car ids)))
+                (set-frame-current-window! (car ls) (car ids))
+                (loop (cdr ids) (cdr ls))))
+            (set! %frame-tree tree)
+            (set! %current-frame (car leaves))
+            (sync-frames!)
+            (show-frame-overlays!)
+            (length ids))))))
+
+(define (expose-pick! n)
+  "Leaves expose mode: restores the saved layout, then focuses the
+window that was shown in grid cell N (#f = just restore)."
+  (let* ((leaves (frame-leaves %frame-tree))
+         (id (and n (< n (length leaves))
+                  (frame-current-window (list-ref leaves n)))))
+    (clear-frame-overlays!)
+    (when %expose-saved
+      (restore-frames! %expose-saved)
+      (set! %expose-saved #f))
+    (when id (focus-window-by-id! id))))
+
+;; ---------------------------------------------------------------------
+;; Unmaximize + gravity (StumpWM unmaximize / gravity): an unmaximized
+;; window is shown at 2/3 of its frame, positioned by its gravity, but
+;; stays a tiled window of that frame.
+;; ---------------------------------------------------------------------
+
+;; id -> gravity symbol, present iff the window is unmaximized.
+(define %unmaximized (make-hash-table))
+
+(define %gravities
+  '(center top bottom left right
+    top-left top-right bottom-left bottom-right))
+
+(define (window-unmaximized? id)
+  (and (hash-ref %unmaximized id) #t))
+
+(define (clear-unmaximized! id)
+  (hash-remove! %unmaximized id))
+
+(define (unmaximized-rect frame id)
+  (let* ((r (frame-display-rect frame))
+         (x (car r)) (y (cadr r)) (w (caddr r)) (h (cadddr r))
+         (uw (max 100 (quotient (* 2 w) 3)))
+         (uh (max 80 (quotient (* 2 h) 3)))
+         (grav (or (hash-ref %unmaximized id) 'center))
+         (gx (cond ((memq grav '(left top-left bottom-left)) x)
+                   ((memq grav '(right top-right bottom-right)) (- (+ x w) uw))
+                   (else (+ x (quotient (- w uw) 2)))))
+         (gy (cond ((memq grav '(top top-left top-right)) y)
+                   ((memq grav '(bottom bottom-left bottom-right)) (- (+ y h) uh))
+                   (else (+ y (quotient (- h uh) 2))))))
+    (list gx gy uw uh)))
+
+(define (unmaximize!)
+  "Toggles the focused tiled window between filling its frame and a 2/3
+rect positioned by its gravity (StumpWM unmaximize)."
+  (let ((id (focused-window-id)))
+    (cond
+     ((not id) (echo "no window"))
+     ((window-floating? id) (echo "window is floating"))
+     ((hash-ref %unmaximized id)
+      (hash-remove! %unmaximized id)
+      (sync-frames!)
+      (echo (format #f "~a fills its frame again" (window-title id))))
+     (else
+      (hash-set! %unmaximized id 'center)
+      (sync-frames!)
+      (echo (format #f "~a unmaximized (gravity: center)" (window-title id)))))))
+
+(define (set-window-gravity! grav)
+  "Sets the focused unmaximized window's gravity (StumpWM gravity)."
+  (let ((id (focused-window-id)))
+    (cond
+     ((not id) (echo "no window"))
+     ((not (memq grav %gravities))
+      (echo (format #f "unknown gravity ~a" grav)))
+     ((not (hash-ref %unmaximized id))
+      (echo "unmaximize first (Print P u)"))
+     (else
+      (hash-set! %unmaximized id grav)
+      (sync-frames!)
+      (echo (format #f "gravity: ~a" grav))))))
 
 ;; ---------------------------------------------------------------------
 ;; Focus cycling
@@ -1719,12 +1994,18 @@ frame's current window."
                 (rect (frame-display-rect frame)))
             (for-each
              (lambda (id)
-               (if (equal? id cur)
-                   (let ((bw %border-width))
-                     (wm-place-window id
-                                      (+ (car rect) bw) (+ (cadr rect) bw)
-                                      (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))))
-                   (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame))))
+               (cond
+                ((not (equal? id cur))
+                 (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
+                ;; Unmaximized: 2/3 rect by gravity, placed without the
+                ;; tiled states (wm-place-float) so CSD corners return.
+                ((hash-ref %unmaximized id)
+                 (apply rust-call 'wm-place-float id (unmaximized-rect frame id)))
+                (else
+                 (let ((bw %border-width))
+                   (wm-place-window id
+                                    (+ (car rect) bw) (+ (cadr rect) bw)
+                                    (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw)))))))
              (frame-window-ids frame))))
         (frame-leaves (cdr rect+tree)))
        (set! %last-output-x (car saved)) (set! %last-output-y (cadr saved))

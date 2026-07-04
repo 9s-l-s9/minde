@@ -41,6 +41,15 @@
 (define %clipboard #f)
 (define (wm-set-clipboard text) (set! %clipboard text) #t)
 (define (wm-border-color hex) #t)
+;; Sprint-9 overlay subrs (recording fakes).
+(define %overlays '())
+(define (wm-add-overlay x y text)
+  (set! %overlays (cons (list x y text) %overlays)) #t)
+(define (wm-clear-overlays) (set! %overlays '()) #t)
+
+;; Keep init.scm's load-placement-rules! away from the developer's real
+;; rules file.
+(setenv "MINDE_RULES_FILE" "/nonexistent-minde-rules.scm")
 
 ;; Load init.scm by its full canonical path. init.scm's own top-level code
 ;; calls (current-filename) (to find scheme/ for add-to-load-path), which
@@ -390,6 +399,21 @@
 (wm-handle-key 0 #f "z")
 (check "C-g leaves command mode" (wm-handle-key ctrl-bit #f "g") #t)
 (check "after C-g: bare v forwarded" (wm-handle-key 0 #f "v") #f)
+
+;; fselect (C-t j): overlays appear, the map stays armed, a digit jumps
+;; and clears the overlays.
+(wm-handle-key ctrl-bit #f "t")
+(check "j (fselect) consumed" (wm-handle-key 0 #f "j") #t)
+(check-true "fselect drew frame overlays" (pair? %overlays))
+(check "digit 0 consumed by the fselect map" (wm-handle-key 0 #f "0") #t)
+(check "overlays cleared after the pick" %overlays '())
+(check "fselect map resolved: bare v forwarded" (wm-handle-key 0 #f "v") #f)
+;; Escape path clears too.
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 0 #f "j")
+(check-true "overlays up again" (pair? %overlays))
+(check "Escape leaves fselect" (wm-handle-key 0 #f "Escape") #t)
+(check "overlays cleared by Escape" %overlays '())
 
 ;; ---------------------------------------------------------------------
 

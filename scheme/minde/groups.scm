@@ -38,6 +38,13 @@
             kill-windows-current-group!
             kill-windows-other!
             groups-echo-string
+            remember!
+            forget!
+            save-placement-rules!
+            load-placement-rules!
+            dump-desktop
+            dump-desktop-to-file
+            restore-from-file
             wm-on-window-moved
             grename!
             gkill!
@@ -418,19 +425,101 @@ marked * (StumpWM groups/vgroups)."
 ;; or title.
 ;; ---------------------------------------------------------------------
 
-;; Each rule: (matcher group-name frame-index follow?). MATCHER is a
-;; string matched as a substring against the window's app-id, then its
-;; title. GROUP-NAME is compared trimmed (" II " and "II" both work);
-;; #f means "the current group". FRAME-INDEX is 0-based in tree order,
-;; clamped to the existing leaves. First matching rule wins.
+;; Each rule: (matcher group-name frame-index follow? lock?). MATCHER
+;; is a string matched as a substring against the window's app-id, then
+;; its title. GROUP-NAME is compared trimmed (" II " and "II" both
+;; work); #f means "the current group". FRAME-INDEX is 0-based in tree
+;; order, clamped to the existing leaves. First matching rule wins.
+;; LOCK? #t (the default, StumpWM's :lock) applies the rule when the
+;; window maps; #f rules only fire through place-existing-windows!.
 (define %placement-rules '())
 
-(define* (add-placement-rule! matcher #:key (group #f) (frame 0) (follow? #f))
+(define* (add-placement-rule! matcher #:key (group #f) (frame 0)
+                              (follow? #f) (raise? #f) (lock? #t))
+  ;; #:raise? is StumpWM's name for what our #:follow? does.
   (set! %placement-rules
-        (append %placement-rules (list (list matcher group frame follow?)))))
+        (append %placement-rules
+                (list (list matcher group frame (or follow? raise?) lock?)))))
+
+(define (rule-lock? rule)
+  ;; Rules loaded from an old 4-element file default to locked.
+  (or (< (length rule) 5) (list-ref rule 4)))
 
 (define (clear-placement-rules!)
   (set! %placement-rules '()))
+
+;; ---------------------------------------------------------------------
+;; Rule persistence + remember/forget (StumpWM remember / forget /
+;; dump-window-placement-rules / restore-window-placement-rules) --
+;; same file pattern as (minde layouts).
+;; ---------------------------------------------------------------------
+
+(define (rules-file)
+  (or (getenv "MINDE_RULES_FILE")
+      (string-append (or (getenv "HOME") ".") "/.config/minde/rules.scm")))
+
+(define (save-placement-rules!)
+  "Writes the placement rules to the rules file."
+  (let ((path (rules-file)))
+    (catch #t
+      (lambda ()
+        (let ((dir (dirname path)))
+          (unless (file-exists? dir) (mkdir dir)))
+        (call-with-output-file path
+          (lambda (port)
+            (display ";; minde placement rules -- written by remember!/forget!\n" port)
+            (write %placement-rules port)
+            (newline port))))
+      (lambda (key . args)
+        (echo (format #f "could not save rules: ~a ~s" key args))))))
+
+(define (load-placement-rules!)
+  "Replaces the placement rules with the rules file's contents. Quietly
+does nothing if the file is missing or unreadable."
+  (let ((path (rules-file)))
+    (when (file-exists? path)
+      (catch #t
+        (lambda ()
+          (let ((saved (call-with-input-file path read)))
+            (when (list? saved)
+              (set! %placement-rules
+                    (filter (lambda (r) (and (pair? r) (string? (car r))))
+                            saved)))))
+        (lambda (key . args)
+          (echo (format #f "could not load rules: ~a ~s" key args)))))))
+
+(define (remember!)
+  "Adds a persistent placement rule pinning the focused window's
+app-id (or title) to its current group and frame (StumpWM remember)."
+  (let ((id (focused-window-id)))
+    (if (not id)
+        (echo "no window")
+        (let ((matcher (or (window-app-id id) (window-title id)))
+              (frame-idx (or (list-index (lambda (f) (eq? f (current-frame)))
+                                         (frame-leaves (current-tree)))
+                             0)))
+          (add-placement-rule! matcher
+                               #:group (string-trim-both (current-group-name))
+                               #:frame frame-idx)
+          (save-placement-rules!)
+          (echo (format #f "remembered: ~a ->~a frame ~a"
+                        matcher (current-group-name) frame-idx))))))
+
+(define (forget!)
+  "Drops every placement rule matching the focused window and persists
+(StumpWM forget)."
+  (let ((id (focused-window-id)))
+    (if (not id)
+        (echo "no window")
+        (let* ((title (window-title id))
+               (app (window-app-id id))
+               (before (length %placement-rules)))
+          (set! %placement-rules
+                (remove (lambda (r) (rule-matches? r title app))
+                        %placement-rules))
+          (save-placement-rules!)
+          (echo (format #f "forgot ~a rule(s)"
+                        (- before (length %placement-rules))))))))
 
 (define (rule-matches? rule title app-id)
   (let ((m (car rule)))
@@ -497,6 +586,65 @@ are left alone; a window already in its rule's target frame stays put."
     (echo (format #f "placed ~a window(s)" moved))))
 
 ;; ---------------------------------------------------------------------
+;; Desktop dump/restore (StumpWM dump-desktop-to-file /
+;; restore-from-file): every group's name, float flag, frame layout
+;; with window assignments (loaded head's tree), and float geometries.
+;; Window ids are session-local -- restore is for the running session;
+;; stale ids are dropped by restore-group-frames!.
+;; ---------------------------------------------------------------------
+
+(define (dump-desktop)
+  (list 'minde-desktop
+        (head-mode)
+        (map (lambda (g)
+               (list (group-name g)
+                     (group-float? g)
+                     (dump-group-frames g)
+                     (map (lambda (id) (cons id (float-geometry id)))
+                          (group-floats g))))
+             %groups)))
+
+(define (dump-desktop-to-file path)
+  (catch #t
+    (lambda ()
+      (call-with-output-file path
+        (lambda (port)
+          (display ";; minde desktop -- written by dump-desktop-to-file\n" port)
+          (write (dump-desktop) port)
+          (newline port)))
+      (echo (string-append "desktop dumped to " path)))
+    (lambda (key . args)
+      (echo (format #f "could not dump desktop: ~a ~s" key args)))))
+
+(define (restore-from-file path)
+  "Re-applies a dump-desktop file: groups are matched (or created) by
+name, their frame layouts and window assignments restored, float
+geometries re-applied. Groups not in the dump are left alone."
+  (catch #t
+    (lambda ()
+      (let ((d (call-with-input-file path read)))
+        (if (not (and (pair? d) (eq? (car d) 'minde-desktop)))
+            (echo (string-append path " is not a desktop dump"))
+            (begin
+              (for-each
+               (lambda (entry)
+                 (let* ((name (car entry))
+                        (g (or (find-group-by-name name) (gnewbg! name))))
+                   (set-group-float?! g (cadr entry))
+                   (restore-group-frames! g (caddr entry))
+                   (for-each
+                    (lambda (fg)
+                      (when (and (pair? (cdr fg))
+                                 (member (car fg) (group-floats g)))
+                        (set-float-geometry! (car fg) (cdr fg))))
+                    (cadddr entry))))
+               (caddr d))
+              (sync-frames!)
+              (echo (string-append "desktop restored from " path))))))
+    (lambda (key . args)
+      (echo (format #f "could not restore desktop: ~a ~s" key args)))))
+
+;; ---------------------------------------------------------------------
 ;; Status line for external bars (eww etc.): written to
 ;; $XDG_RUNTIME_DIR/minde-status whenever it changes, via the
 ;; frames.scm sync hook. Consume with `tail -F` (eww deflisten) or poll
@@ -544,7 +692,8 @@ are left alone; a window already in its rule's target frame stays put."
 ;; ---------------------------------------------------------------------
 
 (define (wm-on-window-map id title app-id)
-  (let ((rule (find (lambda (r) (rule-matches? r title app-id))
+  (let ((rule (find (lambda (r) (and (rule-lock? r)
+                                     (rule-matches? r title app-id)))
                     %placement-rules)))
     (if rule
         (place-by-rule! rule id title app-id)
@@ -576,6 +725,7 @@ a sync since nothing hidden is on-screen)."
   (clear-ontop! id)
   (clear-sticky! id)
   (unmark-window! id)
+  (clear-unmaximized! id)
   (let ((fg (find (lambda (g) (remove-float! g id)) %groups)))
     (cond
      (fg (when (eq? fg (current-group)) (sync-frames!)))

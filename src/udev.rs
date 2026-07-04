@@ -660,6 +660,20 @@ impl MindeState {
             }
         }
 
+        // Positioned overlays (fselect/expose frame labels): global
+        // coords, shifted into this output's framebuffer like everything
+        // else; only drawn when they land on this output.
+        for (loc, msg) in self.overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
+            if let Some(elem) = crate::render::overlay_element(
+                &mut renderer,
+                msg,
+                *loc - output_geo.loc,
+                output.current_scale().integer_scale(),
+            ) {
+                custom.push(elem);
+            }
+        }
+
         // Layer-shell surfaces: upper (top/overlay -- fuzzel, swaylock)
         // draw above windows; lower (bottom/background -- swaybg) below.
         use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
