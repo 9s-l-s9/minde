@@ -59,7 +59,24 @@
             wm-on-output-geometry
             current-group-name
             group-names
-            group-has-window?))
+            group-has-window?
+            dynamic-group?
+            mark-dynamic!
+            gnew-dynamic!
+            gnewbg-dynamic!
+            retile-dynamic!
+            retile!
+            rotate-windows!
+            rotate-stack!
+            exchange-with-master!
+            change-layout!
+            change-split-ratio!
+            change-default-layout!
+            change-default-split-ratio!
+            hnext!
+            hprev!
+            fnext-in-head!
+            fprev-in-head!))
 
 ;; ---------------------------------------------------------------------
 ;; The group list
@@ -136,6 +153,9 @@ or clearing focus)."
       (park-group-windows! (current-group))
       (activate-group! target)
       (sync-frames!)
+      ;; A dynamic group re-derives its master/stack tiling on
+      ;; activation (gmoves into it while hidden left the tree stale).
+      (when (dynamic-group? target) (retile-dynamic!))
       (run-hook!* 'focus-group (group-name target))
       (echo (group-list-string)))))
 
@@ -256,6 +276,7 @@ group, which becomes current (StumpWM gkill). A no-op with one group."
          ids)
         (switch-to-group! (group-name fallback))
         (set! %groups (delq g %groups))
+        (unmark-dynamic! g)
         (when (eq? %last-group g) (set! %last-group #f))
         (echo (group-list-string))))))
 
@@ -303,6 +324,7 @@ gprev-with-window)."
      (lambda (id) (move-window-between-groups! id g (current-group)))
      (group-window-ids g))
     (set! %groups (delq g %groups))
+    (unmark-dynamic! g)
     (when (eq? %last-group g) (set! %last-group #f))))
 
 (define (gmerge! name-or-index)
@@ -418,7 +440,201 @@ marked * (StumpWM groups/vgroups)."
               (begin
                 (hide-window! id)
                 (frame-add-window! (group-current-frame to) id)))))
-    (ensure-unique-window-number! id (group-all-trees to))))
+    (ensure-unique-window-number! id (group-all-trees to))
+    ;; If either end is the visible group and dynamic, retile it now;
+    ;; a hidden dynamic group retiles when activated.
+    (when (and (eq? to (current-group)) (dynamic-group? to))
+      (retile-dynamic!))
+    (when (and (eq? from (current-group)) (dynamic-group? from))
+      (retile-dynamic!))))
+
+;; ---------------------------------------------------------------------
+;; Dynamic groups (StumpWM dynamic-group.lisp): master/stack auto-tiling
+;; as a group property. The newest window is the master at
+;; ratio-of-the-head in the layout position ('left default); everything
+;; else stacks evenly in the remainder. Retiled on map/unmap/gmove/
+;; float toggles; manual splits are refused (see init.scm's guard).
+;; State is per group AND head: group -> (head-id -> (order layout
+;; ratio)), order master-first.
+;; ---------------------------------------------------------------------
+
+(define %dynamic-groups (make-hash-table)) ; hashq <group> -> head table
+(define %dynamic-default-layout 'left)     ; 'left 'right 'top 'bottom
+(define %dynamic-default-ratio 2/3)        ; StumpWM default-split-ratio
+
+(define* (dynamic-group? #:optional (g (current-group)))
+  (and (hashq-ref %dynamic-groups g) #t))
+
+(define (mark-dynamic! g)
+  (hashq-set! %dynamic-groups g (make-hash-table)))
+
+(define (unmark-dynamic! g)
+  (hashq-remove! %dynamic-groups g))
+
+(define (dynamic-state g hid)
+  "The (order layout ratio) list for G on head HID, created on first
+use. #f when G isn't dynamic."
+  (let ((ht (hashq-ref %dynamic-groups g)))
+    (and ht
+         (or (hashv-ref ht hid)
+             (let ((s (list '() %dynamic-default-layout
+                            %dynamic-default-ratio)))
+               (hashv-set! ht hid s)
+               s)))))
+
+(define (set-dynamic-state! g hid order layout ratio)
+  (hashv-set! (hashq-ref %dynamic-groups g) hid (list order layout ratio)))
+
+(define (dynamic-dump order layout ratio)
+  "A dump-frames-shaped snapshot placing ORDER master-first in the
+master/stack layout: (spec leaf-window-lists leaf-currents
+master-leaf-index)."
+  (let ((n (length order)))
+    (if (< n 2)
+        (list 'leaf (list order)
+              (list (and (pair? order) (car order))) 0)
+        (let* ((stack (chain-spec (if (memq layout '(left right))
+                                      'vertical 'horizontal)
+                                  (- n 1)))
+               (spec (case layout
+                       ((left) (list 'hsplit ratio 'leaf stack))
+                       ((right) (list 'hsplit (- 1 ratio) stack 'leaf))
+                       ((top) (list 'vsplit ratio 'leaf stack))
+                       (else (list 'vsplit (- 1 ratio) stack 'leaf))))
+               ;; frame-leaves order is depth-first, so the master leaf
+               ;; is first for left/top and last for right/bottom.
+               (lists (if (memq layout '(left top))
+                          (map list order)
+                          (append (map list (cdr order))
+                                  (list (list (car order)))))))
+          (list spec lists (map car lists)
+                (if (memq layout '(left top)) 0 (- n 1)))))))
+
+(define (retile-dynamic!)
+  "Recomputes the current head's master/stack tiling for the current
+group: windows that appeared since the last retile become the master
+(newest first), vanished ones drop out. No-op in a manual group."
+  (let* ((g (current-group))
+         (hid (current-head-id))
+         (st (dynamic-state g hid)))
+    (when st
+      (let* ((tiled (apply append (cadr (dump-frames))))
+             (kept (filter (lambda (id) (member id tiled)) (car st)))
+             (order (append (filter (lambda (id) (not (member id kept)))
+                                    tiled)
+                            kept))
+             (layout (cadr st))
+             (ratio (caddr st)))
+        (set-dynamic-state! g hid order layout ratio)
+        (restore-frames! (dynamic-dump order layout ratio))))))
+
+(define (gnewbg-dynamic! name)
+  "Creates a dynamic (auto-tiling) group in the background (StumpWM
+gnewbg-dynamic)."
+  (let ((g (gnewbg! name)))
+    (mark-dynamic! g)
+    g))
+
+(define (gnew-dynamic! name)
+  "Creates a dynamic (auto-tiling) group and switches to it (StumpWM
+gnew-dynamic)."
+  (let ((g (gnewbg-dynamic! name)))
+    (switch-to-group! (group-name g))
+    g))
+
+(define (reorder-dynamic! f)
+  "Applies F to the current head's window order and retiles. Echoes in
+a manual group."
+  (let ((st (dynamic-state (current-group) (current-head-id))))
+    (if (not st)
+        (echo "not a dynamic group")
+        (let ((order (f (car st))))
+          (set-dynamic-state! (current-group) (current-head-id)
+                              order (cadr st) (caddr st))
+          (restore-frames! (dynamic-dump order (cadr st) (caddr st)))))))
+
+(define (rotate-list lst dir)
+  (cond ((or (null? lst) (null? (cdr lst))) lst)
+        ((eq? dir 'backward) (append (cdr lst) (list (car lst))))
+        (else (cons (last lst) (list-head lst (- (length lst) 1))))))
+
+(define* (rotate-windows! #:optional (dir 'forward))
+  "Rotates all windows through the master/stack positions (StumpWM
+rotate-windows)."
+  (reorder-dynamic! (lambda (order) (rotate-list order dir))))
+
+(define* (rotate-stack! #:optional (dir 'forward))
+  "Rotates only the stack windows, master stays (StumpWM rotate-stack)."
+  (reorder-dynamic!
+   (lambda (order)
+     (if (< (length order) 3)
+         order
+         (cons (car order) (rotate-list (cdr order) dir))))))
+
+(define (exchange-with-master!)
+  "Swaps the focused window with the master (StumpWM
+exchange-with-master)."
+  (let ((cur (focused-window-id)))
+    (if (not cur)
+        (echo "no focused window")
+        (reorder-dynamic!
+         (lambda (order)
+           (if (or (null? order) (equal? cur (car order)))
+               order
+               (cons cur (delete cur order))))))))
+
+(define (change-dynamic-param! setter)
+  (let* ((g (current-group))
+         (hid (current-head-id))
+         (st (dynamic-state g hid)))
+    (if (not st)
+        (echo "not a dynamic group")
+        (begin
+          (apply set-dynamic-state! g hid (setter st))
+          (retile-dynamic!)))))
+
+(define %dynamic-layouts '(left right top bottom))
+
+(define (change-layout! sym)
+  "Sets the master position for this group+head (StumpWM change-layout):
+left, right, top or bottom."
+  (if (memq sym %dynamic-layouts)
+      (change-dynamic-param!
+       (lambda (st) (list (car st) sym (caddr st))))
+      (echo (format #f "no layout ~a (left right top bottom)" sym))))
+
+(define (change-split-ratio! r)
+  "Sets the master size as a fraction of the head for this group+head
+(StumpWM change-split-ratio)."
+  (let ((r (and (number? r) (max 1/10 (min 9/10 r)))))
+    (if (not r)
+        (echo "ratio must be a number")
+        (change-dynamic-param!
+         (lambda (st) (list (car st) (cadr st) r))))))
+
+(define (change-default-layout! sym)
+  "Sets the default master position for new dynamic group heads."
+  (when (memq sym %dynamic-layouts)
+    (set! %dynamic-default-layout sym)))
+
+(define (change-default-split-ratio! r)
+  "Sets the default master ratio for new dynamic group heads."
+  (when (number? r)
+    (set! %dynamic-default-ratio (max 1/10 (min 9/10 r)))))
+
+(define (retile!)
+  "Forces a retile of the current dynamic group's head (StumpWM
+retile)."
+  (if (dynamic-group?)
+      (retile-dynamic!)
+      (echo "not a dynamic group")))
+
+;; StumpWM dynamic-group head/frame navigation: our heads and per-head
+;; frame cycling already behave this way, so these are plain aliases.
+(define (hnext!) (snext!))
+(define (hprev!) (sprev!))
+(define (fnext-in-head!) (focus-next-frame!))
+(define (fprev-in-head!) (focus-prev-frame!))
 
 ;; ---------------------------------------------------------------------
 ;; Placement rules (StumpWM define-frame-preference): route a newly
@@ -705,7 +921,10 @@ geometries re-applied. Groups not in the dump are left alone."
                     %placement-rules)))
     (if rule
         (place-by-rule! rule id title app-id)
-        (handle-window-map! id title app-id))))
+        (handle-window-map! id title app-id))
+    ;; New tiled window in a dynamic group: it becomes the master.
+    (when (and (dynamic-group?) (not (window-floating? id)))
+      (retile-dynamic!))))
 
 (define (wm-on-window-title id title app-id)
   "Rust: a mapped toplevel's title/app-id changed. Wayland clients set
@@ -768,6 +987,8 @@ a sync since nothing hidden is on-screen)."
             %groups))))
   (forget-window-title! id)
   (forget-window-number! id)
+  ;; A dynamic group refills the master/stack arrangement.
+  (when (dynamic-group?) (retile-dynamic!))
   (run-hook!* 'destroy-window id)
   #t)
 

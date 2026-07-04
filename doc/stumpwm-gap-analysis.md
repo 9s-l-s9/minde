@@ -121,7 +121,7 @@ prompt limitation), `describe-command` / `describe-function` /
 `copy-unhandled-error` (error ring), `load-module` (Guile load-path
 alias), `ratrelwarp`, `restart-soft` alias.
 
-### Sprint 11 — dynamic groups (pure Scheme, closes the list)
+### Sprint 11 — dynamic groups (pure Scheme, closes the list) ✅ DONE
 `gnew-dynamic` / `gnewbg-dynamic`, master/stack auto-tiling as a group
 flag driving apply-layout-spec! on every map/unmap/gmove,
 `change-layout` / `change-default-layout`, `change-split-ratio` /

@@ -314,6 +314,37 @@ xdotool key Escape; sleep 0.3
 loggrep "error in keybinding" && fail "sprint-10 keys/help errored (see log)"
 ok "remapped keys / send-key / which-key / help prompts"
 
+# Sprint 11: dynamic groups -- master/stack auto-tiling, rotate,
+# exchange, retile; manual split refused.
+scripts/minde-cmd '(gnew-dynamic! " dyn ")' >/dev/null 2>&1 || true
+sleep 1
+scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
+sleep 2
+scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
+sleep 2
+scripts/minde-cmd '(begin
+  (use-modules (minde frames) (minde groups))
+  (wm-log (format #f "e2e-dynamic frames=~a dynamic=~a"
+                  (length (frame-leaves (current-tree)))
+                  (dynamic-group?))))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-dynamic frames=2 dynamic=#t" || fail "dynamic group did not auto-tile"
+import -window root "$OUT/dynamic.png"
+# rotate + exchange via the M-G submap, split refusal via Print v.
+xdotool key Print; sleep 0.2; xdotool key alt+shift+g; sleep 0.3
+xdotool key r; sleep 0.4
+xdotool key Print; sleep 0.2; xdotool key alt+shift+g; sleep 0.3
+xdotool key x; sleep 0.4
+xdotool key Print; sleep 0.2; xdotool key v; sleep 0.4
+loggrep "error in keybinding" && fail "dynamic-group keys errored (see log)"
+scripts/minde-cmd '(begin
+  (use-modules (minde groups))
+  (gkill!)
+  (wm-log "e2e-dynamic-done"))' >/dev/null 2>&1 || true
+sleep 1
+loggrep "e2e-dynamic-done" || fail "dynamic gkill cleanup"
+ok "dynamic groups: auto-tile / rotate / exchange / split guard"
+
 # Layouts + gaps via the REPL socket, with a log marker to assert on.
 scripts/minde-cmd '(begin
   (use-modules (minde layouts) (minde frames))

@@ -425,6 +425,16 @@
 (check "overlays cleared by Escape" %overlays '())
 
 ;; ---------------------------------------------------------------------
+;; Shifted-letter chords: "M-G" is physically alt+shift+g (mods 9,
+;; keysym "G") and must hit the M-G submap, not fall back to bare "G".
+;; ---------------------------------------------------------------------
+
+(wm-handle-key ctrl-bit #f "t")
+(wm-handle-key 9 #f "G" "G")
+(check-true "M-G armed the groups submap" (hash-table? %key-state))
+(check "Escape leaves the submap" (wm-handle-key 0 #f "Escape") #t)
+
+;; ---------------------------------------------------------------------
 ;; Sprint 10: send-key, remapped keys, key repeat, which-key, help,
 ;; error ring, ratrelwarp
 ;; ---------------------------------------------------------------------

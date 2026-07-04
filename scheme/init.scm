@@ -312,9 +312,17 @@ focused client), #f otherwise."
         #t)
        (else
         ;; Modifier-prefixed spec ("M-Left") wins over the bare name, so
-        ;; e.g. arrows and M-arrows can coexist in one keymap.
+        ;; e.g. arrows and M-arrows can coexist in one keymap. Shifted
+        ;; letters arrive as their uppercase keysym, so a binding like
+        ;; "M-G" is physically alt+shift+g: retry without the "S-"
+        ;; prefix before falling back to the bare name.
         (let ((binding (or (and (positive? mods-bitmask)
                                 (hash-ref %key-state (key-spec mods-bitmask keysym-name)))
+                           (and (logtest mods-bitmask 1)
+                                (positive? (logand mods-bitmask (lognot 1)))
+                                (hash-ref %key-state
+                                          (key-spec (logand mods-bitmask (lognot 1))
+                                                    keysym-name)))
                            (hash-ref %key-state keysym-name))))
           (set-key-state! 'normal)
           (cond
@@ -399,9 +407,16 @@ focused client), #f otherwise."
 ;; build cannot open a frame here at all. emacsclient additionally needs
 ;; the daemon running inside this session.
 (bind-prefix-key! "E" (lambda () (wm-spawn "emacsclient -c -a emacs")))
-(bind-prefix-key! "v" (lambda () (split-frame-vertical!)))
-(bind-prefix-key! "h" (lambda () (split-frame-horizontal!)))
-(bind-prefix-key! "c" (lambda () (remove-split!)))
+;; Dynamic groups auto-tile; manual splits are refused there (StumpWM).
+(define (guard-manual-tiling thunk)
+  (if (dynamic-group?)
+      (echo (format #f "~a is a dynamic group"
+                    (string-trim-both (current-group-name))))
+      (thunk)))
+
+(bind-prefix-key! "v" (lambda () (guard-manual-tiling split-frame-vertical!)))
+(bind-prefix-key! "h" (lambda () (guard-manual-tiling split-frame-horizontal!)))
+(bind-prefix-key! "c" (lambda () (guard-manual-tiling remove-split!)))
 (bind-prefix-key! "n" (lambda () (focus-next-frame!)))
 ;; f: StumpWM `next` -- cycle through ALL of the group's windows,
 ;; emacs-buffer-style, jumping frames as needed.
@@ -730,7 +745,12 @@ focused client), #f otherwise."
 
 ;; F floats/unfloats (the user's old StumpWM float-this binding); the
 ;; layout prompt moved to M-F.
-(bind-prefix-key! "F" (lambda () (float-this!)) "float/unfloat window")
+(bind-prefix-key! "F"
+  (lambda ()
+    (float-this!)
+    ;; Floating in/out of a dynamic group changes the tiled set.
+    (when (dynamic-group?) (retile-dynamic!)))
+  "float/unfloat window")
 (bind-prefix-key! "M-F" (lambda () (layout-prompt!)) "apply layout (prompt)")
 
 ;; ---------------------------------------------------------------------
@@ -1037,6 +1057,37 @@ refresh)."
 (bind-prefix-key! "M-t" (lambda () (select-floating-window!)) "select floating window (menu)")
 (bind-prefix-key! "C-r" (lambda () (redisplay!)) "redisplay windows")
 
+;; Dynamic groups (StumpWM sprint 11): prompts and per-group commands.
+(define (gnew-dynamic-prompt!)
+  (read-one-line "new dynamic group: "
+    (lambda (name)
+      (unless (string-null? name)
+        (gnew-dynamic! (string-append " " name " "))))
+    #:history 'group))
+
+(define (gnewbg-dynamic-prompt!)
+  (read-one-line "new background dynamic group: "
+    (lambda (name)
+      (unless (string-null? name)
+        (gnewbg-dynamic! (string-append " " name " "))
+        (echo (groups-echo-string))))
+    #:history 'group))
+
+(define (change-layout-prompt!)
+  (read-one-line "master layout (left/right/top/bottom): "
+    (lambda (s)
+      (unless (string-null? s)
+        (change-layout! (string->symbol s))))
+    #:completions '("left" "right" "top" "bottom")))
+
+(define (change-split-ratio-prompt!)
+  (read-one-line "master ratio (0.1-0.9): "
+    (lambda (s)
+      (let ((r (string->number s)))
+        (if r
+            (change-split-ratio! (inexact->exact r))
+            (echo "not a number"))))))
+
 (bind-prefix-key! "M-G"
   (make-keymap
    "n" (lambda () (gnewbg-prompt!))
@@ -1048,7 +1099,16 @@ refresh)."
    "f" (lambda () (gnext-with-window!))
    "b" (lambda () (gprev-with-window!))
    "k" (lambda () (kill-windows-current-group!))
-   "K" (lambda () (kill-windows-other!)))
+   "K" (lambda () (kill-windows-other!))
+   "d" (lambda () (gnew-dynamic-prompt!))
+   "D" (lambda () (gnewbg-dynamic-prompt!))
+   "r" (lambda () (rotate-windows! 'forward))
+   "C-r" (lambda () (rotate-windows! 'backward))
+   "s" (lambda () (rotate-stack! 'forward))
+   "x" (lambda () (exchange-with-master!))
+   "l" (lambda () (change-layout-prompt!))
+   "S" (lambda () (change-split-ratio-prompt!))
+   "t" (lambda () (retile!)))
   "groups submap")
 (for-each
  (lambda (p) (set-binding-doc! (hash-ref %prefix-bindings "M-G") (car p) (cdr p)))
@@ -1061,7 +1121,16 @@ refresh)."
    ("f" . "next group, taking the window")
    ("b" . "previous group, taking the window")
    ("k" . "close all windows in this group")
-   ("K" . "close all windows in other groups")))
+   ("K" . "close all windows in other groups")
+   ("d" . "new dynamic group (prompt)")
+   ("D" . "new dynamic group in background (prompt)")
+   ("r" . "rotate windows through master")
+   ("C-r" . "rotate windows backward")
+   ("s" . "rotate the stack")
+   ("x" . "exchange window with master")
+   ("l" . "master layout (prompt)")
+   ("S" . "master split ratio (prompt)")
+   ("t" . "retile")))
 
 ;; ---------------------------------------------------------------------
 ;; Frames & placement parity (StumpWM sprint 9): fselect, expose,
@@ -1122,9 +1191,13 @@ refresh)."
             (echo "need a count between 2 and 9"))))))
 
 (bind-prefix-key! "M-h"
-  (lambda () (split-uniformly-prompt! 'horizontal)) "hsplit uniformly (prompt)")
+  (lambda () (guard-manual-tiling
+              (lambda () (split-uniformly-prompt! 'horizontal))))
+  "hsplit uniformly (prompt)")
 (bind-prefix-key! "M-v"
-  (lambda () (split-uniformly-prompt! 'vertical)) "vsplit uniformly (prompt)")
+  (lambda () (guard-manual-tiling
+              (lambda () (split-uniformly-prompt! 'vertical))))
+  "vsplit uniformly (prompt)")
 
 ;; Gravity names for the P g prompt.
 (define %gravity-names

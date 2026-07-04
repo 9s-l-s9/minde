@@ -173,6 +173,7 @@
             park-group-windows!
             group-window-count
             frame-leaves
+            chain-spec
             frame-window-ids
             frame-current-window
             frame-add-window!

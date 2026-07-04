@@ -88,7 +88,8 @@ Prefix map (see `scheme/init.scm`):
 | `C-l` | frame windowlist (menu) | | `M-l` | windowlist by class (menu) |
 | `M-p` | pull from windowlist (menu) | | `M-w` | select window by name (prompt) |
 | `M-t` | select floating window (menu) | | `C-r` | redisplay windows |
-| `M-G` | groups submap (see below) | | | |
+| `M-G` | groups submap (see below) | | `M-G d`/`D` | new dynamic group (fg/bg) |
+| `M-G r`/`x` | rotate / exchange with master | | `M-G l`/`S`/`t` | layout / ratio / retile |
 | `j` | fselect: jump to numbered frame | | `M-e` | expose: pick window from grid |
 | `M-o` | sibling frame | | `M-h` / `M-v` | h/vsplit uniformly (prompt) |
 | `C-q` | send next key to window | | `F2` | describe command (prompt) |
@@ -121,7 +122,23 @@ marked windows to a chosen group (gmove-marked), `f`/`b` take the
 current window to the next/previous group and follow
 (gnext/gprev-with-window), `k`/`K` politely close every window of this
 group / of all other groups, `g` echoes the group list with window
-counts (groups/vgroups). `Print P y` toggles always-show: the window
+counts (groups/vgroups).
+
+Dynamic groups (StumpWM dynamic-group.lisp): `M-G d`/`D` create an
+auto-tiling group (foreground/background). The newest window is the
+master, taking 2/3 of the head on the left; the rest stack evenly
+beside it, and every map/unmap/gmove/float retiles automatically —
+manual splits are refused there. In the `M-G` submap: `r`/`C-r` rotate
+all windows through the master position, `s` rotates just the stack,
+`x` exchanges the focused window with the master, `l` picks the master
+position (left/right/top/bottom, per group and head), `S` sets the
+master ratio (0.1–0.9), `t` forces a retile. Colon-callable:
+`(change-default-layout! 'right)`, `(change-default-split-ratio! 1/2)`,
+`hnext!`/`hprev!` (= next/prev head) and
+`fnext-in-head!`/`fprev-in-head!` (= per-head frame cycling — our
+frames are per-head trees already).
+
+`Print P y` toggles always-show: the window
 follows every group switch (StumpWM toggle-always-show). `Print P i`
 echoes the focused window's properties (id/title/class/number/float
 geometry/flags); `Print P d` echoes the date, `Print P V` the version,
