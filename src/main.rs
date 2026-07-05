@@ -11,6 +11,7 @@ mod handlers;
 mod grabs;
 mod input;
 mod ipc;
+mod logging;
 mod render;
 mod state;
 mod udev;
@@ -158,11 +159,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Run(choice) => choice,
     };
 
-    init_logging();
+    logging::init();
     install_crash_log();
 
     let backend = select_backend(backend_choice);
-    tracing::info!(?backend, "selected backend");
+    guile::set_runtime_backend(match backend {
+        Backend::Winit => "winit",
+        Backend::Udev => "udev",
+    });
+    tracing::info!(component = "runtime", ?backend, "selected backend");
 
     let mut event_loop: EventLoop<MindeState> = EventLoop::try_new()?;
 
@@ -288,14 +293,6 @@ fn chrono_free_timestamp() -> String {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => format!("@{}", d.as_secs()),
         Err(_) => "@unknown".into(),
-    }
-}
-
-fn init_logging() {
-    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    } else {
-        tracing_subscriber::fmt().init();
     }
 }
 

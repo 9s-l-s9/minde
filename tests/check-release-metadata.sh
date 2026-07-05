@@ -2,6 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
+[ -x scripts/mindectl ] || {
+    echo "release metadata: scripts/mindectl must be executable" >&2
+    exit 1
+}
+[ -x scripts/minde-cmd ] || {
+    echo "release metadata: scripts/minde-cmd must be executable" >&2
+    exit 1
+}
+
 fail() {
     echo "release metadata: $*" >&2
     exit 1

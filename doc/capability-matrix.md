@@ -15,7 +15,7 @@ incomplete release gate, **external** is deliberately delegated, and
 | Floating windows and pointer move/resize | supported | Scheme unit suites and nested e2e |
 | Window navigation, numbering, marks and placement rules | supported | Scheme unit suites and nested e2e |
 | Native prompt, menu, command/eval and contextual help | supported | Scheme unit suites and nested e2e |
-| Hooks and live Scheme configuration | experimental | API/configuration cleanup and serialized evaluation remain |
+| Hooks and live Scheme configuration | supported | canonical API, atomic reload and serialized main-thread IPC |
 | Native Wayland xdg-shell clients | supported | foot plus compositor e2e; toolkit matrix remains |
 | Xwayland clients | experimental | xterm smoke test when installed; broader matrix remains |
 | Layer shell and exclusive zones | experimental | eww is used manually; automated matrix remains |
@@ -23,8 +23,8 @@ incomplete release gate, **external** is deliberately delegated, and
 | Multiple outputs and hotplug | experimental | pure Scheme head tests; hardware reports remain |
 | DRM/libinput login session | experimental | used on X1/T450s; guided retained reports remain |
 | Fullscreen, urgency and synthesized/remapped keys | supported | Scheme and nested e2e coverage |
-| Session diagnostics and crash log | experimental | crash log exists; redacted report and structured IPC remain |
-| Modeline and system tray | external | use eww through the versioned status interface planned for 1.0 |
+| Session diagnostics and crash log | experimental | structured status/report e2e passes; real-session privacy inspection remains |
+| Modeline and system tray | external | use eww through the schema-v1 query/subscription interface |
 | Wallpaper, launcher and lock screen | external | use layer-shell clients such as swaybg, fuzzel and swaylock |
 | Hard compositor restart preserving clients | external | unsupported by design; validated atomic config reload replaces it |
 | Screencopy/screenshot protocol | missing | not required for nested demo capture; decide before RC |

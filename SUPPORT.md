@@ -20,5 +20,7 @@ change without compatibility aliases before 1.0.
 
 For a bug, run the smallest relevant `make check-*` target and include the
 revision from `minde --version`, backend, Guix system revision, reproduction
-steps, and a minimal configuration. Remove private window titles, clipboard
-data, command arguments, and home paths before sharing diagnostics.
+steps, and a minimal configuration. `mindectl report --output DIRECTORY`
+creates a conservatively redacted starting point; inspect it yourself before
+sharing it. Remove any remaining private window titles, clipboard data,
+command arguments, and home paths from additional diagnostics.

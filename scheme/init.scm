@@ -5,7 +5,8 @@
 ;;; restarting the compositor.
 
 (use-modules (ice-9 hash-table)
-             (srfi srfi-1))
+             (srfi srfi-1)
+             (system vm trace))
 
 ;; scheme/frames.scm lives next to this file; add it to the load path so
 ;; `(use-modules (minde frames))` finds it regardless of cwd.
@@ -25,7 +26,29 @@
              (minde commands)
              (minde command-catalog)
              (minde config)
+             (minde status)
              ((minde foundation keys) #:prefix key:))
+
+;; Publish the versioned status document after every policy synchronization.
+;; publish-status! suppresses unchanged states and keeps the historical
+;; one-line file updated for existing eww configurations.
+(set-sync-hook! publish-status!)
+
+(define (call-with-scheme-backtrace context thunk handler)
+  "Runs THUNK and logs a Guile backtrace before invoking HANDLER on error."
+  (let ((stack #f))
+    (catch #t
+      (lambda ()
+        (with-throw-handler #t thunk
+          (lambda _ (set! stack (make-stack #t)))))
+      (lambda (key . arguments)
+        (let ((details
+               (call-with-output-string
+                (lambda (port)
+                  (format port "~a: ~a ~s~%" context key arguments)
+                  (when stack (display-backtrace stack port))))))
+          (wm-log details)
+          (apply handler key arguments))))))
 
 ;; UI engines are packageable state machines. The compositor supplies their
 ;; rendering/input side effects here; standalone tests inject simple lambdas.
@@ -210,7 +233,7 @@ MODS (possibly '())."
 (define (run-binding! thunk mods keysym-name)
   ;; Errors from a binding are logged, not fatal -- one bad keybinding
   ;; shouldn't take down the compositor.
-  (catch #t
+  (call-with-scheme-backtrace "keybinding failure"
     thunk
     (lambda (key . args)
       (set! %last-unhandled-error
@@ -1497,7 +1520,7 @@ reload baseline. Call once after adding imperative user bindings."
 
 (define (reload-configuration!)
   (let ((path (configuration-file-path)))
-    (catch #t
+    (call-with-scheme-backtrace "configuration reload failure"
       (lambda ()
         (let ((candidate (validate-configuration-file path)))
           (apply-configuration! candidate)
@@ -1567,7 +1590,7 @@ reload baseline. Call once after adding imperative user bindings."
 (define (minde-ipc-eval source)
   (call-with-output-string
     (lambda (port)
-      (catch #t
+      (call-with-scheme-backtrace "IPC evaluation failure"
         (lambda ()
           (let ((datum
                  (call-with-input-string source

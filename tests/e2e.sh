@@ -64,6 +64,17 @@ done
 sleep 1
 ok "compositor up, scheme layer loaded"
 
+# Sprint 6: the supported state query and file-backed subscription expose the
+# same versioned JSON document without arbitrary caller-side parsing.
+state=$(scripts/mindectl query state --json) || fail "structured state query"
+printf '%s\n' "$state" | grep -q '"schema_version":1' || fail "state schema version"
+printf '%s\n' "$state" | grep -q '"backend":"winit"' || fail "state backend"
+printf '%s\n' "$state" | grep -q '"outputs":\[' || fail "state outputs"
+[ -s "$RT/minde/status.json" ] || fail "atomic status.json missing"
+timeout 1 scripts/mindectl subscribe --json >"$OUT/subscription.json" || true
+grep -q '"schema_version":1' "$OUT/subscription.json" || fail "status subscription"
+ok "versioned query + atomic status + subscription"
+
 xdotool search --name Smithay windowfocus || fail "focus nested window"
 
 # Native prompt: Print r, type, TAB-complete, Return -> spawns foot.
@@ -79,6 +90,16 @@ loggrep "handle-window-map!\|window map" || true
 xdotool key Print; sleep 0.2; xdotool key y; sleep 0.5
 import -window root "$OUT/info.png"
 ok "run prompt: type, complete, spawn"
+
+# Reports deliberately request the redacted status view and filter recent log
+# lines that may contain window titles, app ids, clipboard data or commands.
+REPORT="$OUT/report-$WM_PID"
+scripts/mindectl report --output "$REPORT" >/dev/null || fail "diagnostic report"
+grep -q '^report_schema_version=1$' "$REPORT/report.txt" || fail "report schema"
+grep -q '"schema_version":1' "$REPORT/state.json" || fail "report state"
+grep -q '"title"\|"app_id"' "$REPORT/state.json" && fail "report leaked window metadata"
+grep -q "$HOME" "$REPORT"/* && fail "report leaked an absolute home path"
+ok "redacted diagnostic report"
 
 # Splits and window cycling don't error.
 xdotool key Print; sleep 0.2; xdotool key v; sleep 0.5

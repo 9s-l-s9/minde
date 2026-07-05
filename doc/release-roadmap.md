@@ -12,7 +12,9 @@ as unavailable on the current hardware.
 - Sprint 2: implemented and internally verified; owner verification pending.
 - Sprint 3: implemented and internally verified; owner verification pending.
 - Sprint 4: implemented and internally verified; owner verification pending.
-- Sprints 5-9: pending.
+- Sprint 5: implemented and internally verified; owner verification pending.
+- Sprint 6: implemented and internally verified; owner verification pending.
+- Sprints 7-10: pending.
 
 ## Release decisions
 
@@ -221,6 +223,10 @@ clients map/unmap. Expected: no deadlock, panic, stale grab, or partial config.
 Interrupt an atomic state write and confirm the previous file still loads.
 
 ## Sprint 6 — Diagnostics and stable IPC/status
+
+Status: implemented on 2026-07-13. Scheme, Rust, Clippy, ShellCheck, release
+metadata, and the nested e2e scenarios pass. Login-session log rotation,
+hardware facts, and real-session privacy inspection remain owner checks.
 
 ### Implementation
 

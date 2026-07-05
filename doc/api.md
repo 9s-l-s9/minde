@@ -13,7 +13,7 @@ compositor event entry points begin with `handle-`.
 | `(minde input)` | Key notation, registries, and prompts |
 | `(minde commands)` | Typed command records, lookup, and invocation |
 | `(minde hooks)` | Fault-isolated event hooks |
-| `(minde status)` | Text status for external bars |
+| `(minde status)` | Versioned structured state and text status for bars |
 
 The modules under `(minde compositor ...)` are implementation details.
 Rust-to-Scheme handlers are also an internal compositor boundary, not user
@@ -54,3 +54,13 @@ scripts/mindectl check-config scheme/default-config.scm
 ```
 
 The public contract and registry metadata are checked with `make check-api`.
+
+## Status
+
+`(minde status)` exports `status-schema-version`, `current-state`,
+`current-state-json`, `current-status-text`, `status-file-path`, and
+`publish-status!`. `current-state` returns the schema-v1 alist; the JSON form
+is used by `mindectl query state --json` and the atomic status file.
+`current-state-json` accepts `#:redact? #t` for diagnostics that must omit
+focused-window title and application ID. The complete schema and stability
+rules are documented in [diagnostics.md](diagnostics.md).

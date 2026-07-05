@@ -969,9 +969,14 @@ impl MindeState {
         use smithay::xwayland::{X11Wm, XWayland, XWaylandEvent};
 
         if std::env::var_os("MINDE_NO_XWAYLAND").is_some() {
+            guile::set_xwayland_status("disabled", None);
             tracing::info!("MINDE_NO_XWAYLAND set; skipping Xwayland");
+            guile::publish_status();
             return;
         }
+
+        guile::set_xwayland_status("starting", None);
+        guile::publish_status();
 
         let spawn_result = XWayland::spawn(
             &self.display_handle,
@@ -986,7 +991,9 @@ impl MindeState {
         let (xwayland, client) = match spawn_result {
             Ok(x) => x,
             Err(err) => {
+                guile::set_xwayland_status("failed", None);
                 tracing::warn!(%err, "failed to start Xwayland; X11 apps unavailable");
+                guile::publish_status();
                 return;
             }
         };
@@ -1020,6 +1027,7 @@ impl MindeState {
                             }
                             state.xwm = Some(wm);
                             state.xdisplay = Some(display_number);
+                            guile::set_xwayland_status("ready", Some(display_number));
                             // Children get DISPLAY via wm-spawn (X11_DISPLAY).
                             // NEVER set it process-wide: in nested (winit)
                             // mode the compositor is itself an X client, and
@@ -1029,18 +1037,25 @@ impl MindeState {
                             // (same class as the WAYLAND_DISPLAY/winit
                             // startup deadlock).
                             let _ = guile::X11_DISPLAY.set(format!(":{display_number}"));
+                            guile::publish_status();
                         }
                         Err(err) => {
+                            guile::set_xwayland_status("failed", None);
                             tracing::warn!(%err, "failed to attach the X11 window manager");
+                            guile::publish_status();
                         }
                     }
                 }
                 XWaylandEvent::Error => {
+                    guile::set_xwayland_status("failed", None);
                     tracing::warn!("Xwayland crashed on startup; X11 apps unavailable");
+                    guile::publish_status();
                 }
             });
         if let Err(err) = ret {
+            guile::set_xwayland_status("failed", None);
             tracing::warn!(%err, "failed to insert the Xwayland event source");
+            guile::publish_status();
         }
     }
 

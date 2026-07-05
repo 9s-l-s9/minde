@@ -62,6 +62,8 @@
             handle-output-geometry!
             current-group-name
             group-names
+            group-status-summaries
+            current-layout-status
             group-has-window?
             dynamic-group?
             mark-dynamic!
@@ -126,6 +128,17 @@
   (append (append-map frame-window-ids
                       (append-map frame-leaves (group-all-trees g)))
           (group-floats g)))
+
+(define (group-status-summaries)
+  "Returns stable status tuples for every group.
+Each tuple is (NAME FOCUSED? WINDOW-COUNT FLOATING? DYNAMIC?)."
+  (map (lambda (group)
+         (list (group-name group)
+               (eq? group (current-group))
+               (length (delete-duplicates (group-window-ids group)))
+               (group-float? group)
+               (dynamic-group? group)))
+       %groups))
 
 ;; ---------------------------------------------------------------------
 ;; Switching
@@ -594,6 +607,15 @@ exchange-with-master)."
 
 (define %dynamic-layouts '(left right top bottom))
 
+(define (current-layout-status)
+  "Returns a stable description of the current group/head layout.
+Dynamic layouts return (dynamic POSITION RATIO); manual layouts return
+(manual SPEC), where SPEC is the public frame-tree layout datum."
+  (if (dynamic-group?)
+      (let ((state (dynamic-state (current-group) (current-head-id))))
+        (list 'dynamic (cadr state) (caddr state)))
+      (list 'manual (dump-layout-spec))))
+
 (define (change-layout! sym)
   "Sets the master position for this group+head (StumpWM change-layout):
 left, right, top or bottom."
@@ -857,10 +879,9 @@ geometries re-applied. Groups not in the dump are left alone."
       (echo (format #f "could not restore desktop: ~a ~s" key args)))))
 
 ;; ---------------------------------------------------------------------
-;; Status line for external bars (eww etc.): written to
-;; $XDG_RUNTIME_DIR/minde-status whenever it changes, via the
-;; frames.scm sync hook. Consume with `tail -F` (eww deflisten) or poll
-;; `minde-cmd '(status-line)'`.
+;; Compatibility text status for external bars. The versioned structured
+;; publisher lives in (minde status) and installs the frames sync hook
+;; from init.scm, avoiding a groups <-> status module cycle.
 ;; ---------------------------------------------------------------------
 
 (define (status-line)
@@ -869,22 +890,10 @@ geometries re-applied. Groups not in the dump are left alone."
                    " | "
                    (if id (window-title id) ""))))
 
-(define %status-path
-  (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp") "/minde-status"))
-
-(define %last-status #f)
-
-(define (write-status!)
-  (let ((s (status-line)))
-    (unless (equal? s %last-status)
-      (set! %last-status s)
-      (catch #t
-        (lambda ()
-          (call-with-output-file %status-path
-            (lambda (port) (display s port) (newline port))))
-        (lambda _ #f)))))
-
-(set-sync-hook! write-status!)
+(define (refresh-external-status!)
+  (let* ((module (resolve-module '(guile-user) #:ensure #f))
+         (variable (and module (module-variable module 'publish-status!))))
+    (when variable ((variable-ref variable)))))
 
 (define (move-current-window-to-next-group-and-follow!)
   "Moves the current window to the next group and switches there with it
@@ -934,8 +943,9 @@ rule that missed the window at map time is applied now."
               (switch-to-group!
                (group-name (or (find-group-loose (cadr rule)) (current-group))))
               (sync-frames!)))))
-    ;; External bars show the focused window's title.
-    (write-status!)))
+    ;; External bars show the focused window's title. A title-only update
+    ;; does not otherwise require a frame synchronization.
+    (refresh-external-status!)))
 
 (define (next-urgent!)
   "Jumps to the oldest urgent window (StumpWM next-urgent), switching to

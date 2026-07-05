@@ -46,7 +46,8 @@ pub fn init(
                             .take((MAX_REQUEST_BYTES + 1) as u64)
                             .read_to_end(&mut request)
                         {
-                            tracing::warn!(%error, "failed to read IPC request");
+                            tracing::warn!(component = "ipc", action = "read", %error,
+                                "failed to read IPC request");
                             continue;
                         }
                         let response = if request.len() > MAX_REQUEST_BYTES {
@@ -59,12 +60,14 @@ pub fn init(
                             }
                         };
                         if let Err(error) = writeln!(stream, "{response}") {
-                            tracing::warn!(%error, "failed to write IPC response");
+                            tracing::warn!(component = "ipc", action = "write", %error,
+                                "failed to write IPC response");
                         }
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(error) => {
-                        tracing::warn!(%error, "failed to accept IPC connection");
+                        tracing::warn!(component = "ipc", action = "accept", %error,
+                            "failed to accept IPC connection");
                         break;
                     }
                 }
@@ -73,7 +76,8 @@ pub fn init(
         },
     )?;
 
-    tracing::info!(path = %path.display(), "main-thread IPC listening");
+    tracing::info!(component = "ipc", path = %path.display(), mode = "0600",
+        "main-thread IPC listening");
     Ok(())
 }
 

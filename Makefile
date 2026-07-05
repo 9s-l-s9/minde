@@ -4,6 +4,7 @@ SCHEME_TESTS := \
 	tests/foundation-test.scm \
 	tests/ui-prompt-test.scm \
 	tests/config-test.scm \
+	tests/status-test.scm \
 	tests/portable-keymap-test.scm \
 	tests/input-test.scm \
 	tests/frames-test.scm \
@@ -97,6 +98,7 @@ check-docs:
 	@test -s PLAN.md
 	@test -s doc/release-roadmap.md
 	@test -s doc/api.md
+	@test -s doc/diagnostics.md
 	@test -s doc/reusable-packages.md
 	@test -s UNEXPECTED.md
 	sh tests/check-release-metadata.sh

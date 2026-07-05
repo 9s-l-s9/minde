@@ -2,37 +2,143 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
+runtime_root=${XDG_RUNTIME_DIR:-/tmp}
+socket_path=$runtime_root/minde-ipc.sock
+if [ -n "${MINDE_STATUS_PATH:-}" ]; then
+    status_path=$MINDE_STATUS_PATH
+elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    status_path=$XDG_RUNTIME_DIR/minde/status.json
+else
+    status_path=/tmp/minde-$(id -u)/status.json
+fi
+
+usage() {
+    cat <<'EOF'
+usage: mindectl eval EXPR
+       mindectl check-config FILE
+       mindectl query state --json
+       mindectl subscribe --json
+       mindectl report --output DIRECTORY
+EOF
+}
+
+# MODE is `scheme` for the historical eval representation and `raw` for a
+# returned string such as current-state-json.
+ipc_request() {
+    mode=$1
+    expression=$2
+    guile -q -c '
+      (let* ((mode (caddr (command-line)))
+             (expression (cadddr (command-line)))
+             (path (string-append
+                    (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                    "/minde-ipc.sock"))
+             (sock (socket PF_UNIX SOCK_STREAM 0)))
+        (connect sock AF_UNIX path)
+        (display expression sock)
+        (shutdown sock 1)
+        (let ((response (read sock)))
+          (close sock)
+          (if (and (pair? response) (eq? (car response) (quote ok)))
+              (begin
+                (if (string=? mode "raw")
+                    (display (cadr response))
+                    (write (cadr response)))
+                (newline))
+              (begin
+                (format (current-error-port) "mindectl: ~s~%" response)
+                (exit 1)))))' -- "$mode" "$expression"
+}
+
+redacted_path() {
+    case $1 in
+        "$HOME"/*) printf '%s/%s\n' '~' "${1#"$HOME"/}" ;;
+        "$HOME") printf '~\n' ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+write_report() {
+    output=$1
+    [ ! -e "$output" ] || {
+        echo "mindectl: report output already exists: $output" >&2
+        exit 1
+    }
+    mkdir -p "$output"
+    chmod 700 "$output"
+
+    ipc_request raw '(current-state-json #:redact? #t)' >"$output/state.json"
+    chmod 600 "$output/state.json"
+
+    script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+    if [ -x "$script_dir/minde" ]; then
+        version=$("$script_dir/minde" --version 2>/dev/null || printf unknown)
+    elif [ -x "$script_dir/../target/debug/minde" ]; then
+        version=$("$script_dir/../target/debug/minde" --version 2>/dev/null || printf unknown)
+    elif command -v minde >/dev/null 2>&1; then
+        version=$(minde --version 2>/dev/null || printf unknown)
+    else
+        version=unknown
+    fi
+    config=${MINDE_CONFIG:-${MINDE_INIT:-default}}
+    {
+        printf 'report_schema_version=1\n'
+        printf 'minde=%s\n' "$version"
+        printf 'kernel=%s\n' "$(uname -srvmo 2>/dev/null || printf unknown)"
+        printf 'config=%s\n' "$(redacted_path "$config")"
+        printf 'seat=%s\n' "${XDG_SEAT:-unknown}"
+        printf 'libseat_backend=%s\n' "${LIBSEAT_BACKEND:-auto}"
+        printf 'state=state.json\n'
+        printf 'drm=drm.txt\n'
+        printf 'recent_errors=recent-errors.log\n'
+    } >"$output/report.txt"
+
+    {
+        found=false
+        for device in /sys/class/drm/card[0-9]*; do
+            [ -e "$device" ] || continue
+            found=true
+            driver=$(readlink "$device/device/driver" 2>/dev/null || true)
+            printf '%s driver=%s\n' "$(basename "$device")" \
+                "$(basename "${driver:-unknown}")"
+        done
+        $found || printf 'no DRM card visible\n'
+    } >"$output/drm.txt"
+
+    state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/minde
+    {
+        for log in "$state_dir/session.previous.log" \
+                   "$state_dir/session.log" "$state_dir/crash.log"; do
+            [ -r "$log" ] || continue
+            grep -Ei 'warn|error|panic|scheme:' "$log" 2>/dev/null || true
+        done
+    } |
+        grep -Eiv 'title|app.?id|clipboard|command|cmd=|source=' |
+        tail -n 200 |
+        sed "s|$HOME|~|g" >"$output/recent-errors.log"
+    chmod 600 "$output"/*
+    printf '%s\n' "$output"
+}
+
 command=${1:-}
 case "$command" in
     eval)
-        [ "$#" -eq 2 ] || {
-            echo "usage: mindectl eval EXPR" >&2
-            exit 2
-        }
-        exec guile -q -c '
-          (let* ((path (string-append
-                         (or (getenv "XDG_RUNTIME_DIR") "/tmp")
-                         "/minde-ipc.sock"))
-                 (sock (socket PF_UNIX SOCK_STREAM 0)))
-            (connect sock AF_UNIX path)
-            (display (caddr (command-line)) sock)
-            (shutdown sock 1)
-            (let ((response (read sock)))
-              (close sock)
-              (if (and (pair? response) (eq? (car response) (quote ok)))
-                  (begin (write (cadr response)) (newline))
-                  (begin
-                    (format (current-error-port) "mindectl: ~s~%" response)
-                    (exit 1)))))' -- "$2"
+        [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+        ipc_request scheme "$2"
         ;;
     check-config)
-        [ "$#" -eq 2 ] || {
-            echo "usage: mindectl check-config FILE" >&2
-            exit 2
-        }
-        script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-        local_modules=$(CDPATH= cd -- "$script_dir/../scheme" 2>/dev/null && pwd || true)
-        installed_modules=$(CDPATH= cd -- "$script_dir/../share/minde/scheme" 2>/dev/null && pwd || true)
+        [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+        script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+        if [ -d "$script_dir/../scheme" ]; then
+            local_modules=$(unset CDPATH; cd -- "$script_dir/../scheme" && pwd)
+        else
+            local_modules=
+        fi
+        if [ -d "$script_dir/../share/minde/scheme" ]; then
+            installed_modules=$(unset CDPATH; cd -- "$script_dir/../share/minde/scheme" && pwd)
+        else
+            installed_modules=
+        fi
         if [ -f "$local_modules/minde/config.scm" ]; then
             modules=$local_modules
         elif [ -n "$installed_modules" ] && [ -f "$installed_modules/minde/config.scm" ]; then
@@ -50,8 +156,44 @@ case "$command" in
              (format #t "configuration valid: ~a~%" (cadr (command-line)))' \
             "$2"
         ;;
+    query)
+        if [ "$#" -ne 3 ] || [ "$2" != state ] || [ "$3" != --json ]; then
+            usage >&2
+            exit 2
+        fi
+        ipc_request raw '(current-state-json)'
+        ;;
+    subscribe)
+        if [ "$#" -ne 2 ] || [ "$2" != --json ]; then
+            usage >&2
+            exit 2
+        fi
+        [ -S "$socket_path" ] || {
+            echo "mindectl: compositor IPC socket is unavailable" >&2
+            exit 1
+        }
+        last=
+        while [ -S "$socket_path" ]; do
+            current=$(cat "$status_path" 2>/dev/null || true)
+            if [ -n "$current" ] && [ "$current" != "$last" ]; then
+                printf '%s\n' "$current"
+                last=$current
+            fi
+            sleep 0.2
+        done
+        ;;
+    report)
+        if [ "$#" -ne 3 ] || [ "$2" != --output ]; then
+            usage >&2
+            exit 2
+        fi
+        write_report "$3"
+        ;;
+    -h|--help)
+        usage
+        ;;
     *)
-        echo "usage: mindectl {eval EXPR|check-config FILE}" >&2
+        usage >&2
         exit 2
         ;;
 esac

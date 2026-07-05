@@ -23,6 +23,10 @@ shims or migration notes.
   and collision/personal-policy checks.
 - A main-thread `mindectl eval` IPC endpoint and concurrent reload stress
   target; the separate-thread Guile REPL is now explicitly unsafe and opt-in.
+- Schema-v1 `query state --json`, change-only `subscribe --json`, and atomic
+  `status.json` interfaces for bars and monitoring.
+- Human or newline-delimited JSON tracing, Scheme error backtraces, two-session
+  log retention, and a conservatively redacted `mindectl report` bundle.
 
 ### Changed
 
@@ -47,3 +51,5 @@ shims or migration notes.
 - End-to-end tests no longer inherit host keymap or compositor REPL state.
 - Client disconnect, popup/grab, DnD, missing-output, and hotplug paths recover
   from stale protocol state instead of panicking.
+- Local Guix builds no longer include workspace-only agent, cache, or runtime
+  artifact directories in the source derivation.

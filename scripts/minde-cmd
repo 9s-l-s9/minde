@@ -3,5 +3,5 @@
 set -eu
 
 [ "$#" -eq 1 ] || { echo "usage: minde-cmd EXPR" >&2; exit 2; }
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 exec "$script_dir/mindectl" eval "$1"

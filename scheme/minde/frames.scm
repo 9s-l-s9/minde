@@ -2115,6 +2115,9 @@ kill-window) -- vs. close-current-window!'s polite xdg close."
 Called from Rust as (handle-urgent-window! id) via init.scm."
   (unless (member id %urgent-windows)
     (set! %urgent-windows (append %urgent-windows (list id))))
+  ;; Urgency can arrive without any geometry/focus change, so explicitly
+  ;; notify the status publisher installed as the sync hook.
+  (when %sync-hook (%sync-hook))
   (run-event-hook! 'urgent-window id)
   (echo (string-append "Urgent: " (or (window-title id)
                                       (number->string id)))))

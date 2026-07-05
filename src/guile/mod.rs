@@ -182,6 +182,14 @@ static OUTPUT_Y: AtomicI32 = AtomicI32::new(0);
 static OUTPUT_W: AtomicU32 = AtomicU32::new(0);
 static OUTPUT_H: AtomicU32 = AtomicU32::new(0);
 
+// Small process facts exposed through `(wm-runtime-info)`. Numeric atomics
+// avoid sharing compositor objects with Scheme and remain safe if the opt-in
+// unsafe REPL is enabled.
+static RUNTIME_BACKEND: AtomicU32 = AtomicU32::new(0); // 1=winit, 2=udev
+static XWAYLAND_STATUS: AtomicU32 = AtomicU32::new(0);
+static XWAYLAND_DISPLAY: AtomicI32 = AtomicI32::new(-1);
+static RUNTIME_STARTED: OnceLock<std::time::Instant> = OnceLock::new();
+
 /// One head (output/monitor) as reported to Scheme: stable id + usable
 /// rect (global coordinates) + connector name.
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +214,28 @@ pub fn set_output_geometry(x: i32, y: i32, width: u32, height: u32) {
     OUTPUT_Y.store(y, Ordering::SeqCst);
     OUTPUT_W.store(width, Ordering::SeqCst);
     OUTPUT_H.store(height, Ordering::SeqCst);
+}
+
+pub fn set_runtime_backend(name: &str) {
+    let code = match name {
+        "winit" => 1,
+        "udev" => 2,
+        _ => 0,
+    };
+    RUNTIME_BACKEND.store(code, Ordering::SeqCst);
+    let _ = RUNTIME_STARTED.set(std::time::Instant::now());
+}
+
+pub fn set_xwayland_status(status: &str, display: Option<u32>) {
+    let code = match status {
+        "disabled" => 1,
+        "starting" => 2,
+        "ready" => 3,
+        "failed" => 4,
+        _ => 0,
+    };
+    XWAYLAND_STATUS.store(code, Ordering::SeqCst);
+    XWAYLAND_DISPLAY.store(display.map_or(-1, |number| number as i32), Ordering::SeqCst);
 }
 
 fn send_command(cmd: WmCommand) -> bool {
@@ -312,6 +342,15 @@ fn call_named_1(name: &str, a: Scm) -> Option<Scm> {
 pub fn eval_ipc(code: &str) -> Option<String> {
     let result = call_named_1("minde-ipc-eval", from_str(code))?;
     to_string_lossy(result)
+}
+
+/// Asks the public status module to publish after Rust-only state changes
+/// such as Xwayland becoming ready.
+pub fn publish_status() {
+    let Some(proc) = lookup("publish-status!") else {
+        return;
+    };
+    let _ = protected_call(move || unsafe { ffi::scm_call_0(proc) });
 }
 
 fn call_named_3(name: &str, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
@@ -672,6 +711,32 @@ unsafe extern "C" fn wm_outputs() -> Scm {
     scm_list(&entries)
 }
 
+/// `(wm-runtime-info)` -> `(backend xwayland-status xdisplay uptime-ms)`.
+unsafe extern "C" fn wm_runtime_info() -> Scm {
+    let backend = match RUNTIME_BACKEND.load(Ordering::SeqCst) {
+        1 => "winit",
+        2 => "udev",
+        _ => "unknown",
+    };
+    let xwayland = match XWAYLAND_STATUS.load(Ordering::SeqCst) {
+        1 => "disabled",
+        2 => "starting",
+        3 => "ready",
+        4 => "failed",
+        _ => "unknown",
+    };
+    let display = XWAYLAND_DISPLAY.load(Ordering::SeqCst) as i64;
+    let uptime = RUNTIME_STARTED
+        .get()
+        .map_or(0, |started| started.elapsed().as_millis() as i64);
+    scm_list(&[
+        from_str(backend),
+        from_str(xwayland),
+        from_i64(display),
+        from_i64(uptime),
+    ])
+}
+
 fn register_gsubr(name: &str, req: i32, opt: i32, rst: i32, f: ffi::Gsubr) {
     let c = to_cstring(name);
     unsafe {
@@ -801,6 +866,7 @@ pub fn init(loop_signal: LoopSignal) {
         // Gsubr is exactly the zero-arg signature; no transmute needed.
         register_gsubr("wm-request-paste", 0, 0, 0, wm_request_paste);
         register_gsubr("wm-outputs", 0, 0, 0, wm_outputs);
+        register_gsubr("wm-runtime-info", 0, 0, 0, wm_runtime_info);
         register_gsubr(
             "wm-set-clipboard",
             1,

@@ -16,6 +16,7 @@
 (use-modules (guix packages)
              (guix gexp)
              (guix build-system gnu)
+             (srfi srfi-1)
              ((guix licenses) #:prefix license:)
              (gnu packages base)
              (gnu packages rust)
@@ -32,12 +33,16 @@
 (define %source-dir (dirname (current-filename)))
 
 (define (source-select? file stat)
-  ;; Everything except top-level build artifacts and VCS metadata. Only the
-  ;; repo root's target/ is excluded -- vendored crates legitimately contain
-  ;; paths like vendor/cc/src/target/. vendor/ itself IS included; it's the
+  ;; Everything except top-level build/agent artifacts and VCS metadata. Only
+  ;; these repo-root paths are excluded -- vendored crates legitimately contain
+  ;; paths such as vendor/cc/src/target/. vendor/ itself IS included; it is the
   ;; offline crate mirror.
   (let ((rel (string-drop file (+ 1 (string-length %source-dir)))))
-    (not (member rel '("target" ".git")))))
+    (not (any (lambda (directory)
+                (or (string=? rel directory)
+                    (string-prefix? (string-append directory "/") rel)))
+              '("target" ".git" ".local" ".cache" ".claude"
+                ".agents" ".codex" "build")))))
 
 (package
   (name "minde")
@@ -133,6 +138,11 @@ fi
 # binary's own panic hook.
 LOGDIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/minde\"
 mkdir -p \"$LOGDIR\"
+# Keep exactly the current and previous session; overwrite the previous
+# generation at login so stale logs do not accumulate.
+if [ -f \"$LOGDIR/session.log\" ]; then
+  mv -f \"$LOGDIR/session.log\" \"$LOGDIR/session.previous.log\"
+fi
 export RUST_BACKTRACE=1
 exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
 "
@@ -146,6 +156,9 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                  (let ((dest (string-append bin "/" script)))
                    (copy-file (string-append "scripts/" script) dest)
                    (substitute* dest
+                     (("^    guile -q")
+                      (string-append "    " #$(this-package-input "guile")
+                                     "/bin/guile -q"))
                      (("^exec guile")
                       (string-append "exec " #$(this-package-input "guile")
                                      "/bin/guile")))

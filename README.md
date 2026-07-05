@@ -230,14 +230,15 @@ hidden windows, one window per frame is visible at a time.
   the matcher string to a group/frame when they map (StumpWM
   `define-frame-preference`). First matching rule wins.
 
-## Status line for bars (eww)
+## Status for bars (eww)
 
 minde writes `"[I]  II  III | window title"` to
 `$XDG_RUNTIME_DIR/minde-status` whenever it changes (also available
-as `(status-line)` over the main-thread IPC socket / `minde-cmd`). `doc/eww/`
-contains a minimal working eww bar consuming it with `deflisten` +
-`tail -F`; because the bar sets a layer-shell exclusive zone, the frame
-tree automatically tiles into the remaining space.
+as `(status-line)` over main-thread IPC). It also atomically publishes
+schema-v1 JSON at `$XDG_RUNTIME_DIR/minde/status.json`. Prefer
+`mindectl query state --json` or `mindectl subscribe --json` for new
+bars; the schema includes groups, focused window, urgency, outputs, runtime,
+and layout. See [`doc/diagnostics.md`](doc/diagnostics.md).
 
 ## Layer shell
 
@@ -362,6 +363,8 @@ compositor thread, so configuration and window-policy mutation are serialized:
 ```sh
 scripts/mindectl eval '(current-group-name)'
 scripts/mindectl eval '(reload-configuration!)'
+scripts/mindectl query state --json
+timeout 5 scripts/mindectl subscribe --json
 ```
 
 For exceptional interactive development, `MINDE_UNSAFE_REPL=1` restores
@@ -393,6 +396,9 @@ in `doc/release-roadmap.md`.
 What it cannot reach: the udev/DRM backend at runtime. Anything touching
 `src/udev.rs` needs a live `./debug-tty.sh` from a spare VT **before**
 `guix system reconfigure`. If a session does crash, evidence survives in
-`~/.local/state/minde/`: `session.log` (full compositor output, via
-the session wrapper) and `crash.log` (panic + backtrace, via the
-binary's panic hook).
+`~/.local/state/minde/`: `session.log` and `session.previous.log` (the two
+retained compositor sessions) plus `crash.log` (panic + backtrace). Scheme
+keybinding, reload, and IPC failures also include Guile backtraces. Set
+`MINDE_LOG_FORMAT=json` before startup for newline-delimited structured
+tracing, or create a redacted bundle with
+`mindectl report --output /tmp/minde-report`.
