@@ -1,0 +1,124 @@
+#!/bin/sh
+set -eu
+
+cd "$(dirname "$0")/.."
+. tests/lib/nested-compositor.sh
+
+OUT=${MINDE_DEMO_OUT:-build/demos}
+DISPLAY_NUMBER=${MINDE_DEMO_DISPLAY:-:92}
+DURATION=${MINDE_DEMO_DURATION:-3}
+CLIENT_PIDS=""
+RECORDER_PID=""
+SCENARIO_LIST=""
+
+cleanup() {
+    if [ -n "$RECORDER_PID" ]; then
+        kill "$RECORDER_PID" 2>/dev/null || true
+        wait "$RECORDER_PID" 2>/dev/null || true
+    fi
+    for pid in $CLIENT_PIDS; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    if [ -n "$SCENARIO_LIST" ]; then
+        rm -f "$SCENARIO_LIST"
+    fi
+    nested_stop
+}
+trap cleanup EXIT HUP INT TERM
+
+for tool in ffmpeg ffprobe foot import jq xdotool; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "error: $tool is required for scripted demo capture" >&2
+        exit 127
+    }
+done
+
+mkdir -p "$OUT"
+export MINDE_NESTED_CONFIG="$PWD/scheme/default-config.scm"
+nested_start "$OUT/runtime" "$DISPLAY_NUMBER" || {
+    echo "error: demo compositor failed; inspect $OUT/runtime" >&2
+    exit 1
+}
+
+launch_demo_window() {
+    number=$1
+    before=$(nested_window_count)
+    nested_wayland timeout 180 foot --app-id="minde-demo-$number" \
+        --title="Minde demo $number" sh -c 'sleep 170' \
+        >"$OUT/foot-$number.log" 2>&1 &
+    pid=$!
+    CLIENT_PIDS="$CLIENT_PIDS $pid"
+    nested_wait_for_window_after "$before" 12 || {
+        echo "error: demo foot window $number did not map" >&2
+        exit 1
+    }
+}
+
+launch_demo_window 1
+launch_demo_window 2
+xdotool search --name Smithay windowfocus >/dev/null
+
+tab=$(printf '\t')
+SCENARIO_LIST=$(mktemp /tmp/minde-demo-scenarios.XXXXXX)
+scripts/generate-demo-manifest.scm --tsv >"$SCENARIO_LIST"
+while IFS="$tab" read -r id title trigger input_events setup action scenario_cleanup; do
+    video="$OUT/$id.webm"
+    poster="$OUT/$id.png"
+    transcript="$OUT/$id.txt"
+    ffmpeg_log="$OUT/$id.ffmpeg.log"
+    if [ "$input_events" = - ]; then
+        input_label=IPC
+    else
+        input_label=$input_events
+    fi
+
+    {
+        printf 'demo-id: %s\n' "$id"
+        printf 'title: %s\n' "$title"
+        printf 'trigger-label: %s\n' "$trigger"
+        printf 'input-events: %s\n' "$input_label"
+        printf 'setup: %s\n' "$setup"
+        scripts/minde-cmd "(begin $setup #t)"
+    } >"$transcript"
+
+    ffmpeg -nostdin -hide_banner -loglevel error -y \
+        -f x11grab -draw_mouse 0 -framerate 15 -video_size 1280x800 \
+        -i "$NESTED_DISPLAY" -t "$DURATION" -an \
+        -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -row-mt 1 \
+        -threads 2 -crf 38 -b:v 0 "$video" >"$ffmpeg_log" 2>&1 &
+    RECORDER_PID=$!
+
+    sleep 0.4
+    scripts/minde-msg -t 1400 "$trigger · $title" >/dev/null
+    sleep 0.8
+    if [ "$input_events" != - ]; then
+        for key in $input_events; do
+            xdotool key --clearmodifiers "$key"
+            sleep 0.12
+        done
+        {
+            printf 'action: input path (%s)\n' "$action"
+            scripts/mindectl query state --json
+            printf '\n'
+        } >>"$transcript"
+    else
+        {
+            printf 'action: %s\n' "$action"
+            scripts/minde-cmd "(begin $action #t)"
+        } >>"$transcript"
+    fi
+    sleep 0.6
+    nested_capture "$poster"
+    wait "$RECORDER_PID"
+    RECORDER_PID=""
+
+    {
+        printf 'cleanup: %s\n' "$scenario_cleanup"
+        scripts/minde-cmd "(begin $scenario_cleanup #t)"
+    } >>"$transcript"
+    printf 'captured %s\n' "$id"
+done <"$SCENARIO_LIST"
+
+cp doc/generated/demo-manifest.json "$OUT/manifest.json"
+echo "demo capture: artifacts written to $OUT"

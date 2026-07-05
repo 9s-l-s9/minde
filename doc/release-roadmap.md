@@ -16,7 +16,10 @@ as unavailable on the current hardware.
 - Sprint 6: implemented and internally verified; owner verification pending.
 - Sprint 7: implemented and internally verified; owner verification and
   heavyweight optional application shards pending.
-- Sprints 8-10: pending.
+- Sprint 8: implemented and internally verified; generated references, split
+  guides, the offline manual, complete live-export descriptions, and all
+  scripted command media pass. Owner manual/video review remains.
+- Sprints 9-10: pending.
 
 ## Release decisions
 
@@ -299,6 +302,18 @@ title/app-id changes, and layer exclusive zones. Swaylock remains a known
 strict failure, not a successful lock test.
 
 ## Sprint 8 — Complete documentation and demonstrations
+
+Status: implemented, pending owner verification on 2026-07-13. The README has been reduced to an overview;
+focused tutorial, configuration, concepts, keymap, IPC/Eww, debugging,
+architecture, security, hardware and support guides now exist. API/keymap/demo
+manifests and an offline HTML manual are generated with drift/link checks. All
+16 command scenarios produced validated three-second WebM clips, posters and
+transcripts; 12 use real `C-t` input sequences and four unbound commands use
+main-thread IPC. The generated API inventory documents all 274 live exports
+from source docstrings, command metadata, or adjacent metadata for syntax and
+value bindings. The unusually broad public boundary remains a pre-1.0 design
+debt, but it is no longer hidden or undocumented. Sprint completion still
+requires the owner to perform the offline-manual and sampled-video checks below.
 
 ### Implementation
 

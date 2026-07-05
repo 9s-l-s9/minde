@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+out=${1:-doc/generated}
+mkdir -p "$out"
+
+guile --no-auto-compile -L scheme scripts/generate-api-reference.scm \
+    >"$out/api-reference.md"
+guile --no-auto-compile -L scheme scripts/generate-keymap-reference.scm \
+    >"$out/keybindings.md"
+guile --no-auto-compile -L scheme scripts/generate-demo-manifest.scm \
+    >"$out/demo-manifest.json"
+guile --no-auto-compile -L scheme scripts/generate-manual.scm \
+    >"$out/manual.html"

@@ -30,9 +30,12 @@ see save-layout!."
   (set! %layouts
         (append (alist-delete name %layouts) (list (cons name spec)))))
 
-(define (layout-names) (map car %layouts))
+(define (layout-names)
+  "Returns registered layout names in stable insertion order."
+  (map car %layouts))
 
 (define (layout-spec name)
+  "Returns the frame-tree specification registered as NAME, or #f."
   (assoc-ref %layouts name))
 
 (define (apply-layout! name)

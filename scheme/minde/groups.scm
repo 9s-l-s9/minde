@@ -100,9 +100,13 @@
 
 (init-default-groups!)
 
-(define (group-names) (map group-name %groups))
+(define (group-names)
+  "Returns every group name in switching order."
+  (map group-name %groups))
 
-(define (current-group-name) (group-name (current-group)))
+(define (current-group-name)
+  "Returns the padded name of the active group."
+  (group-name (current-group)))
 
 (define (find-group-by-name name)
   (find (lambda (g) (string=? (group-name g) name)) %groups))
@@ -121,6 +125,7 @@
 ;; True if group NAME currently tracks window ID (mapped or not, on- or
 ;; off-screen) -- for tests/inspection.
 (define (group-has-window? name id)
+  "Returns true when group NAME contains window ID in a tree or float list."
   (let ((g (find-group-by-name name)))
     (and g (member id (group-window-ids g)) #t)))
 
@@ -475,9 +480,11 @@ marked * (StumpWM groups/vgroups)."
 (define %dynamic-default-ratio 2/3)        ; StumpWM default-split-ratio
 
 (define* (dynamic-group? #:optional (g (current-group)))
+  "Returns true when G is managed by the dynamic master/stack policy."
   (and (hashq-ref %dynamic-groups g) #t))
 
 (define (mark-dynamic! g)
+  "Marks G dynamic and creates its empty per-head policy table."
   (hashq-set! %dynamic-groups g (make-hash-table)))
 
 (define (unmark-dynamic! g)
@@ -667,6 +674,7 @@ retile)."
 
 (define* (add-placement-rule! matcher #:key (group #f) (frame 0)
                               (follow? #f) (raise? #f) (lock? #t))
+  "Appends a placement rule for MATCHER with group/frame/follow/lock policy."
   ;; #:raise? is StumpWM's name for what our #:follow? does.
   (set! %placement-rules
         (append %placement-rules
@@ -677,6 +685,7 @@ retile)."
   (or (< (length rule) 5) (list-ref rule 4)))
 
 (define (clear-placement-rules!)
+  "Removes every in-memory placement rule without writing the rules file."
   (set! %placement-rules '()))
 
 ;; ---------------------------------------------------------------------
@@ -830,6 +839,7 @@ the window actually moved; the caller re-syncs."
 ;; ---------------------------------------------------------------------
 
 (define (dump-desktop)
+  "Returns the versioned running-session desktop snapshot datum."
   (list 'minde-desktop 1
         (head-mode)
         (map (lambda (g)
@@ -841,6 +851,7 @@ the window actually moved; the caller re-syncs."
              %groups)))
 
 (define (dump-desktop-to-file path)
+  "Writes the running-session desktop snapshot to PATH and echoes the result."
   (catch #t
     (lambda ()
       (write-datum-file path (dump-desktop))
@@ -885,6 +896,7 @@ geometries re-applied. Groups not in the dump are left alone."
 ;; ---------------------------------------------------------------------
 
 (define (status-line)
+  "Returns the compatibility one-line group and focused-window status."
   (let ((id (focused-window-id)))
     (string-append (group-list-string)
                    " | "
@@ -913,6 +925,7 @@ geometries re-applied. Groups not in the dump are left alone."
 ;; ---------------------------------------------------------------------
 
 (define (handle-window-map! id title app-id)
+  "Places a newly mapped window, applies locked rules, and retiles if dynamic."
   (let ((rule (find (lambda (r) (and (rule-lock? r)
                                      (rule-matches? r title app-id)))
                     %placement-rules)))

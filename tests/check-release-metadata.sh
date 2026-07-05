@@ -11,7 +11,11 @@ set -eu
     exit 1
 }
 for helper in tests/applications.sh tests/soak.sh tests/portable-e2e.sh \
-    tests/lib/nested-compositor.sh; do
+    tests/lib/nested-compositor.sh scripts/generate-docs scripts/capture-demos \
+    scripts/generate-api-reference.scm scripts/generate-keymap-reference.scm \
+    scripts/generate-demo-manifest.scm scripts/generate-manual.scm \
+    tests/check-generated-docs.sh tests/check-doc-links.sh \
+    tests/check-demos.sh; do
     [ -x "$helper" ] || {
         echo "release metadata: $helper must be executable" >&2
         exit 1

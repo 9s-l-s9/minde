@@ -99,6 +99,28 @@
 (check "terminal can be configured"
        (string=? (terminal-command) "my-terminal --flag"))
 
+(define (hash-size table)
+  (hash-fold (lambda (key value count) (+ count 1)) 0 table))
+
+(check "every direct binding has generated-reference documentation"
+       (= (hash-size %keybindings) (hash-size %global-binding-docs)))
+
+(define (documented-keymap? keymap seen)
+  (and
+   (not (memq keymap seen))
+   (hash-fold
+    (lambda (key value valid?)
+      (let ((child (or (binding-submap keymap key)
+                       (and (hash-table? value) value))))
+        (and valid?
+             (string? (binding-doc keymap key))
+             (or (not child)
+                 (documented-keymap? child (cons keymap seen))))))
+    #t keymap)))
+
+(check "every portable binding and submap has documentation"
+       (documented-keymap? %prefix-bindings '()))
+
 (check "duplicate top-level keys are rejected"
        (catch #t
          (lambda ()

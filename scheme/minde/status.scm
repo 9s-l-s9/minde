@@ -15,6 +15,8 @@
             publish-status!))
 
 (define status-schema-version 1)
+(define %api-binding-documentation
+  '((status-schema-version . "The integer schema version emitted by the structured status API.")))
 (define %sequence 0)
 (define %last-fingerprint #f)
 

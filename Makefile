@@ -21,7 +21,7 @@ SCHEME_TESTS := \
 
 .PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
-	check-foundation-package check-ui-package clean-test-output
+	docs check-generated-docs check-demos check-foundation-package check-ui-package clean-test-output
 
 check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps
 
@@ -44,7 +44,8 @@ check-static:
 	sh tests/lint-borrows.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
-			scripts/minde-cmd scripts/minde-msg scripts/mindectl; \
+			scripts/capture-demos scripts/generate-docs scripts/minde-cmd \
+			scripts/minde-msg scripts/mindectl; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \
 	fi
@@ -85,6 +86,8 @@ check-e2e:
 		echo "error: ImageMagick 'import' is required" >&2; exit 127; }
 	@command -v jq >/dev/null 2>&1 || { \
 		echo "error: jq is required by the portable nested scenario" >&2; exit 127; }
+	@command -v foot >/dev/null 2>&1 || { \
+		echo "error: foot is required by the run-prompt and portable scenarios" >&2; exit 127; }
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
 
@@ -119,15 +122,37 @@ check-apps-strict:
 check-soak:
 	sh tests/soak.sh
 
-check-docs:
+docs:
+	sh scripts/generate-docs
+
+check-generated-docs:
+	sh tests/check-generated-docs.sh
+
+check-docs: check-generated-docs
 	@test -s README.md
 	@test -s PLAN.md
 	@test -s doc/release-roadmap.md
 	@test -s doc/api.md
+	@test -s doc/tutorial.md
+	@test -s doc/configuration.md
+	@test -s doc/concepts.md
+	@test -s doc/keybindings.md
+	@test -s doc/ipc-eww.md
+	@test -s doc/debugging.md
+	@test -s doc/architecture.md
+	@test -s doc/security.md
+	@test -s doc/hardware-validation.md
+	@test -s doc/support.md
 	@test -s doc/diagnostics.md
 	@test -s doc/application-testing.md
+	@test -s doc/demonstrations.md
+	@test -s doc/generated/api-reference.md
+	@test -s doc/generated/keybindings.md
+	@test -s doc/generated/demo-manifest.json
+	@test -s doc/generated/manual.html
 	@test -s doc/reusable-packages.md
 	@test -s UNEXPECTED.md
+	sh tests/check-doc-links.sh
 	sh tests/check-release-metadata.sh
 
 check-package:
@@ -143,10 +168,13 @@ check-ui-package:
 check-all: check check-e2e check-apps check-docs
 
 check-hardware:
-	@echo "Run ./debug-tty.sh from a spare VT; see doc/hardware-validation.md when Sprint 7 adds the guided checklist."
+	@echo "Run ./debug-tty.sh from a spare VT and follow doc/hardware-validation.md."
 
 demos:
-	@echo "Demo capture is introduced in Sprint 8."
+	sh scripts/capture-demos
+
+check-demos: check-generated-docs
+	sh tests/check-demos.sh
 
 clean-test-output:
 	rm -rf /tmp/minde-e2e

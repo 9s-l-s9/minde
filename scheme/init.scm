@@ -76,6 +76,11 @@
 ;; through the C-t prefix.
 (define %keybindings (make-hash-table))
 
+;; Global binding -> one-line description.  Keeping this beside the live
+;; binding table lets the documentation generator enumerate the exact map
+;; instead of maintaining a second hand-written key reference.
+(define %global-binding-docs (make-hash-table))
+
 ;; Prefix-key bindings: keysym-name -> thunk. Looked up with no modifier
 ;; requirement beyond having entered prefix state (matching StumpWM, where
 ;; e.g. C-t c means "prefix, then plain c").
@@ -90,16 +95,45 @@
   "MODS is a list of symbols such as '(super) or '(ctrl shift)."
   (key:modifiers->bitmask mods))
 
-(define (bind-key! mods key thunk)
+(define* (bind-key! mods key thunk #:optional doc)
   "Bind KEY (an xkb keysym name string, e.g. \"Return\", \"q\", \"d\") with
 modifier list MODS (e.g. '(super)) to THUNK, a zero-argument procedure run
 when the binding fires. Global binding, always active."
-  (hash-set! %keybindings (cons (mods->bitmask mods) key) thunk))
+  (let ((binding (cons (mods->bitmask mods) key)))
+    (hash-set! %keybindings binding thunk)
+    (when doc (hash-set! %global-binding-docs binding doc))))
 
 ;; keymap object -> (key -> one-line doc), fed by the optional doc
 ;; argument of bind-prefix-key!; the ? which-key echo and describe-key
 ;; read it.
 (define %binding-docs (make-hash-table))
+
+;; (PARENT KEY CHILD) triples identify nested maps even when a binding wraps
+;; entry into the child with a small side effect (the w window listing and f
+;; frame-number overlay).  The live objects remain authoritative; this table
+;; only preserves their relationship for help/reference traversal.
+(define %binding-submaps '())
+
+(define (set-binding-submap! parent key child)
+  (set! %binding-submaps
+        (cons (list parent key child)
+              (filter (lambda (entry)
+                        (not (and (eq? parent (car entry))
+                                  (string=? key (cadr entry)))))
+                      %binding-submaps))))
+
+(define (binding-submap parent key)
+  (let ((entry (find (lambda (entry)
+                       (and (eq? parent (car entry))
+                            (string=? key (cadr entry))))
+                     %binding-submaps)))
+    (and entry (caddr entry))))
+
+(define (copy-binding-submaps! source target)
+  (for-each (lambda (entry)
+              (when (eq? source (car entry))
+                (set-binding-submap! target (cadr entry) (caddr entry))))
+            (list-copy %binding-submaps)))
 
 (define (set-binding-doc! keymap key doc)
   (let ((tbl (or (hash-ref %binding-docs keymap)
@@ -119,6 +153,8 @@ right after the prefix key (C-t). THUNK may also be a keymap made with
 up in it. DOC, when given, is a one-line description shown by the ?
 which-key echo and describe-key."
   (hash-set! %prefix-bindings key thunk)
+  (when (hash-table? thunk)
+    (set-binding-submap! %prefix-bindings key thunk))
   (when doc (set-binding-doc! %prefix-bindings key doc)))
 
 (define (keymap-help-string km)
@@ -421,7 +457,8 @@ focused client), #f otherwise."
 ;; Global: super+q quits outright (kept as an escape hatch outside the
 ;; prefix, mirroring many StumpWM configs' emergency exit).
 (bind-key! '(super) "q"
-           (lambda () (wm-quit)))
+           (lambda () (wm-quit))
+           "emergency compositor quit")
 
 ;; The terminal is the only application launcher in the portable default.
 (define (terminal-command)
@@ -1323,15 +1360,20 @@ refresh)."
 ;; Hardware/media keys work without the prefix. All of these just spawn
 ;; shell commands and are harmless no-ops if the tool isn't installed.
 (bind-key! '() "XF86MonBrightnessUp"
-           (lambda () (wm-spawn "brightnessctl set +5%")))
+           (lambda () (wm-spawn "brightnessctl set +5%"))
+           "increase brightness 5%")
 (bind-key! '() "XF86MonBrightnessDown"
-           (lambda () (wm-spawn "brightnessctl set 5%-")))
+           (lambda () (wm-spawn "brightnessctl set 5%-"))
+           "decrease brightness 5%")
 (bind-key! '() "XF86AudioRaiseVolume"
-           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")))
+           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"))
+           "increase volume 5%")
 (bind-key! '() "XF86AudioLowerVolume"
-           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")))
+           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"))
+           "decrease volume 5%")
 (bind-key! '() "XF86AudioMute"
-           (lambda () (wm-spawn "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")))
+           (lambda () (wm-spawn "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"))
+           "toggle audio mute")
 
 ;; ---------------------------------------------------------------------
 ;; Portable prefix map
@@ -1358,6 +1400,7 @@ refresh)."
   "Replace the accumulated development bindings with the release default."
   (set! %prefix-bindings (make-hash-table))
   (set! %binding-docs (make-hash-table))
+  (set! %binding-submaps '())
   (for-each
    (lambda (entry)
      (let ((key (car entry)) (direction (cadr entry)))
@@ -1403,7 +1446,8 @@ refresh)."
      (lambda ()
        (echo (echo-windows-string))
        window-map)
-     "window commands"))
+     "window commands")
+    (set-binding-submap! %prefix-bindings "w" window-map))
   (bind-portable-key! "f"
          (make-documented-keymap
           "h" (lambda () (guard-manual-tiling split-frame-horizontal!)) "split horizontally"
@@ -1433,7 +1477,8 @@ refresh)."
        (show-frame-overlays!)
        (wm-run-after 2000 clear-frame-overlays!)
        frame-map)
-     "frame commands"))
+     "frame commands")
+    (set-binding-submap! %prefix-bindings "f" frame-map))
   (bind-portable-key! "g"
          (make-documented-keymap
           "n" switch-to-next-group! "next group"
@@ -1513,6 +1558,7 @@ reload baseline. Call once after adding imperative user bindings."
      (configuration-bindings config))
     ;; No validation or allocation that can reasonably fail remains after
     ;; this point: publish the complete candidate as one short commit step.
+    (copy-binding-submaps! %prefix-bindings candidate)
     (set! %prefix-bindings candidate)
     (hash-set! %binding-docs candidate candidate-docs)
     (set-prefix-key! (configuration-prefix-modifiers config)

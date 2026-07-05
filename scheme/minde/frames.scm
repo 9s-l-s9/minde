@@ -193,9 +193,15 @@
 (define %current-head-id 0)
 (define %last-head-id 0)
 
-(define (heads) %heads)
-(define (head-mode) %head-mode)
-(define (current-head-id) %current-head-id)
+(define (heads)
+  "Returns the effective output heads as (id x y width height) lists."
+  %heads)
+(define (head-mode)
+  "Returns the current output layout mode: 'per-head or 'span."
+  %head-mode)
+(define (current-head-id)
+  "Returns the identifier of the currently focused output head."
+  %current-head-id)
 (define (head-rect hid) (assv hid %heads))
 
 ;; The root of the frame tree -- either a <frame> or a <split> whose leaves
@@ -217,7 +223,9 @@
 (define %last-output-w 1280)
 (define %last-output-h 720)
 
-(define (current-output-size) (list %last-output-w %last-output-h))
+(define (current-output-size)
+  "Returns the current head's usable (width height)."
+  (list %last-output-w %last-output-h))
 
 ;; The group whose tree/current-frame are currently loaded into
 ;; %frame-tree/%current-frame above. (minde groups) bootstraps its
@@ -225,14 +233,19 @@
 ;; here needs to know about groups plural.
 (define %active-group (make-group "default" %frame-tree %current-frame))
 
-(define (current-group) %active-group)
+(define (current-group)
+  "Returns the active group record."
+  %active-group)
 
-(define (current-tree) %frame-tree)
+(define (current-tree)
+  "Returns the active group's live frame tree on the current head."
+  %frame-tree)
 
 ;; Creates a fresh, empty, single-frame group of the given size. Building
 ;; a <group>/<frame> record is pure data construction -- no wm-* calls --
 ;; so this is safe to use at module load time too.
 (define (make-empty-group name w h)
+  "Returns a new group named NAME with one empty W by H frame."
   (let ((f (make-frame 0 0 w h '() #f)))
     (make-group name f f)))
 
@@ -250,6 +263,7 @@
 ;; (minde groups)'s switch-to-group!) are expected to park the outgoing
 ;; group's windows first and call sync-frames! afterwards.
 (define (activate-group! g)
+  "Loads G into the live frame state without parking or synchronizing windows."
   (unless (eq? g %active-group)
     (flush-active-group!)
     (load-head-into-group! g %current-head-id)
@@ -265,6 +279,7 @@
 
 ;; Every tree of G, across all heads (the live/loaded one first).
 (define (group-all-trees g)
+  "Returns every frame tree owned by G, with its loaded tree first."
   (cons (if (eq? g %active-group) %frame-tree (group-tree g))
         (hash-map->list (lambda (hid pair) (car pair)) (group-heads g))))
 
@@ -342,7 +357,9 @@ becomes the live tree (StumpWM screen focus)."
           (focus-head! (list-ref ids (modulo (+ idx dir) n)))))))
 
 (define (focus-next-head!) (shift-head! 1))
-(define (focus-previous-head!) (shift-head! -1))
+(define (focus-previous-head!)
+  "Focuses the previous output head in display order."
+  (shift-head! -1))
 
 (define (focus-last-head!)
   "Toggles to the previously focused head (StumpWM sother)."
@@ -442,6 +459,7 @@ and 'span (one tree over the union of all monitors)."
 ;; Moves every window tracked by G (active or not) off-screen, without
 ;; touching focus. Used when a group is about to be hidden.
 (define (park-group-windows! g)
+  "Moves every tiled and floating window in G off screen."
   (for-each
    (lambda (frame)
      (for-each
@@ -459,6 +477,7 @@ and 'span (one tree over the union of all monitors)."
 
 ;; Total window count tracked by G (active or not), across all heads.
 (define (group-window-count g)
+  "Returns the number of tiled and floating windows owned by G."
   (+ (length (group-floats g))
      (apply + (map (lambda (f) (length (frame-window-ids f)))
                    (append-map frame-leaves (group-all-trees g))))))
@@ -468,6 +487,7 @@ and 'span (one tree over the union of all monitors)."
 ;; on-screen with stale geometry; see move-window-to-next-group! in
 ;; (minde groups)).
 (define (hide-window! id)
+  "Moves window ID off screen without changing frame bookkeeping or focus."
   (wm-place-window id %offscreen-x %offscreen-y (frame-w %current-frame) (frame-h %current-frame)))
 
 ;; ---------------------------------------------------------------------
@@ -500,6 +520,7 @@ and 'span (one tree over the union of all monitors)."
 (define %message-history '())
 
 (define (last-message)
+  "Returns the most recent compositor message, or #f if none was emitted."
   (and (pair? %message-history) (car %message-history)))
 
 (define (echo text)
@@ -524,6 +545,7 @@ wm-message (or under the test stubs)."
 
 ;; Collects all leaf frames, left/top-to-right/bottom-most first.
 (define (frame-leaves node)
+  "Returns NODE's leaf frames in top-to-bottom, left-to-right tree order."
   (if (frame-node? node)
       (list node)
       (append (frame-leaves (split-child-a node))
@@ -558,6 +580,7 @@ wm-message (or under the test stubs)."
 (define %window-titles (make-hash-table))
 
 (define (window-title id)
+  "Returns the remembered display title for window ID."
   (let ((e (hash-ref %window-titles id)))
     (if e (car e) (format #f "window ~a" id))))
 
@@ -567,10 +590,12 @@ wm-message (or under the test stubs)."
     (and e (not (string-null? (cdr e))) (cdr e))))
 
 (define (forget-window-title! id)
+  "Removes window ID's remembered client and user-supplied titles."
   (hash-remove! %window-titles id)
   (hash-remove! %renamed-windows id))
 
 (define (remember-window-title! id title app-id)
+  "Stores TITLE and APP-ID metadata for window ID."
   (let ((class (if (string? app-id) app-id "")))
     (hash-set! %window-titles id
                (cons (if (and (string? title) (not (string-null? title)))
@@ -605,6 +630,7 @@ refreshes the bookkeeping, keeping a rename-window! title override."
 (define %window-numbers (make-hash-table))
 
 (define (window-number id)
+  "Returns window ID's group-local selection number, or #f."
   (hash-ref %window-numbers id))
 
 ;; TREE may also be a LIST of trees (e.g. group-all-trees output), so
@@ -628,6 +654,7 @@ refreshes the bookkeeping, keeping a rename-window! title override."
   (hash-set! %window-numbers id (smallest-free (used-numbers-in tree id))))
 
 (define (forget-window-number! id)
+  "Removes the group-local selection number assigned to window ID."
   (hash-remove! %window-numbers id))
 
 (define (ensure-unique-window-number! id tree)
@@ -736,6 +763,7 @@ window just gets float focus (and comes to the top of the float stack)."
               (sync-frames!)))))))
 
 (define (frame-add-window! frame id)
+  "Appends window ID to FRAME and makes it FRAME's current window."
   (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
   (set-frame-current-window! frame id))
 
@@ -743,6 +771,7 @@ window just gets float focus (and comes to the top of the float stack)."
 ;; most one). Returns #t if it was found and removed. Generic over any
 ;; tree so (minde groups) can search hidden groups' trees too.
 (define (remove-window-from-tree-in! tree id)
+  "Removes ID from TREE and returns whether it was present."
   (let ((found #f))
     (for-each
      (lambda (frame)
@@ -759,21 +788,26 @@ window just gets float focus (and comes to the top of the float stack)."
 ;; Removes ID from the active group's trees (any head). Returns #t if
 ;; found, in which case the active group is re-synced.
 (define (remove-window-from-active-tree! id)
+  "Removes ID from any active-group head tree, synchronizing on success."
   (let ((found (any (lambda (t) (remove-window-from-tree-in! t id))
                     (group-all-trees %active-group))))
     (when found (sync-frames!))
     found))
 
 (define (current-frame-window)
+  "Returns the current frame's selected window identifier, or #f."
   (frame-current-window %current-frame))
 
 ;; The live current frame itself -- for callers ((minde groups)'
 ;; window moves, init.scm's frame-windowlist) that must target it;
 ;; the active group's group-current-frame field can be stale between
 ;; flushes.
-(define (current-frame) %current-frame)
+(define (current-frame)
+  "Returns the live current frame record."
+  %current-frame)
 
 (define (current-frame-window-ids)
+  "Returns the window identifiers assigned to the live current frame."
   (frame-window-ids %current-frame))
 
 ;; ---------------------------------------------------------------------
@@ -793,9 +827,11 @@ window just gets float focus (and comes to the top of the float stack)."
 (define %focused-float #f)
 
 (define (window-floating? id)
+  "Returns true when window ID has managed floating geometry."
   (and (hash-ref %floating id) #t))
 
 (define (float-geometry id)
+  "Returns floating window ID's (x y width height), or #f."
   (hash-ref %floating id))
 
 (define (set-float-geometry! id rect)
@@ -917,7 +953,9 @@ authoritative and treat the dragged float as focused/topmost."
 
 (define %ontop-windows '())
 
-(define (ontop-windows) %ontop-windows)
+(define (ontop-windows)
+  "Returns the window identifiers marked always-on-top."
+  %ontop-windows)
 
 (define (toggle-always-on-top!)
   "Toggles the focused window's always-on-top flag."
@@ -933,6 +971,7 @@ authoritative and treat the dragged float as focused/topmost."
           (sync-frames!)))))
 
 (define (clear-ontop! id)
+  "Removes window ID's always-on-top state."
   (set! %ontop-windows (delete id %ontop-windows)))
 
 (define (raise-ontop!)
@@ -950,7 +989,9 @@ authoritative and treat the dragged float as focused/topmost."
 
 (define %sticky-windows '())
 
-(define (sticky-windows) %sticky-windows)
+(define (sticky-windows)
+  "Returns the window identifiers configured to follow group switches."
+  %sticky-windows)
 
 (define (toggle-always-show!)
   "Toggles whether the focused window follows every group switch
@@ -965,6 +1006,7 @@ authoritative and treat the dragged float as focused/topmost."
                    (echo (format #f "~a: always shown" (window-title id))))))))
 
 (define (clear-sticky! id)
+  "Removes window ID's always-show state."
   (set! %sticky-windows (delete id %sticky-windows)))
 
 ;; ---------------------------------------------------------------------
@@ -1341,6 +1383,7 @@ current-frame-index)."
   (dump-tree %frame-tree %current-frame))
 
 (define (dump-group-frames g)
+  "Returns a dump-frames snapshot for group G."
   (if (eq? g %active-group)
       (dump-frames)
       (dump-tree (group-tree g) (group-current-frame g))))
@@ -1425,6 +1468,7 @@ near its top-left corner."
       (loop (cdr leaves) (+ n 1)))))
 
 (define (clear-frame-overlays!)
+  "Removes all numbered frame overlays from the compositor."
   (rust-call 'wm-clear-overlays))
 
 (define (focus-frame-by-index! n)
@@ -1457,6 +1501,7 @@ near its top-left corner."
 (define %expose-saved #f)
 
 (define (chain-spec orientation k)
+  "Returns a layout spec containing K leaves split along ORIENTATION."
   (if (<= k 1)
       'leaf
       (list (if (eq? orientation 'horizontal) 'hsplit 'vsplit)
@@ -1522,9 +1567,11 @@ window that was shown in grid cell N (#f = just restore)."
     top-left top-right bottom-left bottom-right))
 
 (define (window-unmaximized? id)
+  "Returns true when tiled window ID is using an unmaximized gravity."
   (and (hash-ref %unmaximized id) #t))
 
 (define (clear-unmaximized! id)
+  "Removes window ID's unmaximized gravity state."
   (hash-remove! %unmaximized id))
 
 (define (unmaximized-rect frame id)
@@ -1602,6 +1649,7 @@ window')."
 ;; All window ids in the active group, in frame order. This is the
 ;; "buffer list" that focus-next-window!/pull-hidden-next! cycle through.
 (define (all-window-ids)
+  "Returns all active-group window identifiers in frame then float order."
   (append (append-map frame-window-ids (active-leaves))
           (group-floats %active-group)))
 
@@ -1613,6 +1661,7 @@ window')."
 
 ;; The head id whose tree holds window ID in the active group, or #f.
 (define (head-of-window id)
+  "Returns the active-group head containing tiled window ID, or #f."
   (if (find (lambda (f) (member id (frame-window-ids f)))
             (frame-leaves %frame-tree))
       %current-head-id
@@ -1740,7 +1789,9 @@ last hidden window instead of the first."
 
 (define %marked-windows '())
 
-(define (marked-windows) %marked-windows)
+(define (marked-windows)
+  "Returns the identifiers of currently marked windows."
+  %marked-windows)
 
 (define (mark-window-toggle!)
   "Toggles the mark on the current window and echoes the result."
@@ -1753,10 +1804,12 @@ last hidden window instead of the first."
                  (echo (format #f "marked ~a" (window-title id))))))))
 
 (define (clear-marks!)
+  "Clears every window mark and reports the change."
   (set! %marked-windows '())
   (echo "marks cleared"))
 
 (define (unmark-window! id)
+  "Removes the mark from window ID."
   (set! %marked-windows (delete id %marked-windows)))
 
 (define (pull-marked!)
@@ -1913,8 +1966,12 @@ the frame shows empty -- StumpWM fclear)."
       (set! %current-frame first-leaf)
       (sync-frames!))))
 
-(define (hsplit-equally! n) (split-equally! 'horizontal n))
-(define (vsplit-equally! n) (split-equally! 'vertical n))
+(define (hsplit-equally! n)
+  "Replaces the current frame with N equally wide frames."
+  (split-equally! 'horizontal n))
+(define (vsplit-equally! n)
+  "Replaces the current frame with N equally tall frames."
+  (split-equally! 'vertical n))
 
 (define (close-current-window!)
   "Requests the focused window (float or current frame's window) be
@@ -1969,7 +2026,9 @@ and re-syncs the active group."
 ;; groups) uses it to keep the status-line file for external bars (eww)
 ;; current without frames.scm having to know about groups or bars.
 (define %sync-hook #f)
-(define (set-sync-hook! proc) (set! %sync-hook proc))
+(define (set-sync-hook! proc)
+  "Sets PROC to run after every completed frame synchronization."
+  (set! %sync-hook proc))
 
 (define (sync-frames-now!)
   "Walks every head's frame tree of the active group, placing each
@@ -2057,7 +2116,9 @@ syncs, restoring the frame layout."
 ;; Window id currently fullscreen, or #f. Only ever one at a time.
 (define %fullscreen-window #f)
 
-(define (fullscreen-window) %fullscreen-window)
+(define (fullscreen-window)
+  "Returns the fullscreen window identifier, or #f."
+  %fullscreen-window)
 
 (define (fullscreen!)
   "Toggles fullscreen on the current window (StumpWM fullscreen). While
@@ -2108,7 +2169,9 @@ kill-window) -- vs. close-current-window!'s polite xdg close."
 ;; (minde groups) since the window may be parked in a hidden group.
 (define %urgent-windows '())
 
-(define (urgent-windows) %urgent-windows)
+(define (urgent-windows)
+  "Returns urgent window identifiers in notification order."
+  %urgent-windows)
 
 (define (add-urgent-window! id)
   "Records ID as urgent, fires the 'urgent-window hook, and echoes it.
@@ -2123,6 +2186,7 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
                                       (number->string id)))))
 
 (define (clear-urgent! id)
+  "Removes window ID from the urgent-window set."
   (set! %urgent-windows (delete id %urgent-windows)))
 
 ;; ---------------------------------------------------------------------

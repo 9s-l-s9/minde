@@ -30,6 +30,11 @@ shims or migration notes.
 - Deterministic tree/geometry/serialization properties, Rust input/output and
   rendering tests, a structured application matrix, a reduced-keymap nested
   scenario, and a bounded RSS-reporting soak runner.
+- Source-generated API and keymap inventories, a command/demo manifest, an
+  offline HTML field manual, and deterministic WebM/poster/transcript capture
+  for every registered command.
+- Source-owned descriptions for all 274 bindings exported by the eight public
+  Scheme modules, including explicit metadata for record accessors and values.
 
 ### Changed
 
@@ -58,3 +63,8 @@ shims or migration notes.
   artifact directories in the source derivation.
 - Pointer clamping now handles negative, vertical, gapped, and non-uniform
   output arrangements instead of assuming one horizontal strip.
+- The monolithic README is now an overview backed by focused tutorial,
+  configuration, concepts, IPC/Eww, debugging, architecture, security,
+  hardware, support, keymap, and demonstration guides.
+- The end-to-end target now reports a missing `foot` dependency before entering
+  the run-prompt scenario.

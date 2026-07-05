@@ -67,7 +67,9 @@ current value, allowing this module to run without a compositor."
 ;; in-memory only).
 (define %histories (make-hash-table))
 
-(define (input-active?) (and %current #t))
+(define (input-active?)
+  "Returns true while a one-line input prompt owns keyboard input."
+  (and %current #t))
 
 (define* (read-one-line prompt on-submit
                         #:key (completions '()) (initial "") (history 'default)
@@ -224,6 +226,7 @@ newlines collapse to spaces since the prompt is a single line."
     (cb line)))
 
 (define (input-abort!)
+  "Closes the active prompt and invokes its optional abort callback."
   (let ((cb (and %current (in-on-abort %current))))
     (set! %current #f)
     (%set-key-repeat #f)

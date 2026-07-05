@@ -29,13 +29,16 @@
 ;; add-hook!/run-hook, which operate on <hook> objects.)
 (define %hooks (foundation:make-hook-registry))
 
-(define (event-hook-procedures name) (foundation:event-hook-procedures %hooks name))
+(define (event-hook-procedures name)
+  "Returns the compositor event-hook procedures registered for NAME."
+  (foundation:event-hook-procedures %hooks name))
 
 (define (add-event-hook! name proc)
   "Registers PROC to run when hook NAME fires."
   (foundation:add-hook! %hooks name proc))
 
 (define (remove-event-hook! name proc)
+  "Removes PROC from compositor event hook NAME."
   (foundation:remove-hook! %hooks name proc))
 
 (define (run-event-hook! name . args)

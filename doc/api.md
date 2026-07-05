@@ -1,6 +1,6 @@
 # Scheme API contract
 
-Sprint 3 establishes the module boundary below. Names use lower-case
+The intended module boundary is below. Names use lower-case
 kebab-case; predicates end in `?`, state-changing procedures end in `!`, and
 compositor event entry points begin with `handle-`.
 
@@ -18,6 +18,26 @@ compositor event entry points begin with `handle-`.
 The modules under `(minde compositor ...)` are implementation details.
 Rust-to-Scheme handlers are also an internal compositor boundary, not user
 configuration API.
+
+The generated inventory in [`generated/api-reference.md`](generated/api-reference.md)
+enumerates the actual Guile interfaces rather than copying this table. It
+currently demonstrates that `(minde frames)` exposes too much internal
+state; those bindings remain visible until they are moved under
+`(minde compositor ...)`.
+
+## Source documentation contract
+
+Procedure descriptions live beside their definitions as Guile docstrings.
+The generator parses source forms directly, including `define*` argument names,
+so output is independent of Guile's compiled-module cache. A complete public
+description records the signature, result, side effects, errors, one executable
+example, stability, and whether the operation is visual. Command demo IDs come
+from the command registry rather than from prose.
+
+Bindings without a source description are emitted as explicit debt. Generated
+documentation must never silently omit an export or invent behavior from its
+name. Non-procedure values and record accessors need adjacent source metadata
+or a narrower public interface before the zero-debt gate can be enabled.
 
 ## Commands
 

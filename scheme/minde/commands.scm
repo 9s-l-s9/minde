@@ -32,6 +32,18 @@
   (documentation command-documentation)
   (demo-id command-demo-id))
 
+;; Source documentation for SRFI-9 syntax bindings, which cannot carry Guile
+;; procedure docstrings.  The API generator reads this adjacent metadata.
+(define %api-binding-documentation
+  '((command? . "Returns true when RECORD is a command metadata record.")
+    (command-name . "Returns RECORD's canonical command name symbol.")
+    (command-procedure . "Returns the procedure invoked by command RECORD.")
+    (command-arguments . "Returns RECORD's ordered command argument names.")
+    (command-category . "Returns RECORD's command category symbol.")
+    (command-summary . "Returns RECORD's concise user-facing summary.")
+    (command-documentation . "Returns RECORD's full user-facing documentation.")
+    (command-demo-id . "Returns RECORD's scripted demonstration identifier.")))
+
 (define %commands (make-hash-table))
 
 (define (canonical-command-name? name)
@@ -60,16 +72,23 @@
     (hash-set! %commands name command)
     command))
 
-(define (clear-command-registry!) (set! %commands (make-hash-table)))
-(define (command-ref name) (hash-ref %commands name))
+(define (clear-command-registry!)
+  "Removes every command from the process-local registry."
+  (set! %commands (make-hash-table)))
+(define (command-ref name)
+  "Returns the registered command named NAME, or #f."
+  (hash-ref %commands name))
 (define (command-name<? a b)
   (string<? (symbol->string a) (symbol->string b)))
 (define (command-names)
+  "Returns every registered command name in lexical order."
   (sort (hash-map->list (lambda (name _) name) %commands) command-name<?))
 (define (commands-in-category category)
+  "Returns registered command records whose category is CATEGORY."
   (filter (lambda (command) (eq? category (command-category command)))
           (map command-ref (command-names))))
 (define (invoke-command name . arguments)
+  "Invokes command NAME with ARGUMENTS after validating existence and arity."
   (let ((command (command-ref name)))
     (unless command (error "unknown command" name))
     (unless (= (length arguments) (length (command-arguments command)))

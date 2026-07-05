@@ -58,7 +58,7 @@ nested_start() {
     cargo build >"$NESTED_OUT/build.log" 2>&1 || return 1
     MINDE_INIT="$PWD/scheme/init.scm" \
         MINDE_SCHEME_DIR="$PWD/scheme" \
-        MINDE_CONFIG="$PWD/tests/e2e-config.scm" \
+        MINDE_CONFIG="${MINDE_NESTED_CONFIG:-$PWD/tests/e2e-config.scm}" \
         MINDE_RULES_FILE="$NESTED_OUT/rules.scm" \
         MINDE_LAYOUTS_FILE="$NESTED_OUT/layouts.scm" \
         ./target/debug/minde --winit >"$NESTED_LOG" 2>&1 &
