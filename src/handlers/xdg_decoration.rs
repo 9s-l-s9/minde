@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! xdg-decoration: always request server-side decorations so tiled clients
 //! (foot, alacritty, ...) don't draw their own titlebars. We don't actually
 //! render any decoration -- in a frame-tiled WM there is nothing to draw.

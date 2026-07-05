@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Shared render-element plumbing used by both the winit (nested) and udev
 //! (DRM/TTY) backends: the `MindeRenderElements` enum, the
 //! focused-window border builder, and a small cursor element helper
@@ -66,9 +68,9 @@ impl BorderBuffers {
         // Drawn *inside* the rectangle: a frame filling the whole output
         // would otherwise have its border entirely off-screen.
         let rects = [
-            ((x, y), (w, t)),             // top
-            ((x, y + h - t), (w, t)),     // bottom
-            ((x, y + t), (t, h - 2 * t)), // left
+            ((x, y), (w, t)),                     // top
+            ((x, y + h - t), (w, t)),             // bottom
+            ((x, y + t), (t, h - 2 * t)),         // left
             ((x + w - t, y + t), (t, h - 2 * t)), // right
         ];
         let mut out = Vec::with_capacity(4);
@@ -154,7 +156,12 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
         }
     }
 
-    let cols = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1).max(1) as i32;
+    let cols = lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(1)
+        .max(1) as i32;
     let w = cols * advance + 2 * inset;
     let h = lines.len() as i32 * line_h + 2 * inset;
 
@@ -167,7 +174,17 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
                 || y < MESSAGE_BORDER
                 || x >= w - MESSAGE_BORDER
                 || y >= h - MESSAGE_BORDER;
-            put_px(&mut data, stride, x, y, if border { MESSAGE_BORDER_COLOR } else { MESSAGE_BG });
+            put_px(
+                &mut data,
+                stride,
+                x,
+                y,
+                if border {
+                    MESSAGE_BORDER_COLOR
+                } else {
+                    MESSAGE_BG
+                },
+            );
         }
     }
 
@@ -184,10 +201,15 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
                         continue;
                     }
                     let (px, py) = (gx + bx, gy + by);
-                    if px < MESSAGE_BORDER || py < MESSAGE_BORDER || px >= w - MESSAGE_BORDER || py >= h - MESSAGE_BORDER {
+                    if px < MESSAGE_BORDER
+                        || py < MESSAGE_BORDER
+                        || px >= w - MESSAGE_BORDER
+                        || py >= h - MESSAGE_BORDER
+                    {
                         continue;
                     }
-                    let blend = |f: u8, b: u8| ((f as u32 * cov + b as u32 * (255 - cov)) / 255) as u8;
+                    let blend =
+                        |f: u8, b: u8| ((f as u32 * cov + b as u32 * (255 - cov)) / 255) as u8;
                     let rgba = [
                         blend(MESSAGE_FG[0], MESSAGE_BG[0]),
                         blend(MESSAGE_FG[1], MESSAGE_BG[1]),
@@ -209,7 +231,11 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
         None,
     );
 
-    MessageState { buffer, size: (w, h), generation }
+    MessageState {
+        buffer,
+        size: (w, h),
+        generation,
+    }
 }
 
 /// Builds the render element showing `msg` centered on an output of

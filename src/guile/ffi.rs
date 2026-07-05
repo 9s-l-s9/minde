@@ -54,7 +54,6 @@ unsafe extern "C" {
 
     pub fn scm_call_0(proc: Scm) -> Scm;
     pub fn scm_call_1(proc: Scm, arg1: Scm) -> Scm;
-    pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
     pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
     pub fn scm_call_4(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm) -> Scm;
     pub fn scm_call_5(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm, arg5: Scm) -> Scm;
@@ -68,8 +67,6 @@ unsafe extern "C" {
     pub fn scm_from_int64(x: i64) -> Scm;
     pub fn scm_to_int64(x: Scm) -> i64;
 
-    /// Builds a two-element list `(a b)`.
-    pub fn scm_list_2(a: Scm, b: Scm) -> Scm;
     pub fn scm_list_4(a: Scm, b: Scm, c: Scm, d: Scm) -> Scm;
     /// `(cons a b)` -- for building lists of arbitrary length from Rust.
     pub fn scm_cons(a: Scm, b: Scm) -> Scm;

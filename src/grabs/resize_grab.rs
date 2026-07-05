@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Resize grab is the state of a composer during which the client window is being resized.
 //!
 //! eg. Usually whenever a user clicks on the app's border and starts dragging, the compositors
@@ -8,12 +10,13 @@ use smithay::{
     desktop::{Space, Window},
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-        GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
-        PointerInnerHandle, RelativeMotionEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
+        MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface,
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::{Logical, Point, Rectangle, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
@@ -67,7 +70,10 @@ impl ResizeSurfaceGrab {
         // configure and never enter the commit dance.
         if let Some(toplevel) = window.toplevel() {
             ResizeSurfaceState::with(toplevel.wl_surface(), |state| {
-                *state = ResizeSurfaceState::Resizing { edges, initial_rect };
+                *state = ResizeSurfaceState::Resizing {
+                    edges,
+                    initial_rect,
+                };
             });
         }
 
@@ -126,8 +132,16 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
 
-        let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
-        let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
+        let max_width = if max_size.w == 0 {
+            i32::MAX
+        } else {
+            max_size.w
+        };
+        let max_height = if max_size.h == 0 {
+            i32::MAX
+        } else {
+            max_size.h
+        };
 
         self.last_window_size = Size::from((
             new_window_width.max(min_width).min(max_width),
@@ -215,7 +229,11 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         handle.axis(data, details)
     }
 
-    fn frame(&mut self, data: &mut MindeState, handle: &mut PointerInnerHandle<'_, MindeState>) {
+    fn frame(
+        &mut self,
+        data: &mut MindeState,
+        handle: &mut PointerInnerHandle<'_, MindeState>,
+    ) {
         handle.frame(data);
     }
 
@@ -334,8 +352,14 @@ impl ResizeSurfaceState {
 
     fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
         match *self {
-            Self::Resizing { edges, initial_rect } => Some((edges, initial_rect)),
-            Self::WaitingForLastCommit { edges, initial_rect } => {
+            Self::Resizing {
+                edges,
+                initial_rect,
+            } => Some((edges, initial_rect)),
+            Self::WaitingForLastCommit {
+                edges,
+                initial_rect,
+            } => {
                 // The resize is done, let's go back to idle
                 *self = Self::Idle;
 
@@ -352,7 +376,11 @@ pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<(
         .elements()
         // Pointer resize grabs only ever start on xdg toplevels; X11
         // windows (toplevel() == None) can't match here.
-        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+        .find(|w| {
+            w.toplevel()
+                .map(|t| t.wl_surface() == surface)
+                .unwrap_or(false)
+        })
         .cloned()?;
 
     let mut window_loc = space.element_location(&window)?;

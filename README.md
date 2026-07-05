@@ -16,6 +16,17 @@ Pinned Smithay revision: `3021f619e2ae4dab8bfb1e21f3f210923b9b6582`
 (post-0.7.0, edition-2024 `master`; no crates.io release matches this
 example's API yet, hence the git dependency in `Cargo.toml`).
 
+## License and support
+
+Project-owned code is licensed under GPL-3.0-or-later. Code adapted from
+Smithay examples remains available under the MIT license; exact provenance is
+recorded in [NOTICE](NOTICE). The complete texts are in [LICENSES](LICENSES),
+with [COPYING](COPYING) describing how they apply.
+
+This is a pre-1.0 project maintained by one person. See [SUPPORT.md](SUPPORT.md)
+for the support scope, [SECURITY.md](SECURITY.md) for private vulnerability
+reporting, and [CONTRIBUTING.md](CONTRIBUTING.md) for local verification.
+
 ## Build / run
 
 This is a Guix project; the manifest pins Rust, Guile 3.0, and Smithay's
@@ -35,6 +46,15 @@ profile).
 
 ## Scheme layer
 
+Reusable Guile code is split into two independently testable packages:
+`guile-minde-foundation` provides geometry, binary trees, serialization,
+hooks, and key notation; `guile-minde-ui` provides prompt and menu state
+machines with injected display operations. Run `make check-foundation` and
+`make check-ui` without a display, or build their Guix definitions from
+`guix/foundation.scm` and `guix/ui.scm`.
+The module inventory and adapter contract are documented in
+[`doc/reusable-packages.md`](doc/reusable-packages.md).
+
 On startup the compositor calls `scm_init_guile()` on the main thread,
 registers a few Rust-backed primitives, then loads `scheme/init.scm`
 (override the path with `MINDE_INIT=/path/to/init.scm`).
@@ -51,51 +71,35 @@ client) with `(mods-bitmask keysym keysym-name)`; returning `#t` consumes
 the key. Modifier bits mirror common X11 masks: shift=1, ctrl=4, alt=8,
 super=64.
 
-Key bindings are StumpWM-style behind a prefix (default: `Print`, like
-the author's StumpWM; change with `(set-prefix-key! '(ctrl) "t")`).
+Key bindings use a prefix-only map (portable default: `C-t`; change it in the
+declarative configuration).
 Pressing the prefix key again forwards it literally to the client.
 Prefix map (see `scheme/init.scm`):
 
 | key | action | | key | action |
 |-----|--------|-|-----|--------|
-| `Return` | terminal (alacritty) | | `r` | run prompt (native, TAB-completes PATH) |
-| `b` | browser (zen/chromium) | | `e` / `E` | lem / emacsclient |
-| `v` / `h` | vsplit / hsplit | | `c` | remove split |
-| `n` | next frame | | `f` | next window (group-wide) |
-| `p` | pull next hidden window | | `o` | next window in this frame |
-| `k` / `d` | close window | | `l` | windowlist (menu) |
-| `g` | next group | | `G` | new group |
-| `m` | move window to next group | | `y` | window info echo |
-| `a` | ask AI (prompt + echo) | | `T` | add TODO (prompt) |
-| `w` | voice dictate | | `i` | eww widgets |
-| `A` | agents submap (c/d/o/p) | | `P` | misc submap (s/w/a) |
-| `s` | resize mode (iresize) | | `F` | float/unfloat window |
-| `M-F` | apply layout (prompt) | | `M-g` | switch group (menu) |
-| `0`–`9` | select window by number | | `C-0`–`C-9` | pull window by number |
-| arrows | move focus directionally | | `M-`arrows | move window directionally |
-| `S-`arrows | swap with neighbor frame | | `Tab` / `S-Tab` | last window / last frame |
-| `u` | last group (gother) | | `W` | numbered window list echo |
-| `C` | only (collapse splits) | | `Delete` | fclear (empty this frame) |
-| `C-f` `C-p` `C-n` `C-o` | reverse of f/p/n/o | | `?` | which-key: list bindings |
-| `F1` | describe next key | | `colon` | eval Scheme (prompt) |
-| `C-m` | last message again | | `x` / `M-x` / `C-x` | mark / pull marked / clear |
-| `M-m` | move window + follow | | | |
-| `M-f` | fullscreen toggle | | `K` | kill window (force, drops client) |
-| `B` | banish pointer | | `C-c` | flash current frame |
-| `C-u` | jump to urgent window | | `M-c` | copy last message |
-| `S` | next head (monitor) | | `M-s` | last head (monitor) |
-| `z` | command mode (`RET`/`C-g` exits) | | | |
-| `C-l` | frame windowlist (menu) | | `M-l` | windowlist by class (menu) |
-| `M-p` | pull from windowlist (menu) | | `M-w` | select window by name (prompt) |
-| `M-t` | select floating window (menu) | | `C-r` | redisplay windows |
-| `M-G` | groups submap (see below) | | `M-G d`/`D` | new dynamic group (fg/bg) |
-| `M-G r`/`x` | rotate / exchange with master | | `M-G l`/`S`/`t` | layout / ratio / retile |
-| `j` | fselect: jump to numbered frame | | `M-e` | expose: pick window from grid |
-| `M-o` | sibling frame | | `M-h` / `M-v` | h/vsplit uniformly (prompt) |
-| `C-q` | send next key to window | | `F2` | describe command (prompt) |
-| `F3` | list all commands | | `F4` | describe function (prompt) |
-| `F5` | where-is (doc search) | | `F6` | describe variable (prompt) |
-| `R` | reload init.scm | | `L` / `Q` | lock / quit (asks) |
+| `h/j/k/l` | focus frame | | `H/J/K/L` | move window |
+| `f H/J/K/L` | exchange windows | | `n/N` | next/previous window |
+| `p/P` | pull next/previous hidden | | `0`–`9` | select numbered window |
+| `w 0`–`w 9` | pull numbered window | | `Return` | configured terminal |
+| `r` | run prompt | | `Space` | command palette |
+| `colon` | evaluate Scheme | | `?` | contextual help |
+| `w` | window submap | | `f` | frame submap |
+| `g` | group submap | | `m` | layout/mode submap |
+| `s` | session submap | | | |
+
+Nested direct bindings include `w 0`–`w 9` to pull a numbered window,
+`f 0`–`f 9` to select a numbered frame, and `f H/J/K/L` to exchange windows
+between frames. Entering `w` displays the numbered window list; entering `f`
+draws numbered frame overlays. `?` while any map is armed shows that map's
+documented keys.
+
+Set `MINDE_TERMINAL` to select a terminal; the fallback is `foot || xterm`.
+Application launchers, keyboard layout, wallpaper, bars, locks, and autostart
+are intentionally user policy and are not part of the repository default.
+Set `MINDE_FULL_KEYMAP=1` before loading `scheme/init.scm` to retain the
+complete feature-oriented keymap instead of replacing it with the reduced
+portable map. This is intended for established personal configurations.
 
 Xwayland: an embedded X server starts automatically; X11-only apps
 (X-built emacs, xterm, legacy tools) appear as ordinary managed windows
@@ -109,14 +113,14 @@ synced.
 Floating windows: `Print F` toggles the focused window between tiled
 and floating (StumpWM float-this/unfloat-this). Floats keep arbitrary
 geometry, render above the tiling, and move/resize with
-**super+left-drag** / **super+right-drag**. `(gnew-float! "name")`
+**super+left-drag** / **super+right-drag**. `(create-floating-group! "name")`
 creates a group where every window floats on map. Floats stay in the
 windowlist/number/cycling rotation; pulling one (`C-0`–`C-9`,
 pull-marked) re-tiles it into the current frame.
 
 Group management (`Print M-G` submap, StumpWM parity): `n`/`N` create a
 tiling/float group in the background (gnewbg/gnewbg-float — `G` and
-`gnew!` now switch, like StumpWM), `m` merges another group's windows
+`create-group!` now switch, like StumpWM), `m` merges another group's windows
 here (gmerge), `o` kills every other group (gkill-other), `M` moves the
 marked windows to a chosen group (gmove-marked), `f`/`b` take the
 current window to the next/previous group and follow
@@ -134,8 +138,8 @@ all windows through the master position, `s` rotates just the stack,
 position (left/right/top/bottom, per group and head), `S` sets the
 master ratio (0.1–0.9), `t` forces a retile. Colon-callable:
 `(change-default-layout! 'right)`, `(change-default-split-ratio! 1/2)`,
-`hnext!`/`hprev!` (= next/prev head) and
-`fnext-in-head!`/`fprev-in-head!` (= per-head frame cycling — our
+`focus-next-head!`/`focus-previous-head!` (= next/prev head) and
+`focus-next-frame!`/`focus-previous-frame!` (= per-head frame cycling — our
 frames are per-head trees already).
 
 `Print P y` toggles always-show: the window
@@ -189,7 +193,7 @@ windows move to the next group).
 ## Hooks
 
 `(minde hooks)` gives user configs StumpWM-style event hooks:
-`(add-hook!* 'focus-window (lambda (id) ...))`. Fired hooks:
+`(add-event-hook! 'focus-window (lambda (id) ...))`. Fired hooks:
 `new-window (id title app-id)`, `destroy-window (id)`, `focus-window
 (id-or-#f)`, `focus-frame (x y w h)`, `focus-group (name)`, `message
 (text)`. A throwing hook is logged and skipped, never fatal.
@@ -230,7 +234,7 @@ hidden windows, one window per frame is visible at a time.
 
 minde writes `"[I]  II  III | window title"` to
 `$XDG_RUNTIME_DIR/minde-status` whenever it changes (also available
-as `(status-line)` over the REPL socket / `minde-cmd`). `doc/eww/`
+as `(status-line)` over the main-thread IPC socket / `minde-cmd`). `doc/eww/`
 contains a minimal working eww bar consuming it with `deflisten` +
 `tail -F`; because the bar sets a layer-shell exclusive zone, the frame
 tree automatically tiles into the remaining space.
@@ -248,7 +252,7 @@ current frame's window when they close.
 ## Native input prompt
 
 `(read-one-line prompt on-submit #:key completions initial history)` from
-`(minde input)` prompts in the message overlay -- StumpWM's
+`(minde ui prompt)` prompts in the message overlay -- StumpWM's
 `read-one-line`, no external launcher. `Print r/a/T/l/G` use it. Editing
 keys (StumpWM `*input-map*` subset): BackSpace, `C-d`/Delete, `C-f`/`C-b`
 (Right/Left), `M-f`/`M-b` (words), `C-a`/`C-e` (Home/End), `C-k`, `C-u`,
@@ -290,7 +294,7 @@ shows a centered gruvbox echo box rendered in-compositor -- StumpWM's
 message window. Unbound prefix keys, group switches, and `Print y` use
 it. From shell scripts, `minde-msg "text"` / `minde-cmd '(expr)'`
 (installed in the package's `bin/`, or `scripts/` in the repo) talk to
-the running compositor via the REPL socket -- that's how the `a`/`T`/`l`
+the running compositor via main-thread IPC -- that's how the `a`/`T`/`l`
 prompt workflows report back.
 
 Configuration: minde loads `$MINDE_INIT`, else
@@ -339,50 +343,52 @@ guix shell -m manifest.scm -- cargo vendor vendor   # offline crate mirror
 guix build -f guix.scm                              # sanity check
 ```
 
-The package installs `bin/minde-session` (env wrapper: de/bone keymap
-defaults, EGL vendor path, bundled Scheme modules) and
+The package installs `bin/minde-session` (EGL vendor path and bundled
+Scheme modules) and
 `share/wayland-sessions/minde.desktop` for the SDDM menu.
 
-Autostart programs: add commands to `%autostart` in your init.scm — they
-run once when the first output is up (`wm-on-startup`). Media keys
-(brightness/volume) and `C-t L` (swaylock) are bound by default.
+User configuration may replace `handle-startup!`, which runs once when the
+first output is ready. The portable default starts nothing automatically.
+Media keys remain available when their corresponding command-line tools are
+installed.
 
-## Connecting to the REPL
+## Runtime evaluation
 
-`scheme/init.scm` starts a Guile REPL server on a Unix socket at
-`$XDG_RUNTIME_DIR/minde-repl.sock` (or `/tmp/minde-repl.sock` if
-`XDG_RUNTIME_DIR` is unset). Connect with a plain Guile REPL client:
-
-```sh
-guix shell guile -- guile
-scheme@(guile-user)> ,use (system repl server)
-scheme@(guile-user)> (system ("nc" "-U" "/run/user/1000/minde-repl.sock"))
-```
-
-or more simply, with `rlwrap`/`socat`:
+The supported control path is a local Unix socket at
+`$XDG_RUNTIME_DIR/minde-ipc.sock` (or `/tmp/minde-ipc.sock` when the
+runtime directory is unset). Requests are evaluated by calloop on the
+compositor thread, so configuration and window-policy mutation are serialized:
 
 ```sh
-socat readline unix-connect:$XDG_RUNTIME_DIR/minde-repl.sock
+scripts/mindectl eval '(current-group-name)'
+scripts/mindectl eval '(reload-configuration!)'
 ```
 
-From Emacs with Geiser, use `geiser-connect-local` and point it at the
-socket path. Note: the REPL runs in its own Guile-managed thread, so
-mutating compositor state from it isn't synchronized with the main event
-loop -- fine for redefining keybindings interactively, but be aware of
-races if you touch other shared state.
+For exceptional interactive development, `MINDE_UNSAFE_REPL=1` restores
+the old Guile REPL at `$XDG_RUNTIME_DIR/minde-repl.sock`. It is explicitly
+unsafe because it evaluates on a separate thread; do not use it for normal
+automation or state mutation.
 
-## Development: ./check
+## Development checks
 
 One command verifies everything the sandbox can reach:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick foot -- ./check
+guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm \
+  shellcheck -- make check-all
 ```
 
-build + clippy (informational) + a borrow lint (`tests/lint-borrows.sh`,
-guards the layer-map RefCell double-borrow class that once froze the TTY)
-+ all Guile suites + a scripted Xvfb e2e (`tests/e2e.sh`: prompt, TAB
-completion, spawn, reload, splits; screenshots land in /tmp/minde-e2e).
+This runs locked Rust build/tests, formatting, fatal Clippy, ShellCheck, the
+borrow lint (`tests/lint-borrows.sh`), all Guile suites, documentation sanity,
+and the scripted Xvfb e2e. Screenshots and logs land in
+`/tmp/minde-e2e`. `./check` remains a wrapper for the same target.
+
+For a faster implementation loop, enter the Guix shell once and run the
+independent targets separately (or concurrently): `make check-rust`,
+`make check-scheme`, `make check-static`, and `make check-e2e`. Packaging and
+DRM validation are separate gates: `make check-package` and
+`make check-hardware`. The full release roadmap and per-sprint owner checks are
+in `doc/release-roadmap.md`.
 
 What it cannot reach: the udev/DRM backend at runtime. Anything touching
 `src/udev.rs` needs a live `./debug-tty.sh` from a spare VT **before**

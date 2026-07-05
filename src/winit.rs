@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use std::time::Duration;
 
 use smithay::{
@@ -36,7 +38,12 @@ pub fn init_winit(
         },
     );
     let _global = output.create_global::<MindeState>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Flipped180),
+        None,
+        Some((0, 0).into()),
+    );
     output.set_preferred(mode);
 
     state.space.map_output(&output, (0, 0));
@@ -53,117 +60,116 @@ pub fn init_winit(
     // damage tracking incremental).
     let mut border_buffers = BorderBuffers::default();
 
-    event_loop.handle().insert_source(winit, move |event, _, state| {
-        match event {
-            WinitEvent::Resized { size, .. } => {
-                output.change_current_state(
-                    Some(Mode {
-                        size,
-                        refresh: 60_000,
-                    }),
-                    None,
-                    None,
-                    None,
-                );
-                // Re-derive the usable area from the new size (layer
-                // exclusive zones re-arranged inside).
-                state.reported_heads.clear();
-                state.update_usable_area();
-            }
-            WinitEvent::Input(event) => state.process_input_event(event),
-            WinitEvent::Redraw => {
-                let size = backend.window_size();
-                let damage = Rectangle::from_size(size);
-
-                // Border elements around the selected frame (falling back
-                // to the focused window before the first sync).
-                let mut custom: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
-                if let Some(geo) = state.focus_rect.or_else(|| {
-                    state
-                        .focused_window
-                        .as_ref()
-                        .and_then(|w| state.space.element_geometry(w))
-                }) {
-                    custom.extend(border_buffers.elements(geo, 1, state.border_color));
+    event_loop
+        .handle()
+        .insert_source(winit, move |event, _, state| {
+            match event {
+                WinitEvent::Resized { size, .. } => {
+                    output.change_current_state(
+                        Some(Mode {
+                            size,
+                            refresh: 60_000,
+                        }),
+                        None,
+                        None,
+                        None,
+                    );
+                    // Re-derive the usable area from the new size (layer
+                    // exclusive zones re-arranged inside).
+                    state.reported_heads.clear();
+                    state.update_usable_area();
                 }
+                WinitEvent::Input(event) => state.process_input_event(event),
+                WinitEvent::Redraw => {
+                    let size = backend.window_size();
+                    let damage = Rectangle::from_size(size);
 
-                {
-                    let (renderer, mut framebuffer) = backend.bind().unwrap();
-                    // Message overlay, centered, above everything.
-                    if let Some(msg) = state.message.as_ref() {
-                        if let Some(elem) = crate::render::message_element(
-                            &mut *renderer,
-                            msg,
-                            (size.w, size.h),
-                            1,
-                        ) {
+                    // Border elements around the selected frame (falling back
+                    // to the focused window before the first sync).
+                    let mut custom: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
+                    if let Some(geo) = state.focus_rect.or_else(|| {
+                        state
+                            .focused_window
+                            .as_ref()
+                            .and_then(|w| state.space.element_geometry(w))
+                    }) {
+                        custom.extend(border_buffers.elements(geo, 1, state.border_color));
+                    }
+
+                    {
+                        let (renderer, mut framebuffer) = backend.bind().unwrap();
+                        // Message overlay, centered, above everything.
+                        if let Some(msg) = state.message.as_ref()
+                            && let Some(elem) = crate::render::message_element(
+                                &mut *renderer,
+                                msg,
+                                (size.w, size.h),
+                                1,
+                            )
+                        {
                             custom.insert(0, elem);
                         }
-                    }
-                    // Positioned overlays (fselect/expose frame labels).
-                    for (loc, msg) in &state.overlays {
-                        if let Some(elem) = crate::render::overlay_element(
-                            &mut *renderer,
-                            msg,
-                            *loc,
-                            1,
-                        ) {
-                            custom.insert(0, elem);
+                        // Positioned overlays (fselect/expose frame labels).
+                        for (loc, msg) in &state.overlays {
+                            if let Some(elem) =
+                                crate::render::overlay_element(&mut *renderer, msg, *loc, 1)
+                            {
+                                custom.insert(0, elem);
+                            }
                         }
+                        smithay::desktop::space::render_output::<
+                            _,
+                            MindeRenderElements<GlesRenderer>,
+                            _,
+                            _,
+                        >(
+                            &output,
+                            renderer,
+                            &mut framebuffer,
+                            1.0,
+                            0,
+                            [&state.space],
+                            &custom,
+                            &mut damage_tracker,
+                            [0.1, 0.1, 0.1, 1.0],
+                        )
+                        .unwrap();
                     }
-                    smithay::desktop::space::render_output::<
-                        _,
-                        MindeRenderElements<GlesRenderer>,
-                        _,
-                        _,
-                    >(
-                        &output,
-                        renderer,
-                        &mut framebuffer,
-                        1.0,
-                        0,
-                        [&state.space],
-                        &custom,
-                        &mut damage_tracker,
-                        [0.1, 0.1, 0.1, 1.0],
-                    )
-                    .unwrap();
+                    backend.submit(Some(&[damage])).unwrap();
+
+                    state.space.elements().for_each(|window| {
+                        window.send_frame(
+                            &output,
+                            state.start_time.elapsed(),
+                            Some(Duration::ZERO),
+                            |_, _| Some(output.clone()),
+                        )
+                    });
+
+                    // Layer surfaces need frame callbacks too, or clients
+                    // like fuzzel draw once and then never repaint.
+                    for layer in smithay::desktop::layer_map_for_output(&output).layers() {
+                        layer.send_frame(
+                            &output,
+                            state.start_time.elapsed(),
+                            Some(Duration::ZERO),
+                            |_, _| Some(output.clone()),
+                        )
+                    }
+
+                    state.space.refresh();
+                    state.popups.cleanup();
+                    let _ = state.display_handle.flush_clients();
+
+                    // Ask for redraw to schedule new frame.
+                    backend.window().request_redraw();
                 }
-                backend.submit(Some(&[damage])).unwrap();
-
-                state.space.elements().for_each(|window| {
-                    window.send_frame(
-                        &output,
-                        state.start_time.elapsed(),
-                        Some(Duration::ZERO),
-                        |_, _| Some(output.clone()),
-                    )
-                });
-
-                // Layer surfaces need frame callbacks too, or clients
-                // like fuzzel draw once and then never repaint.
-                for layer in smithay::desktop::layer_map_for_output(&output).layers() {
-                    layer.send_frame(
-                        &output,
-                        state.start_time.elapsed(),
-                        Some(Duration::ZERO),
-                        |_, _| Some(output.clone()),
-                    )
+                WinitEvent::CloseRequested => {
+                    state.loop_signal.stop();
                 }
-
-                state.space.refresh();
-                state.popups.cleanup();
-                let _ = state.display_handle.flush_clients();
-
-                // Ask for redraw to schedule new frame.
-                backend.window().request_redraw();
-            }
-            WinitEvent::CloseRequested => {
-                state.loop_signal.stop();
-            }
-            _ => (),
-        };
-    })?;
+                _ => (),
+            };
+        })?;
 
     Ok(())
 }

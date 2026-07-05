@@ -10,6 +10,7 @@ mod handlers;
 
 mod grabs;
 mod input;
+mod ipc;
 mod render;
 mod state;
 mod udev;
@@ -26,16 +27,100 @@ enum Backend {
     Udev,
 }
 
-/// Parses `--tty` / `--winit` from argv; anything else is ignored (no
-/// clap dependency, this is intentionally tiny). Default: auto-detect via
-/// `WAYLAND_DISPLAY`/`DISPLAY` (nested if set, else standalone tty).
-fn parse_backend() -> Backend {
-    for arg in std::env::args().skip(1) {
-        match arg.as_str() {
-            "--tty" => return Backend::Udev,
-            "--winit" => return Backend::Winit,
-            _ => {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendChoice {
+    Auto,
+    Explicit(Backend),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CliAction {
+    Run(BackendChoice),
+    Help,
+    Version,
+    CheckConfig(std::path::PathBuf),
+}
+
+const HELP: &str = "minde - a Guile-configurable Wayland compositor
+
+Usage: minde [OPTION]
+
+Options:
+      --tty      run directly on a DRM/udev/libinput session
+      --winit    run nested in an existing Wayland or X11 session
+      --check-config FILE
+                  validate configuration without starting a compositor
+  -h, --help     print this help and exit
+  -V, --version  print version and build revision, then exit
+";
+
+fn parse_args<I, S>(args: I) -> Result<CliAction, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut backend = BackendChoice::Auto;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        let arg = arg.as_ref();
+        match arg {
+            "-h" | "--help" => return Ok(CliAction::Help),
+            "-V" | "--version" => return Ok(CliAction::Version),
+            "--tty" => set_backend(&mut backend, Backend::Udev)?,
+            "--winit" => set_backend(&mut backend, Backend::Winit)?,
+            "--check-config" => {
+                if backend != BackendChoice::Auto {
+                    return Err(
+                        "--check-config cannot be combined with a backend option".to_owned()
+                    );
+                }
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--check-config requires a file".to_owned())?;
+                if let Some(extra) = args.next() {
+                    return Err(format!(
+                        "unexpected argument after configuration file: {}",
+                        extra.as_ref()
+                    ));
+                }
+                return Ok(CliAction::CheckConfig(std::path::PathBuf::from(
+                    path.as_ref(),
+                )));
+            }
+            _ => return Err(format!("unknown option: {arg}")),
         }
+    }
+    Ok(CliAction::Run(backend))
+}
+
+fn set_backend(choice: &mut BackendChoice, requested: Backend) -> Result<(), String> {
+    match *choice {
+        BackendChoice::Auto => {
+            *choice = BackendChoice::Explicit(requested);
+            Ok(())
+        }
+        BackendChoice::Explicit(current) if current == requested => Err(format!(
+            "option specified more than once: {}",
+            backend_flag(requested)
+        )),
+        BackendChoice::Explicit(current) => Err(format!(
+            "conflicting backend options: {} and {}",
+            backend_flag(current),
+            backend_flag(requested)
+        )),
+    }
+}
+
+fn backend_flag(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Winit => "--winit",
+        Backend::Udev => "--tty",
+    }
+}
+
+fn select_backend(choice: BackendChoice) -> Backend {
+    if let BackendChoice::Explicit(backend) = choice {
+        return backend;
     }
     if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some() {
         Backend::Winit
@@ -45,10 +130,38 @@ fn parse_backend() -> Backend {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let action = match parse_args(std::env::args().skip(1)) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("minde: {error}\nTry 'minde --help' for more information.");
+            std::process::exit(2);
+        }
+    };
+    let backend_choice = match action {
+        CliAction::Help => {
+            print!("{HELP}");
+            return Ok(());
+        }
+        CliAction::Version => {
+            println!(
+                "minde {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                env!("MINDE_BUILD_REVISION")
+            );
+            return Ok(());
+        }
+        CliAction::CheckConfig(path) => {
+            validate_config(&path)?;
+            println!("configuration valid: {}", path.display());
+            return Ok(());
+        }
+        CliAction::Run(choice) => choice,
+    };
+
     init_logging();
     install_crash_log();
 
-    let backend = parse_backend();
+    let backend = select_backend(backend_choice);
     tracing::info!(?backend, "selected backend");
 
     let mut event_loop: EventLoop<MindeState> = EventLoop::try_new()?;
@@ -58,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = MindeState::new(&mut event_loop, display);
 
     // Recorded for wm-spawn so children get WAYLAND_DISPLAY even when
-    // spawned (via wm-on-startup) before the env export further down.
+    // spawned (via handle-startup!) before the env export further down.
     let _ = guile::SOCKET_NAME.set(state.socket_name.to_string_lossy().into_owned());
 
     // Guile must be initialized on the main thread, and after this call
@@ -66,8 +179,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // through Guile's own REPL server, which manages its own thread).
     //
     // This must happen before backend init, which calls into Scheme (e.g.
-    // `wm-on-output-geometry`) as soon as it knows the output size.
+    // `handle-output-geometry!`) as soon as it knows the output size.
     guile::init(state.loop_signal.clone());
+    ipc::init(&mut event_loop)?;
 
     match backend {
         Backend::Winit => {
@@ -99,6 +213,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
+}
+
+fn scheme_module_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let repository_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scheme");
+    if repository_dir.is_dir() {
+        return Ok(repository_dir);
+    }
+    if let Some(path) = std::env::var_os("MINDE_SCHEME_DIR") {
+        return Ok(path.into());
+    }
+    let executable = std::env::current_exe()?;
+    let prefix = executable
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or_else(|| std::io::Error::other("cannot determine minde installation prefix"))?;
+    Ok(prefix.join("share/minde/scheme"))
+}
+
+fn validate_config(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let modules = scheme_module_dir()?;
+    let expression = "(use-modules (minde command-catalog) (minde config)) \
+                      (register-builtin-command-schemas!) \
+                      (validate-configuration-file (cadr (command-line)))";
+    let status = std::process::Command::new("guile")
+        .arg("--no-auto-compile")
+        .arg("-L")
+        .arg(&modules)
+        .arg("-c")
+        .arg(expression)
+        .arg(path)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("configuration validation failed: {}", path.display()).into())
+    }
 }
 
 /// A panic on the TTY backend takes the whole session down with no
@@ -146,5 +296,60 @@ fn init_logging() {
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
     } else {
         tracing_subscriber::fmt().init();
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn parses_empty_arguments_as_auto_backend() {
+        assert_eq!(
+            parse_args([] as [&str; 0]),
+            Ok(CliAction::Run(BackendChoice::Auto))
+        );
+    }
+
+    #[test]
+    fn parses_public_flags() {
+        assert_eq!(
+            parse_args(["--tty"]),
+            Ok(CliAction::Run(BackendChoice::Explicit(Backend::Udev)))
+        );
+        assert_eq!(
+            parse_args(["--winit"]),
+            Ok(CliAction::Run(BackendChoice::Explicit(Backend::Winit)))
+        );
+        assert_eq!(parse_args(["--help"]), Ok(CliAction::Help));
+        assert_eq!(parse_args(["-V"]), Ok(CliAction::Version));
+        assert_eq!(
+            parse_args(["--check-config", "config.scm"]),
+            Ok(CliAction::CheckConfig("config.scm".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_duplicate_and_conflicting_flags() {
+        assert!(
+            parse_args(["--unknown"])
+                .unwrap_err()
+                .contains("unknown option")
+        );
+        assert!(
+            parse_args(["--check-config"])
+                .unwrap_err()
+                .contains("requires a file")
+        );
+        assert!(
+            parse_args(["--tty", "--tty"])
+                .unwrap_err()
+                .contains("more than once")
+        );
+        assert!(
+            parse_args(["--tty", "--winit"])
+                .unwrap_err()
+                .contains("conflicting")
+        );
     }
 }

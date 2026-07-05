@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: MIT
+
 //! Xwayland integration: the xwayland-shell protocol handler plus the
 //! X11 window manager (`XwmHandler`). X11 toplevels are wrapped in the
 //! same `desktop::Window` type as Wayland ones and registered with the
-//! Scheme layer through the usual `wm-on-window-map`/`unmap` events, so
+//! Scheme layer through the usual `handle-window-map!`/`unmap` events, so
 //! frames, numbers, placement rules and hooks treat them identically.
 //! Adapted from anvil's `shell/x11.rs`, minus decorations/grabs: the
 //! frame tree owns all geometry, so client-initiated move/resize/
@@ -41,9 +43,7 @@ impl XWaylandShellHandler for MindeState {
             .and_then(|w| w.x11_surface())
             .map(|x| x == &surface)
             .unwrap_or(false);
-        if is_focused
-            && let Some(keyboard) = self.seat.get_keyboard()
-        {
+        if is_focused && let Some(keyboard) = self.seat.get_keyboard() {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             keyboard.set_focus(self, Some(wl_surface), serial);
         }
@@ -176,7 +176,10 @@ impl XwmHandler for MindeState {
         selection: smithay::wayland::selection::SelectionTarget,
     ) -> bool {
         // No primary-selection protocol state; clipboard only.
-        matches!(selection, smithay::wayland::selection::SelectionTarget::Clipboard)
+        matches!(
+            selection,
+            smithay::wayland::selection::SelectionTarget::Clipboard
+        )
     }
 
     fn send_selection(
@@ -256,6 +259,13 @@ impl XwmHandler for MindeState {
     fn unmaximize_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn fullscreen_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn unfullscreen_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn resize_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32, _edges: ResizeEdge) {}
+    fn resize_request(
+        &mut self,
+        _xwm: XwmId,
+        _window: X11Surface,
+        _button: u32,
+        _edges: ResizeEdge,
+    ) {
+    }
     fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}
 }

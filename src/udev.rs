@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Standalone DRM/udev/libinput backend: owns a VT via libseat, scans the
 //! primary GPU for the first usable connector, and renders via GBM/EGL.
 //! Adapted from Smithay's `anvil` example (`anvil/src/udev.rs`); see
@@ -7,7 +9,7 @@
 //! - multi-output: every connected connector becomes an output, laid out
 //!   left-to-right in connection order (anvil's policy); hotplug adds and
 //!   removes outputs at runtime via `DrmScanner`, and Scheme is told
-//!   through `update_usable_area` -> `wm-on-heads-changed`.
+//!   through `update_usable_area` -> `handle-heads-change!`.
 //! - primary GPU only: no `all_gpus`/multi-GPU render-node handling beyond
 //!   what's needed to keep the `GpuManager`/`MultiRenderer` plumbing
 //!   working (anvil's structure is kept here since fighting the API to
@@ -27,8 +29,8 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata, DrmNode,
-            NodeType,
+            CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
+            DrmNode, NodeType,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -55,7 +57,9 @@ use smithay::{
         wayland_server::{DisplayHandle, backend::GlobalId},
     },
     utils::{DeviceFd, Transform},
-    wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+    wayland::dmabuf::{
+        DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
+    },
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{error, info, warn};
@@ -67,8 +71,12 @@ use crate::{MindeState, guile};
 /// anvil's `UdevRenderer` alias. We only ever address the primary node
 /// (see module docs), but keep the multi-GPU-shaped type since that's what
 /// `DrmOutputManager`/`DrmOutput` at this smithay revision expect.
-type UdevRenderer<'a> =
-    MultiRenderer<'a, 'a, GbmGlesBackend<GlesRenderer, DrmDeviceFd>, GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
+type UdevRenderer<'a> = MultiRenderer<
+    'a,
+    'a,
+    GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+    GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+>;
 
 type GbmDrmOutputManager = DrmOutputManager<
     GbmAllocator<DrmDeviceFd>,
@@ -122,14 +130,21 @@ pub struct UdevBackendData {
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     devices: HashMap<DrmNode, DeviceData>,
-    /// Whether `wm-on-startup` has fired (once, on the first output).
+    /// Whether `handle-startup!` has fired (once, on the first output).
     started: bool,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
 }
 
 impl DmabufHandler for MindeState {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.udev_data.as_mut().unwrap().dmabuf_state.as_mut().unwrap().0
+        &mut self
+            .udev_data
+            .as_mut()
+            .unwrap()
+            .dmabuf_state
+            .as_mut()
+            .unwrap()
+            .0
     }
 
     fn dmabuf_imported(
@@ -179,7 +194,12 @@ pub fn init_udev(
     let primary_gpu = primary_gpu(&seat_name)
         .ok()
         .flatten()
-        .and_then(|path| DrmNode::from_path(path).ok()?.node_with_type(NodeType::Render)?.ok())
+        .and_then(|path| {
+            DrmNode::from_path(path)
+                .ok()?
+                .node_with_type(NodeType::Render)?
+                .ok()
+        })
         .ok_or("no primary GPU found")?;
     info!(%primary_gpu, "using primary gpu");
 
@@ -250,10 +270,10 @@ pub fn init_udev(
     // Bring up every device udev already knows about; each connected
     // connector becomes an output.
     for (device_id, path) in udev_backend.device_list() {
-        if let Ok(node) = DrmNode::from_dev_id(device_id) {
-            if let Err(err) = device_added(state, node, path) {
-                warn!(?err, ?node, "skipping drm device");
-            }
+        if let Ok(node) = DrmNode::from_dev_id(device_id)
+            && let Err(err) = device_added(state, node, path)
+        {
+            warn!(?err, ?node, "skipping drm device");
         }
     }
 
@@ -269,10 +289,10 @@ pub fn init_udev(
         .handle()
         .insert_source(udev_backend, |event, _, state| match event {
             UdevEvent::Added { device_id, path } => {
-                if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    if let Err(err) = device_added(state, node, &path) {
-                        warn!(?err, ?node, "failed to add hotplugged drm device");
-                    }
+                if let Ok(node) = DrmNode::from_dev_id(device_id)
+                    && let Err(err) = device_added(state, node, &path)
+                {
+                    warn!(?err, ?node, "failed to add hotplugged drm device");
                 }
             }
             UdevEvent::Changed { device_id } => {
@@ -298,25 +318,35 @@ fn setup_dmabuf_global(state: &mut MindeState) {
         return;
     };
     let dmabuf_formats = renderer.dmabuf_formats();
-    let Some(default_feedback) = DmabufFeedbackBuilder::new(udev.primary_gpu.dev_id(), dmabuf_formats)
-        .build()
-        .ok()
+    let Some(default_feedback) =
+        DmabufFeedbackBuilder::new(udev.primary_gpu.dev_id(), dmabuf_formats)
+            .build()
+            .ok()
     else {
         return;
     };
     let mut dmabuf_state = DmabufState::new();
-    let global =
-        dmabuf_state.create_global_with_default_feedback::<MindeState>(&state.display_handle, &default_feedback);
+    let global = dmabuf_state.create_global_with_default_feedback::<MindeState>(
+        &state.display_handle,
+        &default_feedback,
+    );
     udev.dmabuf_state = Some((dmabuf_state, global));
 }
 
-fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
+fn device_added(
+    state: &mut MindeState,
+    node: DrmNode,
+    path: &Path,
+) -> Result<(), DeviceAddError> {
     let handle = state.handle.clone();
     let udev = state.udev_data.as_mut().unwrap();
 
     let fd = udev
         .session
-        .open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)
+        .open(
+            path,
+            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+        )
         .map_err(DeviceAddError::DeviceOpen)?;
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
 
@@ -324,24 +354,34 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
     let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
 
     let registration_token = handle
-        .insert_source(notifier, move |event, metadata, state: &mut MindeState| match event {
-            DrmEvent::VBlank(crtc) => state.frame_finish(node, crtc, metadata),
-            DrmEvent::Error(err) => error!(%err, "drm error"),
-        })
+        .insert_source(
+            notifier,
+            move |event, metadata, state: &mut MindeState| match event {
+                DrmEvent::VBlank(crtc) => state.frame_finish(node, crtc, metadata),
+                DrmEvent::Error(err) => error!(%err, "drm error"),
+            },
+        )
         .unwrap();
 
     // Try to add this GPU's render node to the shared GpuManager (needed
     // even though we only ever render with the primary node, since
     // `single_renderer` looks the node up there).
     let egl_display = unsafe { EGLDisplay::new(gbm.clone()) };
-    if let Ok(display) = egl_display {
-        if let Ok(egl_device) = EGLDevice::device_for_display(&display) {
-            let render_node = egl_device.try_get_render_node().ok().flatten().unwrap_or(node);
-            let _ = udev.gpus.as_mut().add_node(render_node, gbm.clone());
-        }
+    if let Ok(display) = egl_display
+        && let Ok(egl_device) = EGLDevice::device_for_display(&display)
+    {
+        let render_node = egl_device
+            .try_get_render_node()
+            .ok()
+            .flatten()
+            .unwrap_or(node);
+        let _ = udev.gpus.as_mut().add_node(render_node, gbm.clone());
     }
 
-    let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+    let allocator = GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    );
     let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), None.into());
 
     let mut renderer = udev
@@ -387,7 +427,10 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
         let Some(device) = udev.devices.get_mut(&node) else {
             return;
         };
-        match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
+        match device
+            .drm_scanner
+            .scan_connectors(device.drm_output_manager.device())
+        {
             Ok(scan) => scan,
             Err(err) => {
                 warn!(?err, "failed to scan connectors");
@@ -398,12 +441,18 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
 
     for event in scan_result {
         match event {
-            DrmScanEvent::Connected { connector, crtc: Some(crtc) } => {
+            DrmScanEvent::Connected {
+                connector,
+                crtc: Some(crtc),
+            } => {
                 if !connector_connected(state, node, &connector, crtc) {
                     warn!(?node, ?crtc, "failed to set up connected connector");
                 }
             }
-            DrmScanEvent::Disconnected { connector, crtc: Some(crtc) } => {
+            DrmScanEvent::Disconnected {
+                connector,
+                crtc: Some(crtc),
+            } => {
                 connector_disconnected(state, node, &connector, crtc);
             }
             _ => {}
@@ -411,7 +460,12 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
     }
 }
 
-fn connector_connected(state: &mut MindeState, node: DrmNode, info: &connector::Info, crtc: crtc::Handle) -> bool {
+fn connector_connected(
+    state: &mut MindeState,
+    node: DrmNode,
+    info: &connector::Info,
+    crtc: crtc::Handle,
+) -> bool {
     let udev = state.udev_data.as_mut().unwrap();
     let Some(device) = udev.devices.get_mut(&node) else {
         return false;
@@ -444,10 +498,13 @@ fn connector_connected(state: &mut MindeState, node: DrmNode, info: &connector::
     );
     let global = output.create_global::<MindeState>(&state.display_handle);
     // Lay outputs out left-to-right in connection order (anvil's policy).
-    let position_x = state
-        .space
-        .outputs()
-        .fold(0, |acc, o| acc + state.space.output_geometry(o).map(|g| g.size.w).unwrap_or(0));
+    let position_x = state.space.outputs().fold(0, |acc, o| {
+        acc + state
+            .space
+            .output_geometry(o)
+            .map(|g| g.size.w)
+            .unwrap_or(0)
+    });
     output.set_preferred(wl_mode);
     output.change_current_state(
         Some(wl_mode),
@@ -466,18 +523,18 @@ fn connector_connected(state: &mut MindeState, node: DrmNode, info: &connector::
         }
     };
 
-    let drm_output = match device.drm_output_manager.lock().initialize_output::<
-        _,
-        MindeRenderElements<UdevRenderer<'_>>,
-    >(
-        crtc,
-        drm_mode,
-        &[info.handle()],
-        &output,
-        None,
-        &mut renderer,
-        &DrmOutputRenderElements::default(),
-    ) {
+    let drm_output = match device
+        .drm_output_manager
+        .lock()
+        .initialize_output::<_, MindeRenderElements<UdevRenderer<'_>>>(
+            crtc,
+            drm_mode,
+            &[info.handle()],
+            &output,
+            None,
+            &mut renderer,
+            &DrmOutputRenderElements::default(),
+        ) {
         Ok(drm_output) => drm_output,
         Err(err) => {
             warn!(%err, "failed to initialize drm output");
@@ -509,7 +566,12 @@ fn connector_connected(state: &mut MindeState, node: DrmNode, info: &connector::
     true
 }
 
-fn connector_disconnected(state: &mut MindeState, node: DrmNode, info: &connector::Info, crtc: crtc::Handle) {
+fn connector_disconnected(
+    state: &mut MindeState,
+    node: DrmNode,
+    info: &connector::Info,
+    crtc: crtc::Handle,
+) {
     let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
     info!(?crtc, %output_name, "connector disconnected; removing its output");
     let Some(udev) = state.udev_data.as_mut() else {
@@ -565,7 +627,12 @@ fn device_removed(state: &mut MindeState, node: DrmNode) {
 }
 
 impl MindeState {
-    fn frame_finish(&mut self, node: DrmNode, crtc: crtc::Handle, metadata: &mut Option<DrmEventMetadata>) {
+    fn frame_finish(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        metadata: &mut Option<DrmEventMetadata>,
+    ) {
         let _ = metadata;
         let Some(udev) = self.udev_data.as_mut() else {
             return;
@@ -580,10 +647,15 @@ impl MindeState {
         }
 
         // Schedule the next repaint roughly one frame out.
-        self.handle.insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
-            state.render_now(node, crtc);
-            TimeoutAction::Drop
-        }).ok();
+        self.handle
+            .insert_source(
+                Timer::from_duration(Duration::from_millis(16)),
+                move |_, _, state| {
+                    state.render_now(node, crtc);
+                    TimeoutAction::Drop
+                },
+            )
+            .ok();
     }
 
     fn handle_repaint_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
@@ -603,24 +675,37 @@ impl MindeState {
         };
         if !queued {
             self.handle
-                .insert_source(Timer::from_duration(Duration::from_millis(16)), move |_, _, state| {
-                    state.render_now(node, crtc);
-                    TimeoutAction::Drop
-                })
+                .insert_source(
+                    Timer::from_duration(Duration::from_millis(16)),
+                    move |_, _, state| {
+                        state.render_now(node, crtc);
+                        TimeoutAction::Drop
+                    },
+                )
                 .ok();
         }
     }
 
     /// Renders one frame; returns whether a frame was queued to the DRM
     /// surface (i.e. whether a VBlank event is expected).
-    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) -> Result<bool, SwapBuffersError> {
-        let udev = self.udev_data.as_mut().ok_or(SwapBuffersError::AlreadySwapped)?;
+    fn render_surface(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+    ) -> Result<bool, SwapBuffersError> {
+        let udev = self
+            .udev_data
+            .as_mut()
+            .ok_or(SwapBuffersError::AlreadySwapped)?;
         let primary_gpu = udev.primary_gpu;
 
         // Split borrows: the surface lives in `devices`, the renderer in
         // `gpus` -- disjoint fields of the same UdevBackendData.
         let UdevBackendData { gpus, devices, .. } = udev;
-        let Some(output_surface) = devices.get_mut(&node).and_then(|d| d.surfaces.get_mut(&crtc)) else {
+        let Some(output_surface) = devices
+            .get_mut(&node)
+            .and_then(|d| d.surfaces.get_mut(&crtc))
+        else {
             return Ok(false);
         };
 
@@ -629,7 +714,10 @@ impl MindeState {
             .map_err(|_| SwapBuffersError::AlreadySwapped)?;
 
         let output = output_surface.output.clone();
-        let output_geo = self.space.output_geometry(&output).unwrap();
+        let Some(output_geo) = self.space.output_geometry(&output) else {
+            tracing::warn!("render requested for disconnected output");
+            return Ok(false);
+        };
         let scale = smithay::utils::Scale::from(output.current_scale().fractional_scale());
 
         let mut custom: Vec<MindeRenderElements<UdevRenderer<'_>>> = Vec::new();
@@ -638,8 +726,13 @@ impl MindeState {
         if output_geo.to_f64().contains(self.pointer_location) {
             let hotspot = self.cursor_state.hotspot();
             let cursor_pos = self.pointer_location - output_geo.loc.to_f64();
-            let cursor_phys = (cursor_pos - hotspot.to_f64()).to_physical(scale).to_i32_round();
-            custom.extend(self.cursor_state.render_elements(&mut renderer, cursor_phys, scale));
+            let cursor_phys = (cursor_pos - hotspot.to_f64())
+                .to_physical(scale)
+                .to_i32_round();
+            custom.extend(
+                self.cursor_state
+                    .render_elements(&mut renderer, cursor_phys, scale),
+            );
         }
 
         // Message overlay, centered (below the cursor, above windows) --
@@ -649,21 +742,25 @@ impl MindeState {
             .focus_rect
             .map(|r| output_geo.contains(r.loc))
             .unwrap_or(true);
-        if let Some(msg) = self.message.as_ref().filter(|_| message_here) {
-            if let Some(elem) = crate::render::message_element(
+        if let Some(msg) = self.message.as_ref().filter(|_| message_here)
+            && let Some(elem) = crate::render::message_element(
                 &mut renderer,
                 msg,
                 (output_geo.size.w, output_geo.size.h),
                 output.current_scale().integer_scale(),
-            ) {
-                custom.push(elem);
-            }
+            )
+        {
+            custom.push(elem);
         }
 
         // Positioned overlays (fselect/expose frame labels): global
         // coords, shifted into this output's framebuffer like everything
         // else; only drawn when they land on this output.
-        for (loc, msg) in self.overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
+        for (loc, msg) in self
+            .overlays
+            .iter()
+            .filter(|(l, _)| output_geo.contains(*l))
+        {
             if let Some(elem) = crate::render::overlay_element(
                 &mut renderer,
                 msg,
@@ -689,14 +786,14 @@ impl MindeState {
                         .map(|geo| geo.loc)
                         .unwrap_or_default();
                     smithay::backend::renderer::element::AsRenderElements::<
-                        UdevRenderer<'_>,
-                    >::render_elements::<MindeRenderElements<UdevRenderer<'_>>>(
-                        *surface,
-                        &mut renderer,
-                        loc.to_physical_precise_round(scale),
-                        scale,
-                        1.0,
-                    )
+                                        UdevRenderer<'_>,
+                                    >::render_elements::<MindeRenderElements<UdevRenderer<'_>>>(
+                                        *surface,
+                                        &mut renderer,
+                                        loc.to_physical_precise_round(scale),
+                                        scale,
+                                        1.0,
+                                    )
                 })
             };
         }
@@ -710,16 +807,15 @@ impl MindeState {
             self.focused_window
                 .as_ref()
                 .and_then(|w| self.space.element_geometry(w))
-        }) {
-            if geo.overlaps(output_geo) {
-                let mut local = geo;
-                local.loc -= output_geo.loc;
-                custom.extend(output_surface.border_buffers.elements(
-                    local,
-                    output.current_scale().integer_scale(),
-                    self.border_color,
-                ));
-            }
+        }) && geo.overlaps(output_geo)
+        {
+            let mut local = geo;
+            local.loc -= output_geo.loc;
+            custom.extend(output_surface.border_buffers.elements(
+                local,
+                output.current_scale().integer_scale(),
+                self.border_color,
+            ));
         }
 
         // Window surfaces, front-to-back (custom elements above are drawn
@@ -801,9 +897,12 @@ impl MindeState {
                 })
                 .unwrap_or(true);
             if on_this || (parked && is_first_output) {
-                window.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
-                    Some(output.clone())
-                });
+                window.send_frame(
+                    &output,
+                    self.start_time.elapsed(),
+                    Some(Duration::ZERO),
+                    |_, _| Some(output.clone()),
+                );
             }
         });
         // Layer surfaces need frame callbacks too, or clients like fuzzel
@@ -814,9 +913,12 @@ impl MindeState {
         // on the TTY once; the winit path is immune because
         // space::render_output scopes its own borrow).
         for layer in layer_map.layers() {
-            layer.send_frame(&output, self.start_time.elapsed(), Some(Duration::ZERO), |_, _| {
-                Some(output.clone())
-            });
+            layer.send_frame(
+                &output,
+                self.start_time.elapsed(),
+                Some(Duration::ZERO),
+                |_, _| Some(output.clone()),
+            );
         }
         self.space.refresh();
         self.popups.cleanup();

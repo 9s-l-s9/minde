@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: MIT
+
 use smithay::wayland::seat::WaylandFocus;
 use smithay::{
-    desktop::{PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords},
+    desktop::{
+        PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
+    },
     input::{
         Seat,
         pointer::{Focus, GrabStartData as PointerGrabStartData},
@@ -35,22 +39,27 @@ impl XdgShellHandler for MindeState {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window = Window::new_wayland_window(surface);
-        let wl_surface = window.toplevel().unwrap().wl_surface().clone();
+        let Some(toplevel) = window.toplevel() else {
+            tracing::warn!("new xdg toplevel had no toplevel surface");
+            return;
+        };
+        let wl_surface = toplevel.wl_surface().clone();
         self.space.map_element(window.clone(), (0, 0), false);
 
         let id = self.register_window(window);
 
         let (title, app_id) = with_states(&wl_surface, |states| {
-            let data = states
+            states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap();
-            (
-                data.title.clone().unwrap_or_default(),
-                data.app_id.clone().unwrap_or_default(),
-            )
+                .and_then(|data| data.lock().ok())
+                .map(|data| {
+                    (
+                        data.title.clone().unwrap_or_default(),
+                        data.app_id.clone().unwrap_or_default(),
+                    )
+                })
+                .unwrap_or_default()
         });
 
         guile::on_window_map(id, &title, &app_id);
@@ -60,7 +69,11 @@ impl XdgShellHandler for MindeState {
         let window = self
             .space
             .elements()
-            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface.wl_surface()).unwrap_or(false))
+            .find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == surface.wl_surface())
+                    .unwrap_or(false)
+            })
             .cloned();
 
         if let Some(window) = window {
@@ -76,7 +89,12 @@ impl XdgShellHandler for MindeState {
         let _ = self.popups.track_popup(PopupKind::Xdg(surface));
     }
 
-    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+    fn reposition_request(
+        &mut self,
+        surface: PopupSurface,
+        positioner: PositionerState,
+        token: u32,
+    ) {
         surface.with_pending_state(|state| {
             let geometry = positioner.get_geometry();
             state.geometry = geometry;
@@ -87,20 +105,31 @@ impl XdgShellHandler for MindeState {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
-        let seat = Seat::from_resource(&seat).unwrap();
+        let Some(seat) = Seat::from_resource(&seat) else {
+            tracing::warn!("move request used an unknown seat");
+            return;
+        };
 
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
+            let Some(pointer) = seat.get_pointer() else {
+                return;
+            };
 
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .find(|w| {
+                    w.toplevel()
+                        .map(|t| t.wl_surface() == wl_surface)
+                        .unwrap_or(false)
+                })
+                .cloned();
+            let Some(window) = window else { return };
+            let Some(initial_window_location) = self.space.element_location(&window) else {
+                return;
+            };
 
             let grab = MoveSurfaceGrab {
                 start_data,
@@ -119,20 +148,31 @@ impl XdgShellHandler for MindeState {
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
     ) {
-        let seat = Seat::from_resource(&seat).unwrap();
+        let Some(seat) = Seat::from_resource(&seat) else {
+            tracing::warn!("resize request used an unknown seat");
+            return;
+        };
 
         let wl_surface = surface.wl_surface();
 
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
-            let pointer = seat.get_pointer().unwrap();
+            let Some(pointer) = seat.get_pointer() else {
+                return;
+            };
 
             let window = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().map(|t| t.wl_surface() == wl_surface).unwrap_or(false))
-                .unwrap()
-                .clone();
-            let initial_window_location = self.space.element_location(&window).unwrap();
+                .find(|w| {
+                    w.toplevel()
+                        .map(|t| t.wl_surface() == wl_surface)
+                        .unwrap_or(false)
+                })
+                .cloned();
+            let Some(window) = window else { return };
+            let Some(initial_window_location) = self.space.element_location(&window) else {
+                return;
+            };
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {
@@ -220,22 +260,23 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
     // Handle toplevel commits.
     if let Some(window) = space
         .elements()
-        .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+        .find(|w| {
+            w.toplevel()
+                .map(|t| t.wl_surface() == surface)
+                .unwrap_or(false)
+        })
         .cloned()
     {
         let initial_configure_sent = with_states(surface, |states| {
             states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .initial_configure_sent
+                .and_then(|data| data.lock().ok())
+                .map(|data| data.initial_configure_sent)
+                .unwrap_or(false)
         });
 
-        if !initial_configure_sent
-            && let Some(toplevel) = window.toplevel()
-        {
+        if !initial_configure_sent && let Some(toplevel) = window.toplevel() {
             toplevel.send_configure();
         }
     }
@@ -248,7 +289,9 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
                 if !xdg.is_initial_configure_sent() {
                     // NOTE: This should never fail as the initial configure is always
                     // allowed.
-                    xdg.send_configure().expect("initial configure failed");
+                    if let Err(error) = xdg.send_configure() {
+                        tracing::warn!(%error, "failed to send initial popup configure");
+                    }
                 }
             }
             PopupKind::InputMethod(ref _input_method) => {}
@@ -269,9 +312,15 @@ impl MindeState {
             return;
         };
 
-        let output = self.space.outputs().next().unwrap();
-        let output_geo = self.space.output_geometry(output).unwrap();
-        let window_geo = self.space.element_geometry(window).unwrap();
+        let Some(output) = self.space.outputs().next() else {
+            return;
+        };
+        let Some(output_geo) = self.space.output_geometry(output) else {
+            return;
+        };
+        let Some(window_geo) = self.space.element_geometry(window) else {
+            return;
+        };
 
         // The target geometry for the positioner should be relative to its parent's geometry, so
         // we will compute that here.

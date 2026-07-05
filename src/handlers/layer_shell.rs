@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! wlr-layer-shell: panels (eww), launchers (fuzzel), wallpaper (swaybg),
 //! lockers (swaylock). Layer surfaces live in each output's `LayerMap`,
 //! not in the window `Space`; exclusive zones shrink the usable area the
@@ -32,7 +34,10 @@ impl WlrLayerShellHandler for MindeState {
             .and_then(Output::from_resource)
             .or_else(|| self.space.outputs().next().cloned());
         let Some(output) = output else {
-            tracing::warn!(namespace, "layer surface before any output exists; ignoring");
+            tracing::warn!(
+                namespace,
+                "layer surface before any output exists; ignoring"
+            );
             return;
         };
         if let Err(err) =
@@ -54,8 +59,7 @@ impl WlrLayerShellHandler for MindeState {
             layer.map(|layer| (map, layer))
         }) {
             if let Some(keyboard) = self.seat.get_keyboard() {
-                had_keyboard_focus =
-                    keyboard.current_focus().as_ref() == Some(layer.wl_surface());
+                had_keyboard_focus = keyboard.current_focus().as_ref() == Some(layer.wl_surface());
             }
             map.unmap_layer(&layer);
         }

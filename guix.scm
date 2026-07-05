@@ -121,9 +121,6 @@ directory = \"vendor\"
                 (lambda (port)
                   (format port "#!~a/bin/sh
 # minde login session wrapper.
-: \"${XKB_DEFAULT_LAYOUT:=de}\"
-: \"${XKB_DEFAULT_VARIANT:=bone}\"
-export XKB_DEFAULT_LAYOUT XKB_DEFAULT_VARIANT
 export XDG_CURRENT_DESKTOP=minde
 export MINDE_SCHEME_DIR=~a/scheme
 # EGL vendor discovery on Guix (glvnd needs pointing at mesa).
@@ -153,7 +150,7 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                       (string-append "exec " #$(this-package-input "guile")
                                      "/bin/guile")))
                    (chmod dest #o755)))
-               '("minde-cmd" "minde-msg"))
+               '("minde-cmd" "minde-msg" "mindectl"))
               (call-with-output-file (string-append sessions "/minde.desktop")
                 (lambda (port)
                   (display "[Desktop Entry]
@@ -181,7 +178,7 @@ Type=Application
   ;; into the same profile as minde (system profile via SDDM).
   (propagated-inputs
    (list xorg-server-xwayland))
-  (home-page "https://github.com/s-l-s/minde")
+  (home-page "https://github.com/9s-l-s9/minde")
   (synopsis "StumpWM-style Wayland compositor scripted in Guile Scheme")
   (description
    "minde is a Wayland compositor built on Smithay whose entire policy

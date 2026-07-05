@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use smithay::wayland::seat::WaylandFocus;
 use std::{ffi::OsString, sync::Arc};
 
@@ -6,8 +8,8 @@ use smithay::{
     input::{Seat, SeatState},
     reexports::{
         calloop::{
-            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel::Event as ChannelEvent,
-            generic::Generic,
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+            channel::Event as ChannelEvent, generic::Generic,
         },
         wayland_server::{
             Display, DisplayHandle,
@@ -99,7 +101,7 @@ pub struct MindeState {
     /// Last title/app-id reported to Scheme per window id. Clients set
     /// them only after the initial commit (so the map-time report is
     /// usually empty) and retitle at will; the commit handler diffs
-    /// against this and calls `wm-on-window-title` on change.
+    /// against this and calls `handle-window-title-change!` on change.
     pub reported_titles: std::collections::HashMap<u64, (String, String)>,
 
     /// Compositor-side auto-repeat for consumed key presses (prompts and
@@ -235,10 +237,9 @@ impl MindeState {
         }
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = self
-            .space
-            .outputs()
-            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+        let max_x = self.space.outputs().fold(0, |acc, o| {
+            acc + self.space.output_geometry(o).unwrap().size.w
+        });
         let clamped_x = pos_x.clamp(0.0, max_x as f64);
         let max_y = self
             .space
@@ -391,7 +392,9 @@ impl MindeState {
                     .and_then(|o| self.space.output_geometry(o))
                     .map(|g| (g.size.w, g.size.h))
                     .unwrap_or((1280, 720));
-                self.message = Some(crate::render::render_message(&text, generation, max_w, max_h));
+                self.message = Some(crate::render::render_message(
+                    &text, generation, max_w, max_h,
+                ));
                 if timeout_ms > 0 {
                     let timer = smithay::reexports::calloop::timer::Timer::from_duration(
                         std::time::Duration::from_millis(timeout_ms),
@@ -479,11 +482,9 @@ impl MindeState {
                     let geo = self
                         .space
                         .outputs()
-                        .find(|o| {
-                            match (window_center, self.space.output_geometry(o)) {
-                                (Some(c), Some(g)) => g.contains(c),
-                                _ => false,
-                            }
+                        .find(|o| match (window_center, self.space.output_geometry(o)) {
+                            (Some(c), Some(g)) => g.contains(c),
+                            _ => false,
                         })
                         .or_else(|| self.space.outputs().next())
                         .and_then(|o| self.space.output_geometry(o))
@@ -552,7 +553,12 @@ impl MindeState {
                         let serial = SERIAL_COUNTER.next_serial();
                         pointer.button(
                             self,
-                            &smithay::input::pointer::ButtonEvent { button: code, state, serial, time },
+                            &smithay::input::pointer::ButtonEvent {
+                                button: code,
+                                state,
+                                serial,
+                                time,
+                            },
                         );
                     }
                     pointer.frame(self);
@@ -587,7 +593,11 @@ impl MindeState {
             pointer.motion(
                 self,
                 under,
-                &smithay::input::pointer::MotionEvent { location: pos, serial, time },
+                &smithay::input::pointer::MotionEvent {
+                    location: pos,
+                    serial,
+                    time,
+                },
             );
             pointer.frame(self);
         }
@@ -638,8 +648,7 @@ impl MindeState {
                                 _ => {}
                             }
                         }
-                        if *sym == target
-                            && found.is_none_or(|(_, shifted)| shifted && level == 0)
+                        if *sym == target && found.is_none_or(|(_, shifted)| shifted && level == 0)
                         {
                             found = Some((kc, level == 1));
                         }
@@ -767,7 +776,7 @@ impl MindeState {
     }
 
     /// Reads the current clipboard selection and delivers it to Scheme via
-    /// `(wm-on-paste text)`. A client-owned selection is piped through a
+    /// `(handle-paste! text)`. A client-owned selection is piped through a
     /// calloop source (never blocking the loop); a compositor-owned one
     /// short-circuits to its stored text.
     fn request_paste(&mut self) {
@@ -826,7 +835,7 @@ impl MindeState {
     }
 
     /// Streams READ_FD through a calloop source and delivers the collected
-    /// text to Scheme via `(wm-on-paste text)` once the writer closes.
+    /// text to Scheme via `(handle-paste! text)` once the writer closes.
     fn deliver_pipe_to_scheme(&mut self, read_fd: std::os::fd::OwnedFd) {
         use smithay::reexports::rustix;
         let mut acc: Vec<u8> = Vec::new();
@@ -851,12 +860,18 @@ impl MindeState {
     }
 
     fn window_by_id(&self, id: u64) -> Option<Window> {
-        self.windows.iter().find(|(wid, _)| *wid == id).map(|(_, w)| w.clone())
+        self.windows
+            .iter()
+            .find(|(wid, _)| *wid == id)
+            .map(|(_, w)| w.clone())
     }
 
     /// The registered id of WINDOW, if any (reverse of `window_by_id`).
     pub fn id_for_window(&self, window: &Window) -> Option<u64> {
-        self.windows.iter().find(|(_, w)| w == window).map(|(id, _)| *id)
+        self.windows
+            .iter()
+            .find(|(_, w)| w == window)
+            .map(|(id, _)| *id)
     }
 
     /// Registers a newly-mapped toplevel window and returns its assigned id.
@@ -918,10 +933,12 @@ impl MindeState {
 
         loop_handle
             .insert_source(listening_socket, move |client_stream, _, state| {
-                state
+                if let Err(error) = state
                     .display_handle
                     .insert_client(client_stream, Arc::new(ClientState::default()))
-                    .unwrap();
+                {
+                    tracing::warn!(%error, "failed to register Wayland client");
+                }
             })
             .expect("Failed to init the wayland event source.");
 
@@ -931,7 +948,9 @@ impl MindeState {
                 |_, display, state| {
                     // Safety: we don't drop the display
                     unsafe {
-                        display.get_mut().dispatch_clients(state).unwrap();
+                        if let Err(error) = display.get_mut().dispatch_clients(state) {
+                            tracing::warn!(%error, "failed to dispatch Wayland clients");
+                        }
                     }
                     Ok(PostAction::Continue)
                 },
@@ -973,43 +992,53 @@ impl MindeState {
         };
 
         let display_handle = self.display_handle.clone();
-        let ret = self.handle.insert_source(xwayland, move |event, _, state| match event {
-            XWaylandEvent::Ready { x11_socket, display_number } => {
-                match X11Wm::start_wm(state.handle.clone(), &display_handle, x11_socket, client.clone()) {
-                    Ok(mut wm) => {
-                        tracing::info!(display_number, "xwayland ready");
-                        // Default X11 root cursor: without this, hovering an
-                        // X11 window that sets no cursor of its own shows a
-                        // hollow box (anvil sets one too). Reuse the embedded
-                        // fallback arrow (64x64 RGBA, hotspot at the tip).
-                        if let Err(err) = wm.set_cursor(
-                            crate::render::FALLBACK_CURSOR_RGBA,
-                            smithay::utils::Size::from((64u16, 64u16)),
-                            smithay::utils::Point::from((0u16, 0u16)),
-                        ) {
-                            tracing::warn!(%err, "failed to set the Xwayland default cursor");
+        let ret = self
+            .handle
+            .insert_source(xwayland, move |event, _, state| match event {
+                XWaylandEvent::Ready {
+                    x11_socket,
+                    display_number,
+                } => {
+                    match X11Wm::start_wm(
+                        state.handle.clone(),
+                        &display_handle,
+                        x11_socket,
+                        client.clone(),
+                    ) {
+                        Ok(mut wm) => {
+                            tracing::info!(display_number, "xwayland ready");
+                            // Default X11 root cursor: without this, hovering an
+                            // X11 window that sets no cursor of its own shows a
+                            // hollow box (anvil sets one too). Reuse the embedded
+                            // fallback arrow (64x64 RGBA, hotspot at the tip).
+                            if let Err(err) = wm.set_cursor(
+                                crate::render::FALLBACK_CURSOR_RGBA,
+                                smithay::utils::Size::from((64u16, 64u16)),
+                                smithay::utils::Point::from((0u16, 0u16)),
+                            ) {
+                                tracing::warn!(%err, "failed to set the Xwayland default cursor");
+                            }
+                            state.xwm = Some(wm);
+                            state.xdisplay = Some(display_number);
+                            // Children get DISPLAY via wm-spawn (X11_DISPLAY).
+                            // NEVER set it process-wide: in nested (winit)
+                            // mode the compositor is itself an X client, and
+                            // mesa/EGL lazily open X connections from
+                            // $DISPLAY -- pointing that at our own Xwayland
+                            // deadlocks eglSwapBuffers against ourselves
+                            // (same class as the WAYLAND_DISPLAY/winit
+                            // startup deadlock).
+                            let _ = guile::X11_DISPLAY.set(format!(":{display_number}"));
                         }
-                        state.xwm = Some(wm);
-                        state.xdisplay = Some(display_number);
-                        // Children get DISPLAY via wm-spawn (X11_DISPLAY).
-                        // NEVER set it process-wide: in nested (winit)
-                        // mode the compositor is itself an X client, and
-                        // mesa/EGL lazily open X connections from
-                        // $DISPLAY -- pointing that at our own Xwayland
-                        // deadlocks eglSwapBuffers against ourselves
-                        // (same class as the WAYLAND_DISPLAY/winit
-                        // startup deadlock).
-                        let _ = guile::X11_DISPLAY.set(format!(":{display_number}"));
-                    }
-                    Err(err) => {
-                        tracing::warn!(%err, "failed to attach the X11 window manager");
+                        Err(err) => {
+                            tracing::warn!(%err, "failed to attach the X11 window manager");
+                        }
                     }
                 }
-            }
-            XWaylandEvent::Error => {
-                tracing::warn!("Xwayland crashed on startup; X11 apps unavailable");
-            }
-        });
+                XWaylandEvent::Error => {
+                    tracing::warn!("Xwayland crashed on startup; X11 apps unavailable");
+                }
+            });
         if let Err(err) = ret {
             tracing::warn!(%err, "failed to insert the Xwayland event source");
         }
@@ -1061,7 +1090,10 @@ impl MindeState {
         guile::on_heads_changed(heads);
     }
 
-    pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    pub fn surface_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(WlSurface, Point<f64, Logical>)> {
         use smithay::wayland::shell::wlr_layer::Layer;
 
         // The output under the pointer owns the layer surfaces there;
@@ -1077,14 +1109,14 @@ impl MindeState {
                     .unwrap_or(false)
             })
             .or_else(|| self.space.outputs().next())?;
-        let output_geo = self.space.output_geometry(output).unwrap();
+        let output_geo = self.space.output_geometry(output)?;
         let layers = smithay::desktop::layer_map_for_output(output);
         let local = pos - output_geo.loc.to_f64();
 
         let layer_surface_under = |layer_types: &[Layer]| {
             layer_types.iter().find_map(|lt| {
                 layers.layer_under(*lt, local).and_then(|layer| {
-                    let layer_loc = layers.layer_geometry(layer).unwrap().loc;
+                    let layer_loc = layers.layer_geometry(layer)?.loc;
                     layer
                         .surface_under(local - layer_loc.to_f64(), WindowSurfaceType::ALL)
                         .map(|(s, p)| (s, (p + layer_loc + output_geo.loc).to_f64()))
@@ -1094,11 +1126,13 @@ impl MindeState {
 
         layer_surface_under(&[Layer::Overlay, Layer::Top])
             .or_else(|| {
-                self.space.element_under(pos).and_then(|(window, location)| {
-                    window
-                        .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                        .map(|(s, p)| (s, (p + location).to_f64()))
-                })
+                self.space
+                    .element_under(pos)
+                    .and_then(|(window, location)| {
+                        window
+                            .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                            .map(|(s, p)| (s, (p + location).to_f64()))
+                    })
             })
             .or_else(|| layer_surface_under(&[Layer::Bottom, Layer::Background]))
     }

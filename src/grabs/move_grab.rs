@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Move grab is the state of a composer during which the client window is being dragged around.
 //!
 //! eg. Usually whenever a user clicks on the app's titlebar and starts dragging, the compositors
@@ -8,9 +10,9 @@ use smithay::{
     desktop::Window,
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-        GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
-        PointerInnerHandle, RelativeMotionEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
+        MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point},
@@ -82,7 +84,11 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
         handle.axis(data, details)
     }
 
-    fn frame(&mut self, data: &mut MindeState, handle: &mut PointerInnerHandle<'_, MindeState>) {
+    fn frame(
+        &mut self,
+        data: &mut MindeState,
+        handle: &mut PointerInnerHandle<'_, MindeState>,
+    ) {
         handle.frame(data);
     }
 

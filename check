@@ -1,45 +1,6 @@
 #!/bin/sh
-# The one command to verify minde before shipping a change:
-#
-#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot -- ./check
-#
-# Runs: cargo build, clippy (report-only), the borrow lint, every Guile
-# test suite, and the headless Xvfb e2e. Exits non-zero on any failure.
-#
-# What it CANNOT cover: the udev/DRM backend at runtime. Anything
-# touching src/udev.rs still needs a live `./debug-tty.sh` from a spare
-# VT before `guix system reconfigure` -- check prints a reminder when
-# udev.rs differs from HEAD.
+# Compatibility entry point. The Makefile owns the individual release gates
+# so local development, Guix builds, and future hosted CI run identical checks.
 set -eu
 cd "$(dirname "$0")"
-
-echo "== cargo build =="
-cargo build 2>&1 | tail -1
-
-echo "== clippy (informational) =="
-warnings=$(cargo clippy 2>&1 | grep -c '^warning' || true)
-echo "clippy: $warnings warning(s) (not fatal; keep the number falling)"
-
-echo "== borrow lint =="
-sh tests/lint-borrows.sh
-echo "ok - no double layer_map borrows"
-
-echo "== guile suites =="
-for t in keys input frames groups layouts next-pull heads floats menu winmgmt placement dynamic; do
-  out=$(guile -L scheme "tests/$t-test.scm" 2>/dev/null | tail -1)
-  echo "$t: $out"
-  [ "$out" = "all tests passed" ] || exit 1
-done
-
-echo "== e2e (Xvfb) =="
-sh tests/e2e.sh
-
-if ! git diff --quiet HEAD -- src/udev.rs 2>/dev/null; then
-  echo ""
-  echo "NOTE: src/udev.rs has uncommitted changes -- the e2e does NOT"
-  echo "exercise the DRM backend. Run ./debug-tty.sh from a spare VT"
-  echo "before reconfiguring."
-fi
-
-echo ""
-echo "check: everything passed"
+exec make check-all

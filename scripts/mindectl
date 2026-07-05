@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+
+command=${1:-}
+case "$command" in
+    eval)
+        [ "$#" -eq 2 ] || {
+            echo "usage: mindectl eval EXPR" >&2
+            exit 2
+        }
+        exec guile -q -c '
+          (let* ((path (string-append
+                         (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                         "/minde-ipc.sock"))
+                 (sock (socket PF_UNIX SOCK_STREAM 0)))
+            (connect sock AF_UNIX path)
+            (display (caddr (command-line)) sock)
+            (shutdown sock 1)
+            (let ((response (read sock)))
+              (close sock)
+              (if (and (pair? response) (eq? (car response) (quote ok)))
+                  (begin (write (cadr response)) (newline))
+                  (begin
+                    (format (current-error-port) "mindectl: ~s~%" response)
+                    (exit 1)))))' -- "$2"
+        ;;
+    check-config)
+        [ "$#" -eq 2 ] || {
+            echo "usage: mindectl check-config FILE" >&2
+            exit 2
+        }
+        script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+        local_modules=$(CDPATH= cd -- "$script_dir/../scheme" 2>/dev/null && pwd || true)
+        installed_modules=$(CDPATH= cd -- "$script_dir/../share/minde/scheme" 2>/dev/null && pwd || true)
+        if [ -f "$local_modules/minde/config.scm" ]; then
+            modules=$local_modules
+        elif [ -n "$installed_modules" ] && [ -f "$installed_modules/minde/config.scm" ]; then
+            modules=$installed_modules
+        elif [ -n "${MINDE_SCHEME_DIR:-}" ]; then
+            modules=$MINDE_SCHEME_DIR
+        else
+            echo "mindectl: cannot locate Scheme modules" >&2
+            exit 1
+        fi
+        exec guile --no-auto-compile -L "$modules" -c \
+            '(use-modules (minde command-catalog) (minde config))
+             (register-builtin-command-schemas!)
+             (validate-configuration-file (cadr (command-line)))
+             (format #t "configuration valid: ~a~%" (cadr (command-line)))' \
+            "$2"
+        ;;
+    *)
+        echo "usage: mindectl {eval EXPR|check-config FILE}" >&2
+        exit 2
+        ;;
+esac

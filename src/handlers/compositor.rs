@@ -1,5 +1,7 @@
-use smithay::wayland::seat::WaylandFocus;
+// SPDX-License-Identifier: MIT
+
 use crate::{MindeState, grabs::resize_grab, state::ClientState};
+use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     reexports::wayland_server::{
@@ -9,7 +11,8 @@ use smithay::{
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface,
+            CompositorClientState, CompositorHandler, CompositorState, get_parent,
+            is_sync_subsurface,
         },
         shm::{ShmHandler, ShmState},
     },
@@ -96,10 +99,10 @@ impl MindeState {
             // Arrange before the initial configure so the configure
             // carries the size the anchors/margins produce.
             map.arrange();
-            if !initial_configure_sent {
-                if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL) {
-                    layer.layer_surface().send_configure();
-                }
+            if !initial_configure_sent
+                && let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+            {
+                layer.layer_surface().send_configure();
             }
         }
         self.update_usable_area();
@@ -112,13 +115,12 @@ impl MindeState {
             state.keyboard_interactivity == KeyboardInteractivity::Exclusive
                 && matches!(state.layer, Layer::Top | Layer::Overlay)
         });
-        if wants_keyboard {
-            if let Some(keyboard) = self.seat.get_keyboard() {
-                if keyboard.current_focus().as_ref() != Some(surface) {
-                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                    keyboard.set_focus(self, Some(surface.clone()), serial);
-                }
-            }
+        if wants_keyboard
+            && let Some(keyboard) = self.seat.get_keyboard()
+            && keyboard.current_focus().as_ref() != Some(surface)
+        {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            keyboard.set_focus(self, Some(surface.clone()), serial);
         }
     }
 }

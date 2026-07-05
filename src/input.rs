@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::input::{
@@ -46,7 +48,11 @@ impl MindeState {
 
                 let key_code = event.key_code();
 
-                self.seat.get_keyboard().unwrap().input::<(), _>(
+                let Some(keyboard) = self.seat.get_keyboard() else {
+                    tracing::warn!("keyboard event received before keyboard initialization");
+                    return;
+                };
+                keyboard.input::<(), _>(
                     self,
                     key_code,
                     key_state,
@@ -151,7 +157,9 @@ impl MindeState {
                 self.pointer_location = pos;
 
                 let serial = SERIAL_COUNTER.next_serial();
-                let pointer = self.seat.get_pointer().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
                 let under = self.surface_under(pos);
 
                 pointer.relative_motion(
@@ -175,16 +183,21 @@ impl MindeState {
                 pointer.frame(self);
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let Some(output) = self.space.outputs().next() else {
+                    return;
+                };
+                let Some(output_geo) = self.space.output_geometry(output) else {
+                    return;
+                };
 
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
                 self.pointer_location = pos;
 
                 let serial = SERIAL_COUNTER.next_serial();
 
-                let pointer = self.seat.get_pointer().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
 
                 let under = self.surface_under(pos);
 
@@ -200,8 +213,12 @@ impl MindeState {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let keyboard = self.seat.get_keyboard().unwrap();
+                let Some(pointer) = self.seat.get_pointer() else {
+                    return;
+                };
+                let Some(keyboard) = self.seat.get_keyboard() else {
+                    return;
+                };
 
                 let serial = SERIAL_COUNTER.next_serial();
 
@@ -313,12 +330,12 @@ impl MindeState {
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();
 
-                let horizontal_amount = event
-                    .amount(Axis::Horizontal)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
-                let vertical_amount = event
-                    .amount(Axis::Vertical)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
+                let horizontal_amount = event.amount(Axis::Horizontal).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
+                });
+                let vertical_amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.
+                });
                 let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
                 let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
 

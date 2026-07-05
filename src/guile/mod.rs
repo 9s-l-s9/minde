@@ -31,79 +31,141 @@ pub fn set_loop_signal(signal: LoopSignal) {
 /// a calloop channel.
 #[derive(Debug, Clone)]
 pub enum WmCommand {
-    Place { id: u64, x: i32, y: i32, w: i32, h: i32 },
-    Focus { id: u64 },
+    Place {
+        id: u64,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    Focus {
+        id: u64,
+    },
     ClearFocus,
-    Close { id: u64 },
+    Close {
+        id: u64,
+    },
     /// Rectangle of the currently-selected frame; the render pass draws
     /// the focus border around this (not around the focused window), so an
     /// empty frame is still visibly selected.
-    FocusRect { x: i32, y: i32, w: i32, h: i32 },
+    FocusRect {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
     /// Show text in the centered message overlay (StumpWM's message
     /// window); auto-hides after `timeout_ms` (0 = sticky until replaced
     /// or cleared).
-    Message { text: String, timeout_ms: u64 },
+    Message {
+        text: String,
+        timeout_ms: u64,
+    },
     ClearMessage,
     /// Focus-border color (prefix-state indicator).
-    BorderColor { rgba: [f32; 4] },
-    /// One-shot timer: after `ms`, call `(wm-on-timer token)` on the main
+    BorderColor {
+        rgba: [f32; 4],
+    },
+    /// One-shot timer: after `ms`, call `(handle-timer! token)` on the main
     /// thread. The Scheme side keeps the token->thunk table.
-    RunAfter { ms: u64, token: i64 },
+    RunAfter {
+        ms: u64,
+        token: i64,
+    },
     /// Set/unset xdg fullscreen state on a window; Scheme re-syncs frame
     /// geometry itself when unsetting.
-    Fullscreen { id: u64, on: bool },
+    Fullscreen {
+        id: u64,
+        on: bool,
+    },
     /// Force-kill: drop the window's client connection (StumpWM
     /// kill-window, vs. the polite `Close`).
-    Kill { id: u64 },
+    Kill {
+        id: u64,
+    },
     /// Warp the pointer to a global logical position (banish/ratwarp).
-    WarpPointer { x: i32, y: i32 },
+    WarpPointer {
+        x: i32,
+        y: i32,
+    },
     /// Read the current clipboard selection; delivers the text to Scheme
-    /// via `(wm-on-paste text)` when it arrives.
+    /// via `(handle-paste! text)` when it arrives.
     Paste,
     /// Own the clipboard selection with this text (StumpWM putsel).
-    SetClipboard { text: String },
+    SetClipboard {
+        text: String,
+    },
     /// Place a floating window: same as `Place` but without the Tiled*
     /// states (floats keep their CSD shadows/rounded corners) and with a
     /// raise, so a newly-floated window pops above the tiling.
-    PlaceFloat { id: u64, x: i32, y: i32, w: i32, h: i32 },
+    PlaceFloat {
+        id: u64,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
     /// Raise a window to the top of the stacking order without focusing
     /// it (raise is otherwise only a side effect of `Focus`).
-    Raise { id: u64 },
+    Raise {
+        id: u64,
+    },
     /// Mark/unmark a window as floating on the Rust side; gates the
     /// super+drag move/resize grabs in `input.rs`. Scheme's `%floating`
     /// table remains the authority on float geometry.
-    SetFloating { id: u64, on: bool },
+    SetFloating {
+        id: u64,
+        on: bool,
+    },
     /// Type TEXT into the focused window (StumpWM window-send-string):
     /// synthesized key press/release pairs looked up in the active
     /// keymap (chars not reachable at shift level 0/1 are skipped).
-    SendString { text: String },
+    SendString {
+        text: String,
+    },
     /// Synthesize a pointer click at the current location (StumpWM
     /// ratclick); BUTTON is 1=left 2=middle 3=right.
-    Click { button: u32 },
+    Click {
+        button: u32,
+    },
     /// Synthesize one modifier-wrapped key press/release pair into the
     /// focused window (send-raw-key / meta / remapped keys). MODS is
     /// the Scheme-side bitmask (shift=1 ctrl=4 alt=8 super=64); KEYSYM
     /// is an xkb keysym name ("Down", "Escape", "t").
-    SendKey { mods: u32, keysym: String },
+    SendKey {
+        mods: u32,
+        keysym: String,
+    },
     /// Warp the pointer by a delta from its current position
     /// (StumpWM ratrelwarp).
-    WarpPointerRel { dx: i32, dy: i32 },
+    WarpPointerRel {
+        dx: i32,
+        dy: i32,
+    },
     /// Enable/disable compositor-side auto-repeat for consumed key
     /// presses. Wayland clients repeat held keys themselves, but keys
     /// the compositor swallows (prompts, armed keymaps) never repeat
     /// unless we re-fire them from a timer (see `input.rs`).
-    SetKeyRepeat { on: bool },
+    SetKeyRepeat {
+        on: bool,
+    },
     /// Add a small positioned text overlay (fselect/expose frame-number
     /// labels) at a global logical position. One command per label;
     /// they accumulate until cleared.
-    AddOverlay { x: i32, y: i32, text: String },
+    AddOverlay {
+        x: i32,
+        y: i32,
+        text: String,
+    },
     ClearOverlays,
     /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
     /// fork from the calling thread: forking from the Guile REPL
     /// server thread wedged mesa/llvmpipe in the parent (the main
     /// thread froze inside eglSwapBuffers with the software
     /// rasterizer spinning forever).
-    Spawn { cmd: String },
+    Spawn {
+        cmd: String,
+    },
 }
 
 /// The sending half of the command channel. Set once from `main`/`state.rs`
@@ -226,10 +288,6 @@ pub fn call1(proc: Scm, a: Scm) -> Option<Scm> {
     protected_call(move || unsafe { ffi::scm_call_1(proc, a) })
 }
 
-pub fn call2(proc: Scm, a: Scm, b: Scm) -> Option<Scm> {
-    protected_call(move || unsafe { ffi::scm_call_2(proc, a, b) })
-}
-
 pub fn call3(proc: Scm, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
     protected_call(move || unsafe { ffi::scm_call_3(proc, a, b, c) })
 }
@@ -248,8 +306,12 @@ fn call_named_1(name: &str, a: Scm) -> Option<Scm> {
     call1(lookup(name)?, a)
 }
 
-fn call_named_2(name: &str, a: Scm, b: Scm) -> Option<Scm> {
-    call2(lookup(name)?, a, b)
+/// Evaluate one IPC request through the Scheme-side envelope. This is called
+/// only by the calloop IPC source, so Guile and all policy mutation stay on
+/// the compositor thread.
+pub fn eval_ipc(code: &str) -> Option<String> {
+    let result = call_named_1("minde-ipc-eval", from_str(code))?;
+    to_string_lossy(result)
 }
 
 fn call_named_3(name: &str, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
@@ -314,7 +376,7 @@ pub fn to_string_lossy(v: Scm) -> Option<String> {
 /// start. `wm-spawn` sets WAYLAND_DISPLAY from this explicitly: the
 /// process-wide env var is only exported late in main() (exporting it
 /// before winit init would make winit connect to ourselves), so children
-/// spawned from `wm-on-startup` would otherwise inherit a stale/absent
+/// spawned from `handle-startup!` would otherwise inherit a stale/absent
 /// WAYLAND_DISPLAY and fail to find the compositor (seen as eww's
 /// "Failed to initialize GTK" on the TTY).
 pub static SOCKET_NAME: OnceLock<String> = OnceLock::new();
@@ -402,7 +464,11 @@ pub fn note_activity() {
 
 unsafe extern "C" fn wm_idle_ms() -> Scm {
     let last = LAST_ACTIVITY_MS.load(Ordering::Relaxed);
-    from_i64(if last == 0 { 0 } else { now_ms().saturating_sub(last) as i64 })
+    from_i64(if last == 0 {
+        0
+    } else {
+        now_ms().saturating_sub(last) as i64
+    })
 }
 
 unsafe extern "C" fn wm_send_string(text: Scm) -> Scm {
@@ -582,10 +648,9 @@ unsafe extern "C" fn wm_output_geometry() -> Scm {
 
 /// Builds a proper list from a slice of SCM values.
 fn scm_list(items: &[Scm]) -> Scm {
-    items
-        .iter()
-        .rev()
-        .fold(ffi::SCM_EOL, |tail, &head| unsafe { ffi::scm_cons(head, tail) })
+    items.iter().rev().fold(ffi::SCM_EOL, |tail, &head| unsafe {
+        ffi::scm_cons(head, tail)
+    })
 }
 
 /// `(wm-outputs)` -> `((id x y w h name) ...)`, usable rects.
@@ -625,114 +690,186 @@ pub fn init(loop_signal: LoopSignal) {
     unsafe {
         ffi::scm_init_guile();
 
-        register_gsubr("wm-spawn", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_spawn));
-        register_gsubr("wm-quit", 0, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn() -> Scm,
-            ffi::Gsubr,
-        >(wm_quit));
-        register_gsubr("wm-log", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_log));
-        register_gsubr("wm-place-window", 5, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_place_window));
-        register_gsubr("wm-focus-window", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_focus_window));
-        register_gsubr("wm-close-window", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_close_window));
-        register_gsubr("wm-clear-focus", 0, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn() -> Scm,
-            ffi::Gsubr,
-        >(wm_clear_focus));
-        register_gsubr("wm-message", 1, 1, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_message));
-        register_gsubr("wm-clear-message", 0, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn() -> Scm,
-            ffi::Gsubr,
-        >(wm_clear_message));
-        register_gsubr("wm-add-overlay", 3, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_add_overlay));
+        register_gsubr(
+            "wm-spawn",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_spawn),
+        );
+        register_gsubr("wm-quit", 0, 0, 0, wm_quit);
+        register_gsubr(
+            "wm-log",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_log),
+        );
+        register_gsubr(
+            "wm-place-window",
+            5,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_place_window,
+            ),
+        );
+        register_gsubr(
+            "wm-focus-window",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_focus_window),
+        );
+        register_gsubr(
+            "wm-close-window",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_close_window),
+        );
+        register_gsubr("wm-clear-focus", 0, 0, 0, wm_clear_focus);
+        register_gsubr(
+            "wm-message",
+            1,
+            1,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(wm_message),
+        );
+        register_gsubr("wm-clear-message", 0, 0, 0, wm_clear_message);
+        register_gsubr(
+            "wm-add-overlay",
+            3,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_add_overlay,
+            ),
+        );
         register_gsubr("wm-clear-overlays", 0, 0, 0, wm_clear_overlays);
-        register_gsubr("wm-border-color", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_border_color));
-        register_gsubr("wm-focus-rect", 4, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm, Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_focus_rect));
-        register_gsubr("wm-output-geometry", 0, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn() -> Scm,
-            ffi::Gsubr,
-        >(wm_output_geometry));
-        register_gsubr("wm-run-after-ms", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_run_after_ms));
-        register_gsubr("wm-set-fullscreen", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_set_fullscreen));
-        register_gsubr("wm-kill-window", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_kill_window));
-        register_gsubr("wm-warp-pointer", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_warp_pointer));
+        register_gsubr(
+            "wm-border-color",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_border_color),
+        );
+        register_gsubr(
+            "wm-focus-rect",
+            4,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_focus_rect,
+            ),
+        );
+        register_gsubr("wm-output-geometry", 0, 0, 0, wm_output_geometry);
+        register_gsubr(
+            "wm-run-after-ms",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_run_after_ms,
+            ),
+        );
+        register_gsubr(
+            "wm-set-fullscreen",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_set_fullscreen,
+            ),
+        );
+        register_gsubr(
+            "wm-kill-window",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_kill_window),
+        );
+        register_gsubr(
+            "wm-warp-pointer",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_warp_pointer,
+            ),
+        );
         // Gsubr is exactly the zero-arg signature; no transmute needed.
         register_gsubr("wm-request-paste", 0, 0, 0, wm_request_paste);
         register_gsubr("wm-outputs", 0, 0, 0, wm_outputs);
-        register_gsubr("wm-set-clipboard", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_set_clipboard));
-        register_gsubr("wm-place-float", 5, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_place_float));
-        register_gsubr("wm-raise-window", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_raise_window));
-        register_gsubr("wm-set-floating", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_set_floating));
-        register_gsubr("wm-send-string", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_send_string));
-        register_gsubr("wm-click", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_click));
-        register_gsubr("wm-send-key", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_send_key));
-        register_gsubr("wm-warp-pointer-relative", 2, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm, Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_warp_pointer_relative));
-        register_gsubr("wm-set-key-repeat", 1, 0, 0, std::mem::transmute::<
-            unsafe extern "C" fn(Scm) -> Scm,
-            ffi::Gsubr,
-        >(wm_set_key_repeat));
+        register_gsubr(
+            "wm-set-clipboard",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_clipboard),
+        );
+        register_gsubr(
+            "wm-place-float",
+            5,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_place_float,
+            ),
+        );
+        register_gsubr(
+            "wm-raise-window",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_raise_window),
+        );
+        register_gsubr(
+            "wm-set-floating",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_set_floating,
+            ),
+        );
+        register_gsubr(
+            "wm-send-string",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_send_string),
+        );
+        register_gsubr(
+            "wm-click",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_click),
+        );
+        register_gsubr(
+            "wm-send-key",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(wm_send_key),
+        );
+        register_gsubr(
+            "wm-warp-pointer-relative",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_warp_pointer_relative,
+            ),
+        );
+        register_gsubr(
+            "wm-set-key-repeat",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_key_repeat),
+        );
         register_gsubr("wm-idle-ms", 0, 0, 0, wm_idle_ms);
     }
 
@@ -757,9 +894,8 @@ pub fn init(loop_signal: LoopSignal) {
 
     // Make the bundled modules ((minde frames) &c.) importable from any
     // init file location, e.g. a user config in ~/.config/minde/.
-    let module_dir = std::env::var("MINDE_SCHEME_DIR").unwrap_or_else(|_| {
-        format!("{}/scheme", env!("CARGO_MANIFEST_DIR"))
-    });
+    let module_dir = std::env::var("MINDE_SCHEME_DIR")
+        .unwrap_or_else(|_| format!("{}/scheme", env!("CARGO_MANIFEST_DIR")));
     eval_string(&format!("(add-to-load-path {:?})", module_dir));
 
     tracing::info!(path = %init_path.display(), "loading scheme init file");
@@ -784,48 +920,49 @@ pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool
         Some(r) => to_bool(r),
         None => false,
     };
-    tracing::debug!(mods, keysym_name, consumed, errored = result.is_none(), "handle_key");
+    tracing::debug!(
+        mods,
+        keysym_name,
+        consumed,
+        errored = result.is_none(),
+        "handle_key"
+    );
     consumed
 }
 
-/// Calls `(wm-on-window-map id title app-id)` if bound. `title`/`app_id` may
+/// Calls `(handle-window-map! id title app-id)` if bound. `title`/`app_id` may
 /// be empty strings if the client hasn't set them (yet).
 pub fn on_window_map(id: u64, title: &str, app_id: &str) {
-    call_named_3("wm-on-window-map", from_i64(id as i64), from_str(title), from_str(app_id));
+    call_named_3(
+        "handle-window-map!",
+        from_i64(id as i64),
+        from_str(title),
+        from_str(app_id),
+    );
 }
 
-/// Calls `(wm-on-window-title id title app-id)` if bound: a mapped
+/// Calls `(handle-window-title-change! id title app-id)` if bound: a mapped
 /// toplevel's title or app-id changed. Wayland clients set both only
 /// after the initial configure, so `on_window_map` usually reports
 /// empty strings and the real values arrive through here.
 pub fn on_window_title(id: u64, title: &str, app_id: &str) {
-    call_named_3("wm-on-window-title", from_i64(id as i64), from_str(title), from_str(app_id));
-}
-
-/// Calls `(wm-on-window-unmap id)` if bound.
-pub fn on_window_unmap(id: u64) {
-    call_named_1("wm-on-window-unmap", from_i64(id as i64));
-}
-
-/// Records the new usable area and calls `(wm-on-output-geometry x y width
-/// height)` if bound. Call this whenever the usable area changes: output
-/// init/resize (x/y = 0) or a layer-shell exclusive zone reserving space
-/// (x/y = the zone's origin).
-pub fn on_output_geometry(x: i32, y: i32, width: u32, height: u32) {
-    set_output_geometry(x, y, width, height);
-    call_named_4(
-        "wm-on-output-geometry",
-        from_i64(x as i64),
-        from_i64(y as i64),
-        from_i64(width as i64),
-        from_i64(height as i64),
+    call_named_3(
+        "handle-window-title-change!",
+        from_i64(id as i64),
+        from_str(title),
+        from_str(app_id),
     );
 }
 
+/// Calls `(handle-window-unmap! id)` if bound.
+pub fn on_window_unmap(id: u64) {
+    call_named_1("handle-window-unmap!", from_i64(id as i64));
+}
+
 /// Reports the full head list (usable rects) to Scheme:
-/// `(wm-on-heads-changed ((id x y w h) ...))`. Also refreshes the
+/// `(handle-heads-change! ((id x y w h) ...))`. Also refreshes the
 /// `(wm-output-geometry)` union and the `(wm-outputs)` registry. Falls
-/// back to the legacy single-head `wm-on-output-geometry` when the new
+/// back to the legacy single-head `handle-output-geometry!` when the new
 /// entry point isn't bound (older user configs).
 pub fn on_heads_changed(heads: Vec<HeadInfo>) {
     if heads.is_empty() {
@@ -841,7 +978,7 @@ pub fn on_heads_changed(heads: Vec<HeadInfo>) {
     let first = heads[0].clone();
     *HEADS.lock().unwrap() = heads.clone();
 
-    if let Some(proc) = lookup("wm-on-heads-changed") {
+    if let Some(proc) = lookup("handle-heads-change!") {
         let entries: Vec<Scm> = heads
             .iter()
             .map(|h| {
@@ -857,7 +994,7 @@ pub fn on_heads_changed(heads: Vec<HeadInfo>) {
         call1(proc, scm_list(&entries));
     } else {
         call_named_4(
-            "wm-on-output-geometry",
+            "handle-output-geometry!",
             from_i64(first.x as i64),
             from_i64(first.y as i64),
             from_i64(first.w as i64),
@@ -866,24 +1003,24 @@ pub fn on_heads_changed(heads: Vec<HeadInfo>) {
     }
 }
 
-/// Calls `(wm-on-timer token)` if bound; fired by `WmCommand::RunAfter`'s
+/// Calls `(handle-timer! token)` if bound; fired by `WmCommand::RunAfter`'s
 /// calloop timer on the main (Guile) thread.
 pub fn on_timer(token: i64) {
-    call_named_1("wm-on-timer", from_i64(token));
+    call_named_1("handle-timer!", from_i64(token));
 }
 
-/// Calls `(wm-on-paste text)` if bound, delivering clipboard contents
+/// Calls `(handle-paste! text)` if bound, delivering clipboard contents
 /// requested via `wm-request-paste`.
 pub fn on_paste(text: &str) {
-    call_named_1("wm-on-paste", from_str(text));
+    call_named_1("handle-paste!", from_str(text));
 }
 
-/// Calls `(wm-on-window-moved id x y w h)` if bound; fired when a
+/// Calls `(handle-window-move! id x y w h)` if bound; fired when a
 /// super+drag move/resize grab releases, so Scheme's `%floating` table
 /// tracks the user-dragged geometry.
 pub fn on_window_moved(id: u64, x: i32, y: i32, w: i32, h: i32) {
     call_named_5(
-        "wm-on-window-moved",
+        "handle-window-move!",
         from_i64(id as i64),
         from_i64(x as i64),
         from_i64(y as i64),
@@ -892,18 +1029,18 @@ pub fn on_window_moved(id: u64, x: i32, y: i32, w: i32, h: i32) {
     );
 }
 
-/// Calls `(wm-on-urgent id)` if bound (xdg-activation request for a
+/// Calls `(handle-urgent-window! id)` if bound (xdg-activation request for a
 /// mapped toplevel; StumpWM urgency).
 pub fn on_urgent(id: u64) {
-    call_named_1("wm-on-urgent", from_i64(id as i64));
+    call_named_1("handle-urgent-window!", from_i64(id as i64));
 }
 
-/// Calls `(wm-on-startup)` if bound, once the first output is up and
+/// Calls `(handle-startup!)` if bound, once the first output is up and
 /// synced. Missing definition is a no-op, same as the other `on_*` hooks.
 /// Called from both backends (winit and udev) so autostart works whether
 /// nested or standalone.
 pub fn on_startup() {
-    let Some(proc) = lookup("wm-on-startup") else {
+    let Some(proc) = lookup("handle-startup!") else {
         return;
     };
     protected_call(move || unsafe { ffi::scm_call_0(proc) });

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 mod compositor;
 mod layer_shell;
 mod xdg_decoration;
@@ -31,7 +33,11 @@ impl SeatHandler for MindeState {
         &mut self.seat_state
     }
 
-    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+    fn cursor_image(
+        &mut self,
+        _seat: &Seat<Self>,
+        image: smithay::input::pointer::CursorImageStatus,
+    ) {
         self.cursor_state.set_status(image);
     }
 
@@ -123,8 +129,16 @@ impl WaylandDndGrabHandler for MindeState {
     ) {
         match type_ {
             GrabType::Pointer => {
-                let ptr = seat.get_pointer().unwrap();
-                let start_data = ptr.grab_start_data().unwrap();
+                let Some(ptr) = seat.get_pointer() else {
+                    tracing::warn!("pointer DnD requested on seat without pointer");
+                    source.cancel();
+                    return;
+                };
+                let Some(start_data) = ptr.grab_start_data() else {
+                    tracing::warn!("pointer DnD requested without an active grab");
+                    source.cancel();
+                    return;
+                };
 
                 // create a dnd grab to start the operation
                 let grab = DnDGrab::new_pointer(&self.display_handle, start_data, source, seat);
@@ -153,7 +167,7 @@ impl XdgActivationHandler for MindeState {
 
     /// A client asked for a surface to be activated. We never grant focus
     /// from here (focus stays Scheme-driven); instead this is surfaced as
-    /// StumpWM-style urgency via `(wm-on-urgent id)`.
+    /// StumpWM-style urgency via `(handle-urgent-window! id)`.
     fn request_activation(
         &mut self,
         token: XdgActivationToken,
@@ -165,7 +179,9 @@ impl XdgActivationHandler for MindeState {
             .windows
             .iter()
             .find(|(_, w)| {
-                w.toplevel().map(|t| t.wl_surface() == &surface).unwrap_or(false)
+                w.toplevel()
+                    .map(|t| t.wl_surface() == &surface)
+                    .unwrap_or(false)
             })
             .map(|(id, _)| *id);
         if let Some(id) = id {
