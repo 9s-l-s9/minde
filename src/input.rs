@@ -20,21 +20,25 @@ use crate::state::MindeState;
 
 /// X11-style modifier bitmask mirrored for the Scheme side: shift=1, ctrl=4,
 /// alt=8, super=64.
-fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
+fn modifier_bitmask(shift: bool, ctrl: bool, alt: bool, logo: bool) -> u32 {
     let mut mask = 0u32;
-    if mods.shift {
+    if shift {
         mask |= 1;
     }
-    if mods.ctrl {
+    if ctrl {
         mask |= 4;
     }
-    if mods.alt {
+    if alt {
         mask |= 8;
     }
-    if mods.logo {
+    if logo {
         mask |= 64;
     }
     mask
+}
+
+fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
+    modifier_bitmask(mods.shift, mods.ctrl, mods.alt, mods.logo)
 }
 
 impl MindeState {
@@ -374,5 +378,18 @@ impl MindeState {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::modifier_bitmask;
+
+    #[test]
+    fn modifier_translation_matches_the_scheme_contract() {
+        assert_eq!(modifier_bitmask(false, false, false, false), 0);
+        assert_eq!(modifier_bitmask(true, false, false, false), 1);
+        assert_eq!(modifier_bitmask(false, true, true, false), 4 | 8);
+        assert_eq!(modifier_bitmask(true, true, true, true), 1 | 4 | 8 | 64);
     }
 }

@@ -406,3 +406,23 @@ impl CursorState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_layout_wraps_and_stays_inside_the_output_budget() {
+        let message = render_message(&"abcdefghij".repeat(200), 41, 1280, 800);
+        assert_eq!(message.generation, 41);
+        assert!(message.size.0 > 0 && message.size.0 <= 1280);
+        assert!(message.size.1 > 0 && message.size.1 <= 800);
+    }
+
+    #[test]
+    fn empty_message_still_has_a_renderable_box() {
+        let message = render_message("", 0, 640, 480);
+        assert!(message.size.0 > 0);
+        assert!(message.size.1 > 0);
+    }
+}

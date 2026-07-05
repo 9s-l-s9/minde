@@ -243,12 +243,17 @@ and layout. See [`doc/diagnostics.md`](doc/diagnostics.md).
 ## Layer shell
 
 minde implements `zwlr_layer_shell_v1`: launchers (fuzzel), wallpaper
-(swaybg), lockers (swaylock), and bars/widgets (eww) work. A layer
+(swaybg), and bars/widgets (eww) work. A layer
 surface with an exclusive zone (e.g. a docked eww bar) reserves screen
 space -- the frame tree automatically tiles into the remaining area, so
 an eww mode-line never overlaps windows. Exclusive-keyboard layers
-(fuzzel, swaylock) take the keyboard while open; focus returns to the
+(fuzzel) take the keyboard while open; focus returns to the
 current frame's window when they close.
+
+Modern swaylock does not use layer shell; it requires
+`ext-session-lock-v1`, which minde does not yet implement. The application
+matrix reports that limitation explicitly instead of treating swaylock as a
+passing layer-shell client.
 
 ## Native input prompt
 
@@ -377,21 +382,24 @@ automation or state mutation.
 One command verifies everything the sandbox can reach:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm \
-  shellcheck -- make check-all
+guix shell -m manifest.scm xorg-server xdotool imagemagick jq util-linux \
+  foot xterm wl-clipboard shellcheck -- make check-all
 ```
 
 This runs locked Rust build/tests, formatting, fatal Clippy, ShellCheck, the
 borrow lint (`tests/lint-borrows.sh`), all Guile suites, documentation sanity,
-and the scripted Xvfb e2e. Screenshots and logs land in
-`/tmp/minde-e2e`. `./check` remains a wrapper for the same target.
+and both scripted Xvfb keymap sessions plus the small foot/clipboard/xterm
+application gate. Screenshots and logs land below `/tmp/minde-*`.
+`./check` remains a wrapper for the same target.
 
 For a faster implementation loop, enter the Guix shell once and run the
 independent targets separately (or concurrently): `make check-rust`,
 `make check-scheme`, `make check-static`, and `make check-e2e`. Packaging and
 DRM validation are separate gates: `make check-package` and
-`make check-hardware`. The full release roadmap and per-sprint owner checks are
-in `doc/release-roadmap.md`.
+`make check-hardware`. Heavy application checks are sequential, opt-in batches;
+see [`doc/application-testing.md`](doc/application-testing.md) before running
+them. The full release roadmap and per-sprint owner checks are in
+`doc/release-roadmap.md`.
 
 What it cannot reach: the udev/DRM backend at runtime. Anything touching
 `src/udev.rs` needs a live `./debug-tty.sh` from a spare VT **before**

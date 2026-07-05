@@ -80,6 +80,12 @@ impl XwmHandler for MindeState {
         self.space.map_element(element.clone(), (0, 0), false);
         let id = self.register_window(element);
         guile::on_window_map(id, &title, &class);
+        tracing::info!(
+            component = "window",
+            protocol = "xwayland",
+            window_id = id,
+            "managed toplevel mapped"
+        );
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -95,6 +101,12 @@ impl XwmHandler for MindeState {
             self.space.unmap_elem(&element);
             self.unregister_window(&element);
             guile::on_window_unmap(id);
+            tracing::info!(
+                component = "window",
+                protocol = "xwayland",
+                window_id = id,
+                "managed toplevel unmapped"
+            );
         } else {
             // Unmanaged override-redirect window. (Bind before unmapping:
             // the scrutinee's space borrow lives through an if-let body.)

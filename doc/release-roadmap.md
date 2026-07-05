@@ -14,7 +14,9 @@ as unavailable on the current hardware.
 - Sprint 4: implemented and internally verified; owner verification pending.
 - Sprint 5: implemented and internally verified; owner verification pending.
 - Sprint 6: implemented and internally verified; owner verification pending.
-- Sprints 7-10: pending.
+- Sprint 7: implemented and internally verified; owner verification and
+  heavyweight optional application shards pending.
+- Sprints 8-10: pending.
 
 ## Release decisions
 
@@ -253,6 +255,12 @@ session and confirm both current and previous logs remain available.
 
 ## Sprint 7 — Layered test and application matrix
 
+Status: implemented on 2026-07-13. Rust/Scheme properties, required core
+applications, GTK 3, Qt 6, layer-shell clients, both nested keymaps and a
+short soak passed internally. Optional browser/editor/toolkit shards, the
+60-minute soak and owner visual inspection remain. Modern swaylock exposed a
+missing `ext-session-lock-v1` protocol and is an explicit strict-matrix failure.
+
 ### Implementation
 
 - Share Scheme fixtures and add property tests for tree invariants,
@@ -264,24 +272,31 @@ session and confirm both current and previous logs remain available.
   - GTK 3/4 and Qt 5/6;
   - Electron/Chromium, Firefox, Emacs PGTK, and SDL2;
   - xterm and representative Xwayland clients;
-  - eww, fuzzel, swaybg, and swaylock layer-shell behavior.
+  - eww, fuzzel and swaybg layer-shell behavior;
+  - swaylock's modern session-lock requirement as an explicit unsupported
+    result until `ext-session-lock-v1` exists.
 - Keep Java, Wine, games, touch/tablet, IME, drag-and-drop, and multi-GPU as
   optional/manual coverage unless promoted into the tested matrix.
 - Add soak loops for map/unmap, reload, group switching, clipboard, simulated
-  hotplug, and Xwayland restart.
+  hotplug, and Xwayland client churn. Keep an actual post-startup Xwayland
+  server crash/restart as an explicit missing scenario.
 
 ### Owner verification
 
 ```sh
 make check
 make check-e2e
-make check-apps
+make check-apps-core
+make check-apps-layer
 make check-soak SOAK_MINUTES=60
 ```
 
-Expected: each application produces a structured scenario result and failures
-retain logs/screenshots. Manually inspect popup/dialog placement, CSD,
-fullscreen, clipboard, title/app-id changes, and layer exclusive zones.
+Expected: each selected application produces a structured scenario result and
+failures retain logs/screenshots. Run the heavyweight filters separately as
+documented in `doc/application-testing.md`; do not combine their Guix closures.
+Manually inspect popup/dialog placement, CSD, fullscreen, clipboard,
+title/app-id changes, and layer exclusive zones. Swaylock remains a known
+strict failure, not a successful lock test.
 
 ## Sprint 8 — Complete documentation and demonstrations
 

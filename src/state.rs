@@ -30,6 +30,40 @@ use smithay::{
 
 use crate::guile::{self, WmCommand};
 
+/// Clamp a point to the nearest mapped output.  Treating outputs as a summed
+/// horizontal strip breaks for negative origins, vertical arrangements and
+/// gaps, so keep this calculation independent and table-testable.
+fn clamp_point_to_rectangles(
+    pos: Point<f64, Logical>,
+    rectangles: impl IntoIterator<Item = Rectangle<i32, Logical>>,
+) -> Point<f64, Logical> {
+    let (x, y) = pos.into();
+    let mut nearest: Option<(f64, Point<f64, Logical>)> = None;
+
+    for rectangle in rectangles {
+        let rectangle = rectangle.to_f64();
+        if rectangle.contains(pos) {
+            return pos;
+        }
+        let left = rectangle.loc.x;
+        let top = rectangle.loc.y;
+        let right = left + rectangle.size.w;
+        let bottom = top + rectangle.size.h;
+        let candidate: Point<f64, Logical> = (x.clamp(left, right), y.clamp(top, bottom)).into();
+        let dx = candidate.x - x;
+        let dy = candidate.y - y;
+        let distance = dx * dx + dy * dy;
+        if nearest
+            .as_ref()
+            .is_none_or(|(best_distance, _)| distance < *best_distance)
+        {
+            nearest = Some((distance, candidate));
+        }
+    }
+
+    nearest.map_or(pos, |(_, point)| point)
+}
+
 /// Compositor state. Adapted from Smithay's `smallvil` example
 /// (https://github.com/Smithay/Smithay, MIT licensed); see README for details.
 pub struct MindeState {
@@ -232,29 +266,12 @@ impl MindeState {
     /// anvil's `clamp_coords`. Used by the udev backend's relative pointer
     /// motion (winit only ever gets absolute motion, already in range).
     pub fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.space.outputs().next().is_none() {
-            return pos;
-        }
-
-        let (pos_x, pos_y) = pos.into();
-        let max_x = self.space.outputs().fold(0, |acc, o| {
-            acc + self.space.output_geometry(o).unwrap().size.w
-        });
-        let clamped_x = pos_x.clamp(0.0, max_x as f64);
-        let max_y = self
-            .space
-            .outputs()
-            .find(|o| {
-                let geo = self.space.output_geometry(o).unwrap();
-                geo.contains((clamped_x as i32, 0))
-            })
-            .map(|o| self.space.output_geometry(o).unwrap().size.h);
-
-        if let Some(max_y) = max_y {
-            (clamped_x, pos_y.clamp(0.0, max_y as f64)).into()
-        } else {
-            (clamped_x, pos_y).into()
-        }
+        clamp_point_to_rectangles(
+            pos,
+            self.space
+                .outputs()
+                .filter_map(|output| self.space.output_geometry(output)),
+        )
     }
 
     /// Sets up the calloop channel used to carry `WmCommand`s from Scheme
@@ -1168,4 +1185,43 @@ pub struct ClientState {
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rectangle(x: i32, y: i32, width: i32, height: i32) -> Rectangle<i32, Logical> {
+        Rectangle::new((x, y).into(), (width, height).into())
+    }
+
+    #[test]
+    fn output_clamp_handles_gaps_vertical_layouts_and_negative_origins() {
+        let outputs = [rectangle(-800, 0, 800, 600), rectangle(200, 700, 1200, 900)];
+
+        assert_eq!(
+            clamp_point_to_rectangles((-400.0, 300.0).into(), outputs),
+            (-400.0, 300.0).into()
+        );
+        assert_eq!(
+            clamp_point_to_rectangles((100.0, 300.0).into(), outputs),
+            (0.0, 300.0).into()
+        );
+        assert_eq!(
+            clamp_point_to_rectangles((500.0, 650.0).into(), outputs),
+            (500.0, 700.0).into()
+        );
+        assert_eq!(
+            clamp_point_to_rectangles((1800.0, 1800.0).into(), outputs),
+            (1400.0, 1600.0).into()
+        );
+    }
+
+    #[test]
+    fn output_clamp_without_outputs_preserves_the_point() {
+        assert_eq!(
+            clamp_point_to_rectangles((12.5, -7.0).into(), []),
+            (12.5, -7.0).into()
+        );
+    }
 }

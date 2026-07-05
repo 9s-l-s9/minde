@@ -63,6 +63,12 @@ impl XdgShellHandler for MindeState {
         });
 
         guile::on_window_map(id, &title, &app_id);
+        tracing::info!(
+            component = "window",
+            protocol = "wayland",
+            window_id = id,
+            "managed toplevel mapped"
+        );
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
@@ -80,6 +86,12 @@ impl XdgShellHandler for MindeState {
             self.space.unmap_elem(&window);
             if let Some(id) = self.unregister_window(&window) {
                 guile::on_window_unmap(id);
+                tracing::info!(
+                    component = "window",
+                    protocol = "wayland",
+                    window_id = id,
+                    "managed toplevel unmapped"
+                );
             }
         }
     }

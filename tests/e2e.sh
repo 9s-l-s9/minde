@@ -20,7 +20,14 @@ LOG="$OUT/e2e.log"
 mkdir -p "$OUT" "$RT"
 chmod 700 "$RT"
 
-fail() { echo "FAIL - $1"; [ -f "$LOG" ] && tail -5 "$LOG"; kill "${WM_PID:-0}" "${XVFB_PID:-0}" 2>/dev/null || true; exit 1; }
+fail() {
+  echo "FAIL - $1"
+  [ -f "$LOG" ] && tail -5 "$LOG"
+  for pid in "${WM_PID:-}" "${XVFB_PID:-}"; do
+    [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+  done
+  exit 1
+}
 ok() { echo "ok - $1"; }
 # tracing writes ANSI color codes even into the redirected log; strip
 # them before matching or patterns like "cmd=foot" never hit.

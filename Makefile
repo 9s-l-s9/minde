@@ -2,6 +2,7 @@ SHELL := /bin/sh
 
 SCHEME_TESTS := \
 	tests/foundation-test.scm \
+	tests/property-test.scm \
 	tests/ui-prompt-test.scm \
 	tests/config-test.scm \
 	tests/status-test.scm \
@@ -18,8 +19,8 @@ SCHEME_TESTS := \
 	tests/placement-test.scm \
 	tests/dynamic-test.scm
 
-.PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress \
-	check-apps check-docs check-package check-all check-hardware demos \
+.PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
+	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
 	check-foundation-package check-ui-package clean-test-output
 
 check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps
@@ -42,7 +43,8 @@ check-cli: check-rust
 check-static:
 	sh tests/lint-borrows.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck check debug-tty.sh tests/*.sh scripts/minde-cmd scripts/minde-msg scripts/mindectl; \
+		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
+			scripts/minde-cmd scripts/minde-msg scripts/mindectl; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \
 	fi
@@ -81,7 +83,10 @@ check-e2e:
 		echo "error: xdotool is required; add it to the Guix shell" >&2; exit 127; }
 	@command -v import >/dev/null 2>&1 || { \
 		echo "error: ImageMagick 'import' is required" >&2; exit 127; }
+	@command -v jq >/dev/null 2>&1 || { \
+		echo "error: jq is required by the portable nested scenario" >&2; exit 127; }
 	sh tests/e2e.sh
+	sh tests/portable-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }
@@ -89,9 +94,30 @@ check-stress:
 	@command -v import >/dev/null 2>&1 || { echo "error: ImageMagick 'import' is required" >&2; exit 127; }
 	MINDE_E2E_STRESS=1 sh tests/e2e.sh
 
-# Sprint 7 expands this target into the full toolkit matrix. Until then, the
-# existing e2e suite is the application smoke test (foot plus optional xterm).
-check-apps: check-e2e
+check-apps: check-apps-core
+
+check-apps-all:
+	sh tests/applications.sh
+
+check-apps-core:
+	MINDE_APPS_FILTER=foot,wl-clipboard,xterm sh tests/applications.sh
+
+check-apps-toolkits:
+	MINDE_APPS_FILTER=gtk3,gtk4,qt5,qt6,sdl2 sh tests/applications.sh
+
+check-apps-desktop:
+	MINDE_APPS_FILTER=electron,chromium,firefox,emacs-pgtk sh tests/applications.sh
+
+check-apps-layer:
+	MINDE_APPS_FILTER=swaybg,fuzzel,swaylock,eww sh tests/applications.sh
+
+# Release/CI gate: every matrix entry must be installed and pass. The normal
+# target records explicit skips so contributors can run a useful subset.
+check-apps-strict:
+	MINDE_APPS_STRICT=1 sh tests/applications.sh
+
+check-soak:
+	sh tests/soak.sh
 
 check-docs:
 	@test -s README.md
@@ -99,6 +125,7 @@ check-docs:
 	@test -s doc/release-roadmap.md
 	@test -s doc/api.md
 	@test -s doc/diagnostics.md
+	@test -s doc/application-testing.md
 	@test -s doc/reusable-packages.md
 	@test -s UNEXPECTED.md
 	sh tests/check-release-metadata.sh
@@ -113,7 +140,7 @@ check-foundation-package:
 check-ui-package:
 	guix build -f guix/ui.scm
 
-check-all: check check-apps check-docs
+check-all: check check-e2e check-apps check-docs
 
 check-hardware:
 	@echo "Run ./debug-tty.sh from a spare VT; see doc/hardware-validation.md when Sprint 7 adds the guided checklist."

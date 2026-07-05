@@ -27,6 +27,9 @@ shims or migration notes.
   `status.json` interfaces for bars and monitoring.
 - Human or newline-delimited JSON tracing, Scheme error backtraces, two-session
   log retention, and a conservatively redacted `mindectl report` bundle.
+- Deterministic tree/geometry/serialization properties, Rust input/output and
+  rendering tests, a structured application matrix, a reduced-keymap nested
+  scenario, and a bounded RSS-reporting soak runner.
 
 ### Changed
 
@@ -53,3 +56,5 @@ shims or migration notes.
   from stale protocol state instead of panicking.
 - Local Guix builds no longer include workspace-only agent, cache, or runtime
   artifact directories in the source derivation.
+- Pointer clamping now handles negative, vertical, gapped, and non-uniform
+  output arrangements instead of assuming one horizontal strip.

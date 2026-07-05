@@ -16,16 +16,17 @@ incomplete release gate, **external** is deliberately delegated, and
 | Window navigation, numbering, marks and placement rules | supported | Scheme unit suites and nested e2e |
 | Native prompt, menu, command/eval and contextual help | supported | Scheme unit suites and nested e2e |
 | Hooks and live Scheme configuration | supported | canonical API, atomic reload and serialized main-thread IPC |
-| Native Wayland xdg-shell clients | supported | foot plus compositor e2e; toolkit matrix remains |
-| Xwayland clients | experimental | xterm smoke test when installed; broader matrix remains |
-| Layer shell and exclusive zones | experimental | eww is used manually; automated matrix remains |
-| Clipboard between Wayland and X11 | experimental | basic e2e coverage; MIME/DnD matrix remains |
-| Multiple outputs and hotplug | experimental | pure Scheme head tests; hardware reports remain |
+| Native Wayland xdg-shell clients | supported | required foot gate plus optional GTK, Qt, browser, Emacs and SDL structured scenarios |
+| Xwayland clients | experimental | required xterm mapping gate; post-crash Xwayland restart remains manual/missing |
+| Layer shell and exclusive zones | experimental | bounded eww/fuzzel/swaybg scenarios; owner visual/exclusive-zone check remains |
+| Session lock protocol | missing | modern swaylock reports missing `ext-session-lock-v1`; strict matrix preserves the failure |
+| Clipboard between Wayland and X11 | experimental | required Wayland MIME round trip and compositor e2e; primary selection/DnD remain |
+| Multiple outputs and hotplug | experimental | deterministic geometry properties, Scheme head tests and simulated soak cycle; hardware reports remain |
 | DRM/libinput login session | experimental | used on X1/T450s; guided retained reports remain |
 | Fullscreen, urgency and synthesized/remapped keys | supported | Scheme and nested e2e coverage |
 | Session diagnostics and crash log | experimental | structured status/report e2e passes; real-session privacy inspection remains |
 | Modeline and system tray | external | use eww through the schema-v1 query/subscription interface |
-| Wallpaper, launcher and lock screen | external | use layer-shell clients such as swaybg, fuzzel and swaylock |
+| Wallpaper and launcher | external | use layer-shell clients such as swaybg and fuzzel |
 | Hard compositor restart preserving clients | external | unsupported by design; validated atomic config reload replaces it |
 | Screencopy/screenshot protocol | missing | not required for nested demo capture; decide before RC |
 | Input methods, touch/tablet and drag-and-drop | missing | best-effort unless promoted into the tested 1.0 matrix |

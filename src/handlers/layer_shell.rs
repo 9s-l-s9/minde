@@ -26,7 +26,7 @@ impl WlrLayerShellHandler for MindeState {
         &mut self,
         surface: WlrLayerSurface,
         wl_output: Option<wl_output::WlOutput>,
-        _layer: Layer,
+        layer: Layer,
         namespace: String,
     ) {
         let output = wl_output
@@ -41,9 +41,16 @@ impl WlrLayerShellHandler for MindeState {
             return;
         };
         if let Err(err) =
-            layer_map_for_output(&output).map_layer(&LayerSurface::new(surface, namespace))
+            layer_map_for_output(&output).map_layer(&LayerSurface::new(surface, namespace.clone()))
         {
             tracing::warn!(?err, "failed to map layer surface");
+        } else {
+            tracing::info!(
+                component = "layer-shell",
+                namespace,
+                ?layer,
+                "layer surface mapped"
+            );
         }
         self.update_usable_area();
     }

@@ -28,13 +28,15 @@ make check-ui
 The full local gate, including nested graphical tests, is:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm \
-  shellcheck -- make check-all
+guix shell -m manifest.scm xorg-server xdotool imagemagick jq util-linux \
+  foot xterm wl-clipboard shellcheck -- make check-all
 ```
 
 Use `make check-package` for the offline Guix package build. Hardware/TTY
 validation is a separate, explicitly manual gate because it takes control of
-a real seat.
+a real seat. Run the larger GUI compatibility matrix in the bounded batches
+documented in `doc/application-testing.md`; do not combine every browser and
+toolkit in one Guix environment.
 
 ## Change expectations
 

@@ -10,6 +10,13 @@ set -eu
     echo "release metadata: scripts/minde-cmd must be executable" >&2
     exit 1
 }
+for helper in tests/applications.sh tests/soak.sh tests/portable-e2e.sh \
+    tests/lib/nested-compositor.sh; do
+    [ -x "$helper" ] || {
+        echo "release metadata: $helper must be executable" >&2
+        exit 1
+    }
+done
 
 fail() {
     echo "release metadata: $*" >&2
