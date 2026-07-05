@@ -13,6 +13,7 @@
 (define-module (minde layouts)
   #:use-module (srfi srfi-1)
   #:use-module (minde frames)
+  #:use-module (minde foundation serialization)
   #:export (define-layout!
             layout-names
             layout-spec
@@ -62,11 +63,7 @@ registry to the layouts file."
       (lambda ()
         (let ((dir (dirname path)))
           (unless (file-exists? dir) (mkdir dir)))
-        (call-with-output-file path
-          (lambda (port)
-            (display ";; minde layouts -- written by save-layout!\n" port)
-            (write %layouts port)
-            (newline port)))
+        (write-versioned-datum-file path 'minde-layouts 1 %layouts)
         (echo (string-append "saved layout: " name)))
       (lambda (key . args)
         (echo (format #f "could not save layouts: ~a ~s" key args))))))
@@ -79,7 +76,8 @@ missing or unreadable."
     (when (file-exists? path)
       (catch #t
         (lambda ()
-          (let ((saved (call-with-input-file path read)))
+          (let ((saved (read-versioned-datum-file
+                        path 'minde-layouts 1)))
             (when (list? saved)
               (for-each
                (lambda (entry)

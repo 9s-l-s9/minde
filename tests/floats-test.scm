@@ -60,9 +60,9 @@
 ;; Setup: one head, two windows in the default group
 ;; ---------------------------------------------------------------------
 
-(wm-on-heads-changed '((0 0 0 1280 720)))
-(wm-on-window-map 1 "one" "app-one")
-(wm-on-window-map 2 "two" "app-two")
+(handle-heads-change! '((0 0 0 1280 720)))
+(handle-window-map! 1 "one" "app-one")
+(handle-window-map! 2 "two" "app-two")
 
 (check "two tiled windows to start" (frame-tree-window-count) 2)
 
@@ -92,8 +92,8 @@
 (check-false "sync does not tile-place a float" (hash-ref %placements 2))
 
 ;; Super+drag result flows back into the geometry table.
-(wm-on-window-moved 2 40 50 300 200)
-(check "wm-on-window-moved updates geometry" (float-geometry 2) '(40 50 300 200))
+(handle-window-move! 2 40 50 300 200)
+(check "handle-window-move! updates geometry" (float-geometry 2) '(40 50 300 200))
 (sync-frames!)
 (check "sync re-places the dragged rect" (hash-ref %float-placements 2) '(40 50 300 200))
 
@@ -113,9 +113,9 @@
 ;; Float groups (gnew-float)
 ;; ---------------------------------------------------------------------
 
-(gnew-float! " FL ")
+(create-floating-group! " FL ")
 (switch-to-group! " FL ")
-(wm-on-window-map 3 "three" "app-three")
+(handle-window-map! 3 "three" "app-three")
 
 (check-true "window in a float group floats" (window-floating? 3))
 (check "float group tree stays empty" (frame-tree-window-count) 0)
@@ -137,8 +137,8 @@
 ;; Head changes clamp float geometry
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-moved 3 1200 600 400 300) ; hangs off the 1280x720 edge
-(wm-on-heads-changed '((0 0 0 1024 600)))
+(handle-window-move! 3 1200 600 400 300) ; hangs off the 1280x720 edge
+(handle-heads-change! '((0 0 0 1024 600)))
 (check-true "float clamped into the new head union"
             (let ((r (float-geometry 3)))
               (and (<= (+ (car r) (caddr r)) 1024)
@@ -148,7 +148,7 @@
 ;; Unmap cleans everything up
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-unmap 3)
+(handle-window-unmap! 3)
 (check-false "unmapped float forgotten" (window-floating? 3))
 (check-false "unmapped float out of the group" (group-has-window? " I " 3))
 (check-false "unmapped float out of all-window-ids" (member 3 (all-window-ids)))

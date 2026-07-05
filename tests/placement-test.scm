@@ -4,7 +4,8 @@
 ;;; Run with:
 ;;;   guile -L scheme tests/placement-test.scm
 
-(use-modules (srfi srfi-1))
+(use-modules (srfi srfi-1)
+             (minde foundation serialization))
 
 ;; ---------------------------------------------------------------------
 ;; Stubs recording calls, standing in for the Rust-side subrs.
@@ -59,15 +60,15 @@
 (define (check-true name got)
   (check name (if got #t #f) #t))
 
-(handle-output-geometry! 0 0 1280 720)
+(update-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
 ;; dump-frames / restore-frames!: layout AND window assignment survive.
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-map 1 "one" "foot")
-(wm-on-window-map 2 "two" "foot")
-(wm-on-window-map 3 "three" "foot")
+(handle-window-map! 1 "one" "foot")
+(handle-window-map! 2 "two" "foot")
+(handle-window-map! 3 "three" "foot")
 (split-frame-horizontal!)
 (move-window! 'right) ; w3 into the right frame, focus follows
 
@@ -77,8 +78,8 @@
 (check "right leaf windows" (cadr (cadr %dump)) '(3))
 (check "current frame index dumped" (cadddr %dump) 1)
 
-(only!) ; mangle the layout completely
-(check "only! collapsed to one leaf" (length (frame-leaves (current-tree))) 1)
+(collapse-to-one-frame!) ; mangle the layout completely
+(check "collapse-to-one-frame! collapsed to one leaf" (length (frame-leaves (current-tree))) 1)
 
 (restore-frames! %dump)
 (let ((leaves (frame-leaves (current-tree))))
@@ -89,21 +90,21 @@
 
 ;; Stale ids are dropped; windows mapped since the dump go to leaf 0.
 (define %dump2 (dump-frames))
-(wm-on-window-unmap 2)
-(wm-on-window-map 4 "four" "foot")
+(handle-window-unmap! 2)
+(handle-window-map! 4 "four" "foot")
 (restore-frames! %dump2)
 (let ((leaves (frame-leaves (current-tree))))
   (check "stale id dropped on restore" (frame-window-ids (car leaves)) '(1 4))
   (check "surviving window still in its leaf" (frame-window-ids (cadr leaves)) '(3)))
 
 ;; ---------------------------------------------------------------------
-;; sibling!
+;; focus-sibling-frame!
 ;; ---------------------------------------------------------------------
 
 (focus-frame-by-index! 0)
 (check "on frame 0" (current-frame-window) 1)
-(sibling!)
-(check "sibling! jumped to the other side" (current-frame-window) 3)
+(focus-sibling-frame!)
+(check "focus-sibling-frame! jumped to the other side" (current-frame-window) 3)
 
 ;; ---------------------------------------------------------------------
 ;; fselect helpers: overlays drawn per leaf, focus-frame-by-index!.
@@ -163,7 +164,7 @@
 
 (clear-placement-rules!)
 (add-placement-rule! "term" #:group "II" #:frame 0 #:lock? #f)
-(wm-on-window-map 10 "a term window" "term")
+(handle-window-map! 10 "a term window" "term")
 (check-true "unlocked rule skipped on map"
             (group-has-window? " I " 10))
 (place-existing-windows!)
@@ -171,7 +172,7 @@
             (group-has-window? " II " 10))
 
 (add-placement-rule! "zen" #:group "III")
-(wm-on-window-map 11 "browser" "zen")
+(handle-window-map! 11 "browser" "zen")
 (check-true "locked rule (default) applied on map"
             (group-has-window? " III " 11))
 
@@ -193,7 +194,8 @@
                    (pair? (call-with-input-file path read)))))
 (forget!)
 (check-true "forget! removed the remembered rule, keeping the others"
-            (let ((rules (call-with-input-file %rules-path read)))
+            (let ((rules (read-versioned-datum-file
+                          %rules-path 'minde-placement-rules 1)))
               (and (= (length rules) 2)
                    (not (find (lambda (r) (string=? (car r) "foot")) rules)))))
 
@@ -201,11 +203,11 @@
 ;; dump-desktop-to-file / restore-from-file
 ;; ---------------------------------------------------------------------
 
-(gnewbg-float! " FLT ")
+(create-floating-group-in-background! " FLT ")
 (dump-desktop-to-file %desktop-path)
 (check-true "desktop file written" (file-exists? %desktop-path))
-(only!) ; mangle the active layout
-(gkill-other!) ; and delete every other group
+(collapse-to-one-frame!) ; mangle the active layout
+(delete-other-groups!) ; and delete every other group
 (check "only one group left" (length (group-names)) 1)
 (restore-from-file %desktop-path)
 (check-true "restore recreated group II" (and (member " II " (group-names)) #t))

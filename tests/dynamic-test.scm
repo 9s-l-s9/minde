@@ -58,22 +58,22 @@
 (define (visible? id)
   (let ((p (rect id))) (and p (>= (car p) 0) (>= (cadr p) 0))))
 
-(handle-output-geometry! 0 0 1280 720)
+(update-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
-;; gnew-dynamic!: creates, switches, tiles as windows arrive.
+;; create-dynamic-group!: creates, switches, tiles as windows arrive.
 ;; ---------------------------------------------------------------------
 
-(gnew-dynamic! " dyn ")
-(check "gnew-dynamic! switched" (current-group-name) " dyn ")
+(create-dynamic-group! " dyn ")
+(check "create-dynamic-group! switched" (current-group-name) " dyn ")
 (check-true "group is dynamic" (dynamic-group?))
 
-(wm-on-window-map 1 "one" "foot")
+(handle-window-map! 1 "one" "foot")
 (check "one window fills the head (minus border inset)"
        (length (frame-leaves (current-tree))) 1)
 (check-true "window 1 visible" (visible? 1))
 
-(wm-on-window-map 2 "two" "foot")
+(handle-window-map! 2 "two" "foot")
 (check "two frames after second map"
        (length (frame-leaves (current-tree))) 2)
 ;; Master = newest (2), at 2/3 of 1280 on the left.
@@ -84,7 +84,7 @@
   (check-true "stack window is full height" (> (cadddr s) 650)))
 (check "focus went to the new master" %focused 2)
 
-(wm-on-window-map 3 "three" "foot")
+(handle-window-map! 3 "three" "foot")
 (check "three frames after third map"
        (length (frame-leaves (current-tree))) 3)
 (let ((m (rect 3)) (s1 (rect 2)) (s2 (rect 1)))
@@ -99,7 +99,7 @@
 ;; Unmap: master vanishes, next window is promoted.
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-unmap 3)
+(handle-window-unmap! 3)
 (check "back to two frames" (length (frame-leaves (current-tree))) 2)
 (check-true "window 2 promoted to master" (< (car (rect 2)) 20))
 (check-true "window 1 still stacks" (> (car (rect 1)) 800))
@@ -108,7 +108,7 @@
 ;; rotate-windows! / rotate-stack! / exchange-with-master!
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-map 4 "four" "foot") ; order now (4 2 1)
+(handle-window-map! 4 "four" "foot") ; order now (4 2 1)
 (check-true "4 is master" (< (car (rect 4)) 20))
 (rotate-windows! 'forward) ; (1 4 2)
 (check-true "rotate: 1 became master" (< (car (rect 1)) 20))
@@ -145,11 +145,11 @@
 ;; gmove into a dynamic group retiles it; float excludes a window.
 ;; ---------------------------------------------------------------------
 
-(gnewbg! " manual ")
+(create-group-in-background! " manual ")
 (switch-to-group! " manual ")
-(wm-on-window-map 5 "five" "foot")
+(handle-window-map! 5 "five" "foot")
 (switch-to-group! " dyn ")
-(gmerge! " manual ") ; pulls 5 into the dynamic group
+(merge-group-into-current! " manual ") ; pulls 5 into the dynamic group
 (check "gmerge into dynamic retiled: 4 frames"
        (length (frame-leaves (current-tree))) 4)
 
@@ -164,22 +164,22 @@
        (length (frame-leaves (current-tree))) 4)
 
 ;; ---------------------------------------------------------------------
-;; gnewbg-dynamic! stays in the background; switching retiles it.
+;; create-dynamic-group-in-background! stays in the background; switching retiles it.
 ;; ---------------------------------------------------------------------
 
-(gnewbg-dynamic! " dyn2 ")
-(check "gnewbg-dynamic! did not switch" (current-group-name) " dyn ")
+(create-dynamic-group-in-background! " dyn2 ")
+(check "create-dynamic-group-in-background! did not switch" (current-group-name) " dyn ")
 (switch-to-group! " dyn2 ")
 (check-true "dyn2 is dynamic" (dynamic-group?))
 
 ;; ---------------------------------------------------------------------
-;; retile! / rotate on a manual group refuses politely.
+;; retile-dynamic-group! / rotate on a manual group refuses politely.
 ;; ---------------------------------------------------------------------
 
 (switch-to-group! " I ")
 (set! %messages '())
-(retile!)
-(check-true "retile! refuses in a manual group"
+(retile-dynamic-group!)
+(check-true "retile-dynamic-group! refuses in a manual group"
             (and (pair? %messages)
                  (string-contains (car %messages) "not a dynamic group")))
 (rotate-windows! 'forward)

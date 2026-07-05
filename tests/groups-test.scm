@@ -69,7 +69,7 @@
 ;; Set up a 1280x720 output.
 ;; ---------------------------------------------------------------------
 
-(handle-output-geometry! 0 0 1280 720)
+(update-output-geometry! 0 0 1280 720)
 
 (check "default groups are I, II, III" (group-names) (list " I " " II " " III "))
 (check "current group starts as I" (current-group-name) " I ")
@@ -79,8 +79,8 @@
 ;; focus cleared.
 ;; ---------------------------------------------------------------------
 
-(wm-on-window-map 1 "term" "foot")
-(wm-on-window-map 2 "editor" "emacs")
+(handle-window-map! 1 "term" "foot")
+(handle-window-map! 2 "editor" "emacs")
 
 (check "window 2 is current after both maps" (current-frame-window) 2)
 (check-true "window 2 on-screen before switch" (not (offscreen? (hash-ref %placements 2))))
@@ -136,7 +136,7 @@
 ;; ---------------------------------------------------------------------
 
 (check "window 2 is in hidden group II before unmap" (group-has-window? " II " 2) #t)
-(wm-on-window-unmap 2)
+(handle-window-unmap! 2)
 (check "window 2 removed from group II after unmap while hidden" (group-has-window? " II " 2) #f)
 (check "window 1 (in the current, active group) unaffected" (group-has-window? " I " 1) #t)
 
@@ -147,7 +147,7 @@
 
 ;; Group I currently: single frame with window 1 current. Map a second
 ;; window (3), then split so 1 and 3 end up in different frames.
-(wm-on-window-map 3 "browser" "zen")
+(handle-window-map! 3 "browser" "zen")
 (check "window 3 current after map" (current-frame-window) 3)
 
 (split-frame-vertical!)
@@ -172,7 +172,7 @@
 ;; By app-id, into hidden group II: window must land there parked, with
 ;; the current group unchanged.
 (add-placement-rule! "zen-two" #:group "II" #:frame 0)
-(wm-on-window-map 4 "some page" "zen-two")
+(handle-window-map! 4 "some page" "zen-two")
 (check "rule-matched window landed in group II" (group-has-window? " II " 4) #t)
 (check "rule-matched window not in group I" (group-has-window? " I " 4) #f)
 (check "current group unchanged by non-follow rule" (current-group-name) " I ")
@@ -181,7 +181,7 @@
 
 ;; By title, with #:follow?: switches to the target group and shows it.
 (add-placement-rule! "follow-me" #:group "III" #:follow? #t)
-(wm-on-window-map 5 "follow-me notes" "someapp")
+(handle-window-map! 5 "follow-me notes" "someapp")
 (check "follow rule switched to group III" (current-group-name) " III ")
 (check "followed window is in group III" (group-has-window? " III " 5) #t)
 (check "followed window placed frame-filling"
@@ -196,21 +196,21 @@
             (string-contains (status-line) "follow-me notes"))
 
 ;; Unmatched windows still go through the default path.
-(wm-on-window-map 6 "plain" "plainapp")
+(handle-window-map! 6 "plain" "plainapp")
 (check "unmatched window mapped into the current frame" (current-frame-window) 6)
 
 (clear-placement-rules!)
 
 ;; ---------------------------------------------------------------------
-;; (g) gother! toggles between the last two groups.
+;; (g) switch-to-last-group! toggles between the last two groups.
 ;; ---------------------------------------------------------------------
 
 ;; We're in III (followed window 5 there). The previous group was I.
 (check "still in group III" (current-group-name) " III ")
-(gother!)
-(check "gother! goes back to the previous group (I)" (current-group-name) " I ")
-(gother!)
-(check "gother! toggles forward again (III)" (current-group-name) " III ")
+(switch-to-last-group!)
+(check "switch-to-last-group! goes back to the previous group (I)" (current-group-name) " I ")
+(switch-to-last-group!)
+(check "switch-to-last-group! toggles forward again (III)" (current-group-name) " III ")
 
 ;; ---------------------------------------------------------------------
 ;; (h) Window numbers stay unique within a group across moves.
@@ -230,30 +230,30 @@
             (string-contains (echo-windows-string) "*"))
 
 ;; ---------------------------------------------------------------------
-;; (i) grename! / gkill! / gmove-and-follow! / focus-group hook.
+;; (i) rename-current-group! / delete-current-group! / move-current-window-to-next-group-and-follow! / focus-group hook.
 ;; ---------------------------------------------------------------------
 
 (use-modules (minde hooks))
 (define %focused-groups '())
-(add-hook!* 'focus-group (lambda (name) (set! %focused-groups (cons name %focused-groups))))
+(add-event-hook! 'focus-group (lambda (name) (set! %focused-groups (cons name %focused-groups))))
 
-(grename! "Work")
-(check "grename! renamed the current group" (current-group-name) " Work ")
+(rename-current-group! "Work")
+(check "rename-current-group! renamed the current group" (current-group-name) " Work ")
 
-;; gmove-and-follow!: current window travels and we switch with it.
+;; move-current-window-to-next-group-and-follow!: current window travels and we switch with it.
 (let ((id (current-frame-window)))
-  (check-true "a window is current before gmove-and-follow!" id)
-  (gmove-and-follow!)
-  (check-true "gmove-and-follow! switched groups" (not (string=? (current-group-name) " Work ")))
+  (check-true "a window is current before move-current-window-to-next-group-and-follow!" id)
+  (move-current-window-to-next-group-and-follow!)
+  (check-true "move-current-window-to-next-group-and-follow! switched groups" (not (string=? (current-group-name) " Work ")))
   (check "the window came along and is focused" (current-frame-window) id)
   (check-true "focus-group hook fired" (pair? %focused-groups)))
 
-;; gkill!: the current group dies, its windows land in the next group.
+;; delete-current-group!: the current group dies, its windows land in the next group.
 (let ((doomed (current-group-name))
       (id (current-frame-window))
       (n-before (length (group-names))))
-  (gkill!)
-  (check "gkill! removed a group" (length (group-names)) (- n-before 1))
+  (delete-current-group!)
+  (check "delete-current-group! removed a group" (length (group-names)) (- n-before 1))
   (check-true "killed group is gone" (not (member doomed (group-names))))
   (check-true "its window survived into another group"
               (find (lambda (g) (group-has-window? g id)) (group-names))))
@@ -264,53 +264,53 @@
 ;; ---------------------------------------------------------------------
 
 ;; Clean slate: collapse everything into one group named A.
-(gkill-other!)
-(grename! "A")
-(check "gkill-other! left a single group" (length (group-names)) 1)
+(delete-other-groups!)
+(rename-current-group! "A")
+(check "delete-other-groups! left a single group" (length (group-names)) 1)
 
-(gnewbg! " B ")
-(check "gnewbg! does not switch" (current-group-name) " A ")
-(check-true "gnewbg! created B" (and (member " B " (group-names)) #t))
+(create-group-in-background! " B ")
+(check "create-group-in-background! does not switch" (current-group-name) " A ")
+(check-true "create-group-in-background! created B" (and (member " B " (group-names)) #t))
 
-(gnew! " C ")
-(check "gnew! switches to the new group" (current-group-name) " C ")
+(create-group! " C ")
+(check "create-group! switches to the new group" (current-group-name) " C ")
 
-(let ((g (gnewbg-float! " F ")))
-  (check-true "gnewbg-float! creates a float group" (group-float? g))
-  (check "gnewbg-float! does not switch" (current-group-name) " C "))
+(let ((g (create-floating-group-in-background! " F ")))
+  (check-true "create-floating-group-in-background! creates a float group" (group-float? g))
+  (check "create-floating-group-in-background! does not switch" (current-group-name) " C "))
 
-;; gnext/gprev-with-window!: the window travels and stays focused.
-(wm-on-window-map 71 "traveler" "foot")
-(gnext-with-window!)
-(check-true "gnext-with-window! left C" (not (string=? (current-group-name) " C ")))
+;; gnext/shift-current-window-to-previous-group!: the window travels and stays focused.
+(handle-window-map! 71 "traveler" "foot")
+(shift-current-window-to-next-group!)
+(check-true "shift-current-window-to-next-group! left C" (not (string=? (current-group-name) " C ")))
 (check-true "the window came along" (group-has-window? (current-group-name) 71))
 (check "and is focused" (focused-window-id) 71)
-(gprev-with-window!)
-(check "gprev-with-window! went back to C" (current-group-name) " C ")
+(shift-current-window-to-previous-group!)
+(check "shift-current-window-to-previous-group! went back to C" (current-group-name) " C ")
 (check-true "the window came back too" (group-has-window? " C " 71))
 
-;; gmerge!: B's window moves here, B dies.
+;; merge-group-into-current!: B's window moves here, B dies.
 (switch-to-group! " B ")
-(wm-on-window-map 72 "b-window" "foot")
+(handle-window-map! 72 "b-window" "foot")
 (switch-to-group! " C ")
 (let ((n (length (group-names))))
-  (gmerge! " B ")
-  (check "gmerge! deleted the source group" (length (group-names)) (- n 1))
+  (merge-group-into-current! " B ")
+  (check "merge-group-into-current! deleted the source group" (length (group-names)) (- n 1))
   (check-true "its window landed here" (group-has-window? " C " 72)))
 
-;; gmove-marked-to!: both windows marked, moved to F, marks cleared.
+;; move-marked-windows-to-group!: both windows marked, moved to F, marks cleared.
 (focus-window-by-id! 71)
 (mark-window-toggle!)
 (focus-window-by-id! 72)
 (mark-window-toggle!)
-(gmove-marked-to! " F ")
+(move-marked-windows-to-group! " F ")
 (check-true "71 moved to F" (group-has-window? " F " 71))
 (check-true "72 moved to F" (group-has-window? " F " 72))
 (check "marks cleared by the move" (marked-windows) '())
 
 ;; kill-windows: other groups' windows close, the current group's don't
 ;; -- and vice versa.
-(wm-on-window-map 73 "local" "foot")
+(handle-window-map! 73 "local" "foot")
 (set! %closed '())
 (kill-windows-other!)
 (check-true "kill-windows-other! closed 71" (and (member 71 %closed) #t))
@@ -338,18 +338,18 @@
 (check-true "groups-echo-string marks the current group"
             (and (string-contains (groups-echo-string) "*A") #t))
 
-;; wm-on-window-title: a window that mapped with empty title/app-id gets
+;; handle-window-title-change!: a window that mapped with empty title/app-id gets
 ;; its lock rule applied when the app-id finally arrives.
 (add-placement-rule! "latecomer" #:group " F " #:frame 0)
-(wm-on-window-map 80 "" "")
+(handle-window-map! 80 "" "")
 (check-true "empty-id window stayed in the current group"
             (not (group-has-window? " F " 80)))
-(wm-on-window-title 80 "some page" "latecomer")
+(handle-window-title-change! 80 "some page" "latecomer")
 (check "late app-id recorded" (window-app-id 80) "latecomer")
 (check-true "lock rule applied on late app-id"
             (group-has-window? " F " 80))
 ;; A later retitle must not re-place or duplicate the window.
-(wm-on-window-title 80 "another page" "latecomer")
+(handle-window-title-change! 80 "another page" "latecomer")
 (check-true "retitle keeps it in the rule group"
             (group-has-window? " F " 80))
 

@@ -45,15 +45,15 @@
 (define (check-true name got)
   (check name (if got #t #f) #t))
 
-(handle-output-geometry! 0 0 1280 720)
+(update-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
 ;; App-id bookkeeping: title and class both remembered; rename keeps
 ;; the class.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 1 "Terminal" "foot")
-(handle-window-map! 2 "" "org.zen.browser")
+(track-window-map! 1 "Terminal" "foot")
+(track-window-map! 2 "" "org.zen.browser")
 
 (check "window-title remembered" (window-title 1) "Terminal")
 (check "window-app-id remembered" (window-app-id 1) "foot")
@@ -73,11 +73,11 @@
 ;; unfloats.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 3 "other" "foot")
+(track-window-map! 3 "other" "foot")
 (split-frame-horizontal!)
 ;; 1 and 3 stayed in the left frame; move 3 right, then pull it back.
 (move-window! 'right)
-(focus-prev-frame!)
+(focus-previous-frame!)
 (check "current frame no longer shows 3" (current-frame-window) 1)
 (pull-window-by-id! 3)
 (check "pull-window-by-id! made 3 current here" (current-frame-window) 3)
@@ -117,11 +117,11 @@
 (check "clear-sticky! removed it" (sticky-windows) '())
 
 ;; ---------------------------------------------------------------------
-;; update-window-title! (sprint 10 wm-on-window-title backing): late
+;; update-window-title! (sprint 10 handle-window-title-change! backing): late
 ;; title/app-id arrival updates the books; rename override sticks.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 9 "" "")   ; Wayland clients map before set_title
+(track-window-map! 9 "" "")   ; Wayland clients map before set_title
 (check "map-time title empty" (window-title 9) "")
 (update-window-title! 9 "Page - zen" "zen")
 (check "late title recorded" (window-title 9) "Page - zen")

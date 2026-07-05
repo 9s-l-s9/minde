@@ -5,17 +5,17 @@
 (use-modules (srfi srfi-1))
 
 ;; ---------------------------------------------------------------------
-;; Stubs
+;; Injected UI adapter
 ;; ---------------------------------------------------------------------
 
 (define %shown #f)   ; last wm-message text
 (define %cleared 0)
 
-(define (wm-message text . rest) (set! %shown text) #t)
-(define (wm-clear-message) (set! %cleared (+ %cleared 1)) #t)
-(define (wm-log msg) #t)
-
-(use-modules (minde menu))
+(use-modules (minde ui menu))
+(configure-menu-ui!
+ #:show (lambda (text duration) (set! %shown text))
+ #:clear (lambda () (set! %cleared (+ %cleared 1)))
+ #:set-key-repeat (lambda (enabled?) #t))
 
 ;; ---------------------------------------------------------------------
 ;; Assertion helpers

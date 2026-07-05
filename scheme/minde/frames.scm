@@ -6,7 +6,7 @@
 ;;;
 ;;; Important design constraint (see tests/frames-test.scm): nothing at
 ;;; module load time calls any `wm-*` Rust subr. Those are only ever called
-;;; from `sync-frames!`, `wm-on-window-map`, etc. -- i.e. in response to an
+;;; from `sync-frames!`, `handle-window-map!`, etc. -- i.e. in response to an
 ;;; event, never as a side effect of loading this file. That's what lets the
 ;;; unit test stub the `wm-*` procedures *before* loading this module and
 ;;! still have everything work.
@@ -16,16 +16,20 @@
   #:use-module (srfi srfi-9)
   #:use-module (srfi srfi-11)
   #:use-module (ice-9 regex)
+  #:use-module (minde foundation geometry)
+  #:use-module (minde compositor model)
   #:use-module (minde hooks)
+  #:re-export (group-name group-floats group-float?
+               frame-window-ids frame-current-window)
   #:export (split-frame-horizontal!
             split-frame-vertical!
             remove-split!
             focus-next-frame!
-            focus-prev-frame!
+            focus-previous-frame!
             focus-next-window!
-            focus-prev-window!
+            focus-previous-window!
             focus-next-window-in-frame!
-            focus-prev-window-in-frame!
+            focus-previous-window-in-frame!
             pull-hidden-next!
             pull-hidden-previous!
             pull-window-from-other-frame!
@@ -34,8 +38,8 @@
             move-focus!
             move-window!
             exchange-windows!
-            only!
-            fclear!
+            collapse-to-one-frame!
+            clear-current-frame!
             hsplit-equally!
             vsplit-equally!
             window-number
@@ -54,7 +58,7 @@
             clear-fullscreen-if-window!
             kill-current-window!
             ratwarp!
-            banish!
+            move-pointer-to-corner!
             current-frame-rect
             urgent-windows
             add-urgent-window!
@@ -78,7 +82,7 @@
             ratclick!
             idle-ms
             show-window-properties!
-            sibling!
+            focus-sibling-frame!
             show-frame-overlays!
             clear-frame-overlays!
             focus-frame-by-index!
@@ -107,12 +111,8 @@
             float-geometry
             focused-window-id
             place-floats!
-            handle-window-moved!
+            update-floating-window-geometry!
             remove-float!
-            group-floats
-            set-group-floats!
-            group-float?
-            set-group-float?!
             mark-window-toggle!
             marked-windows
             clear-marks!
@@ -124,15 +124,14 @@
             heads-changed!
             set-heads-mode!
             focus-head!
-            snext!
-            sprev!
-            sother!
+            focus-next-head!
+            focus-previous-head!
+            focus-last-head!
             head-of-window
             group-all-trees
-            group-heads
-            handle-window-map!
-            handle-window-unmap!
-            handle-output-geometry!
+            track-window-map!
+            track-window-unmap!
+            update-output-geometry!
             remove-window-from-active-tree!
             remove-window-from-tree-in!
             current-frame-window
@@ -151,20 +150,8 @@
             forget-window-title!
             window-ids-with-titles
             focus-window-by-id!
-            ;; Group-tree plumbing, used by (minde groups). frames.scm
-            ;; keeps owning the <group> record and the "which group's tree
-            ;; is currently live in %frame-tree/%current-frame" swap
-            ;; (activate-group!) since that's intimately tied to the frame
-            ;; internals below; (minde groups) owns the ordered group
-            ;; list and higher-level operations (switch-to-group! etc).
-            make-group
-            group?
-            group-name
-            set-group-name!
-            group-tree
-            set-group-tree!
-            group-current-frame
-            set-group-current-frame!
+            ;; Opaque group operations used by (minde groups). Mutable
+            ;; record access lives in the private compositor model module.
             make-empty-group
             current-group
             current-tree
@@ -174,8 +161,6 @@
             group-window-count
             frame-leaves
             chain-spec
-            frame-window-ids
-            frame-current-window
             frame-add-window!
             hide-window!))
 
@@ -185,66 +170,11 @@
 
 ;; A leaf frame: a rectangle plus the list of window ids assigned to it and
 ;; which one (if any) is currently shown.
-(define-record-type <frame>
-  (make-frame x y w h window-ids current-window)
-  frame?
-  (x frame-x set-frame-x!)
-  (y frame-y set-frame-y!)
-  (w frame-w set-frame-w!)
-  (h frame-h set-frame-h!)
-  (window-ids frame-window-ids set-frame-window-ids!)
-  (current-window frame-current-window set-frame-current-window!))
-
-;; An internal split node. ORIENTATION is 'horizontal (side-by-side, a
-;; vertical dividing line) or 'vertical (stacked, a horizontal dividing
-;; line) -- matching StumpWM's terms where "vsplit" stacks frames
-;; vertically. RATIO is child-a's share of the split (0 < ratio < 1).
-(define-record-type <split>
-  (make-split orientation ratio child-a child-b)
-  split?
-  (orientation split-orientation)
-  (ratio split-ratio set-split-ratio!)
-  (child-a split-child-a set-split-child-a!)
-  (child-b split-child-b set-split-child-b!))
-
-;; A group: a name plus its own frame tree and current-frame pointer.
-;; Exactly one group is "active" at a time -- its tree/current-frame are
-;; the live %frame-tree/%current-frame below; every other group's state
-;; sits quiescently in its own record until (minde groups) activates
-;; it. See activate-group!.
-(define-record-type <group>
-  (%make-group name tree current-frame
-               last-window shown-window last-frame shown-frame
-               heads loaded-head floats float?)
-  group?
-  (name group-name set-group-name!)
-  (tree group-tree set-group-tree!)
-  (current-frame group-current-frame set-group-current-frame!)
-  ;; StumpWM's "other window/frame" memory, per group: shown-* is what
-  ;; was current at the end of the previous sync, last-* is what was
-  ;; current before that (the toggle target). Updated in sync-frames!.
-  (last-window group-last-window set-group-last-window!)
-  (shown-window group-shown-window set-group-shown-window!)
-  (last-frame group-last-frame set-group-last-frame!)
-  (shown-frame group-shown-frame set-group-shown-frame!)
-  ;; Multi-head state: the tree/current-frame fields above always refer
-  ;; to ONE head's tree -- the one in loaded-head; every other head's
-  ;; (tree . current-frame) pair is stashed in the heads hash (head id ->
-  ;; pair). See load-head-into-group!.
-  (heads group-heads)
-  (loaded-head group-loaded-head set-group-loaded-head!)
-  ;; Floating windows of this group, most-recently-raised first (the
-  ;; list order doubles as stacking order, top first). Geometry lives in
-  ;; the global %floating table. float? marks a gnew-float group: every
-  ;; window mapped into it floats automatically.
-  (floats group-floats set-group-floats!)
-  (float? group-float? set-group-float?!))
-
 ;; Public 3-argument constructor (the last/shown fields start empty; the
 ;; head table starts with just the tree given, on the current head).
 (define (make-group name tree current-frame)
-  (%make-group name tree current-frame #f #f #f #f
-               (make-hash-table) %current-head-id '() #f))
+  (make-group-record name tree current-frame #f #f #f #f
+                     (make-hash-table) %current-head-id '() #f))
 
 ;; ---------------------------------------------------------------------
 ;; State
@@ -411,10 +341,10 @@ becomes the live tree (StumpWM screen focus)."
                        0)))
           (focus-head! (list-ref ids (modulo (+ idx dir) n)))))))
 
-(define (snext!) (shift-head! 1))
-(define (sprev!) (shift-head! -1))
+(define (focus-next-head!) (shift-head! 1))
+(define (focus-previous-head!) (shift-head! -1))
 
-(define (sother!)
+(define (focus-last-head!)
   "Toggles to the previously focused head (StumpWM sother)."
   (if (eqv? %last-head-id %current-head-id)
       (echo "only one head")
@@ -423,27 +353,12 @@ becomes the live tree (StumpWM screen focus)."
 ;; The head beyond the current one in DIR, best perpendicular overlap
 ;; wins -- lets directional focus cross monitor bezels.
 (define (head-in-direction dir)
-  (let* ((r (head-rect %current-head-id))
-         (x (cadr r)) (y (caddr r)) (w (cadddr r)) (h (car (cddddr r))))
-    (define (overlap a1 a2 b1 b2) (- (min a2 b2) (max a1 b1)))
-    (let loop ((cands %heads) (best #f) (best-ov 0))
-      (if (null? cands)
-          best
-          (let* ((c (car cands))
-                 (cx (cadr c)) (cy (caddr c)) (cw (cadddr c)) (ch (car (cddddr c)))
-                 (beyond? (and (not (eqv? (car c) %current-head-id))
-                               (case dir
-                                 ((left)  (<= (+ cx cw) x))
-                                 ((right) (>= cx (+ x w)))
-                                 ((up)    (<= (+ cy ch) y))
-                                 ((down)  (>= cy (+ y h))))))
-                 (ov (and beyond?
-                          (if (memq dir '(left right))
-                              (overlap y (+ y h) cy (+ cy ch))
-                              (overlap x (+ x w) cx (+ cx cw))))))
-            (if (and ov (> ov best-ov))
-                (loop (cdr cands) (car c) ov)
-                (loop (cdr cands) best best-ov)))))))
+  (let ((head (directional-neighbor
+               (head-rect %current-head-id) %heads dir
+               #:rectangle (lambda (item) (cdr item))
+               #:same? (lambda (a b) (eqv? (car a) (car b)))
+               #:adjacent? #f)))
+    (and head (car head))))
 
 ;; The union bounding box of RAW heads, as a single head reusing the
 ;; first raw head's id (so that head's trees survive a mode switch).
@@ -593,7 +508,7 @@ window), falling back to the log when running against a binary without
 wm-message (or under the test stubs)."
   (set! %message-history (cons text (take %message-history
                                            (min 19 (length %message-history)))))
-  (run-hook!* 'message text)
+  (run-event-hook! 'message text)
   (let ((mod (resolve-module '(guile-user) #:ensure #f)))
     (if (and mod (module-variable mod 'wm-message))
         (rust-call 'wm-message text)
@@ -609,7 +524,7 @@ wm-message (or under the test stubs)."
 
 ;; Collects all leaf frames, left/top-to-right/bottom-most first.
 (define (frame-leaves node)
-  (if (frame? node)
+  (if (frame-node? node)
       (list node)
       (append (frame-leaves (split-child-a node))
               (frame-leaves (split-child-b node)))))
@@ -619,7 +534,7 @@ wm-message (or under the test stubs)."
 ;; 'b, or (values #f #f).
 (define (find-parent node leaf)
   (cond
-   ((frame? node) (values #f #f))
+   ((frame-node? node) (values #f #f))
    ((eq? (split-child-a node) leaf) (values node 'a))
    ((eq? (split-child-b node) leaf) (values node 'b))
    (else
@@ -637,7 +552,7 @@ wm-message (or under the test stubs)."
 ;; Window <-> frame bookkeeping
 ;; ---------------------------------------------------------------------
 
-;; id -> (title . app-id), remembered from handle-window-map! for the
+;; id -> (title . app-id), remembered from track-window-map! for the
 ;; windowlist and `info`-style echoes. Survives moves between
 ;; frames/groups; dropped on unmap.
 (define %window-titles (make-hash-table))
@@ -668,7 +583,7 @@ wm-message (or under the test stubs)."
 (define %renamed-windows (make-hash-table))
 
 (define (update-window-title! id title app-id)
-  "Client-driven title/app-id change after map (wm-on-window-title):
+  "Client-driven title/app-id change after map (handle-window-title-change!):
 refreshes the bookkeeping, keeping a rename-window! title override."
   (let ((kept (if (and (hash-ref %renamed-windows id)
                        (hash-ref %window-titles id))
@@ -866,7 +781,7 @@ window just gets float focus (and comes to the top of the float stack)."
 ;; A floated window leaves the frame tree entirely: it keeps arbitrary
 ;; geometry in %floating, renders above the tiling (place-floats!
 ;; re-raises after every sync), and can be moved/resized with
-;; super+drag (Rust reports the result via wm-on-window-moved).
+;; super+drag (Rust reports the result via handle-window-move!).
 ;; ---------------------------------------------------------------------
 
 ;; id -> (x y w h), the authoritative float geometry.
@@ -970,7 +885,7 @@ otherwise put a tiled window above the floats)."
          (rust-call 'wm-raise-window id))))
    (reverse (group-floats %active-group))))
 
-(define (handle-window-moved! id x y w h)
+(define (update-floating-window-geometry! id x y w h)
   "Rust reports where a super+drag move/resize ended; keep %floating
 authoritative and treat the dragged float as focused/topmost."
   (when (window-floating? id)
@@ -1250,7 +1165,7 @@ frame is the whole tree (nothing to remove)."
              ;; leaf of the sibling ends up first.
              (target-leaf
               (begin
-                (if (frame? sibling)
+                (if (frame-node? sibling)
                     (begin
                       (set-frame-x! sibling gx) (set-frame-y! sibling gy)
                       (set-frame-w! sibling gw) (set-frame-h! sibling gh))
@@ -1273,7 +1188,7 @@ frame is the whole tree (nothing to remove)."
 ;; The pixel rectangle (x y w h) currently occupied by an entire subtree
 ;; (leaf or split), i.e. the union of its leaves' rectangles.
 (define (subtree-rect node)
-  (if (frame? node)
+  (if (frame-node? node)
       (list (frame-x node) (frame-y node) (frame-w node) (frame-h node))
       (let* ((leaves (frame-leaves node))
              (x0 (apply min (map frame-x leaves)))
@@ -1285,7 +1200,7 @@ frame is the whole tree (nothing to remove)."
 ;; Re-stretches a subtree (leaf or split) to occupy exactly the given
 ;; rectangle, preserving each split's ratio and orientation.
 (define (resize-subtree! node x y w h)
-  (if (frame? node)
+  (if (frame-node? node)
       (begin
         (set-frame-x! node x) (set-frame-y! node y)
         (set-frame-w! node w) (set-frame-h! node h))
@@ -1331,7 +1246,7 @@ encloses the current frame. Ratio is clamped to [1/10, 9/10]."
   "Resets every split's ratio so all leaf frames get equal shares
 (weighted by leaf count on each side), StumpWM's balance-frames."
   (let balance! ((node %frame-tree))
-    (unless (frame? node)
+    (unless (frame-node? node)
       (let ((la (length (frame-leaves (split-child-a node))))
             (lb (length (frame-leaves (split-child-b node)))))
         (set-split-ratio! node (/ la (+ la lb)))
@@ -1390,7 +1305,7 @@ leaves. Windows never get lost -- every id ends up in some leaf."
   "TREE as a layout spec; ratios are derived from the actual pixel
 rectangles so manual resizes survive a dump/apply round-trip."
   (let node->spec ((node tree))
-    (if (frame? node)
+    (if (frame-node? node)
         'leaf
         (let* ((ra (subtree-rect (split-child-a node)))
                (rr (subtree-rect node))
@@ -1522,7 +1437,7 @@ near its top-left corner."
           (sync-frames!))
         (echo (format #f "no frame ~a" n)))))
 
-(define (sibling!)
+(define (focus-sibling-frame!)
   "Focuses the sibling of the current frame's split (StumpWM sibling)."
   (clear-float-focus!)
   (let-values (((parent side) (find-parent %frame-tree %current-frame)))
@@ -1676,10 +1591,10 @@ window')."
   (clear-float-focus!)
   (let* ((ids (frame-window-ids %current-frame))
          (n (length ids)))
-    ;; n = 1 with nothing shown (after fclear!) should re-show it too.
+    ;; n = 1 with nothing shown (after clear-current-frame!) should re-show it too.
     (when (and (> n 0) (or (> n 1) (not (frame-current-window %current-frame))))
       (let* ((cur (frame-current-window %current-frame))
-             ;; cur can be #f after fclear!; start from the front then.
+             ;; cur can be #f after clear-current-frame!; start from the front then.
              (idx (or (list-index (lambda (i) (equal? i cur)) ids) -1)))
         (set-frame-current-window! %current-frame (list-ref ids (modulo (+ idx 1) n))))))
   (sync-frames!))
@@ -1772,7 +1687,7 @@ other frame holds any window."
                 (loop (+ i 1))))))))
   (sync-frames!))
 
-(define (focus-prev-frame!)
+(define (focus-previous-frame!)
   "Cycles %current-frame to the previous leaf frame in tree order."
   (clear-float-focus!)
   (let* ((leaves (frame-leaves %frame-tree))
@@ -1782,7 +1697,7 @@ other frame holds any window."
       (set! %current-frame (list-ref leaves (modulo (- idx 1) n)))))
   (sync-frames!))
 
-(define (focus-prev-window-in-frame!)
+(define (focus-previous-window-in-frame!)
   "Cycles the current frame's shown window backwards."
   (clear-float-focus!)
   (let* ((ids (frame-window-ids %current-frame))
@@ -1793,7 +1708,7 @@ other frame holds any window."
         (set-frame-current-window! %current-frame (list-ref ids (modulo (- idx 1) n))))))
   (sync-frames!))
 
-(define (focus-prev-window!)
+(define (focus-previous-window!)
   "StumpWM's `prev`: focus-next-window! backwards through the group."
   (let* ((ids (all-window-ids))
          (n (length ids))
@@ -1897,27 +1812,11 @@ and clears the marks."
 ;; adjacency is exact edge equality; among frames sharing that edge the
 ;; one with the largest perpendicular overlap wins.
 (define (frame-in-direction dir)
-  (let* ((f %current-frame)
-         (x (frame-x f)) (y (frame-y f)) (w (frame-w f)) (h (frame-h f)))
-    (define (overlap a1 a2 b1 b2) (- (min a2 b2) (max a1 b1)))
-    (let loop ((cands (frame-leaves %frame-tree)) (best #f) (best-ov 0))
-      (if (null? cands)
-          best
-          (let* ((c (car cands))
-                 (adjacent?
-                  (and (not (eq? c f))
-                       (case dir
-                         ((left)  (= (+ (frame-x c) (frame-w c)) x))
-                         ((right) (= (frame-x c) (+ x w)))
-                         ((up)    (= (+ (frame-y c) (frame-h c)) y))
-                         ((down)  (= (frame-y c) (+ y h))))))
-                 (ov (and adjacent?
-                          (if (memq dir '(left right))
-                              (overlap y (+ y h) (frame-y c) (+ (frame-y c) (frame-h c)))
-                              (overlap x (+ x w) (frame-x c) (+ (frame-x c) (frame-w c)))))))
-            (if (and ov (> ov best-ov))
-                (loop (cdr cands) c ov)
-                (loop (cdr cands) best best-ov)))))))
+  (directional-neighbor
+   %current-frame (frame-leaves %frame-tree) dir
+   #:rectangle (lambda (frame)
+                 (list (frame-x frame) (frame-y frame)
+                       (frame-w frame) (frame-h frame)))))
 
 (define (move-focus! dir)
   "Focuses the frame in direction DIR; at a screen edge, crosses to the
@@ -1979,12 +1878,12 @@ move; focus follows the current window."
 ;; Frame commands: only / fclear / split-equally
 ;; ---------------------------------------------------------------------
 
-(define (only!)
+(define (collapse-to-one-frame!)
   "Collapses the tree to one full-area frame keeping every window, the
 current one visible (StumpWM only)."
   (apply-layout-spec! 'leaf))
 
-(define (fclear!)
+(define (clear-current-frame!)
   "Hides the current frame's shown window (it stays in the frame's list;
 the frame shows empty -- StumpWM fclear)."
   (set-frame-current-window! %current-frame #f)
@@ -2132,12 +2031,12 @@ frame's current window."
     (let ((shown (group-shown-window g)))
       (unless (equal? shown cur)
         (when shown (set-group-last-window! g shown))
-        (run-hook!* 'focus-window cur)))
+        (run-event-hook! 'focus-window cur)))
     (set-group-shown-window! g cur)
     (let ((shownf (group-shown-frame g)))
       (unless (eq? shownf %current-frame)
         (when shownf (set-group-last-frame! g shownf))
-        (run-hook!* 'focus-frame
+        (run-event-hook! 'focus-frame
                     (frame-x %current-frame) (frame-y %current-frame)
                     (frame-w %current-frame) (frame-h %current-frame))))
     (set-group-shown-frame! g %current-frame))
@@ -2193,7 +2092,7 @@ kill-window) -- vs. close-current-window!'s polite xdg close."
   "Warps the pointer to global position X Y (StumpWM ratwarp)."
   (rust-call 'wm-warp-pointer x y))
 
-(define (banish!)
+(define (move-pointer-to-corner!)
   "Warps the pointer to the bottom-right corner of the usable area
 (StumpWM banish)."
   (ratwarp! (- (+ %last-output-x %last-output-w) 2)
@@ -2213,10 +2112,10 @@ kill-window) -- vs. close-current-window!'s polite xdg close."
 
 (define (add-urgent-window! id)
   "Records ID as urgent, fires the 'urgent-window hook, and echoes it.
-Called from Rust as (wm-on-urgent id) via init.scm."
+Called from Rust as (handle-urgent-window! id) via init.scm."
   (unless (member id %urgent-windows)
     (set! %urgent-windows (append %urgent-windows (list id))))
-  (run-hook!* 'urgent-window id)
+  (run-event-hook! 'urgent-window id)
   (echo (string-append "Urgent: " (or (window-title id)
                                       (number->string id)))))
 
@@ -2227,13 +2126,13 @@ Called from Rust as (wm-on-urgent id) via init.scm."
 ;; Event hooks
 ;; ---------------------------------------------------------------------
 ;;
-;; These are no longer the direct wm-on-window-map/wm-on-window-unmap/
-;; wm-on-output-geometry hooks Rust looks up by name -- (minde groups)
+;; These are no longer the direct handle-window-map!/handle-window-unmap!/
+;; handle-output-geometry! hooks Rust looks up by name -- (minde groups)
 ;; owns those now (it needs to route to the active group and search
 ;; hidden groups on unmap). These handle-* procedures are the
 ;; single-group-tree half of that work.
 
-(define (handle-window-map! id title app-id)
+(define (track-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window
 -- or floats it right away if the active group is a float group."
   (remember-window-title! id title app-id)
@@ -2243,18 +2142,18 @@ Called from Rust as (wm-on-urgent id) via init.scm."
         (add-float! %active-group id (default-float-rect))
         (set! %focused-float id))
       (frame-add-window! %current-frame id))
-  (run-hook!* 'new-window id title app-id)
+  (run-event-hook! 'new-window id title app-id)
   (sync-frames!))
 
-(define (handle-window-unmap! id)
+(define (track-window-unmap! id)
   "Removes ID from the active group's tree, if present there. Returns #t
 if found (and re-syncs), #f otherwise -- callers should then search other
 groups' trees themselves via remove-window-from-tree-in!."
   (remove-window-from-active-tree! id))
 
-(define (handle-output-geometry! x y width height)
+(define (update-output-geometry! x y width height)
   "Single-head compatibility shim: treats the whole world as one head
-with id 0. (minde groups)' wm-on-output-geometry routes here only for
-old binaries/tests; multi-head backends call wm-on-heads-changed."
+with id 0. (minde groups)' handle-output-geometry! routes here only for
+old binaries/tests; multi-head backends call handle-heads-change!."
   (when (and (> width 0) (> height 0))
     (heads-changed! (list (list 0 x y width height)) '())))

@@ -15,22 +15,28 @@
 ;;; Same load-time constraint as frames.scm: nothing here calls a wm-*
 ;;; Rust subr at module load time.
 
-(define-module (minde menu)
+(define-module (minde ui menu)
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-9)
   #:use-module (ice-9 optargs)
-  #:export (select-from-menu
+  #:export (configure-menu-ui!
+            select-from-menu
             menu-active?
             menu-handle-key!
             menu-abort!))
 
-(define (rust-call name . args)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod name))))
-    (if var (apply (variable-ref var) args) #f)))
+(define %show (lambda (text duration) #f))
+(define %clear (lambda () #f))
+(define %set-key-repeat (lambda (enabled?) #f))
 
-(define (show! text) (rust-call 'wm-message text 0)) ; sticky
-(define (clear!) (rust-call 'wm-clear-message))
+(define* (configure-menu-ui! #:key show clear set-key-repeat)
+  "Inject display operations. Omitted operations retain their current value."
+  (when show (set! %show show))
+  (when clear (set! %clear clear))
+  (when set-key-repeat (set! %set-key-repeat set-key-repeat)))
+
+(define (show! text) (%show text 0))
+(define (clear!) (%clear))
 
 ;; ---------------------------------------------------------------------
 ;; State
@@ -68,13 +74,13 @@
 item's value; ON-ABORT (if given) on C-g/Escape."
   (let ((norm (map (lambda (it) (if (pair? it) it (cons it it))) items)))
     (if (null? norm)
-        (rust-call 'wm-message "nothing to select" 1500)
+        (%show "nothing to select" 1500)
         (begin
           (set! %menu (make-menu-state prompt norm norm 0 0 "" filter?
                                        on-select on-abort))
           ;; Menus consume every key; let held keys (C-n/C-p paging,
           ;; BackSpace in the filter) repeat compositor-side.
-          (rust-call 'wm-set-key-repeat #t)
+          (%set-key-repeat #t)
           (redraw!)))))
 
 ;; ---------------------------------------------------------------------
@@ -161,7 +167,7 @@ item's value; ON-ABORT (if given) on C-g/Escape."
 
 (define (close!)
   (set! %menu #f)
-  (rust-call 'wm-set-key-repeat #f)
+  (%set-key-repeat #f)
   (clear!))
 
 (define (menu-abort!)

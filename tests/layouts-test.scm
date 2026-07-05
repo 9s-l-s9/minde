@@ -55,10 +55,10 @@
 ;; Setup: 1280x720 output, three windows in the single default frame.
 ;; ---------------------------------------------------------------------
 
-(handle-output-geometry! 0 0 1280 720)
-(handle-window-map! 1 "one" "a")
-(handle-window-map! 2 "two" "b")
-(handle-window-map! 3 "three" "c")
+(update-output-geometry! 0 0 1280 720)
+(track-window-map! 1 "one" "a")
+(track-window-map! 2 "two" "b")
+(track-window-map! 3 "three" "c")
 
 ;; ---------------------------------------------------------------------
 ;; apply-layout!: main + right column (2/3 | stacked halves), windows

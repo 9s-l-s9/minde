@@ -66,19 +66,19 @@
 ;; Set up a 1280x720 output, matching the stub.
 ;; ---------------------------------------------------------------------
 
-(handle-output-geometry! 0 0 1280 720)
+(update-output-geometry! 0 0 1280 720)
 
 ;; ---------------------------------------------------------------------
 ;; Map two windows into the (single, frame-filling) initial frame.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 1 "term" "foot")
+(track-window-map! 1 "term" "foot")
 (check "window 1 placed frame-filling after map"
        (hash-ref %placements 1)
        (list 3 3 1274 714))
 (check "window 1 focused after map" %focused 1)
 
-(handle-window-map! 2 "editor" "emacs")
+(track-window-map! 2 "editor" "emacs")
 ;; window 2 maps into the same (only) frame, becoming its new current
 ;; window; window 1 should now be parked off-screen since it's no longer
 ;; that frame's current window.
@@ -159,11 +159,11 @@
 ;; Unmap removes a window wherever it is.
 ;; ---------------------------------------------------------------------
 
-(handle-window-unmap! 1)
+(track-window-unmap! 1)
 (check "window 1 no longer tracked after unmap" (frame-tree-window-count) 1)
 (check "window 2 remains current after unmap" (current-frame-window) 2)
 
-(handle-window-unmap! 2)
+(track-window-unmap! 2)
 (check "no windows tracked after unmapping both" (frame-tree-window-count) 0)
 (check "current-frame-window is #f with no windows" (current-frame-window) #f)
 
@@ -172,7 +172,7 @@
 ;; edges, window still inset by the border width inside the gapped rect.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 3 "term2" "foot")
+(track-window-map! 3 "term2" "foot")
 (set-gaps! 10 6)
 (check "single gapped frame: outer gap on all sides"
        (hash-ref %placements 3)
@@ -218,20 +218,20 @@
        (list 3 3 1274 354))
 
 (remove-split!)
-(handle-window-unmap! 3)
+(track-window-unmap! 3)
 (forget-window-number! 3)
 
 ;; ---------------------------------------------------------------------
 ;; Window numbers: smallest free per group, reuse after unmap.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 10 "alpha" "a")
-(handle-window-map! 11 "beta" "b")
-(handle-window-map! 12 "gamma" "c")
+(track-window-map! 10 "alpha" "a")
+(track-window-map! 11 "beta" "b")
+(track-window-map! 12 "gamma" "c")
 (check "numbers assigned in map order" (map window-number (list 10 11 12)) (list 0 1 2))
-(handle-window-unmap! 11)
+(track-window-unmap! 11)
 (forget-window-number! 11)
-(handle-window-map! 13 "delta" "d")
+(track-window-map! 13 "delta" "d")
 (check "freed number is reused" (window-number 13) 1)
 
 ;; ---------------------------------------------------------------------
@@ -283,15 +283,15 @@
 ;; only / fclear / hsplit-equally.
 ;; ---------------------------------------------------------------------
 
-(only!)
-(check "only! keeps every window" (frame-tree-window-count) 3)
+(collapse-to-one-frame!)
+(check "collapse-to-one-frame! keeps every window" (frame-tree-window-count) 3)
 (let ((cur (current-frame-window)))
-  (check "only!'s current window fills the screen"
+  (check "collapse-to-one-frame!'s current window fills the screen"
          (hash-ref %placements cur) (list 3 3 1274 714)))
 
-(fclear!)
-(check "fclear! empties the frame's shown window" (current-frame-window) #f)
-(check "fclear! keeps the windows tracked" (frame-tree-window-count) 3)
+(clear-current-frame!)
+(check "clear-current-frame! empties the frame's shown window" (current-frame-window) #f)
+(check "clear-current-frame! keeps the windows tracked" (frame-tree-window-count) 3)
 
 (hsplit-equally! 3)
 (check "hsplit-equally! made three columns; first column current"
@@ -303,15 +303,15 @@
          (hash-ref %placements cur) (list 3 3 421 714)))
 
 ;; Reverse cycling sanity.
-(focus-prev-window-in-frame!)
-(focus-prev-window!)
-(focus-prev-frame!)
+(focus-previous-window-in-frame!)
+(focus-previous-window!)
+(focus-previous-frame!)
 (pull-hidden-previous!)
 (check "reverse cycling kept all windows" (frame-tree-window-count) 3)
 
-(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+(for-each (lambda (id) (track-window-unmap! id) (forget-window-number! id))
           (list 10 12 13))
-(only!)
+(collapse-to-one-frame!)
 
 ;; ---------------------------------------------------------------------
 ;; Hooks fire on map/focus; message hook + lastmsg ring.
@@ -321,16 +321,16 @@
 
 (define %hook-events '())
 (define (record-event . args) (set! %hook-events (cons args %hook-events)))
-(add-hook!* 'new-window (lambda (id title app-id) (record-event 'new id)))
-(add-hook!* 'focus-window (lambda (id) (record-event 'focus id)))
-(add-hook!* 'message (lambda (text) (record-event 'msg text)))
+(add-event-hook! 'new-window (lambda (id title app-id) (record-event 'new id)))
+(add-event-hook! 'focus-window (lambda (id) (record-event 'focus id)))
+(add-event-hook! 'message (lambda (text) (record-event 'msg text)))
 
-(handle-window-map! 20 "hooked" "app")
+(track-window-map! 20 "hooked" "app")
 (check-true "new-window hook fired" (member (list 'new 20) %hook-events))
 (check-true "focus-window hook fired" (member (list 'focus 20) %hook-events))
 
 ;; A hook that throws must not break the event path.
-(add-hook!* 'message (lambda (text) (error "boom")))
+(add-event-hook! 'message (lambda (text) (error "boom")))
 (echo "still alive")
 (check "echo survives a throwing hook" (last-message) "still alive")
 (check-true "message hook saw the echo" (member (list 'msg "still alive") %hook-events))
@@ -339,8 +339,8 @@
 ;; Marks: mark two windows elsewhere, pull them into the current frame.
 ;; ---------------------------------------------------------------------
 
-(handle-window-map! 21 "m1" "a")
-(handle-window-map! 22 "m2" "b")
+(track-window-map! 21 "m1" "a")
+(track-window-map! 22 "m2" "b")
 (split-frame-vertical!)
 ;; current frame (top) holds 20/21/22 with 22 shown; mark 22, cycle and
 ;; mark 21, move to the empty bottom frame and pull both.
@@ -363,7 +363,7 @@
 (check "clear-marks! empties the set" (marked-windows) '())
 
 (remove-split!)
-(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+(for-each (lambda (id) (track-window-unmap! id) (forget-window-number! id))
           (list 20 21 22))
 
 ;; ---------------------------------------------------------------------
@@ -375,14 +375,14 @@
   (set! %fullscreen-calls (cons (cons id on) %fullscreen-calls))
   #t)
 
-(handle-window-map! 30 "term" "foot")
+(track-window-map! 30 "term" "foot")
 (fullscreen!)
 (check "fullscreen! set window 30 fullscreen" (car %fullscreen-calls) '(30 . #t))
 (check "fullscreen-window records the id" (fullscreen-window) 30)
 ;; While fullscreen, sync is frozen: mapping another window must not
 ;; issue placements.
 (hash-clear! %placements)
-(handle-window-map! 31 "editor" "lem")
+(track-window-map! 31 "editor" "lem")
 (check "sync-frames! is a no-op while fullscreen" (hash-count (const #t) %placements) 0)
 (fullscreen!)
 (check "second fullscreen! unset it" (car %fullscreen-calls) '(30 . #f))
@@ -406,7 +406,7 @@
 (clear-urgent! 31)
 (check "clear-urgent! empties the list" (urgent-windows) '())
 
-(for-each (lambda (id) (handle-window-unmap! id) (forget-window-number! id))
+(for-each (lambda (id) (track-window-unmap! id) (forget-window-number! id))
           (list 30 31))
 
 ;; ---------------------------------------------------------------------

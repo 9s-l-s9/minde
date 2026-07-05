@@ -120,7 +120,7 @@
 (check-true "C-g abort callback" %aborted)
 
 ;; ---------------------------------------------------------------------
-;; Clipboard: C-y/C-v request a paste, wm-on-paste inserts at point,
+;; Clipboard: C-y/C-v request a paste, handle-paste! inserts at point,
 ;; M-w copies the buffer.
 ;; ---------------------------------------------------------------------
 
@@ -131,17 +131,17 @@
 (check "C-y requested a paste" %paste-requests 1)
 (wm-handle-key ctrl #f "v" "")
 (check "C-v requested a paste too" %paste-requests 2)
-(wm-on-paste "XY\nZ")
+(handle-paste! "XY\nZ")
 (check "paste inserted at point, newline collapsed" (car %messages) "p: aXY Z|")
 (key "Left" "")
-(wm-on-paste "-")
+(handle-paste! "-")
 (check "paste lands at the cursor" (car %messages) "p: aXY -|Z")
 (wm-handle-key 8 #f "w" "")
 (check "M-w copied the buffer" %clipboard "aXY -Z")
 (key "Return" "")
 (check "buffer with pasted text submitted" %submitted2 "aXY -Z")
 ;; A paste arriving after the prompt closed is a silent no-op.
-(wm-on-paste "late")
+(handle-paste! "late")
 (check-true "late paste ignored" (not (input-active?)))
 
 (if (zero? %failures)

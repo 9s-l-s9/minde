@@ -59,6 +59,7 @@
 ;; Keep init.scm's load-placement-rules! away from the developer's real
 ;; rules file.
 (setenv "MINDE_RULES_FILE" "/nonexistent-minde-rules.scm")
+(setenv "MINDE_CONFIG" "scheme/default-config.scm")
 
 ;; Load init.scm by its full canonical path. init.scm's own top-level code
 ;; calls (current-filename) (to find scheme/ for add-to-load-path), which
@@ -142,11 +143,11 @@
        #t)
 
 ;; ---------------------------------------------------------------------
-;; C-t g dispatches to the groups binding (gnext!) without error.
+;; C-t g dispatches to the groups binding (switch-to-next-group!) without error.
 ;; ---------------------------------------------------------------------
 
 (wm-handle-key ctrl-bit #f "t")
-(check "C-t g is consumed (dispatches to gnext!)"
+(check "C-t g is consumed (dispatches to switch-to-next-group!)"
        (wm-handle-key 0 #f "g")
        #t)
 
@@ -298,20 +299,20 @@
 ;; Sprint 3: timers, fullscreen, kill, banish, flash, urgency, clipboard.
 ;; ---------------------------------------------------------------------
 
-;; wm-run-after stores a thunk that wm-on-timer runs.
+;; wm-run-after stores a thunk that handle-timer! runs.
 (define %fired #f)
 (wm-run-after 5 (lambda () (set! %fired #t)))
 (check-true "wm-run-after armed the Rust timer" (pair? %timer-calls))
-(wm-on-timer (cdar %timer-calls))
-(check "wm-on-timer ran the stored thunk" %fired #t)
+(handle-timer! (cdar %timer-calls))
+(check "handle-timer! ran the stored thunk" %fired #t)
 ;; A throwing thunk must not propagate.
 (wm-run-after 5 (lambda () (error "boom")))
 (check "a throwing timer thunk is caught"
-       (begin (wm-on-timer (cdar %timer-calls)) #t)
+       (begin (handle-timer! (cdar %timer-calls)) #t)
        #t)
 
 ;; Map a window so fullscreen/kill have a target.
-(wm-on-window-map 1 "term" "foot")
+(handle-window-map! 1 "term" "foot")
 
 (wm-handle-key ctrl-bit #f "t")
 (check "M-f (fullscreen) consumed" (wm-handle-key 8 #f "f") #t)
@@ -333,12 +334,12 @@
 (check "C-c (flash frame) consumed" (wm-handle-key 4 #f "c") #t)
 (check-true "flash armed a restore timer" (pair? %timer-calls))
 (check "flash restore timer runs without error"
-       (begin (wm-on-timer (cdar %timer-calls)) #t)
+       (begin (handle-timer! (cdar %timer-calls)) #t)
        #t)
 
-;; Urgency: wm-on-urgent echoes and C-u jumps.
+;; Urgency: handle-urgent-window! echoes and C-u jumps.
 (set! %messages '())
-(wm-on-urgent 1)
+(handle-urgent-window! 1)
 (check-true "urgent window echoed"
             (and (pair? %messages) (string-contains (car %messages) "Urgent")))
 (wm-handle-key ctrl-bit #f "t")
@@ -354,7 +355,7 @@
 (set! %messages '())
 (wm-handle-key ctrl-bit #f "t")
 (wm-handle-key 0 #f "colon")
-(wm-on-paste "(+ 1 2)")
+(handle-paste! "(+ 1 2)")
 (wm-handle-key 0 #f "Return" "")
 (check-true "pasted expression evaluated to 3"
             (find (lambda (m) (string-contains m "3")) %messages))
@@ -376,14 +377,14 @@
 (check "S (snext) consumed" (wm-handle-key 1 #f "S") #t)
 (check-true "single head echoed" (and (pair? %messages)
                                       (string-contains (car %messages) "one head")))
-(wm-on-heads-changed '((0 0 0 1280 720) (1 1280 0 1280 720)))
+(handle-heads-change! '((0 0 0 1280 720) (1 1280 0 1280 720)))
 (wm-handle-key ctrl-bit #f "t")
 (wm-handle-key 1 #f "S")
-(check "snext! switched to head 1" (current-head-id) 1)
+(check "focus-next-head! switched to head 1" (current-head-id) 1)
 (wm-handle-key ctrl-bit #f "t")
 (check "M-s (sother) consumed" (wm-handle-key 8 #f "s") #t)
-(check "sother! back on head 0" (current-head-id) 0)
-(wm-on-heads-changed '((0 0 0 1280 720))) ; back to one head
+(check "focus-last-head! back on head 0" (current-head-id) 0)
+(handle-heads-change! '((0 0 0 1280 720))) ; back to one head
 
 ;; M-c: copy the last message.
 (echo "hello from the message ring")
@@ -449,7 +450,7 @@
 
 ;; Remapped keys: focused window's app-id gates the translation.
 (define groups-mod (resolve-module '(minde groups)))
-((module-ref groups-mod 'wm-on-window-map) 42 "browser" "zen")
+((module-ref groups-mod 'handle-window-map!) 42 "browser" "zen")
 (define-remapped-keys! '(("zen" ("C-n" . "Down") ("C-p" . "Up"))))
 (set! %sent-keys '())
 (check "remapped C-n consumed" (wm-handle-key ctrl-bit #f "n" "") #t)
@@ -479,7 +480,7 @@
 (wm-handle-key ctrl-bit #f "t")
 (check-true "which-key scheduled a timer" (pair? %timer-calls))
 (set! %messages '())
-(wm-on-timer (cdr (car %timer-calls)))
+(handle-timer! (cdr (car %timer-calls)))
 (check-true "which-key echoed the armed map's docs"
             (and (pair? %messages) (string-contains (car %messages) "vsplit")))
 (wm-handle-key 0 #f "Escape") ; resolve the prefix ("not bound" echo)
@@ -487,7 +488,7 @@
 (wm-handle-key ctrl-bit #f "t")
 (wm-handle-key 0 #f "v") ; resolve before the timer fires
 (set! %messages '())
-(wm-on-timer (cdr (car %timer-calls)))
+(handle-timer! (cdr (car %timer-calls)))
 (check "stale which-key timer stays silent" %messages '())
 (which-key-mode!)
 
@@ -541,6 +542,31 @@
 (load-module! "ice-9 q")
 (check-true "load-module echoed success"
             (and (pair? %messages) (string-contains (car %messages) "loaded module")))
+
+;; Declarative reload is atomic: validation failure preserves the exact table,
+;; while a valid candidate publishes its command binding.
+(use-modules (minde foundation serialization) (minde commands))
+(define %config-test-file "/tmp/minde-invalid-config-test.scm")
+(define %g-before-failed-reload (hash-ref %prefix-bindings "g"))
+(setenv "MINDE_CONFIG" %config-test-file)
+(write-datum-file
+ %config-test-file
+ '(minde-config (version 1) (prefix (ctrl) "t")
+                   (bindings ("g" command-that-does-not-exist!))))
+(check "invalid configuration rejected" (reload-configuration!) #f)
+(check-true "failed reload retained previous binding table"
+            (eq? %g-before-failed-reload (hash-ref %prefix-bindings "g")))
+(write-datum-file
+ %config-test-file
+ '(minde-config (version 1) (prefix (ctrl) "t")
+                   (bindings ("g" focus-next-frame!))))
+(check "valid configuration accepted" (reload-configuration!) #t)
+(check-true "valid reload published registered command"
+            (eq? (hash-ref %prefix-bindings "g")
+                 (command-procedure (command-ref 'focus-next-frame!))))
+(delete-file %config-test-file)
+(setenv "MINDE_CONFIG" "scheme/default-config.scm")
+(reload-configuration!)
 
 ;; ---------------------------------------------------------------------
 

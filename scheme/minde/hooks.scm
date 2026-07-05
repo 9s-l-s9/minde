@@ -18,38 +18,34 @@
 ;;; run-binding! in init.scm).
 
 (define-module (minde hooks)
-  #:use-module (srfi srfi-1)
-  #:export (add-hook!*
-            remove-hook!*
-            run-hook!*
-            hook-procedures))
+  #:use-module ((minde foundation hooks) #:prefix foundation:)
+  #:export (add-event-hook!
+            remove-event-hook!
+            run-event-hook!
+            event-hook-procedures))
 
 ;; name (symbol) -> list of procedures, most recently added first.
 ;; (Named with a trailing * to avoid colliding with Guile's own
 ;; add-hook!/run-hook, which operate on <hook> objects.)
-(define %hooks '())
+(define %hooks (foundation:make-hook-registry))
 
-(define (hook-procedures name)
-  (or (assq-ref %hooks name) '()))
+(define (event-hook-procedures name) (foundation:event-hook-procedures %hooks name))
 
-(define (add-hook!* name proc)
+(define (add-event-hook! name proc)
   "Registers PROC to run when hook NAME fires."
-  (set! %hooks (assq-set! %hooks name (cons proc (hook-procedures name)))))
+  (foundation:add-hook! %hooks name proc))
 
-(define (remove-hook!* name proc)
-  (set! %hooks (assq-set! %hooks name (delq proc (hook-procedures name)))))
+(define (remove-event-hook! name proc)
+  (foundation:remove-hook! %hooks name proc))
 
-(define (run-hook!* name . args)
+(define (run-event-hook! name . args)
   "Runs every procedure registered on NAME with ARGS; errors are logged
 via the wm-log subr (when present) and swallowed."
-  (for-each
-   (lambda (proc)
-     (catch #t
-       (lambda () (apply proc args))
-       (lambda (key . eargs)
-         (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-                (var (and mod (module-variable mod 'wm-log))))
-           (when var
-             ((variable-ref var)
-              (format #f "error in ~a hook: ~a ~s" name key eargs)))))))
-   (hook-procedures name)))
+  (apply foundation:run-hook! %hooks name
+         (lambda (key . eargs)
+           (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+                  (var (and mod (module-variable mod 'wm-log))))
+             (when var
+               ((variable-ref var)
+                (format #f "error in ~a hook: ~a ~s" name key eargs)))))
+         args))

@@ -17,24 +17,27 @@
   #:use-module (ice-9 optargs)
   #:use-module (minde hooks)
   #:use-module (minde frames)
+  #:use-module (minde compositor model)
+  #:use-module (minde foundation serialization)
+  #:re-export (focus-next-head! focus-previous-head!)
   #:export (switch-to-group!
-            gother!
+            switch-to-last-group!
             add-placement-rule!
             clear-placement-rules!
             place-existing-windows!
             status-line
-            gnext!
-            gprev!
-            gnew!
-            gnew-auto!
-            gnew-float!
-            gnewbg!
-            gnewbg-float!
-            gnext-with-window!
-            gprev-with-window!
-            gmerge!
-            gkill-other!
-            gmove-marked-to!
+            switch-to-next-group!
+            switch-to-previous-group!
+            create-group!
+            create-auto-named-group!
+            create-floating-group!
+            create-group-in-background!
+            create-floating-group-in-background!
+            shift-current-window-to-next-group!
+            shift-current-window-to-previous-group!
+            merge-group-into-current!
+            delete-other-groups!
+            move-marked-windows-to-group!
             kill-windows-current-group!
             kill-windows-other!
             groups-echo-string
@@ -45,38 +48,34 @@
             dump-desktop
             dump-desktop-to-file
             restore-from-file
-            wm-on-window-moved
-            grename!
-            gkill!
+            handle-window-move!
+            rename-current-group!
+            delete-current-group!
             move-window-to-next-group!
-            gmove-and-follow!
+            move-current-window-to-next-group-and-follow!
             next-urgent!
-            wm-on-heads-changed
+            handle-heads-change!
             set-head-mode!
-            wm-on-window-map
-            wm-on-window-title
-            wm-on-window-unmap
-            wm-on-output-geometry
+            handle-window-map!
+            handle-window-title-change!
+            handle-window-unmap!
+            handle-output-geometry!
             current-group-name
             group-names
             group-has-window?
             dynamic-group?
             mark-dynamic!
-            gnew-dynamic!
-            gnewbg-dynamic!
+            create-dynamic-group!
+            create-dynamic-group-in-background!
             retile-dynamic!
-            retile!
+            retile-dynamic-group!
             rotate-windows!
             rotate-stack!
             exchange-with-master!
             change-layout!
             change-split-ratio!
             change-default-layout!
-            change-default-split-ratio!
-            hnext!
-            hprev!
-            fnext-in-head!
-            fprev-in-head!))
+            change-default-split-ratio!))
 
 ;; ---------------------------------------------------------------------
 ;; The group list
@@ -156,13 +155,13 @@ or clearing focus)."
       ;; A dynamic group re-derives its master/stack tiling on
       ;; activation (gmoves into it while hidden left the tree stale).
       (when (dynamic-group? target) (retile-dynamic!))
-      (run-hook!* 'focus-group (group-name target))
+      (run-event-hook! 'focus-group (group-name target))
       (echo (group-list-string)))))
 
 ;; The group that was current before the last switch (StumpWM gother).
 (define %last-group #f)
 
-(define (gother!)
+(define (switch-to-last-group!)
   "Toggles back to the previously current group."
   (when (and %last-group (memq %last-group %groups))
     (switch-to-group! (group-name %last-group))))
@@ -178,13 +177,13 @@ or clearing focus)."
         %groups)
    "  "))
 
-(define (gnext!)
+(define (switch-to-next-group!)
   "Switches to the next group in %groups, wrapping around."
   (let ((idx (current-group-index)) (n (length %groups)))
     (when (and idx (> n 1))
       (switch-to-group! (modulo (+ idx 1) n)))))
 
-(define (gprev!)
+(define (switch-to-previous-group!)
   "Switches to the previous group in %groups, wrapping around."
   (let ((idx (current-group-index)) (n (length %groups)))
     (when (and idx (> n 1))
@@ -194,7 +193,7 @@ or clearing focus)."
 ;; Creating groups
 ;; ---------------------------------------------------------------------
 
-(define (gnewbg! name)
+(define (create-group-in-background! name)
   "Creates a new empty group named NAME (a string), appended to the end of
 %groups, sized to the last known output geometry. Does not switch to it
 (StumpWM gnewbg)."
@@ -203,15 +202,15 @@ or clearing focus)."
     (set! %groups (append %groups (list g)))
     g))
 
-(define (gnew! name)
+(define (create-group! name)
   "Creates a new empty group named NAME and switches to it (StumpWM
 gnew)."
-  (let ((g (gnewbg! name)))
+  (let ((g (create-group-in-background! name)))
     (switch-to-group! (group-name g))
     g))
 
 ;; Roman numerals for auto-generated group names (I, II, III already
-;; taken by the defaults; gnew-auto! continues IV, V, ...). Falls back to
+;; taken by the defaults; create-auto-named-group! continues IV, V, ...). Falls back to
 ;; a plain number past 3999, which will never happen in practice.
 (define %roman-table
   '((1000 . "M") (900 . "CM") (500 . "D") (400 . "CD")
@@ -226,33 +225,33 @@ gnew)."
      ((>= n (caar table)) (loop (- n (caar table)) table (string-append acc (cdar table))))
      (else (loop n (cdr table) acc)))))
 
-(define (gnew-auto!)
+(define (create-auto-named-group!)
   "Creates a new group with an auto-generated roman-numeral name (\" IV \",
 \" V \", ... continuing the default groups' naming) and switches to it."
-  (gnew! (string-append " " (integer->roman (+ 1 (length %groups))) " ")))
+  (create-group! (string-append " " (integer->roman (+ 1 (length %groups))) " ")))
 
-(define (gnewbg-float! name)
+(define (create-floating-group-in-background! name)
   "Creates a new float group in the background (StumpWM gnewbg-float):
 every window mapped while it is current floats automatically. Does not
 switch to it."
-  (let ((g (gnewbg! name)))
+  (let ((g (create-group-in-background! name)))
     (set-group-float?! g #t)
     g))
 
-(define (gnew-float! name)
+(define (create-floating-group! name)
   "Creates a new float group and switches to it (StumpWM gnew-float)."
-  (let ((g (gnewbg-float! name)))
+  (let ((g (create-floating-group-in-background! name)))
     (switch-to-group! (group-name g))
     g))
 
-(define (grename! name)
+(define (rename-current-group! name)
   "Renames the current group (StumpWM grename). Group names are stored
 padded (\" I \"); NAME is padded the same way."
   (unless (string-null? name)
     (set-group-name! (current-group) (string-append " " (string-trim-both name) " "))
     (echo (group-list-string))))
 
-(define (gkill!)
+(define (delete-current-group!)
   "Deletes the current group; its windows move to the previous (or next)
 group, which becomes current (StumpWM gkill). A no-op with one group."
   (let ((g (current-group)) (n (length %groups)))
@@ -306,19 +305,19 @@ group or the current frame has no window."
         (switch-to-group! (group-name target))
         (focus-window-by-id! id)))))
 
-(define (gnext-with-window!)
+(define (shift-current-window-to-next-group!)
   "Moves the current window to the next group and follows it (StumpWM
 gnext-with-window)."
   (gshift-with-window! 1))
 
-(define (gprev-with-window!)
+(define (shift-current-window-to-previous-group!)
   "Moves the current window to the previous group and follows it (StumpWM
 gprev-with-window)."
   (gshift-with-window! -1))
 
 ;; Adopts every window of G into the current group and deletes G. The
-;; shared core of gmerge! and gkill-other!; callers sync and echo.
-(define (merge-group-into-current! g)
+;; shared core of merge-group-into-current! and delete-other-groups!; callers sync and echo.
+(define (adopt-group-into-current! g)
   (when (and (not (eq? g (current-group))) (memq g %groups))
     (for-each
      (lambda (id) (move-window-between-groups! id g (current-group)))
@@ -327,7 +326,7 @@ gprev-with-window)."
     (unmark-dynamic! g)
     (when (eq? %last-group g) (set! %last-group #f))))
 
-(define (gmerge! name-or-index)
+(define (merge-group-into-current! name-or-index)
   "Merges the group named NAME-OR-INDEX into the current one: all its
 windows (floats stay floating) move here and the emptied group is
 deleted (StumpWM gmerge)."
@@ -336,18 +335,18 @@ deleted (StumpWM gmerge)."
      ((not g) (echo "no such group"))
      ((eq? g (current-group)) (echo "already the current group"))
      (else
-      (merge-group-into-current! g)
+      (adopt-group-into-current! g)
       (sync-frames!)
       (echo (group-list-string))))))
 
-(define (gkill-other!)
+(define (delete-other-groups!)
   "Deletes every group except the current one, merging all their windows
 into it (StumpWM gkill-other)."
-  (for-each merge-group-into-current! (list-copy %groups))
+  (for-each adopt-group-into-current! (list-copy %groups))
   (sync-frames!)
   (echo (group-list-string)))
 
-(define (gmove-marked-to! name-or-index)
+(define (move-marked-windows-to-group! name-or-index)
   "Moves every marked window of the current group into the given group
 and clears their marks (StumpWM gmove-marked)."
   (let ((target (resolve-target name-or-index)))
@@ -528,17 +527,17 @@ group: windows that appeared since the last retile become the master
         (set-dynamic-state! g hid order layout ratio)
         (restore-frames! (dynamic-dump order layout ratio))))))
 
-(define (gnewbg-dynamic! name)
+(define (create-dynamic-group-in-background! name)
   "Creates a dynamic (auto-tiling) group in the background (StumpWM
 gnewbg-dynamic)."
-  (let ((g (gnewbg! name)))
+  (let ((g (create-group-in-background! name)))
     (mark-dynamic! g)
     g))
 
-(define (gnew-dynamic! name)
+(define (create-dynamic-group! name)
   "Creates a dynamic (auto-tiling) group and switches to it (StumpWM
 gnew-dynamic)."
-  (let ((g (gnewbg-dynamic! name)))
+  (let ((g (create-dynamic-group-in-background! name)))
     (switch-to-group! (group-name g))
     g))
 
@@ -622,19 +621,12 @@ left, right, top or bottom."
   (when (number? r)
     (set! %dynamic-default-ratio (max 1/10 (min 9/10 r)))))
 
-(define (retile!)
+(define (retile-dynamic-group!)
   "Forces a retile of the current dynamic group's head (StumpWM
 retile)."
   (if (dynamic-group?)
       (retile-dynamic!)
       (echo "not a dynamic group")))
-
-;; StumpWM dynamic-group head/frame navigation: our heads and per-head
-;; frame cycling already behave this way, so these are plain aliases.
-(define (hnext!) (snext!))
-(define (hprev!) (sprev!))
-(define (fnext-in-head!) (focus-next-frame!))
-(define (fprev-in-head!) (focus-prev-frame!))
 
 ;; ---------------------------------------------------------------------
 ;; Placement rules (StumpWM define-frame-preference): route a newly
@@ -682,11 +674,8 @@ retile)."
       (lambda ()
         (let ((dir (dirname path)))
           (unless (file-exists? dir) (mkdir dir)))
-        (call-with-output-file path
-          (lambda (port)
-            (display ";; minde placement rules -- written by remember!/forget!\n" port)
-            (write %placement-rules port)
-            (newline port))))
+        (write-versioned-datum-file
+         path 'minde-placement-rules 1 %placement-rules))
       (lambda (key . args)
         (echo (format #f "could not save rules: ~a ~s" key args))))))
 
@@ -697,7 +686,8 @@ does nothing if the file is missing or unreadable."
     (when (file-exists? path)
       (catch #t
         (lambda ()
-          (let ((saved (call-with-input-file path read)))
+          (let ((saved (read-versioned-datum-file
+                        path 'minde-placement-rules 1)))
             (when (list? saved)
               (set! %placement-rules
                     (filter (lambda (r) (and (pair? r) (string? (car r))))
@@ -760,7 +750,7 @@ app-id (or title) to its current group and frame (StumpWM remember)."
     (remember-window-title! id title app-id)
     (assign-window-number! id (group-all-trees g))
     (frame-add-window! leaf id)
-    (run-hook!* 'new-window id title app-id)
+    (run-event-hook! 'new-window id title app-id)
     (if active?
         (sync-frames!)
         (begin
@@ -818,7 +808,7 @@ the window actually moved; the caller re-syncs."
 ;; ---------------------------------------------------------------------
 
 (define (dump-desktop)
-  (list 'minde-desktop
+  (list 'minde-desktop 1
         (head-mode)
         (map (lambda (g)
                (list (group-name g)
@@ -831,11 +821,7 @@ the window actually moved; the caller re-syncs."
 (define (dump-desktop-to-file path)
   (catch #t
     (lambda ()
-      (call-with-output-file path
-        (lambda (port)
-          (display ";; minde desktop -- written by dump-desktop-to-file\n" port)
-          (write (dump-desktop) port)
-          (newline port)))
+      (write-datum-file path (dump-desktop))
       (echo (string-append "desktop dumped to " path)))
     (lambda (key . args)
       (echo (format #f "could not dump desktop: ~a ~s" key args)))))
@@ -847,13 +833,15 @@ geometries re-applied. Groups not in the dump are left alone."
   (catch #t
     (lambda ()
       (let ((d (call-with-input-file path read)))
-        (if (not (and (pair? d) (eq? (car d) 'minde-desktop)))
+        (if (not (and (list? d) (>= (length d) 4)
+                      (eq? (car d) 'minde-desktop)
+                      (equal? (cadr d) 1)))
             (echo (string-append path " is not a desktop dump"))
             (begin
               (for-each
                (lambda (entry)
                  (let* ((name (car entry))
-                        (g (or (find-group-by-name name) (gnewbg! name))))
+                        (g (or (find-group-by-name name) (create-group-in-background! name))))
                    (set-group-float?! g (cadr entry))
                    (restore-group-frames! g (caddr entry))
                    (for-each
@@ -862,7 +850,7 @@ geometries re-applied. Groups not in the dump are left alone."
                                  (member (car fg) (group-floats g)))
                         (set-float-geometry! (car fg) (cdr fg))))
                     (cadddr entry))))
-               (caddr d))
+               (cadddr d))
               (sync-frames!)
               (echo (string-append "desktop restored from " path))))))
     (lambda (key . args)
@@ -898,7 +886,7 @@ geometries re-applied. Groups not in the dump are left alone."
 
 (set-sync-hook! write-status!)
 
-(define (gmove-and-follow!)
+(define (move-current-window-to-next-group-and-follow!)
   "Moves the current window to the next group and switches there with it
 (StumpWM gmove-and-follow)."
   (let ((idx (current-group-index)) (n (length %groups))
@@ -915,20 +903,20 @@ geometries re-applied. Groups not in the dump are left alone."
 ;; procedures rather than something requiring qualified lookup).
 ;; ---------------------------------------------------------------------
 
-(define (wm-on-window-map id title app-id)
+(define (handle-window-map! id title app-id)
   (let ((rule (find (lambda (r) (and (rule-lock? r)
                                      (rule-matches? r title app-id)))
                     %placement-rules)))
     (if rule
         (place-by-rule! rule id title app-id)
-        (handle-window-map! id title app-id))
+        (track-window-map! id title app-id))
     ;; New tiled window in a dynamic group: it becomes the master.
     (when (and (dynamic-group?) (not (window-floating? id)))
       (retile-dynamic!))))
 
-(define (wm-on-window-title id title app-id)
+(define (handle-window-title-change! id title app-id)
   "Rust: a mapped toplevel's title/app-id changed. Wayland clients set
-both only after the initial configure, so wm-on-window-map usually saw
+both only after the initial configure, so handle-window-map! usually saw
 empty strings and the real values arrive here (and again on every
 retitle). Refreshes the bookkeeping (windowlist, remapped keys, rules,
 status line); when the app-id first becomes known, a lock placement
@@ -966,7 +954,7 @@ its group if needed."
               (switch-to-group! (group-name g)))
             (focus-window-by-id! id)))))))
 
-(define (wm-on-window-unmap id)
+(define (handle-window-unmap! id)
   "Removes ID from whichever group's tree currently holds it -- the active
 group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen)."
@@ -989,19 +977,19 @@ a sync since nothing hidden is on-screen)."
   (forget-window-number! id)
   ;; A dynamic group refills the master/stack arrangement.
   (when (dynamic-group?) (retile-dynamic!))
-  (run-hook!* 'destroy-window id)
+  (run-event-hook! 'destroy-window id)
   #t)
 
-(define (wm-on-window-moved id x y w h)
+(define (handle-window-move! id x y w h)
   "Rust reports the final geometry of a super+drag move/resize."
-  (handle-window-moved! id x y w h))
+  (update-floating-window-geometry! id x y w h))
 
-(define (wm-on-output-geometry x y width height)
+(define (handle-output-geometry! x y width height)
   "Single-head compatibility path (old binaries / winit-era configs)."
   (when (and (> width 0) (> height 0))
     (heads-changed! (list (list 0 x y width height)) %groups)))
 
-(define (wm-on-heads-changed heads)
+(define (handle-heads-change! heads)
   "Multi-head backends report the full usable-rect list here:
 ((id x y w h) ...)."
   (heads-changed! heads %groups))

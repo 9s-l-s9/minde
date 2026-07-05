@@ -5,7 +5,7 @@
 ;;; Run with: guile -L scheme tests/heads-test.scm
 ;;;
 ;;; Same stub pattern as tests/groups-test.scm; the "hardware" is
-;;; simulated entirely through wm-on-heads-changed.
+;;; simulated entirely through handle-heads-change!.
 
 (use-modules (srfi srfi-1))
 
@@ -45,38 +45,38 @@
 ;; One head to start; a window maps onto it.
 ;; ---------------------------------------------------------------------
 
-(wm-on-heads-changed '((10 0 0 1920 1080)))
+(handle-heads-change! '((10 0 0 1920 1080)))
 (check "single head registered" (map car (heads)) '(10))
 (check "current head follows the only head" (current-head-id) 10)
 
-(wm-on-window-map 1 "term" "foot")
+(handle-window-map! 1 "term" "foot")
 (check-true "window 1 fills head A (minus border)" (onscreen-at? 1 3 3))
 
 ;; ---------------------------------------------------------------------
 ;; Second head appears to the right: desktop extends, window 1 stays.
 ;; ---------------------------------------------------------------------
 
-(wm-on-heads-changed '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
+(handle-heads-change! '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
 (check "two heads registered" (map car (heads)) '(10 11))
 (check "current head unchanged on hotplug" (current-head-id) 10)
 (check-true "window 1 undisturbed" (onscreen-at? 1 3 3))
 
-;; snext! switches to head B; its tree is empty; a new window maps there.
-(snext!)
-(check "snext! moved to head B" (current-head-id) 11)
-(wm-on-window-map 2 "editor" "lem")
+;; focus-next-head! switches to head B; its tree is empty; a new window maps there.
+(focus-next-head!)
+(check "focus-next-head! moved to head B" (current-head-id) 11)
+(handle-window-map! 2 "editor" "lem")
 (check-true "window 2 fills head B at its origin"
             (onscreen-at? 2 1923 3))
 (check-true "window 1 still visible on head A" (onscreen-at? 1 3 3))
 (check "windows numbered uniquely across heads"
        (sort (list (window-number 1) (window-number 2)) <) '(0 1))
 
-;; sother! toggles back; snext!/sprev! cycle.
-(sother!)
-(check "sother! back on head A" (current-head-id) 10)
-(sprev!)
-(check "sprev! wraps to head B" (current-head-id) 11)
-(sother!)
+;; focus-last-head! toggles back; focus-next-head!/focus-previous-head! cycle.
+(focus-last-head!)
+(check "focus-last-head! back on head A" (current-head-id) 10)
+(focus-previous-head!)
+(check "focus-previous-head! wraps to head B" (current-head-id) 11)
+(focus-last-head!)
 
 ;; ---------------------------------------------------------------------
 ;; Directional focus crosses the bezel; focus-window-by-id! switches heads.
@@ -108,14 +108,14 @@
 
 (split-frame-vertical!)
 (check "head A has two frames" (length (frame-leaves (current-tree))) 2)
-(snext!)
+(focus-next-head!)
 (check "head B still one frame" (length (frame-leaves (current-tree))) 1)
-(sother!)
+(focus-last-head!)
 
 ;; Group switching keeps the current head; echo lists both heads' windows.
-(gnext!)
+(switch-to-next-group!)
 (check "group II starts empty across heads" (echo-windows-string) "no windows")
-(gprev!)
+(switch-to-previous-group!)
 (check-true "back in I, both windows listed"
             (let ((s (echo-windows-string)))
               (and (string-contains s "term") (string-contains s "editor"))))
@@ -125,7 +125,7 @@
 ;; ---------------------------------------------------------------------
 
 (focus-window-by-id! 2) ; be ON head B when it dies
-(wm-on-heads-changed '((10 0 0 1920 1080)))
+(handle-heads-change! '((10 0 0 1920 1080)))
 (check "back to one head" (map car (heads)) '(10))
 (check "current head fell back to A" (current-head-id) 10)
 (check-true "window 2 adopted into head A's frames"
@@ -138,7 +138,7 @@
 ;; Span mode: two heads become one big synthetic head.
 ;; ---------------------------------------------------------------------
 
-(wm-on-heads-changed '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
+(handle-heads-change! '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
 (set-head-mode! 'span)
 (check "span mode: one effective head" (length (heads)) 1)
 (check "span head covers the union"

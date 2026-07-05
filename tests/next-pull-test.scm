@@ -33,12 +33,12 @@
 
 ;; Layout: two frames side by side. Left frame holds windows 1 and 2
 ;; (2 visible, 1 hidden behind it), right frame holds window 3.
-(handle-output-geometry! 0 0 1280 720)
-(handle-window-map! 1 "one" "app")
-(handle-window-map! 2 "two" "app")
+(update-output-geometry! 0 0 1280 720)
+(track-window-map! 1 "one" "app")
+(track-window-map! 2 "two" "app")
 (split-frame-horizontal!)      ; 1,2 stay in the left frame, which is current
 (focus-next-frame!)            ; move to the empty right frame
-(handle-window-map! 3 "three" "app")
+(track-window-map! 3 "three" "app")
 
 (check "window 3 focused in right frame" %focused 3)
 (check "window 2 visible in left frame" (visible? 2) #t)
