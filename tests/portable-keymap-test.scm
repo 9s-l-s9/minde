@@ -38,11 +38,17 @@
     (format #t "FAIL - ~a~%" description)))
 
 (define (entered-submap key)
-  ((hash-ref %prefix-bindings key)))
+  (let ((value (hash-ref %prefix-bindings key)))
+    (or (binding-submap %prefix-bindings key)
+        (and (hash-table? value) value))))
+
+(define (nested-submap keymap key)
+  (let ((value (hash-ref keymap key)))
+    (or (binding-submap keymap key)
+        (and (hash-table? value) value))))
 
 (define required-keys
-  '("h" "j" "k" "l" "H" "J" "K" "L"
-    "n" "N" "p" "P"
+  '("h" "j" "k" "l" "n" "p"
     "r" "Space" "colon" "w" "f" "g" "m" "s"))
 (for-each
  (lambda (key)
@@ -61,9 +67,24 @@
 
 (for-each
  (lambda (key)
-   (check (string-append "exchange exists in frame map: " key)
-          (hash-ref (entered-submap "f") key)))
- '("H" "J" "K" "L"))
+   (check (string-append "move exists in window map: " key)
+          (hash-ref (entered-submap "w") key)))
+ '("h" "j" "k" "l"))
+
+(check "window list moved away from directional l"
+       (and (hash-ref (entered-submap "w") "w")
+            (string=? (binding-doc (entered-submap "w") "l") "move window")))
+(check "previous window is available without Shift"
+       (hash-ref (entered-submap "w") "p"))
+(check "both hidden-window pull directions are lowercase"
+       (let ((pull-map (nested-submap (entered-submap "w") "u")))
+         (and pull-map (hash-ref pull-map "n") (hash-ref pull-map "p"))))
+
+(for-each
+ (lambda (key)
+   (check (string-append "exchange exists in frame exchange map: " key)
+          (hash-ref (nested-submap (entered-submap "f") "x") key)))
+ '("h" "j" "k" "l"))
 
 (for-each
  (lambda (number)
@@ -87,6 +108,25 @@
        (string-contains
         (keymap-help-string (entered-submap "w"))
         "0  pull window 0"))
+
+(define (uppercase-letter-key? key)
+  (and (= (string-length key) 1)
+       (char-upper-case? (string-ref key 0))))
+
+(define (lowercase-keymap? keymap seen)
+  (or (memq keymap seen)
+      (hash-fold
+       (lambda (key value valid?)
+         (let ((child (or (binding-submap keymap key)
+                          (and (hash-table? value) value))))
+           (and valid?
+                (not (uppercase-letter-key? key))
+                (or (not child)
+                    (lowercase-keymap? child (cons keymap seen))))))
+       #t keymap)))
+
+(check "portable keymaps contain no uppercase letter bindings"
+       (lowercase-keymap? %prefix-bindings '()))
 
 (check "portable prefix is C-t"
        (and (= %prefix-mods 4) (string=? %prefix-key "t")))

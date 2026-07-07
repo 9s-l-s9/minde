@@ -29,7 +29,7 @@ Inside the nested compositor:
 
 1. Press `C-t Return` to open foot, falling back to xterm.
 2. Press `C-t ?` to show contextual help.
-3. Open a second terminal and use `C-t n` / `C-t N` to cycle windows.
+3. Open a second terminal and use `C-t n` / `C-t w p` to cycle windows.
 4. Use `C-t f h` or `C-t f v` to split the current frame.
 5. Press `C-t f`; numbered frame overlays appear. Select one with `0`–`9`.
 6. Press `C-t w`; numbered windows appear. `w 0`–`w 9` pull one into the

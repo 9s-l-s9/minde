@@ -50,6 +50,20 @@ xdotool key Print; sleep 0.2; xdotool key w; sleep 0.5
 nested_capture "$OUT/windows.png"
 xdotool key 0; sleep 0.3
 
+xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key w; sleep 0.5
+nested_capture "$OUT/window-list.png"
+xdotool key Escape; sleep 0.2
+
+# Shift-free directional layers: focus stays on h/j/k/l, while moving and
+# exchanging windows live in lowercase nested maps.
+xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key h; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key l; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key h; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key x; sleep 0.2; xdotool key l; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key x; sleep 0.2; xdotool key h; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key p; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key u; sleep 0.2; xdotool key p; sleep 0.3
+
 xdotool key Print; sleep 0.2; xdotool key f; sleep 0.5
 nested_capture "$OUT/frames.png"
 xdotool key 0; sleep 0.3
@@ -65,10 +79,10 @@ nested_log_has "error in keybinding" && {
     echo "error: portable keymap produced a keybinding error" >&2
     exit 1
 }
-for screenshot in help windows frames; do
+for screenshot in help windows window-list frames; do
     [ -s "$OUT/$screenshot.png" ] || {
         echo "error: missing $screenshot screenshot" >&2
         exit 1
     }
 done
-echo "portable keymap e2e: help, window/frame numbering, and terminal passed"
+echo "portable keymap e2e: lowercase submaps, help, numbering, and terminal passed"

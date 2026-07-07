@@ -58,7 +58,7 @@ the same definitions.
  (prefix () "Print")
  (bindings
   ("g" switch-to-next-group!)
-  ("R" reload-configuration!)))
+  ("z" reload-configuration!)))
 ```
 
 The loader rejects unknown fields, versions, modifiers and commands, as well

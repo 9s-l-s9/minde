@@ -26,7 +26,7 @@ The configuration is one data expression, not evaluated code:
  (prefix () "Print")
  (bindings
   ("n" focus-next-window!)
-  ("R" reload-configuration!)))
+  ("z" reload-configuration!)))
 ```
 
 Binding targets must be registered commands with no arguments. Unknown fields,

@@ -1404,14 +1404,10 @@ refresh)."
   (for-each
    (lambda (entry)
      (let ((key (car entry)) (direction (cadr entry)))
-       (bind-portable-key! key (lambda () (move-focus! direction)) "focus frame")
-       (bind-portable-key! (string-upcase key) (lambda () (move-window! direction)) "move window")
-       ))
+       (bind-portable-key! key (lambda () (move-focus! direction)) "focus frame")))
    '(("h" left) ("j" down) ("k" up) ("l" right)))
   (bind-portable-key! "n" focus-next-window! "next window")
-  (bind-portable-key! "N" focus-previous-window! "previous window")
   (bind-portable-key! "p" pull-hidden-next! "pull next hidden window")
-  (bind-portable-key! "P" pull-hidden-previous! "pull previous hidden window")
   (for-each
    (lambda (number)
      (let ((key (number->string number)))
@@ -1422,24 +1418,35 @@ refresh)."
   (bind-portable-key! "r" run-prompt! "run command")
   (bind-portable-key! "Space" command-palette! "command palette")
   (bind-portable-key! "colon" eval-prompt! "evaluate Scheme")
-  (bind-portable-key! "w"
-         (make-documented-keymap
-          "n" focus-next-window! "next window"
-          "N" focus-previous-window! "previous window"
-          "c" close-current-window! "close window"
-          "f" float-this! "float/unfloat window"
-          "l" windowlist! "window list"
-          "0" (lambda () (pull-window-by-number! 0)) "pull window 0"
-          "1" (lambda () (pull-window-by-number! 1)) "pull window 1"
-          "2" (lambda () (pull-window-by-number! 2)) "pull window 2"
-          "3" (lambda () (pull-window-by-number! 3)) "pull window 3"
-          "4" (lambda () (pull-window-by-number! 4)) "pull window 4"
-          "5" (lambda () (pull-window-by-number! 5)) "pull window 5"
-          "6" (lambda () (pull-window-by-number! 6)) "pull window 6"
-          "7" (lambda () (pull-window-by-number! 7)) "pull window 7"
-          "8" (lambda () (pull-window-by-number! 8)) "pull window 8"
-          "9" (lambda () (pull-window-by-number! 9)) "pull window 9")
-         "window commands")
+  (let* ((pull-map
+          (make-documented-keymap
+           "n" pull-hidden-next! "pull next hidden window"
+           "p" pull-hidden-previous! "pull previous hidden window"))
+         (window-map
+          (make-documented-keymap
+           "n" focus-next-window! "next window"
+           "p" focus-previous-window! "previous window"
+           "c" close-current-window! "close window"
+           "f" float-this! "float/unfloat window"
+           "w" windowlist! "window list"
+           "u" pull-map "pull hidden window"
+           "0" (lambda () (pull-window-by-number! 0)) "pull window 0"
+           "1" (lambda () (pull-window-by-number! 1)) "pull window 1"
+           "2" (lambda () (pull-window-by-number! 2)) "pull window 2"
+           "3" (lambda () (pull-window-by-number! 3)) "pull window 3"
+           "4" (lambda () (pull-window-by-number! 4)) "pull window 4"
+           "5" (lambda () (pull-window-by-number! 5)) "pull window 5"
+           "6" (lambda () (pull-window-by-number! 6)) "pull window 6"
+           "7" (lambda () (pull-window-by-number! 7)) "pull window 7"
+           "8" (lambda () (pull-window-by-number! 8)) "pull window 8"
+           "9" (lambda () (pull-window-by-number! 9)) "pull window 9")))
+    (for-each
+     (lambda (entry)
+       (let ((key (car entry)) (direction (cadr entry)))
+         (hash-set! window-map key (lambda () (move-window! direction)))
+         (set-binding-doc! window-map key "move window")))
+     '(("h" left) ("j" down) ("k" up) ("l" right)))
+    (bind-portable-key! "w" window-map "window commands"))
   (let ((window-map (hash-ref %prefix-bindings "w")))
     (bind-prefix-key!
      "w"
@@ -1448,13 +1455,20 @@ refresh)."
        window-map)
      "window commands")
     (set-binding-submap! %prefix-bindings "w" window-map))
-  (bind-portable-key! "f"
+  (let ((exchange-map
+         (make-documented-keymap
+          "h" (lambda () (exchange-windows! 'left)) "exchange left"
+          "j" (lambda () (exchange-windows! 'down)) "exchange down"
+          "k" (lambda () (exchange-windows! 'up)) "exchange up"
+          "l" (lambda () (exchange-windows! 'right)) "exchange right")))
+    (bind-portable-key! "f"
          (make-documented-keymap
           "h" (lambda () (guard-manual-tiling split-frame-horizontal!)) "split horizontally"
           "v" (lambda () (guard-manual-tiling split-frame-vertical!)) "split vertically"
           "c" (lambda () (guard-manual-tiling remove-split!)) "remove split"
           "o" collapse-to-one-frame! "collapse to one frame"
           "e" clear-current-frame! "empty frame"
+          "x" exchange-map "exchange windows"
           "0" (lambda () (focus-frame-by-index! 0)) "select frame 0"
           "1" (lambda () (focus-frame-by-index! 1)) "select frame 1"
           "2" (lambda () (focus-frame-by-index! 2)) "select frame 2"
@@ -1464,12 +1478,8 @@ refresh)."
           "6" (lambda () (focus-frame-by-index! 6)) "select frame 6"
           "7" (lambda () (focus-frame-by-index! 7)) "select frame 7"
           "8" (lambda () (focus-frame-by-index! 8)) "select frame 8"
-          "9" (lambda () (focus-frame-by-index! 9)) "select frame 9"
-          "H" (lambda () (exchange-windows! 'left)) "exchange left"
-          "J" (lambda () (exchange-windows! 'down)) "exchange down"
-          "K" (lambda () (exchange-windows! 'up)) "exchange up"
-          "L" (lambda () (exchange-windows! 'right)) "exchange right")
-         "frame commands")
+          "9" (lambda () (focus-frame-by-index! 9)) "select frame 9")
+         "frame commands"))
   (let ((frame-map (hash-ref %prefix-bindings "f")))
     (bind-prefix-key!
      "f"
@@ -1579,8 +1589,6 @@ reload baseline. Call once after adding imperative user bindings."
           (wm-log message)
           (echo message)
           #f)))))
-
-(bind-prefix-key! "R" reload-configuration! "reload configuration")
 
 (clear-command-registry!)
 (register-builtin-command! 'switch-to-next-group! switch-to-next-group!)

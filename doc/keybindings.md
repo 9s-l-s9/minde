@@ -9,14 +9,19 @@ loaded keymaps in [`generated/keybindings.md`](generated/keybindings.md). Run
 The portable map follows a Helix/Meow-like direct modal vocabulary:
 
 - `h/j/k/l`: directional frame focus;
-- uppercase `H/J/K/L`: move the current window;
-- `n/N`: next/previous group window;
-- `p/P`: pull next/previous hidden window;
+- `w h/j/k/l`: move the current window between frames;
+- `n`: next group window; `w p`: previous group window;
+- `p`: pull the next hidden window; `w u n/p`: pull the next/previous
+  hidden window;
 - `w`, `f`, `g`, `m`, `s`: window, frame, group, layout/mode, and session maps;
 - digits select numbered windows directly;
 - `w 0`–`w 9` pull numbered windows;
 - `f 0`–`f 9` select numbered frames;
+- `f x h/j/k/l` exchange windows directionally;
 - `?` displays help for the currently armed map.
+
+The portable map deliberately has no uppercase letter bindings. Additional
+actions use lowercase submaps instead of requiring Shift.
 
 The repository prefix is `C-t`. The maintainer's Guix Home layer deliberately
 uses `Print`; generated repository documentation does not pretend those are

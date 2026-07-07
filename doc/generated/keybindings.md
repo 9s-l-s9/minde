@@ -30,13 +30,6 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `7` | select numbered window | action |
 | `8` | select numbered window | action |
 | `9` | select numbered window | action |
-| `H` | move window | action |
-| `J` | move window | action |
-| `K` | move window | action |
-| `L` | move window | action |
-| `N` | Focus the previous group window. | action |
-| `P` | pull previous hidden window | action |
-| `R` | Validate and atomically reload configuration. | action |
 | `Return` | terminal | action |
 | `Space` | command palette | action |
 | `colon` | evaluate Scheme | action |
@@ -51,15 +44,16 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `f 7` | select frame 7 | action |
 | `f 8` | select frame 8 | action |
 | `f 9` | select frame 9 | action |
-| `f H` | exchange left | action |
-| `f J` | exchange down | action |
-| `f K` | exchange up | action |
-| `f L` | exchange right | action |
 | `f c` | remove split | action |
 | `f e` | empty frame | action |
 | `f h` | split horizontally | action |
 | `f o` | collapse to one frame | action |
 | `f v` | split vertically | action |
+| `f x` | exchange windows | submap |
+| `f x h` | exchange left | action |
+| `f x j` | exchange down | action |
+| `f x k` | exchange up | action |
+| `f x l` | exchange right | action |
 | `g` | group commands | submap |
 | `g m` | move window and follow | action |
 | `g n` | Focus the next group. | action |
@@ -91,8 +85,15 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `w 7` | pull window 7 | action |
 | `w 8` | pull window 8 | action |
 | `w 9` | pull window 9 | action |
-| `w N` | previous window | action |
 | `w c` | close window | action |
 | `w f` | float/unfloat window | action |
-| `w l` | window list | action |
+| `w h` | move window | action |
+| `w j` | move window | action |
+| `w k` | move window | action |
+| `w l` | move window | action |
 | `w n` | next window | action |
+| `w p` | previous window | action |
+| `w u` | pull hidden window | submap |
+| `w u n` | pull next hidden window | action |
+| `w u p` | pull previous hidden window | action |
+| `w w` | window list | action |
