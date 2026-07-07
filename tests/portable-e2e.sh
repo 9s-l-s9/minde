@@ -59,8 +59,8 @@ xdotool key Escape; sleep 0.2
 xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key h; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key l; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key h; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key x; sleep 0.2; xdotool key l; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key f; sleep 0.2; xdotool key x; sleep 0.2; xdotool key h; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key x; sleep 0.2; xdotool key l; sleep 0.3
+xdotool key Print; sleep 0.2; xdotool key x; sleep 0.2; xdotool key h; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key p; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key w; sleep 0.2; xdotool key u; sleep 0.2; xdotool key p; sleep 0.3
 

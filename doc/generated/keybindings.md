@@ -49,11 +49,6 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `f h` | split horizontally | action |
 | `f o` | collapse to one frame | action |
 | `f v` | split vertically | action |
-| `f x` | exchange windows | submap |
-| `f x h` | exchange left | action |
-| `f x j` | exchange down | action |
-| `f x k` | exchange up | action |
-| `f x l` | exchange right | action |
 | `g` | group commands | submap |
 | `g m` | move window and follow | action |
 | `g n` | Focus the next group. | action |
@@ -97,3 +92,8 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `w u n` | pull next hidden window | action |
 | `w u p` | pull previous hidden window | action |
 | `w w` | window list | action |
+| `x` | exchange windows | submap |
+| `x h` | exchange left | action |
+| `x j` | exchange down | action |
+| `x k` | exchange up | action |
+| `x l` | exchange right | action |

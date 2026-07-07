@@ -49,7 +49,7 @@
 
 (define required-keys
   '("h" "j" "k" "l" "n" "p"
-    "r" "Space" "colon" "w" "f" "g" "m" "s"))
+    "r" "Space" "colon" "w" "x" "f" "g" "m" "s"))
 (for-each
  (lambda (key)
    (check (string-append "portable binding exists: " key)
@@ -82,8 +82,8 @@
 
 (for-each
  (lambda (key)
-   (check (string-append "exchange exists in frame exchange map: " key)
-          (hash-ref (nested-submap (entered-submap "f") "x") key)))
+   (check (string-append "exchange exists in exchange map: " key)
+          (hash-ref (entered-submap "x") key)))
  '("h" "j" "k" "l"))
 
 (for-each

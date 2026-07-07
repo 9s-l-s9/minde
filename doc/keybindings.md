@@ -17,7 +17,7 @@ The portable map follows a Helix/Meow-like direct modal vocabulary:
 - digits select numbered windows directly;
 - `w 0`–`w 9` pull numbered windows;
 - `f 0`–`f 9` select numbered frames;
-- `f x h/j/k/l` exchange windows directionally;
+- `x h/j/k/l` exchange windows directionally;
 - `?` displays help for the currently armed map.
 
 The portable map deliberately has no uppercase letter bindings. Additional

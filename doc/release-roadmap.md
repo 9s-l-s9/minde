@@ -165,7 +165,7 @@ bindings continue to work. Restore the file and confirm a successful reload.
 - Ship configurable terminal selection and a dependency-light default config.
 - Adopt the prefix-only keymap:
   - `h/j/k/l`: focus frames; `w h/j/k/l`: move windows;
-    `f x h/j/k/l`: exchange windows.
+    `x h/j/k/l`: exchange windows.
   - `n` / `w p`: next/previous window; `w u n/p`: pull next/previous
     hidden window (`p` keeps the common pull-next action direct).
   - Digits select windows; `w` plus digits pulls them.

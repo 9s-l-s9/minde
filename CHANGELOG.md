@@ -49,7 +49,7 @@ shims or migration notes.
 - Keyboard layout, application launchers, locks, wallpaper, eww, and autostart
   moved out of repository defaults and into the personal Guix Home layer.
 - Portable Alt and uppercase-letter bindings were replaced with lowercase
-  nested sequences: `w h/j/k/l` move windows, `f x h/j/k/l` exchange them,
+  nested sequences: `w h/j/k/l` move windows, `x h/j/k/l` exchange them,
   `w 0`–`w 9` pull numbered windows, and `f 0`–`f 9` select frames. Nested
   maps provide contextual `?` help.
 - Layouts, placement rules, and desktop dumps now use versioned, atomic

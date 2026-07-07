@@ -1461,6 +1461,7 @@ refresh)."
           "j" (lambda () (exchange-windows! 'down)) "exchange down"
           "k" (lambda () (exchange-windows! 'up)) "exchange up"
           "l" (lambda () (exchange-windows! 'right)) "exchange right")))
+    (bind-portable-key! "x" exchange-map "exchange windows")
     (bind-portable-key! "f"
          (make-documented-keymap
           "h" (lambda () (guard-manual-tiling split-frame-horizontal!)) "split horizontally"
@@ -1468,7 +1469,6 @@ refresh)."
           "c" (lambda () (guard-manual-tiling remove-split!)) "remove split"
           "o" collapse-to-one-frame! "collapse to one frame"
           "e" clear-current-frame! "empty frame"
-          "x" exchange-map "exchange windows"
           "0" (lambda () (focus-frame-by-index! 0)) "select frame 0"
           "1" (lambda () (focus-frame-by-index! 1)) "select frame 1"
           "2" (lambda () (focus-frame-by-index! 2)) "select frame 2"
