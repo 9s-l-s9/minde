@@ -19,7 +19,11 @@ as unavailable on the current hardware.
 - Sprint 8: implemented and internally verified; generated references, split
   guides, the offline manual, complete live-export descriptions, and all
   scripted command media pass. Owner manual/video review remains.
-- Sprints 9-10: pending.
+- Sprint 9: implemented and internally verified; committed source archives are
+  reproducible, offline Cargo resolution and the archive-only Guix build pass,
+  installed contents are complete, and all 16 scripted videos were regenerated
+  and validated. Owner clean-checkout release run and live SDDM login remain.
+- Sprint 10: pending.
 
 ## Release decisions
 
@@ -359,6 +363,16 @@ Confirm that regenerating documentation and demos from a clean output
 directory requires no manual recording or editing steps.
 
 ## Sprint 9 — Guix packaging and local release automation
+
+Status: implemented, pending owner verification on 2026-07-13. The local and
+archive-only package entry points, reproducible source/vendored archives,
+version/schema checks, installed-content audit, sequential bounded release
+runner, release notes, and checksums are in place. The full repository gate,
+nested E2E, core application matrix, generated documentation, all scripted
+videos, committed-archive reproducibility, offline Cargo metadata, local Guix
+build, and archive-only Guix build pass. The personal System configuration
+remains on the checkout until an actual RC artifact exists; SDDM installation
+and login are Sprint 10 owner work.
 
 ### Implementation
 

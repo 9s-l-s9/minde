@@ -57,6 +57,8 @@ Target version: `0.1.0`.
   nested sequences: `w h/j/k/l` move windows, `x h/j/k/l` exchange them,
   `w 0`–`w 9` pull numbered windows, and `f 0`–`f 9` select frames. Nested
   maps provide contextual `?` help.
+- Directional exchange was flattened from `f x h/j/k/l` to `x h/j/k/l`; no
+  portable binding now needs a second submap level for directional movement.
 - Layouts, placement rules, and desktop dumps now use versioned, atomic
   persistence formats.
 
