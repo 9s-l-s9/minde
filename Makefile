@@ -21,7 +21,8 @@ SCHEME_TESTS := \
 
 .PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
-	docs check-generated-docs check-demos check-foundation-package check-ui-package clean-test-output
+	docs check-generated-docs check-demos check-foundation-package check-ui-package \
+	release-archives check-release-archives release clean-test-output
 
 check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps
 
@@ -45,7 +46,9 @@ check-static:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
 			scripts/capture-demos scripts/generate-docs scripts/minde-cmd \
-			scripts/minde-msg scripts/mindectl; \
+			scripts/minde-msg scripts/mindectl \
+			scripts/create-release-archives scripts/check-guix-package \
+			scripts/release; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \
 	fi
@@ -146,6 +149,7 @@ check-docs: check-generated-docs
 	@test -s doc/diagnostics.md
 	@test -s doc/application-testing.md
 	@test -s doc/demonstrations.md
+	@test -s doc/releasing.md
 	@test -s doc/generated/api-reference.md
 	@test -s doc/generated/keybindings.md
 	@test -s doc/generated/demo-manifest.json
@@ -157,7 +161,31 @@ check-docs: check-generated-docs
 
 check-package:
 	@command -v guix >/dev/null 2>&1 || { echo "error: guix is required" >&2; exit 127; }
-	guix build -f guix.scm
+	sh scripts/check-guix-package guix.scm
+
+release-archives:
+	@test -n "$(VERSION)" || { echo "error: VERSION is required" >&2; exit 2; }
+	sh scripts/create-release-archives "$(VERSION)"
+
+check-release-archives:
+	@version="$(VERSION)"; \
+	if [ -z "$$version" ]; then \
+		version=$$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1); \
+	fi; \
+	rm -rf build/release-check; \
+	sh scripts/create-release-archives "$$version" build/release-check/one >/dev/null; \
+	sh scripts/create-release-archives "$$version" build/release-check/two >/dev/null; \
+	cmp build/release-check/one/minde-$$version.tar.gz \
+		build/release-check/two/minde-$$version.tar.gz; \
+	cmp build/release-check/one/minde-$$version-vendored.tar.gz \
+		build/release-check/two/minde-$$version-vendored.tar.gz; \
+	guix shell -m manifest.scm -- sh tests/check-release-archives.sh "$$version" \
+		build/release-check/one/minde-$$version.tar.gz \
+		build/release-check/one/minde-$$version-vendored.tar.gz
+
+release:
+	@test -n "$(VERSION)" || { echo "error: VERSION is required" >&2; exit 2; }
+	sh scripts/release "$(VERSION)"
 
 check-foundation-package:
 	guix build -f guix/foundation.scm

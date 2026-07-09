@@ -1,0 +1,11 @@
+# Cargo source replacement used by Guix and vendored release archives.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/Smithay/Smithay?rev=3021f619e2ae4dab8bfb1e21f3f210923b9b6582"]
+git = "https://github.com/Smithay/Smithay"
+rev = "3021f619e2ae4dab8bfb1e21f3f210923b9b6582"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

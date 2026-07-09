@@ -1,0 +1,69 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+
+[ "$#" -eq 1 ] || {
+    echo "usage: scripts/release VERSION" >&2
+    exit 2
+}
+version=$1
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+actual=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+[ "$version" = "$actual" ] || {
+    echo "release: VERSION=$version differs from Cargo.toml ($actual)" >&2
+    exit 1
+}
+
+[ -z "$(git status --porcelain)" ] || {
+    echo "release: the worktree must be clean (including untracked files)" >&2
+    git status --short >&2
+    exit 1
+}
+
+revision=$(git rev-parse --verify HEAD)
+output=build/release/$version
+rm -rf "$output"
+mkdir -p "$output"
+
+# Run sequentially: application and compositor gates launch real processes and
+# should not compete for memory. Override only for development of this script.
+gates=${MINDE_RELEASE_GATES:-"check check-e2e check-apps check-docs demos check-demos check-package"}
+for gate in $gates; do
+    echo "== release gate: $gate =="
+    make "$gate"
+done
+
+scripts/create-release-archives "$version" "$output"
+source_archive=$output/minde-$version.tar.gz
+vendored_archive=$output/minde-$version-vendored.tar.gz
+guix shell -m manifest.scm -- \
+    sh tests/check-release-archives.sh "$version" "$source_archive" "$vendored_archive"
+
+MINDE_SOURCE_ARCHIVE=$(realpath "$vendored_archive") \
+MINDE_VERSION=$version \
+MINDE_BUILD_REVISION=$revision \
+    scripts/check-guix-package guix/release.scm
+
+{
+    printf '# minde %s\n\n' "$version"
+    # Markdown code delimiters are intentional literal characters.
+    # shellcheck disable=SC2016
+    printf 'Revision: `%s`\n\n' "$revision"
+    printf '## Changes\n\n'
+    awk '/^## Unreleased/{copy=1; next} copy && /^## /{exit} copy{print}' CHANGELOG.md
+    printf '\n## Artifacts\n\n'
+    # shellcheck disable=SC2016
+    printf -- '- `minde-%s.tar.gz`: source without vendored dependencies\n' "$version"
+    # shellcheck disable=SC2016
+    printf -- '- `minde-%s-vendored.tar.gz`: offline-build source\n' "$version"
+} >"$output/RELEASE-NOTES.md"
+
+(
+    cd "$output"
+    sha256sum "minde-$version.tar.gz" \
+        "minde-$version-vendored.tar.gz" RELEASE-NOTES.md >SHA256SUMS
+)
+
+echo "release artifacts: $output"

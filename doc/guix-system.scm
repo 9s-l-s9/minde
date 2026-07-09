@@ -11,7 +11,11 @@
 ;;   ;; Load the package definition straight from the checkout. Remember the
 ;;   ;; one-time `guix shell -m manifest.scm -- cargo vendor vendor` step in
 ;;   ;; the repo before reconfiguring (see guix.scm header).
-;;   (load "/home/samuel/Projects/minde/guix.scm"))
+;;   (load "/path/to/minde/guix.scm"))
+
+;; For a release archive, set MINDE_SOURCE_ARCHIVE, MINDE_VERSION, and
+;; MINDE_BUILD_REVISION, then load guix/release.scm instead. See
+;; doc/releasing.md for the checked archive-only workflow.
 
 ;; (operating-system
 ;;   ...

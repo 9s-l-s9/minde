@@ -6,6 +6,8 @@ shims or migration notes.
 
 ## Unreleased
 
+Target version: `0.1.0`.
+
 ### Added
 
 - A Guix-first local verification interface through `make`.
@@ -35,6 +37,9 @@ shims or migration notes.
   for every registered command.
 - Source-owned descriptions for all 274 bindings exported by the eight public
   Scheme modules, including explicit metadata for record accessors and values.
+- Reproducible source and vendored-source archives, an archive-only public
+  Guix package entry point, installed documentation/Guile modules, and a
+  clean-tree local release pipeline with checksums and release notes.
 
 ### Changed
 

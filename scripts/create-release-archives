@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+
+usage() {
+    echo "usage: scripts/create-release-archives VERSION [OUTPUT-DIRECTORY]" >&2
+    exit 2
+}
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    usage
+fi
+version=$1
+output=${2:-build/release/$version}
+case $version in
+    ''|*[!0-9A-Za-z.+-]*)
+        echo "archive: invalid version: $version" >&2
+        exit 2
+        ;;
+esac
+
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+[ "$cargo_version" = "$version" ] || {
+    echo "archive: VERSION=$version differs from Cargo.toml ($cargo_version)" >&2
+    exit 1
+}
+[ -d vendor ] || {
+    echo "archive: vendor/ is missing" >&2
+    echo "run: guix shell -m manifest.scm -- cargo vendor vendor" >&2
+    exit 1
+}
+[ -f vendor/smithay/Cargo.toml ] || {
+    echo "archive: vendor/ does not contain the pinned Smithay checkout" >&2
+    exit 1
+}
+
+mkdir -p "$output"
+output=$(CDPATH='' cd -- "$output" && pwd)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/minde-archive.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+name=minde-$version
+epoch=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}
+tree=${MINDE_ARCHIVE_TREE:-HEAD}
+export SOURCE_DATE_EPOCH="$epoch"
+
+git archive --format=tar --prefix="$name/" "$tree" | tar -xf - -C "$tmp"
+find "$tmp/$name" -exec touch -h -d "@$epoch" {} +
+
+pack() {
+    destination=$1
+    tar --sort=name --format=gnu --mtime="@$epoch" \
+        --owner=0 --group=0 --numeric-owner \
+        -C "$tmp" -cf - "$name" | gzip -n -9 >"$destination"
+}
+
+source_archive=$output/$name.tar.gz
+vendored_archive=$output/$name-vendored.tar.gz
+pack "$source_archive"
+
+cp -a vendor "$tmp/$name/vendor"
+find "$tmp/$name/vendor" -exec touch -h -d "@$epoch" {} +
+pack "$vendored_archive"
+
+printf '%s\n' "$source_archive" "$vendored_archive"

@@ -31,6 +31,10 @@
              (gnu packages bash))
 
 (define %source-dir (dirname (current-filename)))
+(define %project-version "0.1.0")
+(define %source-archive (getenv "MINDE_SOURCE_ARCHIVE"))
+(define %build-revision
+  (or (getenv "MINDE_BUILD_REVISION") "local-checkout"))
 
 (define (source-select? file stat)
   ;; Everything except top-level build/agent artifacts and VCS metadata. Only
@@ -46,14 +50,18 @@
 
 (package
   (name "minde")
-  (version "0.1.0")
-  (source (local-file %source-dir "minde-source"
-                      #:recursive? #t
-                      #:select? source-select?))
+  (version (or (getenv "MINDE_VERSION") %project-version))
+  (source
+   (if %source-archive
+       (local-file %source-archive
+                   (string-append "minde-" version "-vendored.tar.gz"))
+       (local-file %source-dir "minde-source"
+                   #:recursive? #t
+                   #:select? source-select?)))
   (build-system gnu-build-system)
   (arguments
    (list
-    #:tests? #f ; scheme tests need only guile; run via `make check` equiv below
+    #:tests? #t
     #:phases
     #~(modify-phases %standard-phases
         (delete 'configure)
@@ -68,6 +76,7 @@
         (replace 'build
           (lambda _
             (setenv "HOME" (getcwd)) ; cargo wants a writable home
+            (setenv "MINDE_BUILD_REVISION" #$%build-revision)
             ;; wayland-backend (libwayland-server.so.0), smithay's EGL
             ;; loader (libEGL.so.1 via glvnd) and friends are dlopened at
             ;; runtime, so the linker never records them and Guix's
@@ -86,40 +95,41 @@
                                 #$(this-package-input "eudev")))
                      " "))
             (mkdir-p ".cargo")
-            ;; Exactly what `cargo vendor` prints (the git source key must
-            ;; carry the ?rev= qualifier to match Cargo.lock).
-            (call-with-output-file ".cargo/config.toml"
-              (lambda (port)
-                (display "\
-[source.crates-io]
-replace-with = \"vendored-sources\"
-
-[source.\"git+https://github.com/Smithay/Smithay?rev=3021f619e2ae4dab8bfb1e21f3f210923b9b6582\"]
-git = \"https://github.com/Smithay/Smithay\"
-rev = \"3021f619e2ae4dab8bfb1e21f3f210923b9b6582\"
-replace-with = \"vendored-sources\"
-
-[source.vendored-sources]
-directory = \"vendor\"
-" port)))
+            (copy-file "guix/cargo-config.toml" ".cargo/config.toml")
             (invoke "cargo" "build" "--release" "--offline")))
         (replace 'check
           (lambda* (#:key tests? #:allow-other-keys)
             (when tests?
-              (invoke "guile" "-L" "scheme" "tests/frames-test.scm")
-              (invoke "guile" "-L" "scheme" "tests/next-pull-test.scm")
-              (invoke "guile" "-L" "scheme" "tests/groups-test.scm")
-              (invoke "guile" "-L" "scheme" "tests/keys-test.scm")
-              (invoke "guile" "-L" "scheme" "tests/layouts-test.scm"))))
+              (setenv "GUILE_AUTO_COMPILE" "0")
+              (for-each
+               (lambda (test)
+                 (invoke "guile" "--no-auto-compile" "-L" "scheme" test))
+               '("tests/frames-test.scm"
+                 "tests/next-pull-test.scm"
+                 "tests/groups-test.scm"
+                 "tests/layouts-test.scm"
+                 "tests/portable-keymap-test.scm")))))
         (replace 'install
           (lambda* (#:key inputs #:allow-other-keys)
             (let* ((out #$output)
                    (bin (string-append out "/bin"))
                    (share (string-append out "/share/minde"))
+                   (guile-site (string-append out "/share/guile/site/3.0"))
+                   (doc-out (string-append out "/share/doc/minde"))
                    (sessions (string-append out "/share/wayland-sessions"))
                    (mesa #$(this-package-input "mesa")))
               (install-file "target/release/minde" bin)
               (copy-recursively "scheme" (string-append share "/scheme"))
+              (copy-recursively "scheme/minde"
+                                (string-append guile-site "/minde"))
+              (install-file "scheme/default-config.scm" share)
+              (mkdir-p doc-out)
+              (for-each
+               (lambda (file) (install-file file doc-out))
+               '("README.md" "CHANGELOG.md" "CONTRIBUTING.md" "SECURITY.md"
+                 "SUPPORT.md" "UNEXPECTED.md" "NOTICE" "COPYING"))
+              (copy-recursively "LICENSES" (string-append doc-out "/LICENSES"))
+              (copy-recursively "doc" (string-append doc-out "/doc"))
               ;; Session wrapper: environment for a bare-TTY login.
               (mkdir-p sessions)
               (call-with-output-file (string-append bin "/minde-session")
@@ -128,6 +138,7 @@ directory = \"vendor\"
 # minde login session wrapper.
 export XDG_CURRENT_DESKTOP=minde
 export MINDE_SCHEME_DIR=~a/scheme
+export GUILE_LOAD_PATH=~a:${GUILE_LOAD_PATH:-}
 # EGL vendor discovery on Guix (glvnd needs pointing at mesa).
 export __EGL_VENDOR_LIBRARY_DIRS=~a/share/glvnd/egl_vendor.d
 if [ ! -f \"$HOME/.config/minde/init.scm\" ]; then
@@ -147,7 +158,7 @@ export RUST_BACKTRACE=1
 exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
 "
                           #$(this-package-input "bash-minimal")
-                          share mesa share bin)))
+                          share guile-site mesa share bin)))
               (chmod (string-append bin "/minde-session") #o755)
               ;; REPL-socket helper scripts (used by prompt/message
               ;; workflows spawned from bindings). Pin their guile.

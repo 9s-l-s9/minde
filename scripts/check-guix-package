@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+
+package_file=${1:-guix.scm}
+version=${MINDE_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)}
+out=$(guix build -f "$package_file")
+tests/check-package-contents.sh "$out" "$version"
+printf '%s\n' "$out"

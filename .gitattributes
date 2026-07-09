@@ -1,0 +1,8 @@
+/.agents export-ignore
+/.claude export-ignore
+/.codex export-ignore
+/.local export-ignore
+/build export-ignore
+/target export-ignore
+/vendor export-ignore
+/AGENT.md export-ignore
