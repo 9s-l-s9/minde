@@ -9,14 +9,8 @@ session, DRM devices, personal configuration, wallpaper, Eww, or autostart.
 git clone https://github.com/9s-l-s9/minde
 cd minde
 
-guix shell -m manifest.scm -- cargo build --locked
-guix shell -m manifest.scm -- sh -c '
-  export LD_LIBRARY_PATH="$GUIX_ENVIRONMENT/lib"
-  export MINDE_INIT="$PWD/scheme/init.scm"
-  export MINDE_SCHEME_DIR="$PWD/scheme"
-  export MINDE_CONFIG="$PWD/scheme/default-config.scm"
-  cargo run --locked -- --winit
-'
+guix shell -m manifest.scm
+scripts/run-nested
 ```
 
 The nested window uses the dependency-light repository configuration. Its
@@ -62,14 +56,14 @@ cp scheme/default-config.scm /tmp/minde-config.scm
 scripts/mindectl check-config /tmp/minde-config.scm
 ```
 
-Restart with `MINDE_CONFIG=/tmp/minde-config.scm`, or evaluate
-`(reload-configuration!)` after editing. Invalid data is rejected before the
-active binding table changes. Continue with
+Restart with `MINDE_CONFIG=/tmp/minde-config.scm`, or keep the nested
+compositor running and evaluate `(reload-configuration!)` after editing.
+Invalid data is rejected before the active binding table changes. Continue with
 [`configuration.md`](configuration.md) before adding imperative policy.
 
 ## Next checks
 
-Run `make check` for code and configuration tests. Nested graphical tests and
+Run `./check` while editing and before committing. Nested graphical tests and
 the bounded application matrix are documented in
 [`application-testing.md`](application-testing.md). A real DRM/login-session
 test is deliberately separate; follow

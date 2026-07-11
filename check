@@ -1,6 +1,70 @@
 #!/bin/sh
-# Compatibility entry point. The Makefile owns the individual release gates
-# so local development, Guix builds, and future hosted CI run identical checks.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Predictable user-facing verification entry point. Make retains the granular
+# gates used to diagnose failures and assemble integration/release checks.
 set -eu
+
 cd "$(dirname "$0")"
-exec make check-all
+
+usage() {
+    cat <<'EOF'
+usage: ./check [TEST.scm ...]
+
+With no arguments, run the fixed fast development gate: Rust format/check,
+Scheme/API/configuration/keymap suites, static analysis, and documentation.
+
+Optional maintainer modes:
+  --all       bounded nested integration suite
+  --release   integration, videos, package, and archive verification
+EOF
+}
+
+run_release() {
+    make check-all
+    make demos
+    make check-demos
+    make check-package
+    make check-release-archives
+}
+
+case ${1:-} in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    --all)
+        [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+        exec make check-all
+        ;;
+    --release)
+        [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+        run_release
+        exit 0
+        ;;
+    --*)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+# Explicit Scheme test paths are the shortest debugging loop.
+if [ "$#" -gt 0 ]; then
+    for test in "$@"; do
+        case $test in
+            tests/*.scm) ;;
+            *) echo "error: expected a Scheme test under tests/: $test" >&2; exit 2 ;;
+        esac
+        [ -f "$test" ] || { echo "error: test not found: $test" >&2; exit 2; }
+    done
+    for test in "$@"; do
+        guile --no-auto-compile -L scheme "$test"
+    done
+    exit 0
+fi
+
+make check-tools
+cargo fmt --all -- --check
+cargo check --locked
+make check-scheme check-api check-config check-keymaps
+make check-static
+make check-docs

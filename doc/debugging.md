@@ -6,15 +6,24 @@ configuration.
 ## Fast checks
 
 ```sh
-make check-config check-keymaps
-make check-scheme
-make check-rust
-make check-e2e
+./check
+./check tests/config-test.scm
 ```
 
-Use `make check-all` for the bounded default gate. Toolkit/browser matrices and
-the soak runner are separate to avoid unnecessary closures and memory use; see
+The default command always runs the same fixed fast gate and is also the normal
+pre-commit command. Rust uses `cargo check` without final linking. Run
+`./check --all` only when nested integration changed.
+Toolkit/browser matrices and the soak runner remain separate to avoid
+unnecessary closures and memory use; see
 [`application-testing.md`](application-testing.md).
+
+For an interactive reproduction, enter `guix shell -m manifest.scm` once and
+keep `scripts/run-nested` running. Validate Scheme edits with `./check`, then
+reload the live nested compositor without rebuilding it:
+
+```sh
+scripts/mindectl eval '(reload-configuration!)'
+```
 
 ## Running-session evidence
 

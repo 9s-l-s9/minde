@@ -54,7 +54,16 @@ Do not commit `vendor/`.
 ## Full local release
 
 First update every checked version field and commit all intended changes. Then
-run from a clean worktree:
+verify the release gates from the development checkout:
+
+```sh
+./check --release
+```
+
+This checks the bounded integration suite, regenerates and validates scripted
+videos, builds the local Guix package, and compares deterministic archives.
+It does not publish or create release notes. Run the actual release from a
+clean worktree:
 
 ```sh
 make release VERSION=1.0.0-rc1

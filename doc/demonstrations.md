@@ -20,8 +20,7 @@ capture in one isolated nested compositor session.
 ## Generate and validate
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick foot ffmpeg jq \
-  util-linux -- make demos check-demos
+make demos check-demos
 ```
 
 `make demos` regenerates the manifest, starts an isolated Xvfb/winit session,

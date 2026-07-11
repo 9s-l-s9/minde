@@ -21,7 +21,7 @@ not supported because the session-lock protocol is missing.
 ## Before reporting
 
 1. Reproduce with the repository default in a nested session.
-2. Run the smallest relevant `make check-*` target.
+2. Run `./check`, or pass it the smallest relevant Scheme test path.
 3. Record the Minde and Guix revisions and backend.
 4. Create and personally inspect a redacted diagnostic bundle.
 5. State whether the problem also occurs without personal startup programs.

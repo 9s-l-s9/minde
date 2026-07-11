@@ -10,7 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
-- A Guix-first local verification interface through `make`.
+- A Guix-first development environment plus a predictable fast `./check`,
+  persistent nested runner, and explicit integration/release gates.
 - Strict `--help` and `--version` output with an embedded build revision.
 - Release, support, security, licensing, and provenance policies.
 - Independently packaged `guile-minde-foundation` modules for geometry,

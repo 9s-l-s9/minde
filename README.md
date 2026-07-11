@@ -32,15 +32,14 @@ The nested backend runs in a window and does not touch DRM, the display
 manager, or personal startup policy:
 
 ```sh
-guix shell -m manifest.scm -- cargo build --locked
-guix shell -m manifest.scm -- sh -c '
-  export LD_LIBRARY_PATH="$GUIX_ENVIRONMENT/lib"
-  export MINDE_INIT="$PWD/scheme/init.scm"
-  export MINDE_SCHEME_DIR="$PWD/scheme"
-  export MINDE_CONFIG="$PWD/scheme/default-config.scm"
-  cargo run --locked -- --winit
-'
+guix shell -m manifest.scm
+scripts/run-nested
 ```
+
+Keep that shell and compositor running while editing. After a Scheme change,
+run `./check` and then
+`scripts/mindectl eval '(reload-configuration!)'` from another terminal;
+Cargo does not need to rebuild.
 
 The repository default prefix is `C-t`: use `C-t Return` for a terminal and
 `C-t ?` for contextual help. A personal Guix Home configuration may replace
@@ -63,6 +62,7 @@ is generated from the live key tables in
 | Generated API inventory | [`doc/generated/api-reference.md`](doc/generated/api-reference.md) |
 | IPC, status, and Eww | [`doc/ipc-eww.md`](doc/ipc-eww.md) |
 | Debugging | [`doc/debugging.md`](doc/debugging.md) |
+| Complete verification command reference | [`doc/testing.md`](doc/testing.md) |
 | Architecture | [`doc/architecture.md`](doc/architecture.md) |
 | Security model | [`doc/security.md`](doc/security.md) |
 | Hardware/login validation | [`doc/hardware-validation.md`](doc/hardware-validation.md) |
@@ -78,8 +78,7 @@ rejects drift. Videos, posters and transcripts are reproducible build artifacts
 under `build/demos`, not committed binaries:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick foot ffmpeg jq \
-  util-linux -- make demos check-demos
+make demos check-demos
 ```
 
 The sixteen clips are captured sequentially with one compositor and one
@@ -107,25 +106,32 @@ and autostart belong in the personal configuration. Editing a Guix Home service
 does not affect the current session until Home is reconfigured and Minde is
 restarted.
 
-## Verification
+## Development and verification
 
-The bounded default gate is:
+Enter `guix shell -m manifest.scm` once per development session. The manifest
+contains the compiler, native libraries, bounded core application tests,
+documentation tools, and video encoder. Browsers and large
+toolkit matrices remain opt-in so the environment stays reasonable.
+
+Normal development needs one command: `./check`. It always runs the same fast
+Rust, Scheme, API, configuration, keymap, static, and documentation gates.
+Rust uses `cargo check` rather than final linking, so warm runs remain fast:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick jq util-linux \
-  foot xterm wl-clipboard shellcheck -- make check-all
+./check
 ```
 
-It runs locked Rust checks, Guile suites, static checks, both nested keymap
-scenarios, generated-document drift checks, and the small foot/clipboard/xterm
-application gate. Browsers and large toolkit closures are opt-in, separate,
-sequential shards.
+Run the same command before committing. Focused Scheme tests and the bounded
+integration suite are optional escalation paths documented by
+`./check --help`; they are not additional setup steps. The complete matrix is
+indexed in [`doc/testing.md`](doc/testing.md). Implementation-level `make
+check-*` targets exist for CI and diagnosing a failed gate.
 
-Packaging and hardware remain separate:
+Packaging, deterministic videos, and archive checks are deliberately outside
+the edit loop:
 
 ```sh
-make check-package
-make check-release-archives
+./check --release
 make check-hardware
 ```
 

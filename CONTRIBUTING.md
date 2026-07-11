@@ -10,33 +10,31 @@ Enter the repository environment once so Cargo dependencies and native
 libraries remain available across smaller checks:
 
 ```sh
-guix shell -m manifest.scm shellcheck
+guix shell -m manifest.scm
 ```
 
-Run independent checks separately (and in parallel from separate terminals if
-desired):
+Normal development and pre-commit verification use one command:
 
 ```sh
-make check-rust
-make check-scheme
-make check-static
-make check-docs
-make check-foundation
-make check-ui
+./check
 ```
 
-The full local gate, including nested graphical tests, is:
+It always runs the same fixed fast gate. `./check --help` lists the optional
+focused, integration, and release modes. Granular
+`make check-*` targets are retained for debugging and CI, but are not required
+knowledge for normal contribution.
+
+The bounded integration gate, including nested graphical tests, is:
 
 ```sh
-guix shell -m manifest.scm xorg-server xdotool imagemagick jq util-linux \
-  foot xterm wl-clipboard shellcheck -- make check-all
+./check --all
 ```
 
-Use `make check-package` for the offline Guix package build. Hardware/TTY
-validation is a separate, explicitly manual gate because it takes control of
-a real seat. Run the larger GUI compatibility matrix in the bounded batches
-documented in `doc/application-testing.md`; do not combine every browser and
-toolkit in one Guix environment.
+`./check --release` runs sequentially to bound memory. Hardware/TTY validation
+remains explicitly manual because it takes control of a real seat. Run the
+larger GUI compatibility matrix in the bounded batches documented in
+`doc/application-testing.md`; do not combine every browser and toolkit in one
+Guix environment.
 
 ## Change expectations
 

@@ -142,6 +142,7 @@ check-docs: check-generated-docs
 	@test -s doc/keybindings.md
 	@test -s doc/ipc-eww.md
 	@test -s doc/debugging.md
+	@test -s doc/testing.md
 	@test -s doc/architecture.md
 	@test -s doc/security.md
 	@test -s doc/hardware-validation.md

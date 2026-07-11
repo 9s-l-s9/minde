@@ -52,8 +52,7 @@ screenshots remain beside it after failures.
 Core release gate:
 
 ```sh
-guix shell -m manifest.scm xorg-server imagemagick jq util-linux \
-  foot xterm wl-clipboard -- make check-apps-core
+make check-apps-core
 ```
 
 Run toolkits separately so Qt and GTK closures are not combined:
@@ -97,8 +96,7 @@ personal keymap or startup configuration.
 A quick deterministic smoke run:
 
 ```sh
-guix shell -m manifest.scm xorg-server imagemagick jq foot -- \
-  make check-soak SOAK_ITERATIONS=3
+make check-soak SOAK_ITERATIONS=3
 ```
 
 The release-duration run is:

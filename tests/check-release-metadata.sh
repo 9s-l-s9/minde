@@ -17,6 +17,7 @@ for helper in tests/applications.sh tests/soak.sh tests/portable-e2e.sh \
     tests/check-generated-docs.sh tests/check-doc-links.sh \
     tests/check-demos.sh scripts/create-release-archives \
     scripts/check-guix-package scripts/hardware-report scripts/release \
+    scripts/run-nested \
     tests/check-release-archives.sh tests/check-package-contents.sh; do
     [ -x "$helper" ] || {
         echo "release metadata: $helper must be executable" >&2

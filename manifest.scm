@@ -29,5 +29,18 @@
    ;; embedded X server for X11 clients (spawned from PATH at runtime;
    ;; also exercised by the e2e X11 block together with xterm)
    "xorg-server-xwayland"
+   ;; Bounded local verification.  Large browser/toolkit application shards
+   ;; remain opt-in so the normal development environment stays reasonable.
+   "xorg-server"
+   "xdotool"
+   "imagemagick"
+   "jq"
+   "util-linux"
+   "foot"
+   "xterm"
+   "wl-clipboard"
+   "shellcheck"
+   ;; Release demonstration encoder; capture remains explicitly opt-in.
+   "ffmpeg"
    ;; misc
    "git"))
