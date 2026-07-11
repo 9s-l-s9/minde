@@ -19,7 +19,7 @@ incomplete release gate, **external** is deliberately delegated, and
 | Native Wayland xdg-shell clients | supported | required foot gate plus optional GTK, Qt, browser, Emacs and SDL structured scenarios |
 | Xwayland clients | experimental | required xterm mapping gate; post-crash Xwayland restart remains manual/missing |
 | Layer shell and exclusive zones | experimental | bounded eww/fuzzel/swaybg scenarios; owner visual/exclusive-zone check remains |
-| Session lock protocol | missing | modern swaylock reports missing `ext-session-lock-v1`; strict matrix preserves the failure |
+| Session lock protocol | experimental | `ext-session-lock-v1` backs `logout!`/`lock-screen!`/`suspend!` ((minde session)); owner hardware verification that a locker actually blocks input/output remains |
 | Clipboard between Wayland and X11 | experimental | required Wayland MIME round trip and compositor e2e; primary selection/DnD remain |
 | Multiple outputs and hotplug | experimental | deterministic geometry properties, Scheme head tests and simulated soak cycle; hardware reports remain |
 | DRM/libinput login session | experimental | used on X1/T450s; guided retained reports remain |

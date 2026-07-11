@@ -190,6 +190,12 @@ static XWAYLAND_STATUS: AtomicU32 = AtomicU32::new(0);
 static XWAYLAND_DISPLAY: AtomicI32 = AtomicI32::new(-1);
 static RUNTIME_STARTED: OnceLock<std::time::Instant> = OnceLock::new();
 
+/// Whether the session is locked (ext-session-lock). Mirrored out of
+/// `MindeState` so `(wm-session-locked?)` is callable from any thread,
+/// including the REPL. Set from the session-lock handler's lock/unlock
+/// transitions (see `src/handlers/session_lock.rs`).
+static SESSION_LOCKED: AtomicBool = AtomicBool::new(false);
+
 /// One head (output/monitor) as reported to Scheme: stable id + usable
 /// rect (global coordinates) + connector name.
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +242,10 @@ pub fn set_xwayland_status(status: &str, display: Option<u32>) {
     };
     XWAYLAND_STATUS.store(code, Ordering::SeqCst);
     XWAYLAND_DISPLAY.store(display.map_or(-1, |number| number as i32), Ordering::SeqCst);
+}
+
+pub fn set_session_locked(locked: bool) {
+    SESSION_LOCKED.store(locked, Ordering::SeqCst);
 }
 
 fn send_command(cmd: WmCommand) -> bool {
@@ -508,6 +518,12 @@ unsafe extern "C" fn wm_idle_ms() -> Scm {
     } else {
         now_ms().saturating_sub(last) as i64
     })
+}
+
+/// `(wm-session-locked?)` -> boolean: whether the session is currently
+/// locked via ext-session-lock (swaylock &c.).
+unsafe extern "C" fn wm_session_locked() -> Scm {
+    from_bool(SESSION_LOCKED.load(Ordering::SeqCst))
 }
 
 unsafe extern "C" fn wm_send_string(text: Scm) -> Scm {
@@ -937,6 +953,8 @@ pub fn init(loop_signal: LoopSignal) {
             std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_key_repeat),
         );
         register_gsubr("wm-idle-ms", 0, 0, 0, wm_idle_ms);
+        // Zero-arg, boolean return: matches Gsubr exactly, no transmute.
+        register_gsubr("wm-session-locked?", 0, 0, 0, wm_session_locked);
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
@@ -1107,6 +1125,24 @@ pub fn on_urgent(id: u64) {
 /// nested or standalone.
 pub fn on_startup() {
     let Some(proc) = lookup("handle-startup!") else {
+        return;
+    };
+    protected_call(move || unsafe { ffi::scm_call_0(proc) });
+}
+
+/// Calls `(wm-on-session-lock)` if bound, once the session becomes locked
+/// via ext-session-lock. Missing definition is a no-op, same as the other
+/// `on_*` hooks; a Scheme error is caught and never crashes the compositor.
+pub fn on_session_lock() {
+    let Some(proc) = lookup("wm-on-session-lock") else {
+        return;
+    };
+    protected_call(move || unsafe { ffi::scm_call_0(proc) });
+}
+
+/// Calls `(wm-on-session-unlock)` if bound, once the session is unlocked.
+pub fn on_session_unlock() {
+    let Some(proc) = lookup("wm-on-session-unlock") else {
         return;
     };
     protected_call(move || unsafe { ffi::scm_call_0(proc) });

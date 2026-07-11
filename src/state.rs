@@ -22,6 +22,7 @@ use smithay::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
+        session_lock::{LockSurface, SessionLockManagerState},
         shell::xdg::XdgShellState,
         shm::ShmState,
         socket::ListeningSocketSource,
@@ -94,6 +95,20 @@ pub struct MindeState {
     pub xdisplay: Option<u32>,
     pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
     pub popups: PopupManager,
+
+    /// `ext-session-lock-v1` manager global state (registered in `new`).
+    pub session_lock_state: SessionLockManagerState,
+    /// Whether the session is locked. While set, both backends render ONLY
+    /// each output's lock surface (or solid black if none is committed / the
+    /// lock client died), and `process_input_event` delivers nothing to
+    /// regular clients or the Scheme keybinding layer. This is the security
+    /// boundary: no desktop pixel and no stray input while locked.
+    pub locked: bool,
+    /// Committed lock surfaces, one per output (keyed by the compositor
+    /// `Output`). A missing or dead entry for an output means "draw solid
+    /// black" -- the spec forbids ever flashing desktop content while
+    /// locked. See `src/handlers/session_lock.rs`.
+    pub lock_surfaces: Vec<(smithay::output::Output, LockSurface)>,
 
     pub seat: Seat<Self>,
 
@@ -184,6 +199,9 @@ impl MindeState {
             smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
         let layer_shell_state =
             smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
+        // Register the ext-session-lock-v1 manager global. The filter admits
+        // every client; a lock client (swaylock &c.) binds it to lock.
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -238,6 +256,9 @@ impl MindeState {
             xdisplay: None,
             layer_shell_state,
             popups,
+            session_lock_state,
+            locked: false,
+            lock_surfaces: Vec::new(),
             seat,
 
             windows: Vec::new(),

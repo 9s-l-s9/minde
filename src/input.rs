@@ -44,6 +44,13 @@ fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
 impl MindeState {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         guile::note_activity();
+        // While locked, only keyboard events are processed (they reach the
+        // focused lock surface, gated further below so they never hit the
+        // Scheme keybinding layer). Pointer, touch, and axis events are
+        // dropped so no regular client ever sees them.
+        if self.locked && !matches!(event, InputEvent::Keyboard { .. }) {
+            return;
+        }
         match event {
             InputEvent::Keyboard { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -87,6 +94,16 @@ impl MindeState {
                                     }
                                     return FilterResult::Intercept(());
                                 }
+                            }
+
+                            // While locked, keys never reach the Scheme
+                            // keybinding layer -- forward them straight to the
+                            // focused lock surface (VT switching above still
+                            // works, so you can leave for another TTY).
+                            // Otherwise the WM prefix key would operate on the
+                            // lock screen.
+                            if data.locked {
+                                return FilterResult::Forward;
                             }
 
                             // xkbcommon's name ("t", "Return"), not the

@@ -67,8 +67,10 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `p` | Pull the next hidden window. | action |
 | `r` | run command | action |
 | `s` | session commands | submap |
-| `s q` | quit with confirmation | action |
+| `s l` | lock screen | action |
+| `s q` | log out (asks) | action |
 | `s r` | reload configuration | action |
+| `s z` | suspend (locks first) | action |
 | `w` | window commands | submap |
 | `w 0` | pull window 0 | action |
 | `w 1` | pull window 1 | action |

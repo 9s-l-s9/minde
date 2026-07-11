@@ -6,8 +6,9 @@
 # for eyeballing.
 #
 # Run inside the dev shell with the extra tools:
-#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm -- tests/e2e.sh
-# (xterm exercises the Xwayland block; it is skipped when absent.)
+#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm swaylock wayland-utils -- tests/e2e.sh
+# (xterm exercises the Xwayland block; swaylock and wayland-info the
+# session-lock block; each is skipped when absent.)
 #
 # NOTE: this cannot exercise the udev/DRM backend (no seat/DRM headless);
 # TTY changes still need a live `./debug-tty.sh` run from a spare VT.
@@ -418,6 +419,62 @@ for shot in prompt reload; do
   [ "$size" -gt 2000 ] || fail "$shot.png looks blank ($size bytes)"
 done
 ok "screenshots non-blank (in $OUT)"
+
+# Session lock (ext-session-lock-v1), last: nothing can PAM-unlock in a
+# headless harness, so the session stays locked until the compositor is
+# torn down. The nested compositor's client env (not ours) knows the
+# Wayland socket name, so fetch it over IPC for the lock clients below.
+WLD=$(scripts/mindectl eval '(getenv "WAYLAND_DISPLAY")' | tr -d '"')
+if command -v wayland-info >/dev/null 2>&1; then
+  WAYLAND_DISPLAY="$WLD" wayland-info 2>/dev/null \
+    | grep -q ext_session_lock_manager_v1 \
+    || fail "ext_session_lock_manager_v1 global not advertised"
+  ok "session lock: ext_session_lock_manager_v1 advertised"
+else
+  echo "skip: wayland-info not in the shell environment; global check skipped"
+fi
+# The full lock flow needs a real locker. Skips (does not fail) when
+# swaylock is absent or cannot start at all -- sandboxes without PAM
+# make it exit immediately.
+if command -v swaylock >/dev/null 2>&1; then
+  WAYLAND_DISPLAY="$WLD" swaylock -f 2>>"$OUT/swaylock.log" &
+  SWAYLOCK_PID=$!
+  n=0
+  until loggrep "session locked (ext-session-lock)"; do
+    n=$((n + 1))
+    if [ "$n" -gt 25 ]; then
+      if kill -0 "$SWAYLOCK_PID" 2>/dev/null; then
+        fail "swaylock is running but the session never locked"
+      fi
+      echo "skip: swaylock could not start here (no PAM?); lock e2e skipped"
+      break
+    fi
+    sleep 0.2
+  done
+  if loggrep "session locked (ext-session-lock)"; then
+    [ "$(scripts/mindectl eval '(wm-session-locked?)')" = "#t" ] \
+      || fail "wm-session-locked? is not #t while locked"
+    # The WM prefix key must be dead on the lock screen: Print shift+r
+    # reloaded earlier in this script, so a new "reloaded" line now
+    # would mean keys still reach the Scheme keybinding layer.
+    reloads_before=$(sed "s/$ESC\[[0-9;]*m//g" "$LOG" | grep -ac "reloaded " || true)
+    xdotool key Print; sleep 0.2; xdotool key shift+r; sleep 1
+    reloads_after=$(sed "s/$ESC\[[0-9;]*m//g" "$LOG" | grep -ac "reloaded " || true)
+    [ "$reloads_before" = "$reloads_after" ] \
+      || fail "Print R reached Scheme while locked"
+    import -window root "$OUT/locked.png"
+    # Abandon case: the locker dying must NOT unlock the session.
+    kill "$SWAYLOCK_PID" 2>/dev/null || true
+    sleep 1
+    loggrep "session unlocked (ext-session-lock)" \
+      && fail "locker death unlocked the session"
+    [ "$(scripts/mindectl eval '(wm-session-locked?)')" = "#t" ] \
+      || fail "session did not stay locked after the locker died"
+    ok "session lock: locked, keys dead, stays locked on locker death"
+  fi
+else
+  echo "skip: swaylock not in the shell environment; lock e2e skipped"
+fi
 
 kill "$WM_PID" "$XVFB_PID" 2>/dev/null || true
 echo "e2e: all checks passed"

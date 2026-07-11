@@ -12,6 +12,8 @@
 ;;;   focus-frame (x y w h)          -- current frame changed
 ;;;   focus-group (name)             -- group switched
 ;;;   message (text)                 -- something was echoed
+;;;   session-lock ()                -- the session-lock surface came up
+;;;   session-unlock ()              -- the session-lock surface went away
 ;;;
 ;;; A hook procedure that throws is logged and dropped from that run --
 ;;; one bad hook must not break the event path (same policy as

@@ -77,7 +77,9 @@
             change-layout!
             change-split-ratio!
             change-default-layout!
-            change-default-split-ratio!))
+            change-default-split-ratio!
+            wm-on-session-lock
+            wm-on-session-unlock))
 
 ;; ---------------------------------------------------------------------
 ;; The group list
@@ -1021,3 +1023,24 @@ a sync since nothing hidden is on-screen)."
   "'per-head (a frame tree per monitor, StumpWM style) or 'span (one
 tree over the union of all monitors)."
   (set-heads-mode! mode %groups))
+
+;; ---------------------------------------------------------------------
+;; Session lock/unlock (Rust-facing, interface contract with the
+;; compositor's ext-session-lock-v1 support): defined here, alongside
+;; the other 0/N-arg Rust event entry points above, rather than in
+;; (minde session), because Rust looks these up by plain top-level
+;; name (see rust-call's comment) and this is the established home for
+;; that. Both just run a user-extensible named hook; (minde
+;; session)'s suspend! adds a one-shot 'session-lock hook of its own to
+;; know when the lock surface is actually up before it suspends.
+;; ---------------------------------------------------------------------
+
+(define (wm-on-session-lock)
+  "Rust: the session-lock surface is up and the session is now locked.
+Runs the 'session-lock hook."
+  (run-event-hook! 'session-lock))
+
+(define (wm-on-session-unlock)
+  "Rust: the session-lock surface was torn down; the session is
+unlocked again. Runs the 'session-unlock hook."
+  (run-event-hook! 'session-unlock))

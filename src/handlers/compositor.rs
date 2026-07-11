@@ -115,7 +115,10 @@ impl MindeState {
             state.keyboard_interactivity == KeyboardInteractivity::Exclusive
                 && matches!(state.layer, Layer::Top | Layer::Overlay)
         });
+        // While the session is locked, keyboard focus belongs to the lock
+        // surface only -- never let a layer client (a regular client) grab it.
         if wants_keyboard
+            && !self.locked
             && let Some(keyboard) = self.seat.get_keyboard()
             && keyboard.current_focus().as_ref() != Some(surface)
         {

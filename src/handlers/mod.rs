@@ -2,6 +2,7 @@
 
 mod compositor;
 mod layer_shell;
+mod session_lock;
 mod xdg_decoration;
 mod xdg_shell;
 mod xwayland;

@@ -27,6 +27,7 @@
              (minde command-catalog)
              (minde config)
              (minde status)
+             (minde session)
              ((minde foundation keys) #:prefix key:))
 
 ;; Publish the versioned status document after every policy synchronization.
@@ -610,12 +611,21 @@ focused client), #f otherwise."
   (lambda () (echo (or (last-message) "no messages")))
   "last message again")
 
-;; Q now asks before quitting (StumpWM quit-confirm).
-(bind-prefix-key! "Q"
-  (lambda ()
-    (read-one-line "quit minde? (yes/n) "
-      (lambda (a) (when (member a '("y" "yes")) (wm-quit)))))
-  "quit (asks)")
+;; Q now asks before quitting (StumpWM quit-confirm); logout! (minde
+;; session) owns the actual prompt-then-wm-quit shape, so this, the
+;; portable "s q" binding, and the colon prompt all agree on one
+;; implementation.
+(bind-prefix-key! "Q" (lambda () (logout!)) "quit (asks)")
+
+;; ---------------------------------------------------------------------
+;; Session management (minde session): L locks; M-L suspends (locks
+;; first and waits for confirmation -- see the module for why). Logout
+;; is deliberately not on its own single keystroke anywhere: Q above
+;; and the portable "s q" binding both go through logout!'s confirmation
+;; prompt.
+;; ---------------------------------------------------------------------
+(bind-prefix-key! "L" (lambda () (lock-screen!)) "lock screen")
+(bind-prefix-key! "M-L" (lambda () (suspend!)) "suspend (locks first)")
 
 ;; Marks: tag windows, then pull them all here at once. (Not on "t":
 ;; that must stay free as the literal-forward escape for the default
@@ -1506,12 +1516,11 @@ refresh)."
   (bind-portable-key! "s"
     (make-documented-keymap
      "r" (lambda () (reload-configuration!)) "reload configuration"
-     "q" (lambda ()
-           (read-one-line
-            "quit minde? (yes/n) "
-            (lambda (answer)
-              (when (member answer '("y" "yes"))
-                (wm-quit))))) "quit with confirmation")
+     "l" (lambda () (lock-screen!)) "lock screen"
+     ;; z: sleep -- zzz, and free of "s" (the submap key itself, which
+     ;; would be confusing to reuse) and "l" (lock) and "r" (reload).
+     "z" (lambda () (suspend!)) "suspend (locks first)"
+     "q" (lambda () (logout!)) "log out (asks)")
     "session commands"))
 
 (unless (or (getenv "MINDE_FULL_KEYMAP")

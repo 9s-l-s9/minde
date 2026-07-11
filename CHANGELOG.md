@@ -10,6 +10,13 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- Session management: `ext-session-lock-v1` compositor support (swaylock
+  and other lockers can lock the session; while locked no desktop pixel
+  is shown and no input reaches clients or keybindings), plus the
+  `(minde session)` commands `lock-screen!`, `suspend!` (locks first
+  and waits for lock confirmation, failing closed on timeout), and
+  `logout!` (confirmation-gated), with `session-lock`/`session-unlock`
+  hooks and the `wm-session-locked?` query.
 - A Guix-first development environment plus a predictable fast `./check`,
   persistent nested runner, and explicit integration/release gates.
 - Strict `--help` and `--version` output with an embedded build revision.
@@ -71,6 +78,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- The CLI contract check accepts semver pre-release versions
+  (`1.0.0-rc1`), so `make check` passes on the release-candidate series.
 - End-to-end tests no longer inherit host keymap or compositor REPL state.
 - Client disconnect, popup/grab, DnD, missing-output, and hotplug paths recover
   from stale protocol state instead of panicking.

@@ -10,6 +10,7 @@ SCHEME_TESTS := \
 	tests/input-test.scm \
 	tests/frames-test.scm \
 	tests/groups-test.scm \
+	tests/session-test.scm \
 	tests/layouts-test.scm \
 	tests/next-pull-test.scm \
 	tests/heads-test.scm \

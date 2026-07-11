@@ -78,8 +78,56 @@ pub fn init_winit(
                     // exclusive zones re-arranged inside).
                     state.reported_heads.clear();
                     state.update_usable_area();
+                    // Keep any lock surface covering the whole (resized) output.
+                    state.reconfigure_lock_surfaces();
                 }
                 WinitEvent::Input(event) => state.process_input_event(event),
+                WinitEvent::Redraw if state.locked => {
+                    // Locked: render ONLY this output's lock surface, or solid
+                    // black if it has not committed / the client died. Never
+                    // the desktop -- this is the ext-session-lock guarantee.
+                    let size = backend.window_size();
+                    let damage = Rectangle::from_size(size);
+                    {
+                        let (renderer, mut framebuffer) = backend.bind().unwrap();
+                        let mut elements: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
+                        if let Some(lock) = state.lock_surface_for(&output) {
+                            elements =
+                                smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+                                    &mut *renderer,
+                                    lock.wl_surface(),
+                                    (0, 0),
+                                    1.0,
+                                    1.0,
+                                    smithay::backend::renderer::element::Kind::Unspecified,
+                                );
+                        }
+                        damage_tracker
+                            .render_output(
+                                &mut *renderer,
+                                &mut framebuffer,
+                                0,
+                                &elements,
+                                [0.0, 0.0, 0.0, 1.0],
+                            )
+                            .unwrap();
+                    }
+                    backend.submit(Some(&[damage])).unwrap();
+
+                    // Frame callback so the lock client keeps drawing.
+                    if let Some(lock) = state.lock_surface_for(&output) {
+                        smithay::desktop::utils::send_frames_surface_tree(
+                            lock.wl_surface(),
+                            &output,
+                            state.start_time.elapsed(),
+                            Some(Duration::ZERO),
+                            |_, _| Some(output.clone()),
+                        );
+                    }
+
+                    let _ = state.display_handle.flush_clients();
+                    backend.window().request_redraw();
+                }
                 WinitEvent::Redraw => {
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);

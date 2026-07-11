@@ -23,8 +23,10 @@ The current support/evidence boundary is tracked in
 - Reusable Guile foundation and UI packages.
 - Generated API/keymap references and scripted WebM demonstrations.
 
-Modern swaylock is not supported: it requires `ext-session-lock-v1`, which is
-not implemented. Layer shell must not be presented as a secure replacement.
+Session lock, suspend and logout commands (`Print s l` / `s z` / `s q` on the
+portable map) drive `ext-session-lock-v1` through a configurable external
+locker (default `swaylock -f`); see [Session management](#session-management)
+below. Layer shell must not be presented as a secure replacement for it.
 
 ## Quick nested session
 
@@ -105,6 +107,29 @@ Personal launchers, keyboard policy, wallpaper, Eww, brightness initialization
 and autostart belong in the personal configuration. Editing a Guix Home service
 does not affect the current session until Home is reconfigured and Minde is
 restarted.
+
+## Session management
+
+`(minde session)` provides three interactive commands, also reachable from
+the colon prompt (`Print colon`):
+
+| Command | Portable default | Full keymap (`MINDE_FULL_KEYMAP=1`) | What it does |
+|---|---|---|---|
+| `logout!` | `s q` | `Q` | Prompts `log out (ends the session)? (yes/n)`; only `y`/`yes` calls `wm-quit`, ending the session. |
+| `lock-screen!` | `s l` | `L` | Spawns `%lock-command` (default `"swaylock -f"`). |
+| `suspend!` | `s z` | `M-L` | Locks first, waits for confirmation, then spawns `%suspend-command` (default `"loginctl suspend"`, elogind-compatible). |
+
+`suspend!` does not suspend the instant it spawns the locker: spawning races
+the locker's own startup, and suspending mid-race can wake the machine
+unlocked. It waits for the compositor's `wm-on-session-lock` event (fired once
+the session-lock surface is actually up) before suspending, and gives up
+without suspending if that does not happen within `%lock-timeout-ms`
+(default 5000) -- failing closed, since suspending anyway on an unconfirmed
+lock would be a worse bug than a suspend that has to be retried by hand. Set
+`%lock-on-suspend?` to `#f` to suspend immediately without locking. Override
+any of `%lock-command`, `%suspend-command`, `%lock-on-suspend?`, or
+`%lock-timeout-ms` after `(use-modules (minde session))` in a personal
+configuration.
 
 ## Development and verification
 

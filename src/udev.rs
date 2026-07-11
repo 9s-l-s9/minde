@@ -662,6 +662,24 @@ impl MindeState {
         self.render_now(node, crtc);
     }
 
+    /// Forces an immediate repaint of every udev output. Used by the
+    /// session-lock handler so a blank frame reaches every screen before the
+    /// lock is confirmed. No-op under winit (its redraw loop repaints
+    /// continuously; the lock flag makes those frames blank on its own).
+    pub(crate) fn render_all_outputs_now(&mut self) {
+        let Some(udev) = self.udev_data.as_ref() else {
+            return;
+        };
+        let targets: Vec<(DrmNode, crtc::Handle)> = udev
+            .devices
+            .iter()
+            .flat_map(|(node, device)| device.surfaces.keys().map(move |crtc| (*node, *crtc)))
+            .collect();
+        for (node, crtc) in targets {
+            self.render_now(node, crtc);
+        }
+    }
+
     fn render_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
         // If no frame was queued (no damage, or a render error), no VBlank
         // will arrive to drive `frame_finish`, so the repaint chain would
@@ -719,6 +737,69 @@ impl MindeState {
             return Ok(false);
         };
         let scale = smithay::utils::Scale::from(output.current_scale().fractional_scale());
+
+        // Locked: render ONLY this output's lock surface (or solid black if
+        // it has not committed / the client died). Never the desktop -- this
+        // is the ext-session-lock guarantee. `lock_surfaces` is borrowed as a
+        // field here (not via `lock_surface_for`, whose `&self` would clash
+        // with the outstanding `udev_data` borrow above).
+        if self.locked {
+            let lock_surface = self
+                .lock_surfaces
+                .iter()
+                .find(|(o, _)| o == &output)
+                .map(|(_, surface)| surface)
+                .filter(|surface| surface.alive());
+            let mut elements: Vec<MindeRenderElements<UdevRenderer<'_>>> = Vec::new();
+            if let Some(lock) = lock_surface {
+                elements =
+                    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+                        &mut renderer,
+                        lock.wl_surface(),
+                        (0, 0),
+                        scale,
+                        1.0,
+                        smithay::backend::renderer::element::Kind::Unspecified,
+                    );
+            }
+            let render_result = output_surface
+                .drm_output
+                .render_frame(
+                    &mut renderer,
+                    &elements,
+                    smithay::backend::renderer::Color32F::new(0.0, 0.0, 0.0, 1.0),
+                    FrameFlags::DEFAULT,
+                )
+                .map_err(|err| match err {
+                    smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => {
+                        SwapBuffersError::from(err)
+                    }
+                    smithay::backend::drm::compositor::RenderFrameError::RenderFrame(
+                        smithay::backend::renderer::damage::Error::Rendering(err),
+                    ) => SwapBuffersError::from(err),
+                    _ => SwapBuffersError::AlreadySwapped,
+                })?;
+            let queued = !render_result.is_empty;
+            if queued {
+                output_surface
+                    .drm_output
+                    .queue_frame(None)
+                    .map_err(Into::<SwapBuffersError>::into)?;
+            }
+            // Frame callback so the lock client keeps drawing.
+            if let Some((_, lock)) = self.lock_surfaces.iter().find(|(o, _)| o == &output) {
+                smithay::desktop::utils::send_frames_surface_tree(
+                    lock.wl_surface(),
+                    &output,
+                    self.start_time.elapsed(),
+                    Some(Duration::ZERO),
+                    |_, _| Some(output.clone()),
+                );
+            }
+            self.popups.cleanup();
+            let _ = self.display_handle.flush_clients();
+            return Ok(queued);
+        }
 
         let mut custom: Vec<MindeRenderElements<UdevRenderer<'_>>> = Vec::new();
 

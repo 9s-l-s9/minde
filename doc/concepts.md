@@ -47,8 +47,9 @@ Layer-shell surfaces such as swaybg, fuzzel and Eww are arranged independently;
 exclusive zones reduce the space available to frame trees. The modeline and
 system tray remain external responsibilities.
 
-Modern swaylock uses `ext-session-lock-v1`, which is not implemented. It must
-not be treated as a working lock merely because layer shell is available.
+Modern swaylock uses `ext-session-lock-v1`, which backs the `lock-screen!`
+and `suspend!` commands in `(minde session)`. Layer shell is a separate
+mechanism and must not be treated as a working lock on its own.
 
 The current support boundary and evidence are tracked in
 [`capability-matrix.md`](capability-matrix.md).
