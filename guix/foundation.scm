@@ -17,7 +17,7 @@
 
 (package
   (name "guile-minde-foundation")
-  (version "0.1.0")
+  (version "1.0.0-rc1")
   (source (local-file %repository-root "minde-foundation-source"
                       #:recursive? #t #:select? foundation-source?))
   (build-system copy-build-system)

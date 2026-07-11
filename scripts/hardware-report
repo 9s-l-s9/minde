@@ -1,0 +1,79 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+. "$root/release/contract.env"
+host=$(hostname 2>/dev/null || printf unknown)
+safe_host=$(printf '%s' "$host" | tr -c 'A-Za-z0-9._-' '_')
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+output=${1:-build/hardware/$safe_host-$stamp.md}
+mkdir -p "$(dirname "$output")"
+
+command_output() {
+    title=$1
+    shift
+    printf '\n### %s\n\n```text\n' "$title"
+    "$@" 2>&1 || printf 'unavailable or command failed\n'
+    printf '```\n'
+}
+
+{
+    printf '# minde hardware report: %s\n' "$host"
+    # Markdown backticks are intentional literal characters.
+    # shellcheck disable=SC2016
+    printf '\nGenerated: `%s`\n' "$stamp"
+    # shellcheck disable=SC2016
+    printf '\nRelease candidate: `%s`\n' "$MINDE_RELEASE_VERSION"
+    printf '\n## Static snapshot\n'
+    command_output Kernel uname -a
+    command_output 'Guix system generation' readlink -f /var/guix/profiles/system
+    if command -v lspci >/dev/null 2>&1; then
+        command_output 'PCI graphics and drivers' sh -c \
+            "lspci -nnk | sed -n '/VGA compatible controller/,+4p;/Display controller/,+4p'"
+    else
+        command_output 'PCI graphics and drivers' false
+    fi
+    command_output 'DRM devices' sh -c 'ls -l /dev/dri 2>/dev/null'
+    # The single-quoted program is expanded by the child shell, not this one.
+    # shellcheck disable=SC2016
+    command_output 'DRM connectors' sh -c '
+        found=false
+        for status in /sys/class/drm/card*-*/status; do
+            [ -r "$status" ] || continue
+            found=true
+            printf "%s: %s\n" "${status%/status}" "$(cat "$status")"
+        done
+        "$found"'
+    if command -v loginctl >/dev/null 2>&1; then
+        command_output 'Seat' loginctl seat-status "${XDG_SEAT:-seat0}"
+    else
+        command_output 'Seat' false
+    fi
+
+    printf '\n## Owner checklist\n\n'
+    printf '%s\n' \
+        '- [ ] Direct DRM/TTY startup and clean exit' \
+        '- [ ] SDDM login and logout using the RC package' \
+        '- [ ] StumpWM rollback session remains selectable' \
+        '- [ ] Keyboard, pointer, de/bone layout, and Print prefix' \
+        '- [ ] Brightness and audio media keys' \
+        '- [ ] Native Wayland terminal and GTK/Qt application' \
+        '- [ ] Xterm/Xwayland mapping and clipboard both directions' \
+        '- [ ] Frame split, resize, movement, exchange, float, and fullscreen' \
+        '- [ ] Eww bar, wallpaper, brightness policy, and personal autostart' \
+        '- [ ] VT switch away and back' \
+        '- [ ] Suspend/resume and lid close/open' \
+        '- [ ] Available output hotplug and scaling/arrangement' \
+        '- [ ] Lock/unlock limitation reviewed (ext-session-lock-v1 unsupported)' \
+        '- [ ] Forced compositor crash leaves a useful redacted report' \
+        '- [ ] Four-hour soak completed without crash or unbounded RSS' \
+        '- [ ] Prior Guix generation rollback tested'
+
+    printf '\n## Results and notes\n\n'
+    printf 'Outcome: pending owner\n\n'
+    printf 'Failures/workarounds:\n\n'
+    printf 'Retained logs or report paths:\n'
+} >"$output"
+
+printf '%s\n' "$output"

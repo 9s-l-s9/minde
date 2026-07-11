@@ -6,7 +6,7 @@ rendering, input, outputs and backends. The modeline, panel and tray are
 deliberately external; Eww consumes the structured status interface.
 
 The project is unreleased and breaking changes remain intentional before 1.0.
-Development version: `0.1.0`.
+Development version: `1.0.0-rc1`.
 The current support/evidence boundary is tracked in
 [`doc/capability-matrix.md`](doc/capability-matrix.md).
 

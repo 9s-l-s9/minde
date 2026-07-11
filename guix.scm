@@ -31,7 +31,7 @@
              (gnu packages bash))
 
 (define %source-dir (dirname (current-filename)))
-(define %project-version "0.1.0")
+(define %project-version "1.0.0-rc1")
 (define %source-archive (getenv "MINDE_SOURCE_ARCHIVE"))
 (define %build-revision
   (or (getenv "MINDE_BUILD_REVISION") "local-checkout"))
@@ -130,6 +130,7 @@
                  "SUPPORT.md" "UNEXPECTED.md" "NOTICE" "COPYING"))
               (copy-recursively "LICENSES" (string-append doc-out "/LICENSES"))
               (copy-recursively "doc" (string-append doc-out "/doc"))
+              (copy-recursively "release" (string-append doc-out "/release"))
               ;; Session wrapper: environment for a bare-TTY login.
               (mkdir-p sessions)
               (call-with-output-file (string-append bin "/minde-session")

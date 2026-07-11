@@ -6,7 +6,7 @@ shims or migration notes.
 
 ## Unreleased
 
-Target version: `0.1.0`.
+Target version: `1.0.0-rc1`.
 
 ### Added
 
@@ -41,6 +41,11 @@ Target version: `0.1.0`.
   Guix package entry point, installed documentation/Guile modules, and a
   clean-tree local release pipeline with a self-contained bounded Guix
   environment, checksums, and release notes.
+- A machine-readable 1.0 RC contract freezes public API/keymap inventories and
+  configuration, status, persistence, and diagnostic schema versions.
+- `make check-hardware` now writes a retained per-machine hardware snapshot and
+  owner checklist; System/Home can opt into a vendored RC archive while keeping
+  the checkout package as the default rollback path.
 
 ### Changed
 

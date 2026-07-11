@@ -48,7 +48,7 @@ check-static:
 			scripts/capture-demos scripts/generate-docs scripts/minde-cmd \
 			scripts/minde-msg scripts/mindectl \
 			scripts/create-release-archives scripts/check-guix-package \
-			scripts/release; \
+			scripts/hardware-report scripts/release; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \
 	fi
@@ -196,7 +196,9 @@ check-ui-package:
 check-all: check check-e2e check-apps check-docs
 
 check-hardware:
-	@echo "Run ./debug-tty.sh from a spare VT and follow doc/hardware-validation.md."
+	@report=$$(sh scripts/hardware-report); \
+	echo "hardware snapshot: $$report"; \
+	echo "complete it from a spare VT using doc/hardware-validation.md"
 
 demos:
 	sh scripts/capture-demos

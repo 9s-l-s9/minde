@@ -1,6 +1,6 @@
 # Packaging and releasing
 
-The development version is `0.1.0`. Cargo, the three Guix packages, README,
+The release-candidate version is `1.0.0-rc1`. Cargo, the three Guix packages, README,
 changelog, CLI, Smithay vendor configuration, and documented schema versions
 are checked together by `make check-docs`.
 
@@ -37,7 +37,7 @@ current ignored vendor tree and is suitable for offline Cargo and Guix builds:
 
 ```sh
 make check-release-archives
-make release-archives VERSION=0.1.0
+make release-archives VERSION=1.0.0-rc1
 ```
 
 Archive order, owner/group, timestamps, tar format, and gzip metadata are
@@ -57,7 +57,7 @@ First update every checked version field and commit all intended changes. Then
 run from a clean worktree:
 
 ```sh
-make release VERSION=0.1.0
+make release VERSION=1.0.0-rc1
 ```
 
 The release runner executes gates sequentially to bound memory use. Its normal
@@ -82,7 +82,7 @@ tree check:
 ```sh
 make check-package
 make check-release-archives
-make release VERSION=0.1.0
+make release VERSION=1.0.0-rc1
 ```
 
 Then disconnect networking, extract the vendored archive, and run:
@@ -99,6 +99,20 @@ portable configuration, all guides/licenses, and `doc/generated/manual.html`
 exist. Run `bin/minde --version` and confirm it reports the release version
 and commit. Search installed text for the temporary checkout path; there must
 be no match.
+
+To evaluate the personal System/Home configuration against the RC archive
+while retaining the normal checkout fallback:
+
+```sh
+export MINDE_RC_ARCHIVE="$PWD/build/release/1.0.0-rc1/minde-1.0.0-rc1-vendored.tar.gz"
+export MINDE_RC_REVISION="$(git rev-parse HEAD)"
+make -C ~/Projects/System qa-home-samuel qa-system-x1 qa-system-t450s
+```
+
+The shared `~/Projects/System/minde-package.scm` selector uses the archive
+only when both variables are present. Without them, existing reconfiguration
+continues to use the checkout package. Preserve both variables explicitly if
+you later invoke a privileged reconfiguration for the live SDDM test.
 
 To test the SDDM entry in a real login, install the package through the System
 configuration, reconfigure, and restart into a fresh session. Keep the prior

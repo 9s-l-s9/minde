@@ -16,7 +16,7 @@
 
 (package
   (name "guile-minde-ui")
-  (version "0.1.0")
+  (version "1.0.0-rc1")
   (source (local-file %repository-root "minde-ui-source" #:recursive? #t
                       #:select? ui-source?))
   (build-system copy-build-system)

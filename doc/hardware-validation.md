@@ -5,6 +5,17 @@ GPU drivers, suspend/resume, physical hotplug, or the display manager. Perform
 this checklist from a spare text VT before removing the StumpWM rollback
 session.
 
+Create the retained, machine-specific report first:
+
+```sh
+make check-hardware
+```
+
+This only reads system information and writes a Markdown checklist under
+`build/hardware/`; it does not reconfigure, log out, suspend, or change the
+running session. Run it once on X1 and once on T450s, then fill in each result
+while following the sections below.
+
 ## Preflight
 
 ```sh
@@ -58,3 +69,7 @@ Run `./debug-tty.sh` when retained diagnostics are needed. Record machine,
 kernel/Guix generation, GPU, connectors, input devices, suspend/hotplug result,
 and relevant redacted logs. Hardware-specific failures must not be generalized
 as portable behavior without reproducing them in the nested backend.
+
+The release remains pending until both generated reports say `Outcome: pass`,
+identify their retained diagnostic paths, and record rollback to the preceding
+Guix generation.

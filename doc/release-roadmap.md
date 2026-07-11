@@ -23,7 +23,8 @@ as unavailable on the current hardware.
   reproducible, offline Cargo resolution and the archive-only Guix build pass,
   installed contents are complete, and all 16 scripted videos were regenerated
   and validated. Owner clean-checkout release run and live SDDM login remain.
-- Sprint 10: pending.
+- Sprint 10: release-candidate preparation implemented; T450s/X1 physical
+  reports, four-hour soak, RC SDDM login, and rollback remain owner-pending.
 
 ## Release decisions
 
@@ -400,6 +401,15 @@ all Scheme modules/docs are installed, and no build path references the
 development checkout.
 
 ## Sprint 10 — Hardware validation, release candidate, and 1.0
+
+Status: implemented, pending owner hardware verification from 2026-07-14. The
+version is `1.0.0-rc1`; the public API, portable keymap, and configuration,
+status, persistence, and diagnostic schema versions are frozen by
+`release/contract.env`. `make check-hardware` now writes a retained report, and
+the personal System/Home configuration can opt into a vendored RC archive
+without removing its checkout or StumpWM rollback paths. T450s and X1 physical
+sessions, four-hour soak runs, SDDM RC login, and generation rollback cannot be
+claimed until the owner completes and retains both reports.
 
 ### Implementation
 
