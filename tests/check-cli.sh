@@ -14,8 +14,9 @@ version=$("$binary" --version)
 printf '%s\n' "$help" | grep -q '^Usage: minde \[OPTION\]$'
 printf '%s\n' "$help" | grep -q -- '--tty'
 printf '%s\n' "$help" | grep -q -- '--winit'
+# Semver with an optional pre-release suffix ("1.0.0-rc1").
 printf '%s\n' "$version" |
-    grep -Eq '^minde [0-9]+\.[0-9]+\.[0-9]+ \([^()]+\)$'
+    grep -Eq '^minde [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)? \([^()]+\)$'
 
 set +e
 error=$("$binary" --definitely-invalid 2>&1)
