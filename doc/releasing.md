@@ -63,7 +63,9 @@ make release VERSION=0.1.0
 The release runner executes gates sequentially to bound memory use. Its normal
 gate set is `check`, nested E2E, the bounded core application matrix,
 documentation, scripted video generation and validation, and the local Guix
-package. The heavier toolkit/browser shards remain opt-in. The runner then
+package. It automatically enters a Guix shell containing exactly those build,
+core-application, and video tools. The heavier toolkit/browser shards remain
+opt-in. The runner then
 creates and validates both archives, builds the archive-only Guix package,
 inspects installed content, and writes `RELEASE-NOTES.md` plus `SHA256SUMS`
 under `build/release/VERSION/`.

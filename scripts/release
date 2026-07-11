@@ -24,6 +24,13 @@ actual=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
 
 revision=$(git rev-parse --verify HEAD)
 output=build/release/$version
+
+if [ "${MINDE_RELEASE_ENV:-0}" != 1 ]; then
+    exec guix shell -m manifest.scm xorg-server xdotool imagemagick jq \
+        util-linux foot xterm wl-clipboard ffmpeg shellcheck -- \
+        env MINDE_RELEASE_ENV=1 sh scripts/release "$version"
+fi
+
 rm -rf "$output"
 mkdir -p "$output"
 

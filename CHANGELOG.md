@@ -39,7 +39,8 @@ Target version: `0.1.0`.
   Scheme modules, including explicit metadata for record accessors and values.
 - Reproducible source and vendored-source archives, an archive-only public
   Guix package entry point, installed documentation/Guile modules, and a
-  clean-tree local release pipeline with checksums and release notes.
+  clean-tree local release pipeline with a self-contained bounded Guix
+  environment, checksums, and release notes.
 
 ### Changed
 
