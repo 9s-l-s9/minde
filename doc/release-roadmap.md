@@ -43,9 +43,12 @@ as unavailable on the current hardware.
   checkouts); the hosted workflow is YAML-thin by construction; the channel
   builds both Guile packages from committed files, with the compositor
   package deferred to the first published vendored archive; the packaging
-  reference is generated and drift-gated. Owner verification remains: one
-  hosted Actions run (push), one tag run publishing artifacts, and a
-  `guix pull` channel install from a machine without the checkout.
+  reference is generated and drift-gated. The first hosted Actions run on
+  main passed on 2026-07-16 (run 29502921908) after one honest divergence was
+  fixed: the pinned shell had no CA bundle, so cargo's TLS fetches failed on
+  the runner while a host bundle masked the gap locally. Owner verification
+  remains: one tag run publishing artifacts, and a `guix pull` channel
+  install from a machine without the checkout.
 - Sprint 13: not started. Screen capture and desktop-portal support.
 - Sprint 14: not started. Ecosystem protocol completion toward parity with
   niri/hyprland/sway daily-driver expectations.
