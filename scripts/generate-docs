@@ -13,3 +13,4 @@ guile --no-auto-compile -L scheme scripts/generate-demo-manifest.scm \
 guile --no-auto-compile -L scheme scripts/generate-manual.scm \
     >"$out/manual.html"
 sh scripts/generate-testing-reference doc/testing.md
+sh scripts/generate-packaging-reference "$out/packaging.md"

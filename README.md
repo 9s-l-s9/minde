@@ -72,6 +72,7 @@ is generated from the live key tables in
 | Application matrix | [`doc/application-testing.md`](doc/application-testing.md) |
 | Scripted demonstrations | [`doc/demonstrations.md`](doc/demonstrations.md) |
 | Packaging and releases | [`doc/releasing.md`](doc/releasing.md) |
+| Generated packaging/distribution reference | [`doc/generated/packaging.md`](doc/generated/packaging.md) |
 | Offline generated manual | [`doc/generated/manual.html`](doc/generated/manual.html) |
 
 `make docs` regenerates API, keymap, manifest and HTML outputs. Generated files

@@ -1,0 +1,126 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Single noninteractive CI entry point.
+#
+# This is the one script both a developer and the hosted GitHub Actions runner
+# execute. The hosted workflow (.github/workflows/ci.yml) does nothing but
+# install Guix and call this file; if a hosted run and a local run ever
+# disagree, that is a bug by construction, because no gate logic lives in the
+# workflow YAML.
+#
+# Default mode composes the existing gates that are safe on a headless runner:
+#   * ./check              -- the fast development gate. It already includes the
+#                             documentation (check-docs) and static-analysis
+#                             (check-static) gates, so they are not repeated.
+#   * check-release-metadata -- executable-helper and release-contract checks.
+#
+# --release-artifacts additionally builds the deterministic source and vendored
+# archives via the existing scripts/create-release-archives +
+# tests/check-release-archives.sh path, verifies they are byte-reproducible,
+# and leaves them together with SHA256SUMS in a predictable output directory
+# (build/ci/artifacts by default; override with MINDE_CI_OUTPUT).
+#
+# Deliberately excluded from the default CI run: nested/e2e (check-e2e),
+# application matrices (check-apps*), demos, stress, and soak. Those launch
+# real graphical processes and heavyweight Guix closures that headless CI
+# runners cannot support; the project treats them as escalation paths run
+# locally or on real hardware (see doc/application-testing.md and the roadmap's
+# Sprint 12 notes). Run them with ./check --all or the granular make targets.
+#
+# Runs identically inside `guix shell -m manifest.scm` and from outside: when
+# invoked outside the environment it re-executes itself inside it, matching the
+# convention in scripts/release.
+set -eu
+
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+release_artifacts=0
+case ${1:-} in
+    '')
+        ;;
+    --release-artifacts)
+        [ "$#" -eq 1 ] || { echo "usage: scripts/ci [--release-artifacts]" >&2; exit 2; }
+        release_artifacts=1
+        ;;
+    -h|--help)
+        cat <<'EOF'
+usage: scripts/ci [--release-artifacts]
+
+Default: run the fast gate (./check, which includes doc and static gates) and
+the release-metadata check. --release-artifacts also builds the deterministic
+source/vendored archives and writes them with SHA256SUMS to build/ci/artifacts
+(override with MINDE_CI_OUTPUT). Re-execs inside `guix shell -m manifest.scm`
+when run outside it. See the header comment for excluded heavyweight gates.
+EOF
+        exit 0
+        ;;
+    *)
+        echo "usage: scripts/ci [--release-artifacts]" >&2
+        exit 2
+        ;;
+esac
+
+# Enter the pinned environment once, then re-exec inside it, so every gate sees
+# the same tools whether or not the caller already ran `guix shell`.
+if [ "${MINDE_CI_ENV:-0}" != 1 ]; then
+    set --
+    [ "$release_artifacts" -eq 1 ] && set -- --release-artifacts
+    # tar and gzip are not in manifest.scm but the deterministic-archive path
+    # (scripts/create-release-archives) needs them; add them like scripts/release
+    # adds its extra tools.
+    exec guix shell -m manifest.scm shellcheck tar gzip -- \
+        env MINDE_CI_ENV=1 sh scripts/ci "$@"
+fi
+
+echo "== ci gate: check =="
+./check
+
+echo "== ci gate: check-release-metadata =="
+sh tests/check-release-metadata.sh
+
+if [ "$release_artifacts" -eq 0 ]; then
+    echo "ci: default gates passed"
+    exit 0
+fi
+
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+[ -n "$version" ] || { echo "ci: could not read version from Cargo.toml" >&2; exit 1; }
+
+output=${MINDE_CI_OUTPUT:-build/ci/artifacts}
+rm -rf "$output"
+mkdir -p "$output"
+output=$(CDPATH='' cd -- "$output" && pwd)
+
+# The vendored archive needs the local crate mirror, which is gitignored and
+# therefore absent on a fresh CI checkout. Recreate it from the locked graph;
+# the result is deterministic for a given Cargo.lock and toolchain.
+[ -d vendor ] || {
+    echo "== ci gate: cargo vendor (fresh checkout) =="
+    cargo vendor vendor >/dev/null
+}
+
+echo "== ci gate: release archives ($version) =="
+# Build twice and compare to prove byte-reproducibility, mirroring the
+# check-release-archives make target, then keep the first copy as the artifacts.
+verify_dir=build/ci/release-check
+rm -rf "$verify_dir"
+sh scripts/create-release-archives "$version" "$verify_dir/two" >/dev/null
+sh scripts/create-release-archives "$version" "$output" >/dev/null
+source_archive=$output/minde-$version.tar.gz
+vendored_archive=$output/minde-$version-vendored.tar.gz
+cmp "$source_archive" "$verify_dir/two/minde-$version.tar.gz"
+cmp "$vendored_archive" "$verify_dir/two/minde-$version-vendored.tar.gz"
+rm -rf "$verify_dir"
+
+echo "== ci gate: check-release-archives =="
+sh tests/check-release-archives.sh "$version" "$source_archive" "$vendored_archive"
+
+(
+    cd "$output"
+    sha256sum "minde-$version.tar.gz" "minde-$version-vendored.tar.gz" >SHA256SUMS
+)
+
+echo "ci: release artifacts in $output"
+ls -1 "$output"

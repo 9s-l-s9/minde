@@ -43,6 +43,25 @@ sccache/mold are deliberately not part of the default toolchain. For Scheme,
 Geiser or another Guile-aware client works against a normal `guile -L
 scheme` REPL; see `doc/debugging.md#editor-setup` and `#interactive-scheme-debugging`.
 
+## Continuous integration
+
+Hosted CI runs exactly one script, `scripts/ci`, the same one you can run
+locally:
+
+```sh
+guix shell -m manifest.scm -- scripts/ci
+```
+
+It composes the fast gate (`./check`, which already includes the documentation
+and static-analysis gates) and the release-metadata check. On version tags the
+hosted workflow additionally runs `scripts/ci --release-artifacts`, which builds
+the deterministic source and vendored archives, verifies they are
+byte-reproducible, and writes them with `SHA256SUMS` to `build/ci/artifacts`.
+No gate logic lives in `.github/workflows/ci.yml`; if a hosted run disagrees
+with a local one, the bug is in `scripts/ci`. Nested/e2e, application, demo, and
+soak gates stay out of CI because headless runners cannot support them; run them
+locally with `./check --all` or the granular `make check-*` targets.
+
 ## Change expectations
 
 - Keep Rust formatted and free of Clippy warnings.

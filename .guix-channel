@@ -1,0 +1,8 @@
+;; SPDX-License-Identifier: GPL-3.0-or-later
+;; Declares this repository as a Guix channel. `guix pull` reads only this
+;; file and the committed tree below `directory`; it never sees the
+;; gitignored vendor/ mirror. See guix-channel/minde/packages.scm for what
+;; that constraint means for which packages this channel can expose today.
+(channel
+ (version 0)
+ (directory "guix-channel"))

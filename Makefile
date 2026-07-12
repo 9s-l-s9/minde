@@ -47,6 +47,7 @@ check-static:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
 			scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
+			scripts/generate-packaging-reference \
 			scripts/minde-cmd \
 			scripts/minde-msg scripts/mindectl \
 			scripts/create-release-archives scripts/check-guix-package \

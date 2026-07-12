@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Hosted CI. This workflow contains no gate logic: every check lives in
+# scripts/ci, the same noninteractive entry point a developer runs locally
+# inside `guix shell -m manifest.scm`. YAML here only checks out the code,
+# installs Guix, caches the store, calls scripts/ci, and uploads artifacts.
+# If a hosted run and a local run disagree, that is a bug in scripts/ci, not
+# here.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Guix store
+        uses: actions/cache@v4
+        with:
+          # /var/guix holds the daemon's store database; a cached /gnu/store
+          # without it is invisible to the daemon and the cache is wasted.
+          path: |
+            /gnu/store
+            /var/guix
+          key: guix-store-${{ runner.os }}-${{ hashFiles('manifest.scm', 'guix.scm') }}
+          restore-keys: |
+            guix-store-${{ runner.os }}-
+
+      - name: Install Guix
+        uses: PromyLOPh/guix-install-action@v1
+
+      - name: Run CI entry point
+        run: scripts/ci
+
+  release-artifacts:
+    # Only version tags publish artifacts; the gates themselves already ran in
+    # the check job via the same scripts/ci entry point.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache Guix store
+        uses: actions/cache@v4
+        with:
+          # /var/guix holds the daemon's store database; a cached /gnu/store
+          # without it is invisible to the daemon and the cache is wasted.
+          path: |
+            /gnu/store
+            /var/guix
+          key: guix-store-${{ runner.os }}-${{ hashFiles('manifest.scm', 'guix.scm') }}
+          restore-keys: |
+            guix-store-${{ runner.os }}-
+
+      - name: Install Guix
+        uses: PromyLOPh/guix-install-action@v1
+
+      - name: Build release artifacts
+        run: scripts/ci --release-artifacts
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/ci/artifacts/minde-*.tar.gz
+            build/ci/artifacts/SHA256SUMS

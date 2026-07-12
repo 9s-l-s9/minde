@@ -10,6 +10,25 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- `scripts/ci`, the single noninteractive CI entry point: the fast gate
+  plus release-metadata by default, and `--release-artifacts` builds the
+  deterministic archives twice, proves byte-reproducibility, recreates
+  the crate mirror on a fresh checkout, and writes both archives plus
+  `SHA256SUMS`. The hosted GitHub Actions workflow
+  (`.github/workflows/ci.yml`) contains no gate logic: it installs Guix,
+  restores the store cache, calls `scripts/ci`, and on version tags
+  publishes the artifacts to a GitHub Release.
+- A Guix channel (`.guix-channel`, `guix-channel/`) exposing
+  `guile-minde-foundation` and `guile-minde-ui` from the committed
+  tree. The compositor package joins the channel once the first tagged
+  release publishes the vendored archive at a stable URL; the channel
+  deliberately does not ship a package that cannot build from a
+  `guix pull` checkout.
+- `doc/generated/packaging.md`, a script-generated packaging reference
+  (`scripts/generate-packaging-reference`): build/runtime dependencies,
+  installed layout, session entry, archive verification, channel usage,
+  and the first-party-Guix support boundary, drift-checked by
+  `make check-docs`.
 - `scripts/run-nested`, the documented nested-session entry point, now
   exists: it guards against a missing Guix shell, cargo, or graphical
   session, and runs the nested instance under an isolated
