@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 mod compositor;
+pub mod gamma_control;
 mod layer_shell;
 mod session_lock;
 mod xdg_decoration;

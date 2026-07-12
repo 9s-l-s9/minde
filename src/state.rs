@@ -176,6 +176,15 @@ pub struct MindeState {
     pub session: Option<smithay::backend::session::libseat::LibSeatSession>,
     /// Backend-private state for the udev/DRM backend; `None` under winit.
     pub udev_data: Option<crate::udev::UdevBackendData>,
+
+    /// Active `wlr-gamma-control-unstable-v1` controls, one per output
+    /// (blue-light tools: gammastep, wlsunset). Only ever populated under
+    /// the udev backend, which alone advertises the manager global. See
+    /// `handlers::gamma_control`.
+    pub gamma_controls: std::collections::HashMap<
+        smithay::output::Output,
+        crate::handlers::gamma_control::GammaControlEntry,
+    >,
 }
 
 impl MindeState {
@@ -280,6 +289,7 @@ impl MindeState {
             cursor_state: crate::render::CursorState::default(),
             session: None,
             udev_data: None,
+            gamma_controls: std::collections::HashMap::new(),
         }
     }
 

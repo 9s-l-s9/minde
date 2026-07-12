@@ -285,6 +285,10 @@ pub fn init_udev(
 
     setup_dmabuf_global(state);
 
+    // Gamma control is udev-only: it drives real CRTCs via the legacy DRM
+    // SETGAMMA ioctl, so winit deliberately never advertises this global.
+    crate::handlers::gamma_control::init_gamma_control_manager(&state.display_handle);
+
     event_loop
         .handle()
         .insert_source(udev_backend, |event, _, state| match event {
@@ -581,6 +585,9 @@ fn connector_disconnected(
         return;
     };
     if let Some(surface) = device.surfaces.remove(&crtc) {
+        // Void any gamma control on this output before its CRTC goes away
+        // (no restore possible once the surface is gone).
+        state.gamma_output_removed(&surface.output);
         // OutputSurface::drop removes the global; unmap first.
         state.space.unmap_output(&surface.output);
         drop(surface);
@@ -660,6 +667,32 @@ impl MindeState {
 
     fn handle_repaint_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
         self.render_now(node, crtc);
+    }
+
+    /// Resolves an output to the DRM device fd, CRTC, and gamma ramp length
+    /// needed to drive its gamma ramps. `None` if the output isn't a udev
+    /// surface or its CRTC reports no gamma. Used by the gamma-control
+    /// handler (udev-only; winit never advertises the global).
+    pub fn gamma_info_for_output(
+        &self,
+        output: &Output,
+    ) -> Option<(DrmDeviceFd, crtc::Handle, u32)> {
+        use smithay::reexports::drm::control::Device as ControlDevice;
+        let udev = self.udev_data.as_ref()?;
+        for device in udev.devices.values() {
+            for surface in device.surfaces.values() {
+                if &surface.output != output {
+                    continue;
+                }
+                let (fd, crtc) = surface.drm_output.with_compositor(|compositor| {
+                    let drm_surface = compositor.surface();
+                    (drm_surface.device_fd().clone(), drm_surface.crtc())
+                });
+                let size = fd.get_crtc(crtc).ok()?.gamma_length();
+                return Some((fd, crtc, size));
+            }
+        }
+        None
     }
 
     /// Forces an immediate repaint of every udev output. Used by the
