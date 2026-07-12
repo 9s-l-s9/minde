@@ -25,6 +25,15 @@
 ;;; below), at module load time.
 
 (define-module (minde session)
+  ;; Non-declarative: the config variables below are documented (README,
+  ;; "Session management") as user-overridable via (set! %lock-command
+  ;; ...) from init.scm. Guile 3's default declarative modules let the
+  ;; compiler constant-fold a module's own top-level references, so a
+  ;; compiled build would read the ORIGINAL value while an external set!
+  ;; only mutated the exported copy -- suspend!/lock-screen! would ignore
+  ;; the user's override. #:declarative? #f keeps those cross-references
+  ;; going through the live variable, honoring the set! contract.
+  #:declarative? #f
   #:use-module (minde frames)
   #:use-module (minde hooks)
   #:use-module (minde ui prompt)

@@ -1,0 +1,81 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Launch Minde nested in a window inside an existing Wayland or X11
+# session (the winit backend).  This is the "Quick nested session" path
+# from the README: it does not touch DRM, the display manager, or any
+# personal startup policy.
+#
+# Usage (from the project Guix shell):
+#   guix shell -m manifest.scm
+#   scripts/run-nested
+#
+# Any extra arguments are passed through to the compositor after --winit.
+set -eu
+cd "$(dirname "$0")/.."
+
+# The winit backend dlopens the Guix wayland/xcb/EGL libraries at runtime;
+# without the shell they resolve to nothing and the compositor aborts with
+# a cryptic dlopen failure.  Fail early with the actionable instruction.
+if [ -z "${GUIX_ENVIRONMENT:-}" ]; then
+    echo "run-nested: not inside the project Guix shell." >&2
+    echo "run-nested: enter it first: guix shell -m manifest.scm" >&2
+    exit 1
+fi
+
+command -v cargo >/dev/null 2>&1 || {
+    echo "run-nested: cargo is required; enter: guix shell -m manifest.scm" >&2
+    exit 127
+}
+
+# The nested window is a client of the host compositor (Wayland) or X
+# server (X11).  With neither socket in the environment winit has nothing
+# to open and would panic; refuse up front instead.
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
+    echo "run-nested: no graphical session detected." >&2
+    echo "run-nested: run this from inside a running Wayland or X11 session" >&2
+    echo "run-nested: (WAYLAND_DISPLAY or DISPLAY must be set)." >&2
+    exit 1
+fi
+
+# winit dlopens libraries shipped by the shell; they must be on the loader
+# path (see manifest.scm and the README nested-session note).
+export LD_LIBRARY_PATH="$GUIX_ENVIRONMENT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Isolate the runtime directory, exactly like tests/lib/nested-compositor.sh.
+# The IPC socket path is fixed to $XDG_RUNTIME_DIR/minde-ipc.sock and the
+# compositor removes an existing socket before binding (src/ipc.rs), so a
+# nested instance sharing the host runtime directory would silently destroy
+# the IPC socket of a live outer Minde session.  The host Wayland socket
+# stays reachable because WAYLAND_DISPLAY accepts an absolute path.
+host_rt=${XDG_RUNTIME_DIR:-/tmp}
+nested_rt=$host_rt/minde-nested
+mkdir -p "$nested_rt" && chmod 700 "$nested_rt"
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    case $WAYLAND_DISPLAY in
+        /*) ;;
+        *) export WAYLAND_DISPLAY="$host_rt/$WAYLAND_DISPLAY" ;;
+    esac
+fi
+export XDG_RUNTIME_DIR="$nested_rt"
+echo "run-nested: nested runtime directory: $nested_rt" >&2
+echo "run-nested: control the nested instance with:" >&2
+echo "run-nested:   XDG_RUNTIME_DIR=$nested_rt scripts/mindectl ..." >&2
+# Default to a legible log level for interactive use without clobbering an
+# explicit developer choice.
+export RUST_LOG="${RUST_LOG:-minde=info,scheme=info}"
+
+# Build the binary; a clear message beats a stale or missing target.
+cargo build || {
+    echo "run-nested: cargo build failed; fix the errors above and retry" >&2
+    exit 1
+}
+
+# Locate the Scheme tree and the dependency-light repository configuration
+# the same way the e2e harness does (MINDE_INIT / MINDE_SCHEME_DIR /
+# MINDE_CONFIG).  default-config.scm is the portable map documented for
+# the first nested session.
+exec env \
+    MINDE_INIT="$PWD/scheme/init.scm" \
+    MINDE_SCHEME_DIR="$PWD/scheme" \
+    MINDE_CONFIG="${MINDE_CONFIG:-$PWD/scheme/default-config.scm}" \
+    ./target/debug/minde --winit "$@"

@@ -718,9 +718,12 @@ focused client), #f otherwise."
 
 ;; ---------------------------------------------------------------------
 ;; Multi-head (multi-monitor): each group has a frame tree per head;
-;; S cycles heads, M-S toggles to the last one. Directional focus
-;; (Print arrows) also crosses monitor edges. Users who prefer one big
+;; S cycles heads, M-s toggles to the last one. Directional focus
+;; (prefix arrows) also crosses monitor edges. Users who prefer one big
 ;; tree spanning all monitors can (set-head-mode! 'span).
+;;
+;; These two are development-only: install-portable-keymap! rebuilds the
+;; map from scratch, so the release default binds heads under "o" instead.
 ;; ---------------------------------------------------------------------
 
 (bind-prefix-key! "S" (lambda () (focus-next-head!)) "next head (monitor)")
@@ -1507,6 +1510,14 @@ refresh)."
           "s" gselect! "select group"
           "m" move-current-window-to-next-group-and-follow! "move window and follow")
          "group commands")
+  (bind-portable-key! "o"
+         (make-documented-keymap
+          "n" focus-next-head! "next head (monitor)"
+          "p" focus-previous-head! "previous head (monitor)"
+          "o" focus-last-head! "last head (monitor)"
+          "s" (lambda () (set-head-mode! 'span)) "span heads (one tree over all monitors)"
+          "h" (lambda () (set-head-mode! 'per-head)) "per-head mode (a tree per monitor)")
+         "output (monitor) commands")
   (bind-portable-key! "m"
          (make-documented-keymap
           "l" layout-prompt! "select layout"

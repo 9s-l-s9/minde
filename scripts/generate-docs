@@ -12,3 +12,4 @@ guile --no-auto-compile -L scheme scripts/generate-demo-manifest.scm \
     >"$out/demo-manifest.json"
 guile --no-auto-compile -L scheme scripts/generate-manual.scm \
     >"$out/manual.html"
+sh scripts/generate-testing-reference doc/testing.md

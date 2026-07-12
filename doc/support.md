@@ -14,9 +14,13 @@ clients are deliberately not part of the default gate.
 
 ## Delegated components
 
-The modeline, panel, tray, wallpaper, launcher and lock UI are external tools.
-Eww, swaybg and fuzzel have automated layer-shell scenarios. Modern swaylock is
-not supported because the session-lock protocol is missing.
+The modeline, panel, tray, wallpaper and launcher are external tools. Eww,
+swaybg and fuzzel have automated layer-shell scenarios. `ext-session-lock-v1`
+is implemented and drives `(minde session)`'s `lock-screen!`/`suspend!`,
+so modern lockers such as swaylock are supported as the external
+`%lock-command`; see [`capability-matrix.md`](capability-matrix.md) for the
+current experimental/verified status and README's "Session management"
+section for the interactive commands.
 
 ## Before reporting
 

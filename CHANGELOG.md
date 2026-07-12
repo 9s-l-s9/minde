@@ -10,6 +10,34 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- `scripts/run-nested`, the documented nested-session entry point, now
+  exists: it guards against a missing Guix shell, cargo, or graphical
+  session, and runs the nested instance under an isolated
+  `XDG_RUNTIME_DIR` so it cannot displace the IPC socket of a live outer
+  Minde session.
+- `doc/testing.md` is now a generated verification-command reference
+  (`scripts/generate-testing-reference`), wired into `make docs` and
+  drift-checked by `make check-docs`.
+- `doc/debugging.md` documents interactive Scheme debugging
+  (`MINDE_UNSAFE_REPL=1` REPL versus one-shot `mindectl eval`),
+  Rust-side debugging (backtraces, gdb on the nested backend, the DRM
+  seat caveat, crash.log), cold-build expectations, and editor setup;
+  `CONTRIBUTING.md` carries condensed pointers.
+
+### Fixed
+
+- Overrides of `(minde session)` configuration variables
+  (`%lock-command`, `%suspend-command`, `%lock-on-suspend?`,
+  `%lock-timeout-ms`) were silently ignored in compiled builds because
+  the module was declarative; the module is now non-declarative and
+  `set!` from a personal configuration works as documented.
+- `doc/support.md` no longer claims the session-lock protocol is
+  missing.
+- `tests/check-portable-defaults.sh` now fails loudly when ripgrep is
+  absent instead of printing a false "ok"; `manifest.scm` gained
+  `ripgrep` and `diffutils` so `./check` is self-contained in the
+  project shell.
+
 - Session management: `ext-session-lock-v1` compositor support (swaylock
   and other lockers can lock the session; while locked no desktop pixel
   is shown and no input reaches clients or keybindings), plus the

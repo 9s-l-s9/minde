@@ -36,6 +36,13 @@ larger GUI compatibility matrix in the bounded batches documented in
 `doc/application-testing.md`; do not combine every browser and toolkit in one
 Guix environment.
 
+The vendored, git-pinned Smithay crate graph is large, so the first
+`cargo build`/`cargo check` or rust-analyzer index after a clean checkout is
+slow; see `doc/debugging.md#cold-build` for measured numbers and why
+sccache/mold are deliberately not part of the default toolchain. For Scheme,
+Geiser or another Guile-aware client works against a normal `guile -L
+scheme` REPL; see `doc/debugging.md#editor-setup` and `#interactive-scheme-debugging`.
+
 ## Change expectations
 
 - Keep Rust formatted and free of Clippy warnings.

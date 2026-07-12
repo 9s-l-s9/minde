@@ -40,6 +40,10 @@
    "xterm"
    "wl-clipboard"
    "shellcheck"
+   ;; used by the static/doc-drift gates; without them ./check cannot run
+   ;; self-contained in this shell
+   "ripgrep"
+   "diffutils"
    ;; Release demonstration encoder; capture remains explicitly opt-in.
    "ffmpeg"
    ;; misc

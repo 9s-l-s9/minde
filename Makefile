@@ -46,7 +46,8 @@ check-static:
 	sh tests/lint-borrows.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
-			scripts/capture-demos scripts/generate-docs scripts/minde-cmd \
+			scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
+			scripts/minde-cmd \
 			scripts/minde-msg scripts/mindectl \
 			scripts/create-release-archives scripts/check-guix-package \
 			scripts/hardware-report scripts/release; \

@@ -64,6 +64,12 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `m l` | select layout | action |
 | `m r` | resize mode | action |
 | `n` | Focus the next group window. | action |
+| `o` | output (monitor) commands | submap |
+| `o h` | per-head mode (a tree per monitor) | action |
+| `o n` | Focus the next output head. | action |
+| `o o` | Return to the last focused output head. | action |
+| `o p` | previous head (monitor) | action |
+| `o s` | span heads (one tree over all monitors) | action |
 | `p` | Pull the next hidden window. | action |
 | `r` | run command | action |
 | `s` | session commands | submap |
