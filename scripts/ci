@@ -70,8 +70,19 @@ if [ "${MINDE_CI_ENV:-0}" != 1 ]; then
     # tar and gzip are not in manifest.scm but the deterministic-archive path
     # (scripts/create-release-archives) needs them; add them like scripts/release
     # adds its extra tools.
-    exec guix shell -m manifest.scm shellcheck tar gzip -- \
+    # nss-certs: cargo fetches the crates.io index and the pinned Smithay git
+    # checkout over TLS on a fresh runner; without a CA bundle in the
+    # environment that fails with "CAfile: none" (locally the host
+    # environment usually leaks one in, which masks the gap).
+    exec guix shell -m manifest.scm shellcheck tar gzip nss-certs -- \
         env MINDE_CI_ENV=1 sh scripts/ci "$@"
+fi
+
+if [ -z "${SSL_CERT_FILE:-}" ] \
+    && [ -f "${GUIX_ENVIRONMENT:-/nonexistent}/etc/ssl/certs/ca-certificates.crt" ]; then
+    export SSL_CERT_FILE="$GUIX_ENVIRONMENT/etc/ssl/certs/ca-certificates.crt"
+    export SSL_CERT_DIR="$GUIX_ENVIRONMENT/etc/ssl/certs"
+    export GIT_SSL_CAINFO="$SSL_CERT_FILE"
 fi
 
 echo "== ci gate: check =="
