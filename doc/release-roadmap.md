@@ -46,9 +46,17 @@ as unavailable on the current hardware.
   reference is generated and drift-gated. The first hosted Actions run on
   main passed on 2026-07-16 (run 29502921908) after one honest divergence was
   fixed: the pinned shell had no CA bundle, so cargo's TLS fetches failed on
-  the runner while a host bundle masked the gap locally. Owner verification
-  remains: one tag run publishing artifacts, and a `guix pull` channel
-  install from a machine without the checkout.
+  the runner while a host bundle masked the gap locally. On 2026-07-16 the
+  `v1.0.0-rc1` tag run also passed end to end: the fresh-checkout
+  `cargo vendor` bootstrap worked, both archives plus SHA256SUMS were
+  published to the GitHub Release, and the published checksums are
+  byte-identical to a local rebuild at the tag commit. The channel was
+  verified through a real pull (clean clone via `guix time-machine`) after
+  fixing a pull-only defect: compiled channel modules see `current-filename`
+  as `#f`, so the repository root is now resolved through `%load-path`.
+  Remaining: the repository is currently private, so the public-URL channel
+  and release downloads activate only when it is made public; rerun the
+  channel install from a second machine at that point.
 - Sprint 13: not started. Screen capture and desktop-portal support.
 - Sprint 14: not started. Ecosystem protocol completion toward parity with
   niri/hyprland/sway daily-driver expectations.
