@@ -47,6 +47,7 @@
 (define-module (minde packages)
   #:use-module (guix packages)
   #:use-module (guix gexp)
+  #:use-module ((guix utils) #:select (current-source-directory))
   #:use-module (guix build-system copy)
   #:use-module ((guix licenses) #:prefix license:)
   #:export (guile-minde-foundation
@@ -56,9 +57,17 @@
 ;; the repository root, i.e. the same root `directory` in .guix-channel is
 ;; relative to. This must stay a plain path computation (no vendor/, no
 ;; environment variables) so the module loads under a bare `guix pull`.
+;; The path is resolved through %load-path rather than current-filename:
+;; `guix pull` compiles channel modules to bytecode, and current-filename is
+;; #f when a module is loaded from a .go file, which made every package in
+;; this module invisible after a real pull while `guix build -L guix-channel`
+;; (which interprets the source) kept working. The channel module directory
+;; is always on %load-path when this module is loadable at all.
 (define %repository-root
   (canonicalize-path
-   (string-append (dirname (current-filename)) "/../..")))
+   (string-append
+    (dirname (dirname (search-path %load-path "minde/packages.scm")))
+    "/..")))
 
 (define (foundation-source? file stat)
   (let ((relative (string-drop file (+ 1 (string-length %repository-root)))))
