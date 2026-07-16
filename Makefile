@@ -94,8 +94,13 @@ check-e2e:
 		echo "error: jq is required by the portable nested scenario" >&2; exit 127; }
 	@command -v foot >/dev/null 2>&1 || { \
 		echo "error: foot is required by the run-prompt and portable scenarios" >&2; exit 127; }
+	@command -v grim >/dev/null 2>&1 || { \
+		echo "error: grim is required by the screen-capture scenario" >&2; exit 127; }
+	@command -v identify >/dev/null 2>&1 || { \
+		echo "error: ImageMagick 'identify' is required by the screen-capture scenario" >&2; exit 127; }
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
+	sh tests/screencapture-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

@@ -28,7 +28,7 @@ incomplete release gate, **external** is deliberately delegated, and
 | Modeline and system tray | external | use eww through the schema-v1 query/subscription interface |
 | Wallpaper and launcher | external | use layer-shell clients such as swaybg and fuzzel |
 | Hard compositor restart preserving clients | external | unsupported by design; validated atomic config reload replaces it |
-| Screencopy/screenshot protocol | missing | not required for nested demo capture; decide before RC |
+| Screencopy/screenshot protocol | experimental | `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` (output sources); grim shm capture verified nested (winit), full-frame damage, no cursor session; udev/DRM path shares the handler but wants hardware verification |
 | Input methods, touch/tablet and drag-and-drop | missing | best-effort unless promoted into the tested 1.0 matrix |
 | Broad NVIDIA/multi-GPU support | missing | tested-hardware-only policy for 1.0 |
 

@@ -10,6 +10,20 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- Screen capture via `ext-image-copy-capture-v1` and
+  `ext-image-capture-source-v1` (output capture sources). Screenshot
+  tools such as grim can now grab a frame of an output on both the winit
+  (nested) and udev/DRM backends. Capture buffers are filled after the
+  output's on-screen frame is composited; shm is supported everywhere
+  (grim's path, verified nested), and the udev backend additionally
+  advertises dmabuf constraints from the primary render node for a future
+  zero-copy screen-cast path. This first version reports full-frame
+  damage and advertises only output sources -- no foreign-toplevel
+  capture and no separate cursor session (cursors are drawn inline only
+  when a client requests paint-cursors). A bounded nested e2e gate
+  (`tests/screencapture-e2e.sh`, wired into `make check-e2e`) launches the
+  nested compositor and asserts that `grim` captures a correctly-sized,
+  non-blank PNG over `ext-image-copy-capture-v1`.
 - `scripts/ci`, the single noninteractive CI entry point: the fast gate
   plus release-metadata by default, and `--release-artifacts` builds the
   deterministic archives twice, proves byte-reproducibility, recreates

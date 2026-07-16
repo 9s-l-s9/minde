@@ -34,6 +34,8 @@
    "xorg-server"
    "xdotool"
    "imagemagick"
+   ;; ext-image-copy-capture-v1 client used by the screen-capture e2e gate
+   "grim"
    "jq"
    "util-linux"
    "foot"

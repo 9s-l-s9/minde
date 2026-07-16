@@ -665,6 +665,30 @@ impl MindeState {
             .ok();
     }
 
+    /// Dmabuf capture constraints for `ext-image-copy-capture-v1`: the
+    /// primary render node plus its supported format/modifier pairs. Offered
+    /// so a future zero-copy screen-cast path can allocate GPU buffers; shm
+    /// capture (grim) needs none of this. `None` if no renderer is available.
+    pub(crate) fn dmabuf_capture_constraints(
+        &mut self,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
+        let udev = self.udev_data.as_mut()?;
+        let node = udev.primary_gpu;
+        let renderer = udev.gpus.single_renderer(&node).ok()?;
+        let mut grouped: HashMap<Fourcc, Vec<smithay::backend::allocator::Modifier>> =
+            HashMap::new();
+        for format in renderer.dmabuf_formats().iter() {
+            grouped
+                .entry(format.code)
+                .or_default()
+                .push(format.modifier);
+        }
+        Some(smithay::wayland::image_copy_capture::DmabufConstraints {
+            node,
+            formats: grouped.into_iter().collect(),
+        })
+    }
+
     fn handle_repaint_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
         self.render_now(node, crtc);
     }
@@ -1036,6 +1060,43 @@ impl MindeState {
         }
         self.space.refresh();
         self.popups.cleanup();
+
+        // Satisfy any queued screen-capture frames for this output. Drop the
+        // layer_map guard first: `output_scene_elements` re-opens it, and two
+        // live guards on the same output's RefCell panic (see the frame-
+        // callback NOTE above).
+        drop(layer_map);
+        if !self.pending_captures.is_empty() {
+            let capture_size = output
+                .current_mode()
+                .map(|m| m.size)
+                .unwrap_or_else(|| (output_geo.size.w, output_geo.size.h).into());
+            let int_scale = output.current_scale().integer_scale();
+            let time = self.start_time.elapsed();
+            let focus = self.focus_rect.or_else(|| {
+                self.focused_window
+                    .as_ref()
+                    .and_then(|w| self.space.element_geometry(w))
+            });
+            crate::handlers::screencopy::satisfy_output_captures(
+                &mut renderer,
+                &output,
+                output_geo,
+                scale,
+                int_scale,
+                capture_size,
+                time,
+                &mut self.pending_captures,
+                &self.space,
+                &mut self.cursor_state,
+                self.pointer_location,
+                self.message.as_ref(),
+                &self.overlays,
+                focus,
+                self.border_color,
+            );
+        }
+
         let _ = self.display_handle.flush_clients();
 
         Ok(queued)

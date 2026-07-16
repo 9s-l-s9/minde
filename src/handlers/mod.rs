@@ -3,6 +3,7 @@
 mod compositor;
 pub mod gamma_control;
 mod layer_shell;
+pub mod screencopy;
 mod session_lock;
 mod xdg_decoration;
 mod xdg_shell;

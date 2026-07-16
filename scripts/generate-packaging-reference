@@ -186,6 +186,38 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
     echo "described above."
     echo
 
+    echo "## Screen capture and desktop-portal support"
+    echo
+    echo "Extracted from \`doc/capability-matrix.md\` (the capability-status"
+    echo "source of truth):"
+    echo
+    echo '```'
+    grep 'Screencopy/screenshot protocol' doc/capability-matrix.md
+    echo '```'
+    echo
+    if grep -q '^   "grim"$' manifest.scm; then
+        echo "\`grim\` is part of the development shell (\`manifest.scm\`) and is"
+        echo "the reference client: Guix packages \`grim\` 1.5.0, which speaks"
+        echo "\`ext-image-copy-capture-v1\` and works against minde today."
+    else
+        echo "\`grim\` >= 1.5.0 (the first release speaking"
+        echo "\`ext-image-copy-capture-v1\`) is the reference screenshot client."
+    fi
+    echo
+    echo "**Portal-based screen sharing is not yet available.** The only"
+    echo "screen-cast portal backend currently packaged in Guix,"
+    echo "\`xdg-desktop-portal-wlr\` (0.8.2), speaks the older"
+    echo "\`wlr-screencopy-unstable-v1\` protocol only; minde does not"
+    echo "implement \`wlr-screencopy\`, so \`xdg-desktop-portal-wlr\` cannot"
+    echo "capture minde's outputs, and no PipeWire screen-cast path exists"
+    echo "yet. The path forward is a portal backend that speaks"
+    echo "\`ext-image-copy-capture-v1\` directly, such as"
+    echo "\`xdg-desktop-portal-luminous\`; it is not currently packaged in Guix."
+    echo "See"
+    echo "[\`../release-roadmap.md\`](../release-roadmap.md#sprint-13--screen-capture-and-desktop-portal)"
+    echo "for the tracked follow-up."
+    echo
+
     echo "## Support boundary"
     echo
     echo "First-party support target: pinned Guix, installed either from a"

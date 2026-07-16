@@ -57,7 +57,24 @@ as unavailable on the current hardware.
   Remaining: the repository is currently private, so the public-URL channel
   and release downloads activate only when it is made public; rerun the
   channel install from a second machine at that point.
-- Sprint 13: not started. Screen capture and desktop-portal support.
+- Sprint 13: implementation done (2026-07-16); owner hardware verification
+  pending. `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` are
+  wired on both backends (`src/handlers/screencopy.rs`): shm capture
+  everywhere, dmabuf constraints offered on udev for a future zero-copy
+  screen-cast path; output capture only — no cursor sessions or toplevel
+  sources are advertised. Captures are queued and satisfied after a real
+  composited frame. Verified end to end nested: `grim` 1.5.0 produced a
+  correct full-scene PNG, and a bounded gate (`tests/screencapture-e2e.sh`,
+  part of `make check-e2e`) validates format, dimensions against the queried
+  output mode, and non-flat content. Portal status is documented via the
+  packaging-reference generator: `xdg-desktop-portal-wlr` in Guix speaks
+  only `wlr-screencopy-unstable-v1`, which minde does not implement, so
+  portal screen sharing is not yet available; the forward path is a portal
+  backend speaking `ext-image-copy-capture-v1`. Remaining owner
+  verification: udev/DRM capture on real hardware (screenshot + recording);
+  the browser video-call check waits on the portal path. Known follow-ups:
+  pending frames for an unplugged output linger until the client drops the
+  session; no periodic `ImageCopyCaptureState::cleanup()` call.
 - Sprint 14: not started. Ecosystem protocol completion toward parity with
   niri/hyprland/sway daily-driver expectations.
 

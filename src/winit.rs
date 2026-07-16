@@ -185,6 +185,38 @@ pub fn init_winit(
                     }
                     backend.submit(Some(&[damage])).unwrap();
 
+                    // Satisfy any queued screen-capture frames for this output
+                    // by re-compositing the scene into their buffers (shm).
+                    if !state.pending_captures.is_empty()
+                        && let Some(output_geo) = state.space.output_geometry(&output)
+                    {
+                        let focus = state.focus_rect.or_else(|| {
+                            state
+                                .focused_window
+                                .as_ref()
+                                .and_then(|w| state.space.element_geometry(w))
+                        });
+                        let time = state.start_time.elapsed();
+                        crate::handlers::screencopy::satisfy_output_captures(
+                            backend.renderer(),
+                            &output,
+                            output_geo,
+                            1.0.into(),
+                            1,
+                            size,
+                            time,
+                            &mut state.pending_captures,
+                            &state.space,
+                            &mut state.cursor_state,
+                            state.pointer_location,
+                            state.message.as_ref(),
+                            &state.overlays,
+                            focus,
+                            state.border_color,
+                        );
+                        let _ = state.display_handle.flush_clients();
+                    }
+
                     state.space.elements().for_each(|window| {
                         window.send_frame(
                             &output,

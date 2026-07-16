@@ -177,6 +177,19 @@ pub struct MindeState {
     /// Backend-private state for the udev/DRM backend; `None` under winit.
     pub udev_data: Option<crate::udev::UdevBackendData>,
 
+    /// Screencopy (`ext-image-copy-capture-v1`) delegate state and the
+    /// `ext-image-capture-source-v1` source managers. `capture_sessions`
+    /// parks the owned [`Session`](smithay::wayland::image_copy_capture::Session)
+    /// handles (dropping one sends `stopped`); `pending_captures` holds frames
+    /// queued by clients, satisfied after the next render of their output.
+    /// See `handlers::screencopy`.
+    pub image_capture_source_state: smithay::wayland::image_capture_source::ImageCaptureSourceState,
+    pub output_capture_source_state:
+        smithay::wayland::image_capture_source::OutputCaptureSourceState,
+    pub image_copy_capture_state: smithay::wayland::image_copy_capture::ImageCopyCaptureState,
+    pub capture_sessions: Vec<smithay::wayland::image_copy_capture::Session>,
+    pub pending_captures: Vec<crate::handlers::screencopy::PendingCapture>,
+
     /// Active `wlr-gamma-control-unstable-v1` controls, one per output
     /// (blue-light tools: gammastep, wlsunset). Only ever populated under
     /// the udev backend, which alone advertises the manager global. See
@@ -211,6 +224,17 @@ impl MindeState {
         // Register the ext-session-lock-v1 manager global. The filter admits
         // every client; a lock client (swaylock &c.) binds it to lock.
         let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |_| true);
+
+        // Screencopy: the copy-capture manager plus the output image-capture
+        // source manager (both admit every client). We deliberately do NOT
+        // register the foreign-toplevel source manager or a cursor session --
+        // see `handlers::screencopy`.
+        let image_capture_source_state =
+            smithay::wayland::image_capture_source::ImageCaptureSourceState::new();
+        let output_capture_source_state =
+            smithay::wayland::image_capture_source::OutputCaptureSourceState::new::<Self>(&dh);
+        let image_copy_capture_state =
+            smithay::wayland::image_copy_capture::ImageCopyCaptureState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -289,6 +313,11 @@ impl MindeState {
             cursor_state: crate::render::CursorState::default(),
             session: None,
             udev_data: None,
+            image_capture_source_state,
+            output_capture_source_state,
+            image_copy_capture_state,
+            capture_sessions: Vec::new(),
+            pending_captures: Vec::new(),
             gamma_controls: std::collections::HashMap::new(),
         }
     }

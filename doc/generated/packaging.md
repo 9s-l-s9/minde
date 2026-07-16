@@ -40,6 +40,7 @@ Entered with `guix shell -m manifest.scm`:
 - `xorg-server`
 - `xdotool`
 - `imagemagick`
+- `grim`
 - `jq`
 - `util-linux`
 - `foot`
@@ -144,6 +145,32 @@ as `guix/release.scm` does from `MINDE_SOURCE_ARCHIVE`. Until
 then, installing the compositor requires a checkout and `guix.scm`
 (or `guix/release.scm` against a locally vendored archive), as
 described above.
+
+## Screen capture and desktop-portal support
+
+Extracted from `doc/capability-matrix.md` (the capability-status
+source of truth):
+
+```
+| Screencopy/screenshot protocol | experimental | `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` (output sources); grim shm capture verified nested (winit), full-frame damage, no cursor session; udev/DRM path shares the handler but wants hardware verification |
+```
+
+`grim` is part of the development shell (`manifest.scm`) and is
+the reference client: Guix packages `grim` 1.5.0, which speaks
+`ext-image-copy-capture-v1` and works against minde today.
+
+**Portal-based screen sharing is not yet available.** The only
+screen-cast portal backend currently packaged in Guix,
+`xdg-desktop-portal-wlr` (0.8.2), speaks the older
+`wlr-screencopy-unstable-v1` protocol only; minde does not
+implement `wlr-screencopy`, so `xdg-desktop-portal-wlr` cannot
+capture minde's outputs, and no PipeWire screen-cast path exists
+yet. The path forward is a portal backend that speaks
+`ext-image-copy-capture-v1` directly, such as
+`xdg-desktop-portal-luminous`; it is not currently packaged in Guix.
+See
+[`../release-roadmap.md`](../release-roadmap.md#sprint-13--screen-capture-and-desktop-portal)
+for the tracked follow-up.
 
 ## Support boundary
 
