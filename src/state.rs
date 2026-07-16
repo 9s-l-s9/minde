@@ -235,6 +235,9 @@ impl MindeState {
             smithay::wayland::image_capture_source::OutputCaptureSourceState::new::<Self>(&dh);
         let image_copy_capture_state =
             smithay::wayland::image_copy_capture::ImageCopyCaptureState::new::<Self>(&dh);
+        // Also serve the legacy wlr-screencopy protocol (wf-recorder,
+        // xdg-desktop-portal-wlr) on both backends; see handlers::wlr_screencopy.
+        let _ = crate::handlers::wlr_screencopy::init_wlr_screencopy_manager(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");

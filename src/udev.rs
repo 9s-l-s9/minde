@@ -1067,10 +1067,6 @@ impl MindeState {
         // callback NOTE above).
         drop(layer_map);
         if !self.pending_captures.is_empty() {
-            let capture_size = output
-                .current_mode()
-                .map(|m| m.size)
-                .unwrap_or_else(|| (output_geo.size.w, output_geo.size.h).into());
             let int_scale = output.current_scale().integer_scale();
             let time = self.start_time.elapsed();
             let focus = self.focus_rect.or_else(|| {
@@ -1084,7 +1080,6 @@ impl MindeState {
                 output_geo,
                 scale,
                 int_scale,
-                capture_size,
                 time,
                 &mut self.pending_captures,
                 &self.space,

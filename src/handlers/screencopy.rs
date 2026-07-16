@@ -60,11 +60,29 @@ use smithay::{
 use crate::MindeState;
 use crate::render::{BorderBuffers, CursorState, MessageState, MindeRenderElements};
 
-/// A capture frame queued against an output, awaiting the next render.
+/// A capture frame queued against an output, awaiting the next render. Holds
+/// either an `ext-image-copy-capture-v1` frame or a `wlr-screencopy-unstable-v1`
+/// frame -- both flow through the same [`MindeState::pending_captures`] queue
+/// and are satisfied by [`satisfy_output_captures`] after the next composite.
+pub enum CaptureFrame {
+    /// `ext-image-copy-capture-v1` frame (Smithay-driven).
+    Ext(Frame),
+    /// `wlr-screencopy-unstable-v1` frame (hand-written protocol).
+    Wlr(crate::handlers::wlr_screencopy::WlrPending),
+}
+
+/// A capture queued against an output, awaiting the next render.
 pub struct PendingCapture {
     pub output: Output,
-    pub frame: Frame,
+    pub frame: CaptureFrame,
     pub draw_cursor: bool,
+    /// Top-left of the captured area in output-logical coords. `(0, 0)` for
+    /// full-output captures (all ext frames, plain wlr `capture_output`); a
+    /// non-zero origin comes from wlr `capture_output_region`, and shifts the
+    /// whole scene so a sub-rectangle lands in a region-sized buffer.
+    pub origin: Point<i32, Logical>,
+    /// Physical size of the destination buffer.
+    pub size: Size<i32, Physical>,
 }
 
 // ---------------------------------------------------------------------------
@@ -139,10 +157,16 @@ impl ImageCopyCaptureHandler for MindeState {
             frame.fail(CaptureFailureReason::Unknown);
             return;
         }
+        let size: Size<i32, Physical> = output
+            .current_mode()
+            .map(|m| (m.size.w, m.size.h).into())
+            .unwrap_or_default();
         self.pending_captures.push(PendingCapture {
             output,
-            frame,
+            frame: CaptureFrame::Ext(frame),
             draw_cursor: session.draw_cursor(),
+            origin: (0, 0).into(),
+            size,
         });
     }
 
@@ -164,6 +188,7 @@ fn output_scene_elements<R>(
     renderer: &mut R,
     output: &Output,
     output_geo: Rectangle<i32, Logical>,
+    origin: Point<i32, Logical>,
     scale: Scale<f64>,
     int_scale: i32,
     space: &Space<Window>,
@@ -177,6 +202,11 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Send + Clone + 'static,
 {
+    // Every element is positioned relative to the output origin; shifting that
+    // origin by the capture `origin` slides the whole scene so a sub-rectangle
+    // (wlr region capture) lands at the top-left of the destination buffer.
+    // Full-output captures pass `(0, 0)` and are unaffected.
+    let base = output_geo.loc + origin;
     let mut custom: Vec<MindeRenderElements<R>> = Vec::new();
 
     // Cursor at the current pointer location (only when this capture asked
@@ -185,7 +215,7 @@ where
         && output_geo.to_f64().contains(pointer_location)
     {
         let hotspot = cursor_state.hotspot();
-        let cursor_pos = pointer_location - output_geo.loc.to_f64();
+        let cursor_pos = pointer_location - base.to_f64();
         let cursor_phys = (cursor_pos - hotspot.to_f64())
             .to_physical(scale)
             .to_i32_round();
@@ -206,9 +236,7 @@ where
 
     // Positioned overlays landing on this output.
     for (loc, msg) in overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
-        if let Some(elem) =
-            crate::render::overlay_element(renderer, msg, *loc - output_geo.loc, int_scale)
-        {
+        if let Some(elem) = crate::render::overlay_element(renderer, msg, *loc - base, int_scale) {
             custom.push(elem);
         }
     }
@@ -224,7 +252,8 @@ where
             let loc = layer_map
                 .layer_geometry(surface)
                 .map(|geo| geo.loc)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                - origin;
             out.extend(AsRenderElements::<R>::render_elements::<
                 MindeRenderElements<R>,
             >(
@@ -244,7 +273,7 @@ where
         && geo.overlaps(output_geo)
     {
         let mut local = geo;
-        local.loc -= output_geo.loc;
+        local.loc -= base;
         let mut border = BorderBuffers::default();
         custom.extend(border.elements(local, int_scale, border_color));
     }
@@ -262,8 +291,7 @@ where
         {
             continue;
         }
-        let phys_loc =
-            (loc - window.geometry().loc - output_geo.loc).to_physical_precise_round(scale);
+        let phys_loc = (loc - window.geometry().loc - base).to_physical_precise_round(scale);
         all.extend(AsRenderElements::<R>::render_elements(
             window, renderer, phys_loc, scale, 1.0,
         ));
@@ -273,35 +301,46 @@ where
     all
 }
 
+/// Result of filling a capture buffer: either the copied region (on success)
+/// or a reason the copy could not be done. Lets each protocol translate the
+/// outcome into its own completion events.
+pub enum FillOutcome {
+    Ok(Rectangle<i32, BufferCoords>),
+    /// The attached buffer's type is not one we can fill (neither shm nor a
+    /// dmabuf); maps to ext `BufferConstraints` / wlr `failed`.
+    UnsupportedBuffer,
+    /// Rendering the scene into the buffer failed.
+    RenderFailed,
+}
+
 /// Re-composites the given elements into a client capture buffer (shm or
-/// dmabuf) and completes the frame. Rendered upright (`Transform::Normal`)
-/// and reported as such, so the captured image is the logical desktop
-/// regardless of any physical output transform.
-fn render_capture_frame<R>(
+/// dmabuf). Rendered upright (`Transform::Normal`), so the captured image is
+/// the logical desktop regardless of any physical output transform. Shared by
+/// the ext and wlr protocols; the caller signals completion.
+fn fill_capture_buffer<R>(
     renderer: &mut R,
     elements: &[MindeRenderElements<R>],
-    frame: Frame,
+    buffer: &WlBuffer,
     size: Size<i32, Physical>,
     scale: Scale<f64>,
-    time: Duration,
-) where
+) -> FillOutcome
+where
     R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer> + Bind<Dmabuf>,
     R::TextureId: Send + Clone + 'static,
     R::Error: Send + Sync + 'static,
 {
-    let buffer = frame.buffer();
     let buffer_size: Size<i32, BufferCoords> = (size.w, size.h).into();
     let region = Rectangle::from_size(buffer_size);
     let mut tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
     let clear = [0.1, 0.1, 0.1, 1.0];
 
-    match smithay::backend::renderer::buffer_type(&buffer) {
+    match smithay::backend::renderer::buffer_type(buffer) {
         Some(smithay::backend::renderer::BufferType::Dma) => {
-            match render_into_dmabuf(renderer, elements, &buffer, &mut tracker, clear) {
-                Ok(()) => frame.success(Transform::Normal, vec![region], time),
+            match render_into_dmabuf(renderer, elements, buffer, &mut tracker, clear) {
+                Ok(()) => FillOutcome::Ok(region),
                 Err(err) => {
                     tracing::warn!(%err, "screencopy: dmabuf capture failed");
-                    frame.fail(CaptureFailureReason::Unknown);
+                    FillOutcome::RenderFailed
                 }
             }
         }
@@ -309,20 +348,20 @@ fn render_capture_frame<R>(
             match render_into_shm(
                 renderer,
                 elements,
-                &buffer,
+                buffer,
                 &mut tracker,
                 clear,
                 buffer_size,
                 region,
             ) {
-                Ok(()) => frame.success(Transform::Normal, vec![region], time),
+                Ok(()) => FillOutcome::Ok(region),
                 Err(err) => {
                     tracing::warn!(%err, "screencopy: shm capture failed");
-                    frame.fail(CaptureFailureReason::Unknown);
+                    FillOutcome::RenderFailed
                 }
             }
         }
-        _ => frame.fail(CaptureFailureReason::BufferConstraints),
+        _ => FillOutcome::UnsupportedBuffer,
     }
 }
 
@@ -413,7 +452,6 @@ pub fn satisfy_output_captures<R>(
     output_geo: Rectangle<i32, Logical>,
     scale: Scale<f64>,
     int_scale: i32,
-    size: Size<i32, Physical>,
     time: Duration,
     pending: &mut Vec<PendingCapture>,
     space: &Space<Window>,
@@ -452,6 +490,7 @@ pub fn satisfy_output_captures<R>(
             renderer,
             output,
             output_geo,
+            capture.origin,
             scale,
             int_scale,
             space,
@@ -461,6 +500,22 @@ pub fn satisfy_output_captures<R>(
             focus,
             border_color,
         );
-        render_capture_frame(renderer, &elements, capture.frame, size, scale, time);
+        match capture.frame {
+            CaptureFrame::Ext(frame) => {
+                let buffer = frame.buffer();
+                match fill_capture_buffer(renderer, &elements, &buffer, capture.size, scale) {
+                    FillOutcome::Ok(region) => frame.success(Transform::Normal, vec![region], time),
+                    FillOutcome::UnsupportedBuffer => {
+                        frame.fail(CaptureFailureReason::BufferConstraints)
+                    }
+                    FillOutcome::RenderFailed => frame.fail(CaptureFailureReason::Unknown),
+                }
+            }
+            CaptureFrame::Wlr(pending) => {
+                let outcome =
+                    fill_capture_buffer(renderer, &elements, &pending.buffer, capture.size, scale);
+                pending.complete(outcome, time);
+            }
+        }
     }
 }

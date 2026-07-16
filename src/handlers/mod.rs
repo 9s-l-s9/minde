@@ -5,6 +5,7 @@ pub mod gamma_control;
 mod layer_shell;
 pub mod screencopy;
 mod session_lock;
+pub mod wlr_screencopy;
 mod xdg_decoration;
 mod xdg_shell;
 mod xwayland;

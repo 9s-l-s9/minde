@@ -24,6 +24,17 @@ Target version: `1.0.0-rc1`.
   (`tests/screencapture-e2e.sh`, wired into `make check-e2e`) launches the
   nested compositor and asserts that `grim` captures a correctly-sized,
   non-blank PNG over `ext-image-copy-capture-v1`.
+- Screen capture via legacy `wlr-screencopy-unstable-v1` (v3), the
+  protocol wf-recorder and `xdg-desktop-portal-wlr` (browser screen
+  sharing) speak. Served on both the winit and udev/DRM backends and
+  advertised alongside the ext protocol; `capture_output`,
+  `capture_output_region` (honest sub-rectangle capture), `copy` and
+  `copy_with_damage` are all implemented, with shm everywhere and dmabuf
+  advertised on udev. Both protocols share the single capture queue drained
+  after each composite, so wlr frames reuse the ext scene-assembly and
+  buffer-fill machinery rather than a parallel render loop. The nested e2e
+  gate (`tests/screencapture-e2e.sh`) now additionally records a bounded
+  `wf-recorder` clip and validates it (via `ffprobe` when available).
 - `scripts/ci`, the single noninteractive CI entry point: the fast gate
   plus release-metadata by default, and `--release-artifacts` builds the
   deterministic archives twice, proves byte-reproducibility, recreates

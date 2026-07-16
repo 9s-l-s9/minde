@@ -41,6 +41,7 @@ Entered with `guix shell -m manifest.scm`:
 - `xdotool`
 - `imagemagick`
 - `grim`
+- `wf-recorder`
 - `jq`
 - `util-linux`
 - `foot`
@@ -152,23 +153,26 @@ Extracted from `doc/capability-matrix.md` (the capability-status
 source of truth):
 
 ```
-| Screencopy/screenshot protocol | experimental | `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` (output sources); grim shm capture verified nested (winit), full-frame damage, no cursor session; udev/DRM path shares the handler but wants hardware verification |
+| Screencopy/screenshot protocol | experimental | `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` (output sources) and legacy `wlr-screencopy-unstable-v1` v3 (wf-recorder, `xdg-desktop-portal-wlr`); both share one capture queue. grim (ext) and wf-recorder (wlr) shm capture verified nested (winit), full-frame damage, honest region capture; udev/DRM path and portal browser sharing want hardware verification |
 ```
 
 `grim` is part of the development shell (`manifest.scm`) and is
 the reference client: Guix packages `grim` 1.5.0, which speaks
 `ext-image-copy-capture-v1` and works against minde today.
 
-**Portal-based screen sharing is not yet available.** The only
-screen-cast portal backend currently packaged in Guix,
-`xdg-desktop-portal-wlr` (0.8.2), speaks the older
-`wlr-screencopy-unstable-v1` protocol only; minde does not
-implement `wlr-screencopy`, so `xdg-desktop-portal-wlr` cannot
-capture minde's outputs, and no PipeWire screen-cast path exists
-yet. The path forward is a portal backend that speaks
-`ext-image-copy-capture-v1` directly, such as
-`xdg-desktop-portal-luminous`; it is not currently packaged in Guix.
-See
+**Portal-based screen sharing is now expected to work, pending
+owner hardware verification.** minde serves the legacy
+`wlr-screencopy-unstable-v1` (v3) protocol alongside
+`ext-image-copy-capture-v1`, so the screen-cast portal backend
+packaged in Guix, `xdg-desktop-portal-wlr` (0.8.2) -- which speaks
+`wlr-screencopy` only -- can now capture minde's outputs, which
+is the path browser screen sharing uses. `wf-recorder`, another
+pure `wlr-screencopy` client, is exercised by the nested e2e gate.
+The portal path itself has been wired but not yet verified on real
+hardware/PipeWire; a portal backend speaking
+`ext-image-copy-capture-v1` directly (such as
+`xdg-desktop-portal-luminous`) remains an alternative but is not
+currently packaged in Guix. See
 [`../release-roadmap.md`](../release-roadmap.md#sprint-13--screen-capture-and-desktop-portal)
 for the tracked follow-up.
 

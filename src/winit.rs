@@ -203,7 +203,6 @@ pub fn init_winit(
                             output_geo,
                             1.0.into(),
                             1,
-                            size,
                             time,
                             &mut state.pending_captures,
                             &state.space,

@@ -72,7 +72,24 @@ as unavailable on the current hardware.
   portal screen sharing is not yet available; the forward path is a portal
   backend speaking `ext-image-copy-capture-v1`. Remaining owner
   verification: udev/DRM capture on real hardware (screenshot + recording);
-  the browser video-call check waits on the portal path. Known follow-ups:
+  the browser video-call check waits on the portal path. Owner verification
+  progress (2026-07-16): DRM screenshot verified on X1 — after a system
+  reconfigure and removing the shadowing home-profile install, `grim` captured
+  a correct frame on real hardware. Recording and portal sharing remain
+  blocked on `wlr-screencopy-unstable-v1` (wf-recorder 0.6.0 and
+  xdg-desktop-portal-wlr in Guix speak only that protocol), so a follow-up
+  sprint 13b implements it, reusing this sprint's render machinery — the
+  approach sway/river use (compositor serves wlr-screencopy;
+  xdg-desktop-portal-wlr bridges to PipeWire for browsers). Sprint 13b
+  implementation done (2026-07-16): `zwlr_screencopy_manager_v1` v3 is
+  hand-implemented in `src/handlers/wlr_screencopy.rs` (Smithay ships no
+  server module) and reuses the ext machinery — both protocols queue into
+  the shared pending-capture list satisfied after each composite. Region
+  capture clips to the output; shm everywhere, dmabuf advertised on udev.
+  The e2e gate now also proves a bounded `wf-recorder` recording nested.
+  Remaining owner verification: on real hardware, record with `wf-recorder`
+  and share a screen in one real browser call with `xdg-desktop-portal-wlr`
+  + PipeWire running. Known follow-ups:
   pending frames for an unplugged output linger until the client drops the
   session; no periodic `ImageCopyCaptureState::cleanup()` call.
 - Sprint 14: not started. Ecosystem protocol completion toward parity with

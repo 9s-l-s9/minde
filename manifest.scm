@@ -36,6 +36,8 @@
    "imagemagick"
    ;; ext-image-copy-capture-v1 client used by the screen-capture e2e gate
    "grim"
+   ;; wlr-screencopy-unstable-v1 client used by the screen-capture e2e gate
+   "wf-recorder"
    "jq"
    "util-linux"
    "foot"
