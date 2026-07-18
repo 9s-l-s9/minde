@@ -10,6 +10,36 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- Clipboard ecosystem (sprint 14): primary selection
+  (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
+  across Wayland clients and Xwayland (the X11 selection loop now mirrors the
+  primary selection in both directions), plus clipboard-manager support via
+  `zwlr_data_control_manager_v1` and `ext_data_control_manager_v1`. All three
+  ride Smithay's selection delegates and share the compositor selection. A
+  bounded nested e2e gate (`tests/clipboard-e2e.sh`, wired into
+  `make check-e2e`) asserts the manager globals are advertised and that both
+  the clipboard and the primary selection round-trip through wl-clipboard.
+- `wlr-foreign-toplevel-management-unstable-v1` (v3, hand-written on the wlr
+  bindings) so external bars, docks and switchers can enumerate windows and
+  request activate/close/fullscreen/minimize. Per-window title, app-id,
+  activated state and output association are kept in sync from the existing
+  window-lifecycle and focus paths; activate/close/fullscreen route through
+  the group/frame model (new Scheme hooks `handle-foreign-activate!`,
+  `handle-foreign-fullscreen!`, `handle-foreign-minimize!` in
+  `(minde groups)`), and minimize is a documented no-op (the tiling model
+  has no minimized state). A bounded nested e2e gate
+  (`tests/foreign-toplevel-e2e.sh`) binds the manager against a live toplevel.
+- `wlr-output-management-unstable-v1` (v4, hand-written) so wlr-randr, kanshi
+  and wdisplays can query and set the output layout (mode, position, scale,
+  transform). Accepted configurations apply to the compositor outputs and
+  reconcile back into the Scheme head model (`(wm-outputs)` /
+  `handle-heads-change!`) exactly as a hotplug/resize does; external changes
+  re-advertise to bound managers. Acceptance is gated by an optional Scheme
+  policy predicate `output-configuration-allowed?` (default accept), and
+  `handle-output-configured!` fires after an external change. Mode changes are
+  refused under the winit backend (the host window fixes the size). A bounded
+  nested e2e gate (`tests/output-management-e2e.sh`) queries the head and
+  applies a scale via wlr-randr.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

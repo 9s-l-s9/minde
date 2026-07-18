@@ -187,10 +187,12 @@ impl XwmHandler for MindeState {
         _xwm: XwmId,
         selection: smithay::wayland::selection::SelectionTarget,
     ) -> bool {
-        // No primary-selection protocol state; clipboard only.
+        use smithay::wayland::selection::SelectionTarget;
+        // Both clipboard and primary selection are wired (the latter added
+        // with the primary-selection protocol state in sprint 14).
         matches!(
             selection,
-            smithay::wayland::selection::SelectionTarget::Clipboard
+            SelectionTarget::Clipboard | SelectionTarget::Primary
         )
     }
 
@@ -205,13 +207,23 @@ impl XwmHandler for MindeState {
         use smithay::wayland::selection::data_device::{
             current_data_device_selection_userdata, request_data_device_client_selection,
         };
-        if !matches!(selection, SelectionTarget::Clipboard) {
-            return;
-        }
+        use smithay::wayland::selection::primary_selection::{
+            current_primary_selection_userdata, request_primary_client_selection,
+        };
+        // The current owner userdata and the "ask the Wayland owner"
+        // request differ per target; everything else is identical.
+        let owner = match selection {
+            SelectionTarget::Clipboard => {
+                current_data_device_selection_userdata(&self.seat).map(|o| o.clone())
+            }
+            SelectionTarget::Primary => {
+                current_primary_selection_userdata(&self.seat).map(|o| o.clone())
+            }
+        };
         // Check ownership before requesting: a compositor-registered
         // selection would make the request fail with the fd already
         // consumed, dropping the paste.
-        match current_data_device_selection_userdata(&self.seat).map(|o| o.clone()) {
+        match owner {
             Some(super::SelectionOwner::Text(text)) => {
                 // wm-set-clipboard text: write it ourselves.
                 std::thread::spawn(move || {
@@ -224,9 +236,29 @@ impl XwmHandler for MindeState {
                 // An X11 mirror asking X11 back would loop; drop it.
             }
             None => {
-                // A Wayland client owns the selection: ask it.
-                if let Err(err) = request_data_device_client_selection(&self.seat, mime_type, fd) {
-                    tracing::warn!(?err, "failed to hand the Wayland selection to an X11 paste");
+                // A Wayland client owns the selection: ask it. The two
+                // targets return distinct error types, so handle inline.
+                match selection {
+                    SelectionTarget::Clipboard => {
+                        if let Err(err) =
+                            request_data_device_client_selection(&self.seat, mime_type, fd)
+                        {
+                            tracing::warn!(
+                                ?err,
+                                "failed to hand the Wayland clipboard to an X11 paste"
+                            );
+                        }
+                    }
+                    SelectionTarget::Primary => {
+                        if let Err(err) =
+                            request_primary_client_selection(&self.seat, mime_type, fd)
+                        {
+                            tracing::warn!(
+                                ?err,
+                                "failed to hand the Wayland primary selection to an X11 paste"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -239,13 +271,23 @@ impl XwmHandler for MindeState {
         mime_types: Vec<String>,
     ) {
         use smithay::wayland::selection::SelectionTarget;
-        if matches!(selection, SelectionTarget::Clipboard) {
-            smithay::wayland::selection::data_device::set_data_device_selection(
-                &self.display_handle,
-                &self.seat,
-                mime_types,
-                super::SelectionOwner::X11,
-            );
+        match selection {
+            SelectionTarget::Clipboard => {
+                smithay::wayland::selection::data_device::set_data_device_selection(
+                    &self.display_handle,
+                    &self.seat,
+                    mime_types,
+                    super::SelectionOwner::X11,
+                );
+            }
+            SelectionTarget::Primary => {
+                smithay::wayland::selection::primary_selection::set_primary_selection(
+                    &self.display_handle,
+                    &self.seat,
+                    mime_types,
+                    super::SelectionOwner::X11,
+                );
+            }
         }
     }
 
@@ -258,10 +300,20 @@ impl XwmHandler for MindeState {
         use smithay::wayland::selection::data_device::{
             clear_data_device_selection, current_data_device_selection_userdata,
         };
-        if matches!(selection, SelectionTarget::Clipboard)
-            && current_data_device_selection_userdata(&self.seat).is_some()
-        {
-            clear_data_device_selection(&self.display_handle, &self.seat);
+        use smithay::wayland::selection::primary_selection::{
+            clear_primary_selection, current_primary_selection_userdata,
+        };
+        match selection {
+            SelectionTarget::Clipboard => {
+                if current_data_device_selection_userdata(&self.seat).is_some() {
+                    clear_data_device_selection(&self.display_handle, &self.seat);
+                }
+            }
+            SelectionTarget::Primary => {
+                if current_primary_selection_userdata(&self.seat).is_some() {
+                    clear_primary_selection(&self.display_handle, &self.seat);
+                }
+            }
         }
     }
 

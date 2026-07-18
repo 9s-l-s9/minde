@@ -47,6 +47,8 @@ Entered with `guix shell -m manifest.scm`:
 - `foot`
 - `xterm`
 - `wl-clipboard`
+- `wlr-randr`
+- `wayland-utils`
 - `shellcheck`
 - `ripgrep`
 - `diffutils`

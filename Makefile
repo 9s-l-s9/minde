@@ -98,9 +98,18 @@ check-e2e:
 		echo "error: grim is required by the screen-capture scenario" >&2; exit 127; }
 	@command -v identify >/dev/null 2>&1 || { \
 		echo "error: ImageMagick 'identify' is required by the screen-capture scenario" >&2; exit 127; }
+	@command -v wl-paste >/dev/null 2>&1 || { \
+		echo "error: wl-clipboard is required by the clipboard scenario" >&2; exit 127; }
+	@command -v wayland-info >/dev/null 2>&1 || { \
+		echo "error: wayland-utils (wayland-info) is required by the clipboard/foreign-toplevel scenarios" >&2; exit 127; }
+	@command -v wlr-randr >/dev/null 2>&1 || { \
+		echo "error: wlr-randr is required by the output-management scenario" >&2; exit 127; }
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
 	sh tests/screencapture-e2e.sh
+	sh tests/clipboard-e2e.sh
+	sh tests/foreign-toplevel-e2e.sh
+	sh tests/output-management-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

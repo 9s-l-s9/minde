@@ -43,6 +43,11 @@
    "foot"
    "xterm"
    "wl-clipboard"
+   ;; wlr-output-management client used by the output-management e2e gate
+   "wlr-randr"
+   ;; wayland-info (global enumeration) used by the clipboard and
+   ;; foreign-toplevel e2e gates to assert the manager globals are advertised
+   "wayland-utils"
    "shellcheck"
    ;; used by the static/doc-drift gates; without them ./check cannot run
    ;; self-contained in this shell

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 mod compositor;
+pub mod foreign_toplevel;
 pub mod gamma_control;
 mod layer_shell;
+pub mod output_management;
 pub mod screencopy;
 mod session_lock;
 pub mod wlr_screencopy;
@@ -48,7 +50,40 @@ impl SeatHandler for MindeState {
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
-        set_data_device_focus(dh, seat, client);
+        set_data_device_focus(dh, seat, client.clone());
+        // The primary selection follows keyboard focus too, so the newly
+        // focused client can read the middle-click selection.
+        smithay::wayland::selection::primary_selection::set_primary_focus(dh, seat, client);
+    }
+}
+
+//
+// Primary selection & data control (clipboard managers)
+//
+
+use smithay::wayland::selection::primary_selection::{
+    PrimarySelectionHandler, PrimarySelectionState,
+};
+
+impl PrimarySelectionHandler for MindeState {
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
+    }
+}
+
+impl smithay::wayland::selection::wlr_data_control::DataControlHandler for MindeState {
+    fn data_control_state(
+        &mut self,
+    ) -> &mut smithay::wayland::selection::wlr_data_control::DataControlState {
+        &mut self.data_control_state
+    }
+}
+
+impl smithay::wayland::selection::ext_data_control::DataControlHandler for MindeState {
+    fn data_control_state(
+        &mut self,
+    ) -> &mut smithay::wayland::selection::ext_data_control::DataControlState {
+        &mut self.ext_data_control_state
     }
 }
 

@@ -354,6 +354,39 @@
             (group-has-window? " F " 80))
 
 ;; ---------------------------------------------------------------------
+;; Sprint 14: the foreign-toplevel activate hook (defined in init.scm) is
+;; thin glue over these exported group operations. Exercise the exact
+;; building blocks it uses -- find the group holding an id, switch to it,
+;; focus the window -- across freshly-created groups.
+;; ---------------------------------------------------------------------
+
+(create-group! " FTA ")
+(switch-to-group! " FTA ")
+(handle-window-map! 200 "one" "app-one")
+(create-group! " FTB ")
+(switch-to-group! " FTB ")
+(handle-window-map! 201 "two" "app-two")
+
+;; The activate hook's core: locate the owning group by name and focus.
+(define (activate-like-foreign! id)
+  (let ((g (find (lambda (name) (group-has-window? name id)) (group-names))))
+    (when g
+      (unless (string=? g (current-group-name))
+        (switch-to-group! g))
+      (focus-window-by-id! id))))
+
+(activate-like-foreign! 200)
+(check "foreign-activate reaches the window's group"
+       (current-group-name) " FTA ")
+(check "foreign-activate focuses the requested window" %focused 200)
+
+;; A vanished window is a no-op (find returns #f; focus untouched).
+(set! %focused 'unchanged)
+(activate-like-foreign! 999999)
+(check "foreign-activate on a missing window does nothing"
+       %focused 'unchanged)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

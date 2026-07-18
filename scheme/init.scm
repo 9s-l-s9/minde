@@ -697,6 +697,43 @@ focused client), #f otherwise."
 (define (handle-urgent-window! id) (add-urgent-window! id))
 (bind-prefix-key! "C-u" (lambda () (next-urgent!)) "jump to urgent window")
 
+;; Foreign-toplevel management (wlr-foreign-toplevel-management): external
+;; bars/switchers request actions on windows by their compositor id. Rust
+;; (src/handlers/foreign_toplevel.rs) looks these up by plain top-level
+;; name, as with the other event entry points, so they live here as thin
+;; glue over the exported group/frame operations rather than as public
+;; module API. `close` is handled entirely in Rust (a shell close).
+(define (handle-foreign-activate! id)
+  "Rust: a taskbar/switcher asked to activate window ID. Switches to the
+group holding it (if any) and focuses it; a no-op if it has since vanished."
+  (let ((group (find (lambda (name) (group-has-window? name id)) (group-names))))
+    (when group
+      (unless (string=? group (current-group-name))
+        (switch-to-group! group))
+      (focus-window-by-id! id))))
+
+(define (handle-foreign-fullscreen! id on)
+  "Rust: a taskbar asked to (un)fullscreen window ID. Activates the window,
+then drives the single-fullscreen model (fullscreen-window / fullscreen!)
+so at most one window is fullscreen and the frame layout re-syncs on exit."
+  (handle-foreign-activate! id)
+  (let ((current (fullscreen-window)))
+    (cond
+     ;; Want it fullscreen and it isn't: clear any other, then set this one.
+     ((and on (not (equal? current id)))
+      (when current (fullscreen!)) ; clears the currently-fullscreen window
+      (fullscreen!))               ; focused window is now ID -> fullscreen it
+     ;; Want it un-fullscreened and it currently is: toggle off.
+     ((and (not on) (equal? current id))
+      (fullscreen!)))))
+
+(define (handle-foreign-minimize! id on)
+  "Rust: a taskbar asked to (un)minimize window ID. minde's tiling model
+has no minimized state and never advertises one, so this is intentionally a
+no-op; defined so the request is acknowledged rather than reaching an
+unbound-variable path."
+  (values id on))
+
 ;; Clipboard. Paste is asynchronous: wm-request-paste (fired from the
 ;; prompt's C-y/C-v) makes Rust read the selection and call (handle-paste!
 ;; text) when it has arrived; route it into the active prompt.

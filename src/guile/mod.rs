@@ -324,8 +324,16 @@ pub fn lookup(name: &str) -> Option<Scm> {
     })
 }
 
+pub fn call0(proc: Scm) -> Option<Scm> {
+    protected_call(move || unsafe { ffi::scm_call_0(proc) })
+}
+
 pub fn call1(proc: Scm, a: Scm) -> Option<Scm> {
     protected_call(move || unsafe { ffi::scm_call_1(proc, a) })
+}
+
+pub fn call2(proc: Scm, a: Scm, b: Scm) -> Option<Scm> {
+    protected_call(move || unsafe { ffi::scm_call_2(proc, a, b) })
 }
 
 pub fn call3(proc: Scm, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
@@ -361,6 +369,10 @@ pub fn publish_status() {
         return;
     };
     let _ = protected_call(move || unsafe { ffi::scm_call_0(proc) });
+}
+
+fn call_named_2(name: &str, a: Scm, b: Scm) -> Option<Scm> {
+    call2(lookup(name)?, a, b)
 }
 
 fn call_named_3(name: &str, a: Scm, b: Scm, c: Scm) -> Option<Scm> {
@@ -1117,6 +1129,56 @@ pub fn on_window_moved(id: u64, x: i32, y: i32, w: i32, h: i32) {
 /// mapped toplevel; StumpWM urgency).
 pub fn on_urgent(id: u64) {
     call_named_1("handle-urgent-window!", from_i64(id as i64));
+}
+
+/// Calls `(handle-foreign-activate! id)` if bound: an external taskbar or
+/// switcher (wlr-foreign-toplevel-management) asked to activate a window.
+/// Routed through Scheme so the group/frame focus model stays authoritative.
+pub fn on_foreign_activate(id: u64) {
+    call_named_1("handle-foreign-activate!", from_i64(id as i64));
+}
+
+/// Calls `(handle-foreign-fullscreen! id on)` if bound: a foreign-toplevel
+/// client requested (un)fullscreen. Scheme applies it via the same path as
+/// the interactive fullscreen command, keeping its state model in sync.
+pub fn on_foreign_fullscreen(id: u64, on: bool) {
+    call_named_2(
+        "handle-foreign-fullscreen!",
+        from_i64(id as i64),
+        from_bool(on),
+    );
+}
+
+/// Calls `(handle-foreign-minimize! id on)` if bound: a foreign-toplevel
+/// client requested (un)minimize. minde maps this onto hide/show.
+pub fn on_foreign_minimize(id: u64, on: bool) {
+    call_named_2(
+        "handle-foreign-minimize!",
+        from_i64(id as i64),
+        from_bool(on),
+    );
+}
+
+/// Policy gate for `wlr-output-management` apply requests: an external
+/// tool (wlr-randr, kanshi, wdisplays) asked to change the output layout.
+/// Returns whether the compositor should accept it. Consults the optional
+/// Scheme predicate `(output-configuration-allowed?)`; if it is unbound
+/// (the default) or errors, external configuration is accepted. A user can
+/// define it to return `#f` to refuse all external output changes.
+pub fn output_config_allowed() -> bool {
+    match lookup("output-configuration-allowed?") {
+        Some(proc) => call0(proc).map(to_bool).unwrap_or(true),
+        None => true,
+    }
+}
+
+/// Notifies Scheme that the output layout was changed by an external
+/// `wlr-output-management` client, via `(handle-output-configured!)` if
+/// bound, so a config can react (re-tile, persist, log). A no-op otherwise.
+pub fn on_output_configured() {
+    if let Some(proc) = lookup("handle-output-configured!") {
+        let _ = protected_call(move || unsafe { ffi::scm_call_0(proc) });
+    }
 }
 
 /// Calls `(handle-startup!)` if bound, once the first output is up and

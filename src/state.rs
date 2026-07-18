@@ -86,6 +86,18 @@ pub struct MindeState {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
+    /// Primary selection (`zwp_primary_selection_device_manager_v1`):
+    /// middle-click paste between Wayland clients, mirrored to/from
+    /// Xwayland. Registered unconditionally in `new`.
+    pub primary_selection_state:
+        smithay::wayland::selection::primary_selection::PrimarySelectionState,
+    /// `wlr-data-control-unstable-v1` manager state: lets clipboard
+    /// managers (cliphist, `wl-paste --watch`) observe and set the
+    /// clipboard and primary selection without holding keyboard focus.
+    pub data_control_state: smithay::wayland::selection::wlr_data_control::DataControlState,
+    /// `ext-data-control-v1` manager state: the standardized successor to
+    /// wlr-data-control, for newer clipboard managers. Both are advertised.
+    pub ext_data_control_state: smithay::wayland::selection::ext_data_control::DataControlState,
     pub xdg_decoration_state: smithay::wayland::shell::xdg::decoration::XdgDecorationState,
     pub xdg_activation_state: smithay::wayland::xdg_activation::XdgActivationState,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
@@ -198,6 +210,16 @@ pub struct MindeState {
         smithay::output::Output,
         crate::handlers::gamma_control::GammaControlEntry,
     >,
+
+    /// `wlr-foreign-toplevel-management-unstable-v1` manager state: mirrors
+    /// the window registry into taskbar/switcher handles. See
+    /// `handlers::foreign_toplevel`.
+    pub foreign_toplevel: crate::handlers::foreign_toplevel::ForeignToplevelManagerState,
+
+    /// `wlr-output-management-unstable-v1` manager state: lets wlr-randr,
+    /// kanshi and wdisplays query and set the output layout. See
+    /// `handlers::output_management`.
+    pub output_management: crate::handlers::output_management::OutputManagementState,
 }
 
 impl MindeState {
@@ -213,6 +235,24 @@ impl MindeState {
 
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
+        // Primary selection plus both data-control managers. Data control
+        // is told about primary selection so clipboard managers can also
+        // manage the middle-click selection; the `|_| true` filters admit
+        // every client (these are unprivileged desktop tools here).
+        let primary_selection_state =
+            smithay::wayland::selection::primary_selection::PrimarySelectionState::new::<Self>(&dh);
+        let data_control_state =
+            smithay::wayland::selection::wlr_data_control::DataControlState::new::<Self, _>(
+                &dh,
+                Some(&primary_selection_state),
+                |_| true,
+            );
+        let ext_data_control_state =
+            smithay::wayland::selection::ext_data_control::DataControlState::new::<Self, _>(
+                &dh,
+                Some(&primary_selection_state),
+                |_| true,
+            );
         let xdg_decoration_state =
             smithay::wayland::shell::xdg::decoration::XdgDecorationState::new::<Self>(&dh);
         let xdg_activation_state =
@@ -238,6 +278,14 @@ impl MindeState {
         // Also serve the legacy wlr-screencopy protocol (wf-recorder,
         // xdg-desktop-portal-wlr) on both backends; see handlers::wlr_screencopy.
         let _ = crate::handlers::wlr_screencopy::init_wlr_screencopy_manager(&dh);
+        // wlr-foreign-toplevel-management: advertised on both backends so
+        // external bars/switchers can enumerate and control windows.
+        let foreign_toplevel =
+            crate::handlers::foreign_toplevel::init_foreign_toplevel_manager(&dh);
+        // wlr-output-management: advertised on both backends. Under winit the
+        // output size is fixed, so mode changes fail rather than lie; scale,
+        // transform and position still apply.
+        let output_management = crate::handlers::output_management::init_output_management(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -285,6 +333,9 @@ impl MindeState {
             output_manager_state,
             seat_state,
             data_device_state,
+            primary_selection_state,
+            data_control_state,
+            ext_data_control_state,
             xdg_decoration_state,
             xdg_activation_state,
             xwayland_shell_state,
@@ -322,6 +373,8 @@ impl MindeState {
             capture_sessions: Vec::new(),
             pending_captures: Vec::new(),
             gamma_controls: std::collections::HashMap::new(),
+            foreign_toplevel,
+            output_management,
         }
     }
 
@@ -381,6 +434,7 @@ impl MindeState {
                     let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
                 }
                 self.space.map_element(window, (x, y), false);
+                self.refresh_foreign_toplevel_outputs();
             }
             WmCommand::PlaceFloat { id, x, y, w, h } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -445,6 +499,7 @@ impl MindeState {
                     }
                 }
                 self.focused_window = Some(window);
+                self.foreign_toplevel_focus(Some(id));
             }
             WmCommand::ClearFocus => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -458,6 +513,7 @@ impl MindeState {
                     }
                 }
                 self.focused_window = None;
+                self.foreign_toplevel_focus(None);
             }
             WmCommand::FocusRect { x, y, w, h } => {
                 self.focus_rect = Some(Rectangle::new((x, y).into(), (w, h).into()));
@@ -529,6 +585,7 @@ impl MindeState {
                     tracing::warn!(id, "wm-set-fullscreen: unknown window id");
                     return;
                 };
+                self.foreign_toplevel_fullscreen(id, on);
                 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
                 // X11 windows: set the fullscreen hint and let the shared
                 // full-rect placement below apply through configure.
@@ -958,8 +1015,38 @@ impl MindeState {
     pub fn register_window(&mut self, window: Window) -> u64 {
         let id = self.next_window_id;
         self.next_window_id += 1;
+        // Any title/app-id already known at map time (empty for a Wayland
+        // toplevel that configures first, the class/title for an X11 window).
+        let (title, app_id) = self.window_title_app_id(&window);
         self.windows.push((id, window));
+        self.foreign_toplevel_created(id, title, app_id);
         id
+    }
+
+    /// Best-effort current title/app-id for a window, from whichever shell
+    /// backs it. Used to seed the foreign-toplevel handle at map time.
+    fn window_title_app_id(&self, window: &Window) -> (String, String) {
+        if let Some(toplevel) = window.toplevel() {
+            use smithay::wayland::compositor::with_states;
+            use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+            return with_states(toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|d| d.lock().ok())
+                    .map(|d| {
+                        (
+                            d.title.clone().unwrap_or_default(),
+                            d.app_id.clone().unwrap_or_default(),
+                        )
+                    })
+                    .unwrap_or_default()
+            });
+        }
+        if let Some(x11) = window.x11_surface() {
+            return (x11.title(), x11.class());
+        }
+        (String::new(), String::new())
     }
 
     /// Removes a window (by Wayland surface identity) from the registry,
@@ -972,6 +1059,7 @@ impl MindeState {
         let id = self.windows.remove(pos).0;
         self.floating_ids.remove(&id);
         self.reported_titles.remove(&id);
+        self.foreign_toplevel_closed(id);
         Some(id)
     }
 
@@ -1002,6 +1090,7 @@ impl MindeState {
         };
         if self.reported_titles.get(&id) != Some(&current) {
             guile::on_window_title(id, &current.0, &current.1);
+            self.foreign_toplevel_title(id, &current.0, &current.1);
             self.reported_titles.insert(id, current);
         }
     }
@@ -1183,6 +1272,11 @@ impl MindeState {
         }
         self.reported_heads = heads.clone();
         guile::on_heads_changed(heads);
+        // Window/output association may have shifted with the geometry.
+        self.refresh_foreign_toplevel_outputs();
+        // Re-advertise the layout to wlr-output-management clients (kanshi,
+        // wlr-randr) so an external resize/hotplug reconciles back to them.
+        self.output_management_refresh();
     }
 
     pub fn surface_under(
