@@ -32,6 +32,7 @@ incomplete release gate, **external** is deliberately delegated, and
 | Wallpaper and launcher | external | use layer-shell clients such as swaybg and fuzzel |
 | Hard compositor restart preserving clients | external | unsupported by design; validated atomic config reload replaces it |
 | Screencopy/screenshot protocol | experimental | `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` (output sources) and legacy `wlr-screencopy-unstable-v1` v3 (wf-recorder, `xdg-desktop-portal-wlr`); both share one capture queue. grim (ext) and wf-recorder (wlr) shm capture verified nested (winit), full-frame damage, honest region capture; udev/DRM path and portal browser sharing want hardware verification |
+| Pointer constraints and relative pointer | experimental | `zwp_pointer_constraints_v1` (lock/confine) and `zwp_relative_pointer_manager_v1` via Smithay's server modules; a locked pointer parks while relative motion still flows and the cursor-position hint is honored on unlock, a confined pointer clamps to its region, constraints activate on pointer focus; udev forwards true libinput deltas, winit synthesizes relative deltas from absolute motion; nested e2e asserts both globals plus Rust unit tests of the clamp logic; a real pointer-lock game on hardware remains |
 | Input methods, touch/tablet and drag-and-drop | missing | best-effort unless promoted into the tested 1.0 matrix |
 | Broad NVIDIA/multi-GPU support | missing | tested-hardware-only policy for 1.0 |
 

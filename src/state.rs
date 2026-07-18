@@ -220,6 +220,19 @@ pub struct MindeState {
     /// kanshi and wdisplays query and set the output layout. See
     /// `handlers::output_management`.
     pub output_management: crate::handlers::output_management::OutputManagementState,
+
+    /// `zwp_pointer_constraints_v1` global state (pointer lock/confinement)
+    /// and `zwp_relative_pointer_manager_v1` global state (raw relative
+    /// motion). Both are per-surface client protocols for games and
+    /// pointer-lock clients; the input integration lives in
+    /// `handlers::pointer_constraints` and `input.rs`.
+    pub pointer_constraints_state: smithay::wayland::pointer_constraints::PointerConstraintsState,
+    pub relative_pointer_manager_state:
+        smithay::wayland::relative_pointer::RelativePointerManagerState,
+    /// Last cursor-position hint committed by a locked-pointer client
+    /// (surface-local), honored by warping the cursor there on unlock. See
+    /// `PointerConstraintsHandler` in `handlers::pointer_constraints`.
+    pub pointer_lock_hint: Option<(WlSurface, Point<f64, Logical>)>,
 }
 
 impl MindeState {
@@ -286,6 +299,15 @@ impl MindeState {
         // output size is fixed, so mode changes fail rather than lie; scale,
         // transform and position still apply.
         let output_management = crate::handlers::output_management::init_output_management(&dh);
+
+        // Pointer constraints (lock/confine) and relative pointer. Both are
+        // advertised on both backends; the relative-motion source differs
+        // (true libinput deltas under udev, deltas synthesized from absolute
+        // motion under winit -- see input.rs).
+        let pointer_constraints_state =
+            smithay::wayland::pointer_constraints::PointerConstraintsState::new::<Self>(&dh);
+        let relative_pointer_manager_state =
+            smithay::wayland::relative_pointer::RelativePointerManagerState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -375,6 +397,9 @@ impl MindeState {
             gamma_controls: std::collections::HashMap::new(),
             foreign_toplevel,
             output_management,
+            pointer_constraints_state,
+            relative_pointer_manager_state,
+            pointer_lock_hint: None,
         }
     }
 
@@ -720,7 +745,7 @@ impl MindeState {
 
     /// Warps the pointer to a global logical position (clamped to the
     /// outputs) and emits the matching motion event.
-    fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
+    pub(crate) fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
         let pos = self.clamp_to_outputs(pos);
         self.pointer_location = pos;
         let under = self.surface_under(pos);

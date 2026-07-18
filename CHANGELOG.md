@@ -40,6 +40,20 @@ Target version: `1.0.0-rc1`.
   refused under the winit backend (the host window fixes the size). A bounded
   nested e2e gate (`tests/output-management-e2e.sh`) queries the head and
   applies a scale via wlr-randr.
+- Pointer constraints and relative pointer (sprint 14): `zwp_pointer_constraints_v1`
+  (pointer lock and confinement) and `zwp_relative_pointer_manager_v1` (raw
+  relative motion) via Smithay's server modules, for games and pointer-lock
+  clients. A locked pointer stays parked while relative motion still flows, and
+  the client's cursor-position hint is honored by warping the cursor there on
+  unlock; a confined pointer is clamped to its region; constraints activate when
+  the pointer enters their surface (focus-driven), per the protocol. Relative
+  motion is forwarded from real libinput deltas on the udev backend and
+  synthesized from consecutive absolute positions on the winit (nested) backend,
+  so the relative-pointer protocol is usable in both. No Scheme surface: these
+  are per-surface client requests, not compositor policy. A bounded nested e2e
+  gate (`tests/pointer-constraints-e2e.sh`, wired into `make check-e2e`) asserts
+  both manager globals are advertised; Rust unit tests cover the region-clamp
+  and membership logic.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

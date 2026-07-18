@@ -5,6 +5,7 @@ pub mod foreign_toplevel;
 pub mod gamma_control;
 mod layer_shell;
 pub mod output_management;
+pub mod pointer_constraints;
 pub mod screencopy;
 mod session_lock;
 pub mod wlr_screencopy;
