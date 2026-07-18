@@ -88,6 +88,26 @@ Target version: `1.0.0-rc1`.
   e2e gate (`tests/idle-e2e.sh`, wired into `make check-e2e`) asserts both
   globals via wayland-info and runs swayidle with a one-second timeout,
   confirming the compositor actually fires an idle notification.
+- Cursor shape and Xcursor theming (sprint 14): `wp_cursor_shape_manager_v1`
+  (`cursor-shape-v1`) via Smithay's `cursor_shape` module, advertised on both
+  backends, so clients request a named cursor shape instead of attaching their
+  own surface. Named cursors (the default pointer and every cursor-shape
+  request) now resolve through an Xcursor theme loaded from `XCURSOR_THEME`
+  and `XCURSOR_SIZE` (defaults: theme `default`, size 24), replacing the
+  previously always-on hardcoded fallback bitmap; the requested cursor size
+  scales with the output's integer-ceil scale so cursors stay crisp on HiDPI
+  outputs. Themed images are cached per shape and scale, honour the image
+  hotspot, and render through the same `CursorState` path as client-surface
+  cursors -- so themed, shape-requested and client cursors all appear on the
+  udev on-screen pointer and in screen captures. When no theme is installed
+  (a bare environment), rendering falls back to the built-in bitmap. Animated
+  cursors use their first frame only (documented in `src/render.rs`). Theme
+  and size come from the environment per ecosystem convention, so no Scheme
+  surface is added. A bounded nested e2e gate (`tests/cursor-shape-e2e.sh`,
+  wired into `make check-e2e`) asserts the manager global via wayland-info and
+  that the compositor stays stable under an explicit theme/size environment;
+  Rust unit tests in `src/render.rs` cover shape-name resolution and integer
+  size selection.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

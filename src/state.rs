@@ -263,6 +263,9 @@ pub struct MindeState {
     /// Surfaces that currently hold an idle inhibitor. Non-empty means idle
     /// notifications are suppressed. See `handlers::idle`.
     pub idle_inhibitors: std::collections::HashSet<WlSurface>,
+    /// `wp_cursor_shape_manager_v1` global state. Kept alive so the global
+    /// stays advertised; requests route to `SeatHandler::cursor_image`.
+    pub cursor_shape_manager_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
 }
 
 impl MindeState {
@@ -352,6 +355,14 @@ impl MindeState {
         // handlers::idle for the input/inhibit wiring.
         let idle_notifier_state = IdleNotifierState::<Self>::new(&dh, event_loop.handle());
         let idle_inhibit_state = IdleInhibitManagerState::new::<Self>(&dh);
+
+        // wp_cursor_shape_manager_v1: clients request a named cursor shape
+        // instead of attaching their own surface; Smithay routes the request
+        // to `SeatHandler::cursor_image` as `CursorImageStatus::Named`, which
+        // the render path resolves through the Xcursor theme. See
+        // `crate::render::CursorState`.
+        let cursor_shape_manager_state =
+            smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -449,6 +460,7 @@ impl MindeState {
             idle_notifier_state,
             idle_inhibit_state,
             idle_inhibitors: std::collections::HashSet::new(),
+            cursor_shape_manager_state,
         }
     }
 

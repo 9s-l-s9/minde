@@ -59,6 +59,13 @@ impl SeatHandler for MindeState {
     }
 }
 
+// `wp_cursor_shape_v1` can also target tablet tools. We do not advertise a
+// tablet manager, so this is never driven, but Smithay's cursor-shape device
+// dispatch is generic over `TabletSeatHandler`; the default (no-op) image
+// callback satisfies the bound. Tablet cursor images therefore fall through
+// to the default themed pointer.
+impl smithay::wayland::tablet_manager::TabletSeatHandler for MindeState {}
+
 //
 // Primary selection & data control (clipboard managers)
 //

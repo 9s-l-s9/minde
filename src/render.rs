@@ -16,9 +16,10 @@ use smithay::{
             surface::WaylandSurfaceRenderElement,
         },
     },
-    input::pointer::CursorImageStatus,
+    input::pointer::{CursorIcon, CursorImageStatus},
     utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale},
 };
+use std::collections::HashMap;
 
 // Space window surfaces (built per-window via `Window`'s `AsRenderElements`
 // impl, which only needs `R: Renderer + ImportAll` -- we avoid nesting
@@ -303,16 +304,115 @@ where
 }
 
 /// Fallback pointer cursor image (a plain 64x64 RGBA arrow), used when no
-/// client has set a surface-based cursor and no xcursor theme lookup is
-/// performed (this compositor always uses the built-in fallback).
+/// client has set a surface-based cursor and no xcursor theme lookup
+/// succeeds (bare test environments with no cursor theme installed).
 pub static FALLBACK_CURSOR_RGBA: &[u8] = include_bytes!("../resources/cursor.rgba");
 const FALLBACK_CURSOR_SIZE: (i32, i32) = (64, 64);
 
-/// Tracks the current pointer cursor: either our default fallback image or
-/// a client-provided surface (set via `SeatHandler::cursor_image`).
+/// Default Xcursor base size (logical px) when `XCURSOR_SIZE` is unset,
+/// matching the freedesktop/GTK convention.
+const DEFAULT_CURSOR_SIZE: u32 = 24;
+/// Default Xcursor theme name when `XCURSOR_THEME` is unset. The xcursor
+/// crate falls back to the "default" theme's inheritance chain.
+const DEFAULT_CURSOR_THEME: &str = "default";
+
+/// A decoded, ready-to-render themed cursor image. Animated cursors are
+/// loaded as their first frame only (documented limitation); the crate
+/// returns frames in file order and we keep the first of the chosen size.
+#[derive(Clone)]
+struct ThemedCursor {
+    buffer: MemoryRenderBuffer,
+    /// Hotspot in cursor-image pixels (i.e. physical px at load scale).
+    hotspot: Point<i32, Physical>,
+}
+
+/// Loads Xcursor theme images honoring `XCURSOR_THEME`/`XCURSOR_SIZE`, and
+/// caches decoded images per (shape name, integer output scale). The size
+/// requested from the theme scales with the output's (integer-ceil) scale
+/// so cursors stay crisp on HiDPI outputs.
+struct XCursorLoader {
+    theme: xcursor::CursorTheme,
+    base_size: u32,
+    cache: HashMap<(&'static str, i32), Option<ThemedCursor>>,
+}
+
+impl XCursorLoader {
+    fn from_env() -> Self {
+        let theme_name = std::env::var("XCURSOR_THEME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_CURSOR_THEME.to_string());
+        let base_size = std::env::var("XCURSOR_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .filter(|s| *s > 0)
+            .unwrap_or(DEFAULT_CURSOR_SIZE);
+        Self {
+            theme: xcursor::CursorTheme::load(&theme_name),
+            base_size,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Returns the themed image for `icon` at the given integer output
+    /// scale, or `None` when the theme (or the icon within it) is absent.
+    fn get(&mut self, icon: CursorIcon, int_scale: i32) -> Option<ThemedCursor> {
+        let key = (icon.name(), int_scale);
+        if let Some(cached) = self.cache.get(&key) {
+            return cached.clone();
+        }
+        let loaded = self.load(icon, int_scale);
+        self.cache.insert(key, loaded.clone());
+        loaded
+    }
+
+    fn load(&self, icon: CursorIcon, int_scale: i32) -> Option<ThemedCursor> {
+        let target = self.base_size.saturating_mul(int_scale.max(1) as u32);
+        // Try the canonical CSS/cursor-shape name first, then the legacy
+        // Xcursor aliases (e.g. "left_ptr" for Default).
+        let path = std::iter::once(icon.name())
+            .chain(icon.alt_names().iter().copied())
+            .find_map(|name| self.theme.load_icon(name))?;
+        let bytes = std::fs::read(path).ok()?;
+        let images = xcursor::parser::parse_xcursor(&bytes)?;
+        // Pick the nominal size closest to the target; among equal-size
+        // frames `min_by_key` keeps the first (frame 0 of an animation).
+        let image = images
+            .iter()
+            .min_by_key(|img| (img.size as i64 - target as i64).abs())?;
+        // Xcursor stores each pixel as a little-endian 0xAARRGGBB u32, so the
+        // raw file bytes (`pixels_rgba`) are B,G,R,A in memory -- exactly the
+        // DRM Argb8888 layout the rest of the renderer expects.
+        let buffer = MemoryRenderBuffer::from_slice(
+            &image.pixels_rgba,
+            smithay::backend::allocator::Fourcc::Argb8888,
+            (image.width as i32, image.height as i32),
+            int_scale.max(1),
+            smithay::utils::Transform::Normal,
+            None,
+        );
+        Some(ThemedCursor {
+            buffer,
+            hotspot: Point::from((image.xhot as i32, image.yhot as i32)),
+        })
+    }
+}
+
+/// Selects the integer output scale used to size themed cursors: the
+/// ceiling of the (fractional) output scale, at least 1.
+pub fn cursor_scale(scale: Scale<f64>) -> i32 {
+    (scale.x.max(scale.y).max(1.0).ceil() as i32).max(1)
+}
+
+/// Tracks the current pointer cursor: a themed/named cursor (default or
+/// requested via `wp_cursor_shape_v1`), or a client-provided surface (set
+/// via `SeatHandler::cursor_image`). Named cursors resolve through the
+/// Xcursor theme, falling back to the built-in bitmap when no theme is
+/// available.
 pub struct CursorState {
     status: CursorImageStatus,
     default_buffer: MemoryRenderBuffer,
+    loader: XCursorLoader,
 }
 
 impl Default for CursorState {
@@ -327,6 +427,7 @@ impl Default for CursorState {
                 smithay::utils::Transform::Normal,
                 None,
             ),
+            loader: XCursorLoader::from_env(),
         }
     }
 }
@@ -342,8 +443,8 @@ impl CursorState {
 
     /// Renders the cursor at physical `location`, honoring
     /// `CursorImageStatus`: hidden while a client requested no cursor,
-    /// the client's own surface while `Surface(..)`, our fallback image
-    /// while `Named(..)`.
+    /// the client's own surface while `Surface(..)`, and the themed
+    /// Xcursor image (or built-in fallback) while `Named(..)`.
     pub fn render_elements<R>(
         &mut self,
         renderer: &mut R,
@@ -356,7 +457,29 @@ impl CursorState {
     {
         match &self.status {
             CursorImageStatus::Hidden => vec![],
-            CursorImageStatus::Named(_) => {
+            CursorImageStatus::Named(icon) => {
+                let icon = *icon;
+                let int_scale = cursor_scale(scale);
+                // Themed cursor: offset the physical location by the image
+                // hotspot (in physical px) so the tip lands on the pointer.
+                if let Some(themed) = self.loader.get(icon, int_scale) {
+                    let loc = location - themed.hotspot;
+                    match MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        loc.to_f64(),
+                        &themed.buffer,
+                        None,
+                        None,
+                        None,
+                        Kind::Cursor,
+                    ) {
+                        Ok(elem) => return vec![elem.into()],
+                        Err(err) => {
+                            tracing::warn!(?err, "failed to render themed cursor");
+                        }
+                    }
+                }
+                // No theme (or import failure): built-in fallback bitmap.
                 match MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     location.to_f64(),
@@ -425,5 +548,55 @@ mod tests {
         let message = render_message("", 0, 640, 480);
         assert!(message.size.0 > 0);
         assert!(message.size.1 > 0);
+    }
+
+    #[test]
+    fn cursor_scale_is_integer_ceiling_at_least_one() {
+        assert_eq!(cursor_scale(Scale::from(1.0)), 1);
+        assert_eq!(cursor_scale(Scale::from(1.5)), 2);
+        assert_eq!(cursor_scale(Scale::from(2.0)), 2);
+        assert_eq!(cursor_scale(Scale::from(2.01)), 3);
+        // Degenerate/zero scales never size a cursor below 1x.
+        assert_eq!(cursor_scale(Scale::from(0.0)), 1);
+    }
+
+    #[test]
+    fn cursor_icon_names_prefer_canonical_then_legacy_aliases() {
+        // cursor-shape maps Shape::Default -> CursorIcon::Default; the
+        // themed loader looks up the canonical CSS name first, then the
+        // legacy Xcursor aliases so classic themes (left_ptr) still match.
+        let icon = CursorIcon::Default;
+        assert_eq!(icon.name(), "default");
+        assert!(icon.alt_names().contains(&"left_ptr"));
+
+        // A resize shape resolves to its canonical hyphenated name.
+        assert_eq!(CursorIcon::EwResize.name(), "ew-resize");
+    }
+
+    #[test]
+    fn xcursor_loader_size_defaults_and_env_overrides() {
+        // Defaults with no env set.
+        unsafe {
+            std::env::remove_var("XCURSOR_SIZE");
+            std::env::remove_var("XCURSOR_THEME");
+        }
+        assert_eq!(XCursorLoader::from_env().base_size, DEFAULT_CURSOR_SIZE);
+
+        // Valid override is honored; invalid/zero falls back to the default.
+        unsafe {
+            std::env::set_var("XCURSOR_SIZE", "48");
+        }
+        assert_eq!(XCursorLoader::from_env().base_size, 48);
+        unsafe {
+            std::env::set_var("XCURSOR_SIZE", "0");
+        }
+        assert_eq!(XCursorLoader::from_env().base_size, DEFAULT_CURSOR_SIZE);
+        unsafe {
+            std::env::set_var("XCURSOR_SIZE", "bogus");
+        }
+        assert_eq!(XCursorLoader::from_env().base_size, DEFAULT_CURSOR_SIZE);
+        unsafe {
+            std::env::remove_var("XCURSOR_SIZE");
+        }
     }
 }
