@@ -48,6 +48,9 @@
    ;; wayland-info (global enumeration) used by the clipboard and
    ;; foreign-toplevel e2e gates to assert the manager globals are advertised
    "wayland-utils"
+   ;; swayidle: ext-idle-notify-v1 client used by the idle e2e gate to
+   ;; assert the compositor actually fires an idle notification
+   "swayidle"
    "shellcheck"
    ;; used by the static/doc-drift gates; without them ./check cannot run
    ;; self-contained in this shell

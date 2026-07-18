@@ -3,6 +3,7 @@
 mod compositor;
 pub mod foreign_toplevel;
 pub mod gamma_control;
+mod idle;
 mod layer_shell;
 pub mod output_management;
 pub mod pointer_constraints;

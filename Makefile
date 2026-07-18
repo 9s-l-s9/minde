@@ -104,6 +104,8 @@ check-e2e:
 		echo "error: wayland-utils (wayland-info) is required by the clipboard/foreign-toplevel scenarios" >&2; exit 127; }
 	@command -v wlr-randr >/dev/null 2>&1 || { \
 		echo "error: wlr-randr is required by the output-management scenario" >&2; exit 127; }
+	@command -v swayidle >/dev/null 2>&1 || { \
+		echo "error: swayidle is required by the idle scenario" >&2; exit 127; }
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
 	sh tests/screencapture-e2e.sh
@@ -112,6 +114,7 @@ check-e2e:
 	sh tests/output-management-e2e.sh
 	sh tests/pointer-constraints-e2e.sh
 	sh tests/fractional-scale-e2e.sh
+	sh tests/idle-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

@@ -49,6 +49,7 @@ Entered with `guix shell -m manifest.scm`:
 - `wl-clipboard`
 - `wlr-randr`
 - `wayland-utils`
+- `swayidle`
 - `shellcheck`
 - `ripgrep`
 - `diffutils`

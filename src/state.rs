@@ -21,6 +21,8 @@ use smithay::{
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         fractional_scale::FractionalScaleManagerState,
+        idle_inhibit::IdleInhibitManagerState,
+        idle_notify::IdleNotifierState,
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
         session_lock::{LockSurface, SessionLockManagerState},
@@ -247,6 +249,20 @@ pub struct MindeState {
     /// (surface-local), honored by warping the cursor there on unlock. See
     /// `PointerConstraintsHandler` in `handlers::pointer_constraints`.
     pub pointer_lock_hint: Option<(WlSurface, Point<f64, Logical>)>,
+
+    /// `ext-idle-notify-v1` notifier state: per-seat idle timers that fire
+    /// `idled`/`resumed` to clients (swayidle &c.). Reset on every input
+    /// event from `process_input_event`; suppressed while an idle inhibitor
+    /// is active. See `handlers::idle`.
+    pub idle_notifier_state: IdleNotifierState<Self>,
+    /// `zwp_idle_inhibit_manager_v1` global state. Clients (fullscreen
+    /// video/calls) create per-surface inhibitors; we track the set of
+    /// surfaces with a live inhibitor and, while non-empty, mark the idle
+    /// notifier inhibited. See `handlers::idle`.
+    pub idle_inhibit_state: IdleInhibitManagerState,
+    /// Surfaces that currently hold an idle inhibitor. Non-empty means idle
+    /// notifications are suppressed. See `handlers::idle`.
+    pub idle_inhibitors: std::collections::HashSet<WlSurface>,
 }
 
 impl MindeState {
@@ -329,6 +345,13 @@ impl MindeState {
         // destination size independent of buffer scale.
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         let viewporter_state = ViewporterState::new::<Self>(&dh);
+
+        // ext-idle-notify-v1 and zwp_idle_inhibit_manager_v1: both advertised
+        // on both backends. The notifier owns per-seat idle timers on the
+        // event loop; the inhibit manager lets clients suppress them. See
+        // handlers::idle for the input/inhibit wiring.
+        let idle_notifier_state = IdleNotifierState::<Self>::new(&dh, event_loop.handle());
+        let idle_inhibit_state = IdleInhibitManagerState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -423,6 +446,9 @@ impl MindeState {
             fractional_scale_manager_state,
             viewporter_state,
             pointer_lock_hint: None,
+            idle_notifier_state,
+            idle_inhibit_state,
+            idle_inhibitors: std::collections::HashSet::new(),
         }
     }
 

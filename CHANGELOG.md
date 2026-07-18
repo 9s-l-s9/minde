@@ -74,6 +74,20 @@ Target version: `1.0.0-rc1`.
   globals via wayland-info, applies a 1.5 scale with wlr-randr and confirms
   the compositor reflects it and stays alive, then runs foot at that scale
   without a protocol error.
+- Idle notify and idle inhibit (sprint 14): `ext-idle-notify-v1` and
+  `zwp_idle_inhibit_manager_v1` (idle-inhibit) via Smithay's server modules,
+  advertised on both backends. Per-seat idle timers reset on every input
+  event at the central `process_input_event` dispatch, so a swayidle-style
+  daemon can drive auto-lock, DPMS and dimming (idle policy stays external,
+  the same stance `(minde session)` takes for the locker -- no Scheme
+  surface is added). An idle inhibitor on any surface suppresses idle
+  notifications so fullscreen video and calls keep the screen awake; idle is
+  inhibited while any live inhibitor exists (per-surface visibility is not
+  tracked, documented in `src/handlers/idle.rs`), and inhibitors whose client
+  died are pruned so a crash cannot pin the screen awake. A bounded nested
+  e2e gate (`tests/idle-e2e.sh`, wired into `make check-e2e`) asserts both
+  globals via wayland-info and runs swayidle with a one-second timeout,
+  confirming the compositor actually fires an idle notification.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

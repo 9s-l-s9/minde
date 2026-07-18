@@ -44,6 +44,11 @@ fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
 impl MindeState {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         guile::note_activity();
+        // Reset the ext-idle-notify-v1 timers on any user activity (keyboard,
+        // pointer motion/button/axis, touch). Done before the locked-state
+        // gate so activity on the lock screen still counts as activity. See
+        // handlers::idle.
+        self.notify_idle_activity();
         // While locked, only keyboard events are processed (they reach the
         // focused lock surface, gated further below so they never hit the
         // Scheme keybinding layer). Pointer, touch, and axis events are
