@@ -111,6 +111,7 @@ check-e2e:
 	sh tests/foreign-toplevel-e2e.sh
 	sh tests/output-management-e2e.sh
 	sh tests/pointer-constraints-e2e.sh
+	sh tests/fractional-scale-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

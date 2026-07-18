@@ -190,7 +190,6 @@ fn output_scene_elements<R>(
     output_geo: Rectangle<i32, Logical>,
     origin: Point<i32, Logical>,
     scale: Scale<f64>,
-    int_scale: i32,
     space: &Space<Window>,
     cursor: Option<(&mut CursorState, Point<f64, Logical>)>,
     message: Option<&MessageState>,
@@ -228,7 +227,7 @@ where
             renderer,
             msg,
             (output_geo.size.w, output_geo.size.h),
-            int_scale,
+            scale,
         )
     {
         custom.push(elem);
@@ -236,7 +235,7 @@ where
 
     // Positioned overlays landing on this output.
     for (loc, msg) in overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
-        if let Some(elem) = crate::render::overlay_element(renderer, msg, *loc - base, int_scale) {
+        if let Some(elem) = crate::render::overlay_element(renderer, msg, *loc - base, scale) {
             custom.push(elem);
         }
     }
@@ -275,7 +274,7 @@ where
         let mut local = geo;
         local.loc -= base;
         let mut border = BorderBuffers::default();
-        custom.extend(border.elements(local, int_scale, border_color));
+        custom.extend(border.elements(local, scale, border_color));
     }
 
     // Window surfaces, front-to-back (space yields back-to-front).
@@ -451,7 +450,6 @@ pub fn satisfy_output_captures<R>(
     output: &Output,
     output_geo: Rectangle<i32, Logical>,
     scale: Scale<f64>,
-    int_scale: i32,
     time: Duration,
     pending: &mut Vec<PendingCapture>,
     space: &Space<Window>,
@@ -492,7 +490,6 @@ pub fn satisfy_output_captures<R>(
             output_geo,
             capture.origin,
             scale,
-            int_scale,
             space,
             cursor,
             message,

@@ -885,7 +885,7 @@ impl MindeState {
                 &mut renderer,
                 msg,
                 (output_geo.size.w, output_geo.size.h),
-                output.current_scale().integer_scale(),
+                scale,
             )
         {
             custom.push(elem);
@@ -899,12 +899,9 @@ impl MindeState {
             .iter()
             .filter(|(l, _)| output_geo.contains(*l))
         {
-            if let Some(elem) = crate::render::overlay_element(
-                &mut renderer,
-                msg,
-                *loc - output_geo.loc,
-                output.current_scale().integer_scale(),
-            ) {
+            if let Some(elem) =
+                crate::render::overlay_element(&mut renderer, msg, *loc - output_geo.loc, scale)
+            {
                 custom.push(elem);
             }
         }
@@ -949,11 +946,11 @@ impl MindeState {
         {
             let mut local = geo;
             local.loc -= output_geo.loc;
-            custom.extend(output_surface.border_buffers.elements(
-                local,
-                output.current_scale().integer_scale(),
-                self.border_color,
-            ));
+            custom.extend(
+                output_surface
+                    .border_buffers
+                    .elements(local, scale, self.border_color),
+            );
         }
 
         // Window surfaces, front-to-back (custom elements above are drawn
@@ -1067,7 +1064,6 @@ impl MindeState {
         // callback NOTE above).
         drop(layer_map);
         if !self.pending_captures.is_empty() {
-            let int_scale = output.current_scale().integer_scale();
             let time = self.start_time.elapsed();
             let focus = self.focus_rect.or_else(|| {
                 self.focused_window
@@ -1079,7 +1075,6 @@ impl MindeState {
                 &output,
                 output_geo,
                 scale,
-                int_scale,
                 time,
                 &mut self.pending_captures,
                 &self.space,

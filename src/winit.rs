@@ -131,6 +131,11 @@ pub fn init_winit(
                 WinitEvent::Redraw => {
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
+                    // Honor the output's fractional scale (wlr-randr --scale,
+                    // via wlr-output-management) so the nested scene renders
+                    // at the same density fractional-scale clients paint at.
+                    let fscale = output.current_scale().fractional_scale();
+                    let scale = smithay::utils::Scale::from(fscale);
 
                     // Border elements around the selected frame (falling back
                     // to the focused window before the first sync).
@@ -141,7 +146,7 @@ pub fn init_winit(
                             .as_ref()
                             .and_then(|w| state.space.element_geometry(w))
                     }) {
-                        custom.extend(border_buffers.elements(geo, 1, state.border_color));
+                        custom.extend(border_buffers.elements(geo, scale, state.border_color));
                     }
 
                     {
@@ -152,7 +157,7 @@ pub fn init_winit(
                                 &mut *renderer,
                                 msg,
                                 (size.w, size.h),
-                                1,
+                                scale,
                             )
                         {
                             custom.insert(0, elem);
@@ -160,7 +165,7 @@ pub fn init_winit(
                         // Positioned overlays (fselect/expose frame labels).
                         for (loc, msg) in &state.overlays {
                             if let Some(elem) =
-                                crate::render::overlay_element(&mut *renderer, msg, *loc, 1)
+                                crate::render::overlay_element(&mut *renderer, msg, *loc, scale)
                             {
                                 custom.insert(0, elem);
                             }
@@ -201,8 +206,7 @@ pub fn init_winit(
                             backend.renderer(),
                             &output,
                             output_geo,
-                            1.0.into(),
-                            1,
+                            scale,
                             time,
                             &mut state.pending_captures,
                             &state.space,

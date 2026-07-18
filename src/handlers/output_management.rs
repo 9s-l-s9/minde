@@ -561,6 +561,9 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                             // unchanged-geometry short-circuit.
                             state.reported_heads.clear();
                             state.update_usable_area();
+                            // A scale change must reach fractional-scale
+                            // clients so they repaint at the new density.
+                            state.update_fractional_scales();
                             crate::guile::on_output_configured();
                         }
                     }

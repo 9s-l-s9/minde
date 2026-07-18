@@ -54,6 +54,26 @@ Target version: `1.0.0-rc1`.
   gate (`tests/pointer-constraints-e2e.sh`, wired into `make check-e2e`) asserts
   both manager globals are advertised; Rust unit tests cover the region-clamp
   and membership logic.
+- Fractional scaling and viewport (sprint 14): `wp-fractional-scale-v1` and
+  `wp-viewporter` served on both backends via Smithay's server modules.
+  Clients learn each surface's preferred fractional scale, which follows the
+  output the surface sits on and is re-sent to every mapped surface when an
+  output's scale changes (e.g. wlr-randr `--scale 1.5`, through the sprint-14
+  output-management path). The render and screencopy paths now use the
+  output's `f64` fractional scale throughout -- window content, the
+  compositor chrome (focus border, message and frame-number overlays) and
+  capture buffers -- replacing the previous integer-only assumptions; the
+  winit backend renders at the output's fractional scale via its damage
+  tracker, and screencopy buffer sizes stay physical (mode size), so a
+  fractionally-scaled output is captured at full resolution. Viewporter is
+  validated by Smithay's commit buffer handler and its surface render
+  elements honor the destination size automatically. No new public Scheme
+  exports: output scale (already settable through wlr-output-management)
+  accepts fractional values. A bounded nested e2e gate
+  (`tests/fractional-scale-e2e.sh`, wired into `make check-e2e`) asserts both
+  globals via wayland-info, applies a 1.5 scale with wlr-randr and confirms
+  the compositor reflects it and stays alive, then runs foot at that scale
+  without a protocol error.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

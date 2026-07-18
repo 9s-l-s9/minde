@@ -52,12 +52,13 @@ impl Default for BorderBuffers {
 
 impl BorderBuffers {
     /// Builds the 4 border-edge render elements around `geo` (in logical
-    /// coordinates, at the given integer output `scale`), in `color`
-    /// (changes with prefix-key state, StumpWM style).
+    /// coordinates, at the given output `scale`), in `color` (changes with
+    /// prefix-key state, StumpWM style). `scale` is the output's fractional
+    /// scale so the border tracks the same density as window content.
     pub fn elements<R>(
         &mut self,
         geo: Rectangle<i32, Logical>,
-        scale: i32,
+        scale: Scale<f64>,
         color: [f32; 4],
     ) -> Vec<MindeRenderElements<R>>
     where
@@ -79,7 +80,7 @@ impl BorderBuffers {
             out.push(
                 SolidColorRenderElement::from_buffer(
                     buf,
-                    Point::<i32, Logical>::from(loc).to_physical(scale),
+                    Point::<i32, Logical>::from(loc).to_physical_precise_round(scale),
                     1.0,
                     1.0,
                     Kind::Unspecified,
@@ -244,7 +245,7 @@ pub fn message_element<R>(
     renderer: &mut R,
     msg: &MessageState,
     output_size: (i32, i32),
-    scale: i32,
+    scale: Scale<f64>,
 ) -> Option<MindeRenderElements<R>>
 where
     R: Renderer + ImportAll + ImportMem,
@@ -256,7 +257,7 @@ where
     ));
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
-        loc.to_physical(scale).to_f64(),
+        loc.to_f64().to_physical(scale),
         &msg.buffer,
         None,
         None,
@@ -278,7 +279,7 @@ pub fn overlay_element<R>(
     renderer: &mut R,
     msg: &MessageState,
     loc: Point<i32, Logical>,
-    scale: i32,
+    scale: Scale<f64>,
 ) -> Option<MindeRenderElements<R>>
 where
     R: Renderer + ImportAll + ImportMem,
@@ -286,7 +287,7 @@ where
 {
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
-        loc.to_physical(scale).to_f64(),
+        loc.to_f64().to_physical(scale),
         &msg.buffer,
         None,
         None,

@@ -236,4 +236,24 @@ impl XdgActivationHandler for MindeState {
 
 impl OutputHandler for MindeState {}
 
+//
+// wp-fractional-scale-v1
+//
+// The manager already sends any pre-filled preferred scale when the client
+// creates the object; we seed it here from the surface's output so a client
+// that binds fractional-scale before mapping still gets a sensible value.
+// Subsequent output-scale changes are pushed by `update_fractional_scales`.
+//
+
+impl smithay::wayland::fractional_scale::FractionalScaleHandler for MindeState {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        let scale = self.output_scale_for_surface(&surface);
+        smithay::wayland::compositor::with_states(&surface, |states| {
+            smithay::wayland::fractional_scale::with_fractional_scale(states, |fractional| {
+                fractional.set_preferred_scale(scale);
+            });
+        });
+    }
+}
+
 smithay::delegate_dispatch2!(MindeState);

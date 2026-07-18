@@ -20,12 +20,14 @@ use smithay::{
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
+        fractional_scale::FractionalScaleManagerState,
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
         session_lock::{LockSurface, SessionLockManagerState},
         shell::xdg::XdgShellState,
         shm::ShmState,
         socket::ListeningSocketSource,
+        viewporter::ViewporterState,
     },
 };
 
@@ -229,6 +231,18 @@ pub struct MindeState {
     pub pointer_constraints_state: smithay::wayland::pointer_constraints::PointerConstraintsState,
     pub relative_pointer_manager_state:
         smithay::wayland::relative_pointer::RelativePointerManagerState,
+    /// `wp-fractional-scale-v1` manager global: lets clients request a
+    /// fractional buffer scale and learn each surface's preferred scale.
+    /// Advertised on both backends; the preferred scale is (re)sent from
+    /// `FractionalScaleHandler::new_fractional_scale` and whenever an
+    /// output's scale changes (`update_fractional_scales`).
+    pub fractional_scale_manager_state: FractionalScaleManagerState,
+    /// `wp-viewporter` global: lets clients crop/scale their buffer to a
+    /// logical destination size. Registered unconditionally; Smithay's
+    /// commit buffer handler validates and applies the viewport, and its
+    /// surface render elements honor the destination size automatically.
+    pub viewporter_state: ViewporterState,
+
     /// Last cursor-position hint committed by a locked-pointer client
     /// (surface-local), honored by warping the cursor there on unlock. See
     /// `PointerConstraintsHandler` in `handlers::pointer_constraints`.
@@ -308,6 +322,13 @@ impl MindeState {
             smithay::wayland::pointer_constraints::PointerConstraintsState::new::<Self>(&dh);
         let relative_pointer_manager_state =
             smithay::wayland::relative_pointer::RelativePointerManagerState::new::<Self>(&dh);
+
+        // Fractional scale and viewporter: advertised on both backends.
+        // Fractional scale reports each surface's preferred scale (following
+        // its output); viewporter lets clients render at a logical
+        // destination size independent of buffer scale.
+        let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
+        let viewporter_state = ViewporterState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
@@ -399,6 +420,8 @@ impl MindeState {
             output_management,
             pointer_constraints_state,
             relative_pointer_manager_state,
+            fractional_scale_manager_state,
+            viewporter_state,
             pointer_lock_hint: None,
         }
     }
@@ -1304,6 +1327,57 @@ impl MindeState {
         self.output_management_refresh();
     }
 
+    /// Preferred fractional scale for a surface: the scale of the output it
+    /// is mapped onto, falling back to the first output (or 1.0 with none).
+    /// Used to seed a freshly-created `wp_fractional_scale` object.
+    pub fn output_scale_for_surface(&self, surface: &WlSurface) -> f64 {
+        for window in self.space.elements() {
+            let matches = window.wl_surface().map(|s| &*s == surface).unwrap_or(false);
+            if matches && let Some(output) = self.space.outputs_for_element(window).first() {
+                return output.current_scale().fractional_scale();
+            }
+        }
+        self.space
+            .outputs()
+            .next()
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(1.0)
+    }
+
+    /// Pushes each mapped surface's preferred fractional scale to match the
+    /// output it sits on. Call after any output-scale change (wlr-randr
+    /// `--scale`, hotplug) so `wp_fractional_scale` clients repaint at the
+    /// new density. A no-op for clients that never bound the protocol.
+    pub fn update_fractional_scales(&mut self) {
+        let default_scale = self
+            .space
+            .outputs()
+            .next()
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(1.0);
+        let mut targets: Vec<(WlSurface, f64)> = Vec::new();
+        for window in self.space.elements() {
+            let scale = self
+                .space
+                .outputs_for_element(window)
+                .first()
+                .map(|o| o.current_scale().fractional_scale())
+                .unwrap_or(default_scale);
+            if let Some(surface) = window.wl_surface() {
+                targets.push((surface.into_owned(), scale));
+            }
+        }
+        for output in self.space.outputs() {
+            let scale = output.current_scale().fractional_scale();
+            for layer in smithay::desktop::layer_map_for_output(output).layers() {
+                targets.push((layer.wl_surface().clone(), scale));
+            }
+        }
+        for (surface, scale) in targets {
+            send_surface_preferred_scale(&surface, scale);
+        }
+    }
+
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -1350,6 +1424,25 @@ impl MindeState {
             })
             .or_else(|| layer_surface_under(&[Layer::Bottom, Layer::Background]))
     }
+}
+
+/// Sets the preferred fractional scale on a surface and its whole subsurface
+/// tree. Smithay sends the `preferred_scale` event only when the value
+/// actually changes, so this is cheap to call redundantly.
+fn send_surface_preferred_scale(surface: &WlSurface, scale: f64) {
+    use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
+    use smithay::wayland::fractional_scale::with_fractional_scale;
+    with_surface_tree_downward(
+        surface,
+        (),
+        |_, _, _| TraversalAction::DoChildren(()),
+        |_, states, _| {
+            with_fractional_scale(states, |fractional| {
+                fractional.set_preferred_scale(scale);
+            });
+        },
+        |_, _, _| true,
+    );
 }
 
 /// Stable per-output id handed to Scheme, stored in the `Output`'s user
