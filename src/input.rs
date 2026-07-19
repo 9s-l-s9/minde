@@ -379,6 +379,7 @@ impl MindeState {
                             }
                         });
                         keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+                        self.set_text_input_focus(None);
                     }
                 };
 

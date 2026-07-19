@@ -266,6 +266,15 @@ pub struct MindeState {
     /// `wp_cursor_shape_manager_v1` global state. Kept alive so the global
     /// stays advertised; requests route to `SeatHandler::cursor_image`.
     pub cursor_shape_manager_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
+
+    /// `zwp_text_input_manager_v3` and `zwp_input_method_manager_v2` global
+    /// state (IME: fcitx5/ibus, on-screen keyboards). Kept alive so both
+    /// globals stay advertised; per-seat `TextInputHandle`/`InputMethodHandle`
+    /// live in the seat user-data. Text-input focus follows keyboard focus via
+    /// `set_text_input_focus`; the candidate-window popup is handled in
+    /// `handlers::input_method`.
+    pub text_input_manager_state: smithay::wayland::text_input::TextInputManagerState,
+    pub input_method_manager_state: smithay::wayland::input_method::InputMethodManagerState,
 }
 
 impl MindeState {
@@ -364,6 +373,12 @@ impl MindeState {
         let cursor_shape_manager_state =
             smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(&dh);
 
+        // text-input-v3 + input-method-v2: both advertised on both backends.
+        // The input-method manager admits every client (privileged; the
+        // protocol enforces one active IME per seat). See handlers::input_method.
+        let (text_input_manager_state, input_method_manager_state) =
+            crate::handlers::input_method::init_input_method(&dh);
+
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
@@ -461,6 +476,8 @@ impl MindeState {
             idle_inhibit_state,
             idle_inhibitors: std::collections::HashSet::new(),
             cursor_shape_manager_state,
+            text_input_manager_state,
+            input_method_manager_state,
         }
     }
 
@@ -592,6 +609,9 @@ impl MindeState {
                 if let Some(keyboard) = self.seat.get_keyboard() {
                     keyboard.set_focus(self, Option::<WlSurface>::None, serial);
                 }
+                // Clearing keyboard focus doesn't invoke `focus_changed`, so
+                // drop text-input focus explicitly (IME leaves the surface).
+                self.set_text_input_focus(None);
                 for (_, w) in &self.windows {
                     w.set_activated(false);
                     if let Some(t) = w.toplevel() {

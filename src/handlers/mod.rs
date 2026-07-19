@@ -4,6 +4,7 @@ mod compositor;
 pub mod foreign_toplevel;
 pub mod gamma_control;
 mod idle;
+pub mod input_method;
 mod layer_shell;
 pub mod output_management;
 pub mod pointer_constraints;
@@ -56,6 +57,10 @@ impl SeatHandler for MindeState {
         // The primary selection follows keyboard focus too, so the newly
         // focused client can read the middle-click selection.
         smithay::wayland::selection::primary_selection::set_primary_focus(dh, seat, client);
+        // Text-input focus must follow keyboard focus so a running IME
+        // (fcitx5/ibus) services the right surface. `focus_changed` only
+        // fires for a Some(focus); focus-clear paths call this directly.
+        self.set_text_input_focus(focused.cloned());
     }
 }
 

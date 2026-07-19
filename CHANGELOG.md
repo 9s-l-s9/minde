@@ -108,6 +108,21 @@ Target version: `1.0.0-rc1`.
   that the compositor stays stable under an explicit theme/size environment;
   Rust unit tests in `src/render.rs` cover shape-name resolution and integer
   size selection.
+- Input methods via `text-input-v3` and `input-method-v2` (sprint 14):
+  `zwp_text_input_manager_v3` and `zwp_input_method_manager_v2` advertised on
+  both backends through Smithay's `text_input`/`input_method` modules, so an
+  IME (fcitx5/ibus) or on-screen keyboard can drive preedit and commit into
+  Wayland text fields. Text-input focus follows keyboard focus
+  (`MindeState::set_text_input_focus`, driven from `SeatHandler::
+  focus_changed` and the focus-clear paths), the input-method popup (candidate
+  window) is tracked in the shared `PopupManager` and rendered at the
+  text-input cursor rectangle by the existing per-window popup path, and the
+  input-method manager admits every client first-come-first-served (the
+  protocol enforces one active IME per seat; no Scheme surface, as the IME is
+  the user's session daemon). A bounded nested e2e gate
+  (`tests/text-input-e2e.sh`, wired into `make check-e2e`) asserts both manager
+  globals via wayland-info and that a real text-input-v3 client (foot) maps,
+  gains focus, and stays connected with no protocol error.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

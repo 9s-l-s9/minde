@@ -116,6 +116,7 @@ check-e2e:
 	sh tests/fractional-scale-e2e.sh
 	sh tests/idle-e2e.sh
 	sh tests/cursor-shape-e2e.sh
+	sh tests/text-input-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

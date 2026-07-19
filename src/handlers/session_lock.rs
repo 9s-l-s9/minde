@@ -52,6 +52,8 @@ impl SessionLockHandler for MindeState {
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Option::<WlSurface>::None, serial);
         }
+        // Drop text-input focus too: no IME activity while the session is locked.
+        self.set_text_input_focus(None);
         if let Some(pointer) = self.seat.get_pointer() {
             let location = self.pointer_location;
             let time = self.start_time.elapsed().as_millis() as u32;
