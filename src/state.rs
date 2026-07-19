@@ -275,6 +275,29 @@ pub struct MindeState {
     /// `handlers::input_method`.
     pub text_input_manager_state: smithay::wayland::text_input::TextInputManagerState,
     pub input_method_manager_state: smithay::wayland::input_method::InputMethodManagerState,
+
+    /// `zwp_virtual_keyboard_manager_v1` global state (wtype/ydotool-style
+    /// automation and accessibility tools). Kept alive so the global stays
+    /// advertised; Smithay's virtual-keyboard handle injects keys straight
+    /// into the focused surface's `wl_keyboard` (see the module docs in
+    /// `handlers::virtual_keyboard`). The client filter admits every client:
+    /// these are user-session automation tools, the same stance taken for the
+    /// input-method manager.
+    pub virtual_keyboard_manager_state:
+        smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState,
+    /// `zwp_keyboard_shortcuts_inhibit_manager_v1` global state
+    /// (remote-desktop/VM clients). Inhibitors are auto-granted but only
+    /// *active* while their surface holds keyboard focus; an active inhibitor
+    /// makes `process_input_event` bypass the prefix grab and every Scheme
+    /// shortcut. See `handlers::keyboard_shortcuts_inhibit`.
+    pub keyboard_shortcuts_inhibit_state:
+        smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
+    /// The inhibitor currently activated because its surface holds keyboard
+    /// focus, if any. Tracked so it can be deactivated the instant focus
+    /// leaves the surface (the protocol forbids an inhibitor surviving focus
+    /// loss). See `update_keyboard_shortcuts_inhibitors`.
+    pub active_shortcuts_inhibitor:
+        Option<smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor>,
 }
 
 impl MindeState {
@@ -379,6 +402,28 @@ impl MindeState {
         let (text_input_manager_state, input_method_manager_state) =
             crate::handlers::input_method::init_input_method(&dh);
 
+        // virtual-keyboard + virtual-pointer: automation/accessibility tools
+        // (wtype, ydotool, wlrctl). The virtual-keyboard filter admits every
+        // client -- these are user-session tools, and their injected keys go
+        // to the focused surface honestly (gated by focus, never bypassing the
+        // session lock; a locked session's focus is its lock surface). The
+        // virtual-pointer manager is hand-rolled (Smithay ships no server
+        // module); its global id is discarded like the other wlr globals.
+        let virtual_keyboard_manager_state =
+            smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState::new::<Self, _>(
+                &dh,
+                |_client| true,
+            );
+        let _ = crate::handlers::virtual_pointer::init_virtual_pointer_manager(&dh);
+
+        // keyboard-shortcuts-inhibit: remote-desktop/VM clients. Inhibitors
+        // are auto-granted, but only take effect while their surface has
+        // keyboard focus (see handlers::keyboard_shortcuts_inhibit).
+        let keyboard_shortcuts_inhibit_state =
+            smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState::new::<Self>(
+                &dh,
+            );
+
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
@@ -478,6 +523,9 @@ impl MindeState {
             cursor_shape_manager_state,
             text_input_manager_state,
             input_method_manager_state,
+            virtual_keyboard_manager_state,
+            keyboard_shortcuts_inhibit_state,
+            active_shortcuts_inhibitor: None,
         }
     }
 
@@ -610,8 +658,11 @@ impl MindeState {
                     keyboard.set_focus(self, Option::<WlSurface>::None, serial);
                 }
                 // Clearing keyboard focus doesn't invoke `focus_changed`, so
-                // drop text-input focus explicitly (IME leaves the surface).
+                // drop text-input focus and deactivate any shortcuts inhibitor
+                // explicitly (IME leaves the surface; the inhibitor must not
+                // survive focus loss).
                 self.set_text_input_focus(None);
+                self.update_keyboard_shortcuts_inhibitors(None);
                 for (_, w) in &self.windows {
                     w.set_activated(false);
                     if let Some(t) = w.toplevel() {

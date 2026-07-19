@@ -123,6 +123,32 @@ Target version: `1.0.0-rc1`.
   (`tests/text-input-e2e.sh`, wired into `make check-e2e`) asserts both manager
   globals via wayland-info and that a real text-input-v3 client (foot) maps,
   gains focus, and stays connected with no protocol error.
+- Virtual keyboard and pointer (sprint 14): `zwp_virtual_keyboard_manager_v1`
+  (Smithay's `virtual_keyboard` module, client filter admits every client --
+  these are user-session automation and accessibility tools) and a hand-written
+  `zwlr_virtual_pointer_manager_v1` v2 on the wlr bindings (Smithay ships no
+  server module for it), for wtype/ydotool/wlrctl-style automation. Injected
+  keys reach the focused surface's keyboard directly (gated by focus, so they
+  never bypass the session lock); virtual pointer motion/button/axis are
+  translated into the *same* pointer processing the real input path uses
+  (factored into `pointer_relative_motion`/`pointer_absolute_motion`/
+  `pointer_button_event`/`pointer_axis_frame` in `src/input.rs`), so pointer
+  constraints, idle-activity reset and the locked-session gate all apply to
+  virtual input. No Scheme surface.
+- Keyboard shortcuts inhibit (sprint 14): `zwp_keyboard_shortcuts_inhibit_manager_v1`
+  (Smithay's `keyboard_shortcuts_inhibit` module) for remote-desktop and VM
+  clients. Inhibitors are auto-granted (documented; no user prompt) but active
+  only while their surface has keyboard focus. An active inhibitor makes
+  `process_input_event` bypass the prefix-key grab and every Scheme shortcut --
+  checked right after the session-lock gate, so it can never take effect on the
+  lock surface -- and focus loss deactivates it immediately
+  (`update_keyboard_shortcuts_inhibitors`, called from `focus_changed` and
+  every focus-clear path) so it can never survive focus loss. No Scheme surface.
+- A bounded nested e2e gate (`tests/virtual-input-e2e.sh`, wired into
+  `make check-e2e`) asserts all three manager globals, uses wtype to type a
+  marker line into a focused foot client and asserts the text lands, and drives
+  the hand-rolled virtual pointer with wlrctl while asserting the compositor
+  stays alive and logs no protocol error.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

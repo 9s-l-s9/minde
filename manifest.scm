@@ -51,6 +51,12 @@
    ;; swayidle: ext-idle-notify-v1 client used by the idle e2e gate to
    ;; assert the compositor actually fires an idle notification
    "swayidle"
+   ;; wtype: zwp_virtual_keyboard_v1 client used by the virtual-input e2e gate
+   ;; to type into a focused client and assert the text lands
+   "wtype"
+   ;; wlrctl: zwlr_virtual_pointer_v1 client used by the virtual-input e2e gate
+   ;; to drive the virtual pointer
+   "wlrctl"
    "shellcheck"
    ;; used by the static/doc-drift gates; without them ./check cannot run
    ;; self-contained in this shell

@@ -5,11 +5,13 @@ pub mod foreign_toplevel;
 pub mod gamma_control;
 mod idle;
 pub mod input_method;
+pub mod keyboard_shortcuts_inhibit;
 mod layer_shell;
 pub mod output_management;
 pub mod pointer_constraints;
 pub mod screencopy;
 mod session_lock;
+pub mod virtual_pointer;
 pub mod wlr_screencopy;
 mod xdg_decoration;
 mod xdg_shell;
@@ -61,6 +63,10 @@ impl SeatHandler for MindeState {
         // (fcitx5/ibus) services the right surface. `focus_changed` only
         // fires for a Some(focus); focus-clear paths call this directly.
         self.set_text_input_focus(focused.cloned());
+        // A keyboard-shortcuts inhibitor is live only while its surface has
+        // keyboard focus; reconcile on every focus change (see
+        // handlers::keyboard_shortcuts_inhibit).
+        self.update_keyboard_shortcuts_inhibitors(focused);
     }
 }
 

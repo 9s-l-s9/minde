@@ -50,6 +50,8 @@ Entered with `guix shell -m manifest.scm`:
 - `wlr-randr`
 - `wayland-utils`
 - `swayidle`
+- `wtype`
+- `wlrctl`
 - `shellcheck`
 - `ripgrep`
 - `diffutils`
