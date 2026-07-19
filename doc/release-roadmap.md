@@ -92,8 +92,23 @@ as unavailable on the current hardware.
   + PipeWire running. Known follow-ups:
   pending frames for an unplugged output linger until the client drops the
   session; no periodic `ImageCopyCaptureState::cleanup()` call.
-- Sprint 14: not started. Ecosystem protocol completion toward parity with
-  niri/hyprland/sway daily-driver expectations.
+- Sprint 14: implementation complete (2026-07-17, commits 6b6430a..7490a30).
+  All twelve items landed with gates green: data-control (wlr+ext) and
+  primary selection incl. Xwayland; wlr-foreign-toplevel-management;
+  wlr-output-management with the Scheme policy gate; pointer-constraints and
+  relative-pointer; fractional-scale and viewporter with fractional-aware
+  chrome; idle-notify and idle-inhibit; cursor-shape with Xcursor themes;
+  text-input-v3/input-method-v2; virtual keyboard/pointer and
+  keyboard-shortcuts-inhibit (lock-gated, focus-scoped); presentation-time,
+  tearing-control (advisory only, no async-flip path in the vendored
+  DrmCompositor) and linux-drm-syncobj (capability-guarded, udev-only);
+  and the libinput configuration surface (wm-input-devices,
+  wm-configure-input!). Remaining owner verification on real hardware:
+  cliphist/clipboard manager, kanshi or wlr-randr layout change, a
+  pointer-lock game or weston demo client, a fractional-scale display,
+  swayidle auto-lock, fcitx5 round trip, wtype on the udev backend,
+  presentation-time/syncobj behavior on the DRM backend, and per-device
+  libinput rules taking effect.
 
 ## Release decisions
 
