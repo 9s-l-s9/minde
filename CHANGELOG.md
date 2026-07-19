@@ -149,6 +149,35 @@ Target version: `1.0.0-rc1`.
   marker line into a focused foot client and asserts the text lands, and drives
   the hand-rolled virtual pointer with wlrctl while asserting the compositor
   stays alive and logs no protocol error.
+- Presentation timing, tearing control and explicit sync (sprint 14):
+  - `wp-presentation-time` (Smithay's `PresentationState`) is served
+    **udev-only**. Each output's DRM frame now carries an
+    `OutputPresentationFeedback` as its queue user-data; on the matching vblank
+    it is delivered with the kernel's real monotonic timestamp, sequence and
+    `Vsync|HwClock|HwCompletion` flags (falling back to the compositor clock and
+    `Vsync` only when the driver reports no monotonic timestamps), the refresh
+    interval from the output mode, and per-surface zero-copy flags taken from
+    the render report. The nested winit backend has no true presentation clock,
+    so it deliberately does not advertise the global.
+  - `wp-tearing-control-v1` (`wp_tearing_control_manager_v1`, hand-written on
+    the staging bindings since Smithay ships no server module) is advertised on
+    **both** backends so tearing-aware clients find it. It is **advisory only**:
+    the vendored Smithay `DrmCompositor` exposes no async/immediate page-flip
+    path, so the `async` hint is recorded but never turned into a real tearing
+    flip -- clients render identically either way. This is documented honestly
+    in the capability matrix rather than claimed as working tearing.
+  - `linux-drm-syncobj-v1` (`wp_linux_drm_syncobj_manager_v1`, Smithay's
+    `DrmSyncobjState`) explicit sync is served **udev-only** and only when the
+    primary GPU exposes syncobj timeline eventfds (`DRM_CAP_SYNCOBJ_TIMELINE`,
+    probed by `supports_syncobj_eventfd`); hardware without support never gets
+    the global. Smithay's renderer imports the client acquire fence as a KMS
+    in-fence and signals the release point when the buffer is dropped, so no
+    compositor-side commit changes were needed. No new Scheme surface.
+  - A bounded nested e2e gate (`tests/presentation-tearing-e2e.sh`, wired into
+    `make check-e2e`) asserts `wp_tearing_control_manager_v1` is advertised and
+    that neither `wp_presentation` nor `wp_linux_drm_syncobj_manager_v1` appear
+    on the winit backend (locking in the udev-only split); the udev presentation
+    and syncobj paths are flagged for hardware-owner verification.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

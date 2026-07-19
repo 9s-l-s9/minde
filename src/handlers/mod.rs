@@ -11,6 +11,7 @@ pub mod output_management;
 pub mod pointer_constraints;
 pub mod screencopy;
 mod session_lock;
+pub mod tearing_control;
 pub mod virtual_pointer;
 pub mod wlr_screencopy;
 mod xdg_decoration;

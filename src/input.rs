@@ -121,10 +121,11 @@ impl MindeState {
                             // handlers::keyboard_shortcuts_inhibit), and this
                             // runs *after* the locked gate above, so it can
                             // never take effect on the lock surface.
-                            if {
+                            let inhibited = {
                                 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat;
                                 data.seat.keyboard_shortcuts_inhibited()
-                            } {
+                            };
+                            if inhibited {
                                 return FilterResult::Forward;
                             }
 

@@ -416,6 +416,15 @@ impl MindeState {
             );
         let _ = crate::handlers::virtual_pointer::init_virtual_pointer_manager(&dh);
 
+        // wp-tearing-control-v1: advertised on both backends so tearing-aware
+        // clients (games) find the protocol. Advisory only -- the DRM backend
+        // cannot perform async page flips at this Smithay revision, so the hint
+        // is recorded but never acted upon (see handlers::tearing_control and
+        // the capability matrix). wp-presentation-time and linux-drm-syncobj
+        // are udev-only and registered in `init_udev` (they need real vblank
+        // timestamps and a syncobj-capable DRM device respectively).
+        let _ = crate::handlers::tearing_control::init_tearing_control_manager(&dh);
+
         // keyboard-shortcuts-inhibit: remote-desktop/VM clients. Inhibitors
         // are auto-granted, but only take effect while their surface has
         // keyboard focus (see handlers::keyboard_shortcuts_inhibit).

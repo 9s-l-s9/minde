@@ -14,12 +14,27 @@
 //!   what's needed to keep the `GpuManager`/`MultiRenderer` plumbing
 //!   working (anvil's structure is kept here since fighting the API to
 //!   remove it entirely isn't worth it).
-//! - no DRM leasing, no fps/debug overlays, no screencopy/wlr protocols,
-//!   no profiling, no presentation-time feedback (this compositor doesn't
-//!   expose `wp_presentation`, so DRM output user-data is just `()`).
+//! - no DRM leasing, no fps/debug overlays, no profiling.
+//!
+//! udev-only ecosystem protocols wired here (they need real hardware the
+//! nested winit backend cannot provide):
+//! - `wp-presentation-time`: the DRM output user-data carries an
+//!   [`OutputPresentationFeedback`] per queued frame; on vblank the real
+//!   monotonic timestamp, sequence and refresh from [`DrmEventMetadata`] are
+//!   sent to the clients that requested feedback for surfaces scanned out on
+//!   that output.
+//! - `linux-drm-syncobj-v1` (explicit sync): created only when the primary
+//!   GPU supports syncobj timeline eventfds; Smithay's renderer/DrmCompositor
+//!   then imports the acquire fence as a KMS in-fence and signals the release
+//!   point when the buffer is dropped.
+//!
+//! `wp-tearing-control` is advertised on both backends from `state.rs` but is
+//! advisory only (the DRM compositor has no async page-flip path here).
 
 use std::{collections::HashMap, path::Path, time::Duration};
 
+use smithay::backend::renderer::element::default_primary_scanout_output_compare;
+use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay::{
     backend::{
         SwapBuffersError,
@@ -30,7 +45,7 @@ use smithay::{
         },
         drm::{
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
-            DrmNode, NodeType,
+            DrmEventTime, DrmNode, NodeType,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -45,6 +60,10 @@ use smithay::{
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{UdevBackend, UdevEvent, primary_gpu},
     },
+    desktop::utils::{
+        OutputPresentationFeedback, surface_presentation_feedback_flags_from_states,
+        surface_primary_scanout_output, update_surface_primary_scanout_output,
+    },
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
@@ -56,9 +75,11 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::{DisplayHandle, backend::GlobalId},
     },
-    utils::{DeviceFd, Transform},
-    wayland::dmabuf::{
-        DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
+    utils::{DeviceFd, Monotonic, Transform},
+    wayland::{
+        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState, supports_syncobj_eventfd},
+        presentation::{PresentationState, Refresh},
     },
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
@@ -78,10 +99,16 @@ type UdevRenderer<'a> = MultiRenderer<
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
 
+/// Per-frame user-data attached to each queued DRM frame: the presentation
+/// feedback owed to clients once the frame is actually scanned out. Returned
+/// by `frame_submitted` on the matching vblank (see `frame_finish`). `None`
+/// for frames that owe no feedback (e.g. the locked blank frame).
+type FrameUserData = Option<OutputPresentationFeedback>;
+
 type GbmDrmOutputManager = DrmOutputManager<
     GbmAllocator<DrmDeviceFd>,
     GbmFramebufferExporter<DrmDeviceFd>,
-    Option<()>,
+    FrameUserData,
     DrmDeviceFd,
 >;
 
@@ -101,7 +128,7 @@ struct OutputSurface {
     drm_output: DrmOutput<
         GbmAllocator<DrmDeviceFd>,
         GbmFramebufferExporter<DrmDeviceFd>,
-        Option<()>,
+        FrameUserData,
         DrmDeviceFd,
     >,
     border_buffers: BorderBuffers,
@@ -133,6 +160,34 @@ pub struct UdevBackendData {
     /// Whether `handle-startup!` has fired (once, on the first output).
     started: bool,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
+    /// `wp_presentation` global (udev-only): kept alive so the global stays
+    /// advertised. Feedback is collected per frame and delivered on vblank;
+    /// the state itself only owns the global's lifetime.
+    #[allow(dead_code)]
+    presentation_state: PresentationState,
+    /// `linux-drm-syncobj-v1` explicit-sync state, created only when the
+    /// primary GPU exposes syncobj timeline eventfds (`DRM_CAP_SYNCOBJ_TIMELINE`
+    /// via [`supports_syncobj_eventfd`]). `None` on hardware without support,
+    /// in which case the global is simply never advertised. See
+    /// [`DrmSyncobjHandler`] below.
+    syncobj_state: Option<DrmSyncobjState>,
+}
+
+/// The POSIX clock id (`CLOCK_MONOTONIC`) the DRM backend reports presentation
+/// timestamps against. The kernel delivers vblank timestamps on this clock
+/// (`has_monotonic_timestamps`), and it is advertised to clients through the
+/// `wp_presentation` global so they can correlate the numbers. This is a
+/// Linux-only DRM backend, so the value is fixed.
+const CLOCK_MONOTONIC: u32 = 1;
+
+/// Explicit-sync (`linux-drm-syncobj-v1`): Smithay's renderer picks the
+/// acquire/release sync points straight out of the surface's committed state,
+/// so all this handler has to expose is the state delegate. It is only `Some`
+/// when the primary GPU supports syncobj timelines (see `syncobj_state`).
+impl DrmSyncobjHandler for MindeState {
+    fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
+        self.udev_data.as_mut()?.syncobj_state.as_mut()
+    }
 }
 
 impl DmabufHandler for MindeState {
@@ -212,6 +267,12 @@ pub fn init_udev(
         Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
     }))?;
 
+    // wp-presentation-time global (udev-only: real vblank timestamps). The
+    // winit backend has no true presentation clock, so it deliberately never
+    // advertises this global -- see the capability matrix.
+    let presentation_state =
+        PresentationState::new::<MindeState>(&state.display_handle, CLOCK_MONOTONIC);
+
     state.session = Some(session.clone());
     state.udev_data = Some(UdevBackendData {
         session: session.clone(),
@@ -220,6 +281,10 @@ pub fn init_udev(
         devices: HashMap::new(),
         started: false,
         dmabuf_state: None,
+        presentation_state,
+        // Filled in by `device_added` once the primary GPU is opened and its
+        // syncobj-timeline capability is probed.
+        syncobj_state: None,
     });
 
     let udev_backend = UdevBackend::new(&seat_name)?;
@@ -343,6 +408,7 @@ fn device_added(
     path: &Path,
 ) -> Result<(), DeviceAddError> {
     let handle = state.handle.clone();
+    let dh = state.display_handle.clone();
     let udev = state.udev_data.as_mut().unwrap();
 
     let fd = udev
@@ -355,6 +421,22 @@ fn device_added(
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
 
     let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
+
+    // linux-drm-syncobj-v1 (explicit sync): create the global once, from the
+    // first DRM device that supports syncobj timeline eventfds
+    // (DRM_CAP_SYNCOBJ_TIMELINE, probed by `supports_syncobj_eventfd`). We only
+    // ever render on the primary GPU, so its device fd is the import device
+    // Smithay uses to import client acquire/release fences. Hardware without
+    // support just never gets the global -- no faked explicit-sync claim.
+    if udev.syncobj_state.is_none() {
+        if supports_syncobj_eventfd(&fd) {
+            info!("drm device supports syncobj timelines; enabling linux-drm-syncobj-v1");
+            udev.syncobj_state = Some(DrmSyncobjState::new::<MindeState>(&dh, fd.clone()));
+        } else {
+            info!("drm device lacks syncobj timeline support; linux-drm-syncobj-v1 not advertised");
+        }
+    }
+
     let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
 
     let registration_token = handle
@@ -640,17 +722,52 @@ impl MindeState {
         crtc: crtc::Handle,
         metadata: &mut Option<DrmEventMetadata>,
     ) {
-        let _ = metadata;
-        let Some(udev) = self.udev_data.as_mut() else {
-            return;
+        // Submit the flipped frame and reclaim the presentation feedback that
+        // was attached when the frame was queued. Scoped so the udev/device/
+        // surface borrows are released before we touch `self.start_time` and
+        // deliver the feedback.
+        let (output, submitted) = {
+            let Some(udev) = self.udev_data.as_mut() else {
+                return;
+            };
+            let Some(device) = udev.devices.get_mut(&node) else {
+                return;
+            };
+            let Some(surface) = device.surfaces.get_mut(&crtc) else {
+                return; // output vanished (unplug); don't reschedule repaints
+            };
+            (surface.output.clone(), surface.drm_output.frame_submitted())
         };
-        let Some(device) = udev.devices.get_mut(&node) else {
-            return;
-        };
-        if let Some(surface) = device.surfaces.get_mut(&crtc) {
-            let _ = surface.drm_output.frame_submitted();
-        } else {
-            return; // output vanished (unplug); don't reschedule repaints
+
+        // wp-presentation-time: mark every surface scanned out on this output
+        // as presented, with the real vblank timestamp/sequence when the kernel
+        // provided monotonic timestamps (otherwise fall back to our own clock
+        // and only claim Vsync).
+        match submitted {
+            Ok(Some(Some(mut feedback))) => {
+                let (clock, flags) = match metadata.as_ref().map(|m| m.time) {
+                    Some(DrmEventTime::Monotonic(tp)) => (
+                        tp,
+                        wp_presentation_feedback::Kind::Vsync
+                            | wp_presentation_feedback::Kind::HwClock
+                            | wp_presentation_feedback::Kind::HwCompletion,
+                    ),
+                    _ => (
+                        self.start_time.elapsed(),
+                        wp_presentation_feedback::Kind::Vsync,
+                    ),
+                };
+                let seq = metadata.as_ref().map(|m| m.sequence as u64).unwrap_or(0);
+                let refresh = output
+                    .current_mode()
+                    .map(|mode| {
+                        Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
+                    })
+                    .unwrap_or(Refresh::Unknown);
+                feedback.presented::<_, Monotonic>(clock, refresh, seq, flags);
+            }
+            Ok(_) => {}
+            Err(err) => warn!(%err, "drm frame_submitted failed"),
         }
 
         // Schedule the next repaint roughly one frame out.
@@ -1006,12 +1123,74 @@ impl MindeState {
                 _ => SwapBuffersError::AlreadySwapped,
             })?;
 
+        // wp-presentation-time: collect the feedback owed to every surface
+        // scanned out on this output. `update_surface_primary_scanout_output`
+        // records which output each surface landed on (needed by
+        // `surface_primary_scanout_output`), and the render report flags
+        // zero-copy scanout. The feedback rides along as the queued frame's
+        // user-data and is delivered on the matching vblank in `frame_finish`.
+        // The `layer_map` guard from above is reused (a second guard on the
+        // same output panics -- see the frame-callback NOTE below).
+        let mut presentation_feedback = OutputPresentationFeedback::new(&output);
+        for window in self.space.elements() {
+            if self.space.outputs_for_element(window).contains(&output) {
+                window.with_surfaces(|surface, states| {
+                    update_surface_primary_scanout_output(
+                        surface,
+                        &output,
+                        states,
+                        None,
+                        &render_result.states,
+                        default_primary_scanout_output_compare,
+                    );
+                });
+                window.take_presentation_feedback(
+                    &mut presentation_feedback,
+                    surface_primary_scanout_output,
+                    |surface, _| {
+                        surface_presentation_feedback_flags_from_states(
+                            surface,
+                            None,
+                            &render_result.states,
+                        )
+                    },
+                );
+            }
+        }
+        for layer_surface in layer_map.layers() {
+            layer_surface.with_surfaces(|surface, states| {
+                update_surface_primary_scanout_output(
+                    surface,
+                    &output,
+                    states,
+                    None,
+                    &render_result.states,
+                    default_primary_scanout_output_compare,
+                );
+            });
+            layer_surface.take_presentation_feedback(
+                &mut presentation_feedback,
+                surface_primary_scanout_output,
+                |surface, _| {
+                    surface_presentation_feedback_flags_from_states(
+                        surface,
+                        None,
+                        &render_result.states,
+                    )
+                },
+            );
+        }
+
         let queued = !render_result.is_empty;
         if queued {
             output_surface
                 .drm_output
-                .queue_frame(None)
+                .queue_frame(Some(presentation_feedback))
                 .map_err(Into::<SwapBuffersError>::into)?;
+        } else {
+            // No frame will be scanned out, so no vblank will arrive to deliver
+            // the feedback; discard it now rather than leak the callbacks.
+            presentation_feedback.discarded();
         }
 
         // Frame callbacks: windows on this output, plus -- from the first
