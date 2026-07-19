@@ -178,6 +178,23 @@ Target version: `1.0.0-rc1`.
     that neither `wp_presentation` nor `wp_linux_drm_syncobj_manager_v1` appear
     on the winit backend (locking in the udev-only split); the udev presentation
     and syncobj paths are flagged for hardware-owner verification.
+- libinput device configuration surface in Scheme (sprint 14): two compositor
+  primitives, `(wm-input-devices)` (enumerate seat devices with their
+  capability names) and
+  `(wm-configure-input! match #:tap-to-click #:natural-scroll #:accel-profile
+  #:click-method)`, plus an optional `handle-input-device-added!` hook. Rules
+  are stored (deduplicated by match) and the udev/DRM backend applies them to
+  every matching device on arrival (hotplug) and re-applies to devices already
+  present when a rule changes at runtime; settings a device does not support
+  are logged and skipped, never fatal. These are Rust-registered primitives,
+  not part of the frozen `(minde …)` module API. The nested winit backend
+  has no libinput, so `wm-input-devices` returns `()` and rules configure
+  nothing. Covered by a Scheme unit test (`tests/input-config-test.scm`,
+  argument validation and rule normalization on the no-libinput path) and a
+  bounded nested e2e gate (`tests/input-config-e2e.sh`, wired into
+  `make check-e2e`) that drives both primitives through `mindectl eval`;
+  real per-device tap/scroll/accel/click on a touchpad is hardware
+  owner-verification.
 - Screen capture via `ext-image-copy-capture-v1` and
   `ext-image-capture-source-v1` (output capture sources). Screenshot
   tools such as grim can now grab a frame of an output on both the winit

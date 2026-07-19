@@ -8,6 +8,7 @@ SCHEME_TESTS := \
 	tests/status-test.scm \
 	tests/portable-keymap-test.scm \
 	tests/input-test.scm \
+	tests/input-config-test.scm \
 	tests/frames-test.scm \
 	tests/groups-test.scm \
 	tests/session-test.scm \
@@ -119,6 +120,7 @@ check-e2e:
 	sh tests/text-input-e2e.sh
 	sh tests/virtual-input-e2e.sh
 	sh tests/presentation-tearing-e2e.sh
+	sh tests/input-config-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

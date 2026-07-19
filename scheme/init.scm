@@ -676,6 +676,63 @@ focused client), #f otherwise."
         (lambda (key . args)
           (wm-log (format #f "error in timer: ~a ~a" key args)))))))
 
+;; ---------------------------------------------------------------------
+;; libinput device configuration (per-device tap-to-click, natural
+;; scrolling, acceleration profile, click method).
+;;
+;; `wm-input-devices` and the low-level `wm-configure-input-rule!` are Rust
+;; primitives (src/guile/mod.rs); they are not part of any frozen public
+;; module. Under the nested winit backend there is no libinput context, so
+;; `wm-input-devices` returns '() and rules are stored but configure
+;; nothing. On the udev/DRM backend a stored rule is applied to every
+;; matching device as it arrives (hotplug) and re-applied immediately to
+;; devices already present. Settings a device does not support are logged
+;; and skipped, never fatal.
+;; ---------------------------------------------------------------------
+
+(define (%guile-user-var name)
+  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
+    (and mod (module-variable mod name))))
+
+(define (%input-tristate v)
+  ;; #t -> 1 (enable), #f -> 0 (disable), 'unset (or anything else) -> -1.
+  (cond ((eq? v #t) 1) ((eq? v #f) 0) (else -1)))
+
+(define (%input-choice v allowed setting)
+  ;; A member of ALLOWED becomes its string form; 'unset leaves the setting
+  ;; unchanged (empty string); anything else is reported and ignored.
+  (cond
+   ((eq? v 'unset) "")
+   ((and (symbol? v) (memq v allowed)) (symbol->string v))
+   (else
+    (wm-log (format #f "wm-configure-input!: unknown ~a ~s" setting v))
+    "")))
+
+(define* (wm-configure-input! match #:key (tap-to-click 'unset)
+                              (natural-scroll 'unset)
+                              (accel-profile 'unset)
+                              (click-method 'unset))
+  "Store a libinput configuration rule and apply it to matching devices.
+
+MATCH is #t (every device) or a string matched as a substring of the
+device name (as reported by `wm-input-devices'). Keyword settings, each
+left unchanged when omitted:
+  #:tap-to-click   #t or #f
+  #:natural-scroll #t or #f
+  #:accel-profile  'flat or 'adaptive
+  #:click-method   'button-areas or 'clickfinger
+A later rule with the same MATCH replaces the earlier one. On the udev
+backend the rule applies to matching devices now and on hotplug; under
+winit it is stored but configures nothing. Returns #t when stored."
+  (let ((var (%guile-user-var 'wm-configure-input-rule!)))
+    (and var
+         ((variable-ref var)
+          (if (eq? match #t) "" match)
+          (%input-tristate tap-to-click)
+          (%input-tristate natural-scroll)
+          (%input-choice accel-profile '(flat adaptive) "accel-profile")
+          (%input-choice click-method '(button-areas clickfinger) "click-method")))))
+
 ;; Fullscreen / force kill / banish (see (minde frames)).
 (bind-prefix-key! "M-f" (lambda () (fullscreen!)) "fullscreen toggle")
 (bind-prefix-key! "K" (lambda () (kill-current-window!)) "kill window (force)")

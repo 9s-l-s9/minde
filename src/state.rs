@@ -867,6 +867,7 @@ impl MindeState {
                     pointer.frame(self);
                 }
             }
+            WmCommand::ReapplyInputConfig => self.reapply_input_config(),
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => {

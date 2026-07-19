@@ -59,6 +59,56 @@ Editing a Guix Home service does not update the running session. Apply Home,
 inspect `~/.config/minde/init.scm`, then log out and back in before judging
 startup behavior.
 
+## Input device configuration
+
+On the DRM/libinput backend, per-device pointer and touchpad behavior is
+configured from Scheme. Two Rust primitives back this surface (they are
+compositor primitives, not part of the versioned `(minde …)` module API):
+
+`(wm-input-devices)` returns the libinput devices on the seat as
+`((name capability …) …)`, where each capability is one of `"keyboard"`,
+`"pointer"`, `"touch"`, `"tablet-tool"`, `"tablet-pad"`, `"gesture"`, or
+`"switch"`. Under the nested winit backend there is no libinput context, so it
+returns `()`.
+
+`(wm-configure-input! match #:key tap-to-click natural-scroll accel-profile
+click-method)` stores a configuration rule and applies it to matching devices.
+`match` is `#t` (every device) or a substring of the device name. The keyword
+settings, each left unchanged when omitted:
+
+| Keyword | Values |
+|---|---|
+| `#:tap-to-click` | `#t` / `#f` |
+| `#:natural-scroll` | `#t` / `#f` |
+| `#:accel-profile` | `'flat` / `'adaptive` |
+| `#:click-method` | `'button-areas` / `'clickfinger` |
+
+A rule applies to every device already present and, since rules are stored, to
+matching devices as they hotplug. A later rule with the same `match` replaces
+the earlier one. Settings a device does not support are logged and skipped,
+never fatal. Under winit the rule is stored but configures nothing.
+
+```scheme
+(define (handle-startup!)
+  ;; Natural scrolling everywhere; tap-to-click and click-to-tap only on the
+  ;; laptop touchpad.
+  (wm-configure-input! #t #:natural-scroll #t)
+  (wm-configure-input! "Touchpad"
+                       #:tap-to-click #t
+                       #:accel-profile 'adaptive
+                       #:click-method 'clickfinger))
+```
+
+The optional hook `(handle-input-device-added! name capabilities)` fires after
+each device arrives and its stored rules are applied, for imperative per-device
+policy:
+
+```scheme
+(define (handle-input-device-added! name capabilities)
+  (when (member "pointer" capabilities)
+    (wm-configure-input! name #:accel-profile 'flat)))
+```
+
 ## Common environment variables
 
 | Variable | Purpose |

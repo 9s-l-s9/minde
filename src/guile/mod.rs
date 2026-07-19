@@ -158,6 +158,11 @@ pub enum WmCommand {
         text: String,
     },
     ClearOverlays,
+    /// Re-apply the stored libinput configuration rules to every
+    /// currently-present device. Enqueued by `wm-configure-input!` so a
+    /// runtime reconfigure reaches devices already plugged in (rules are
+    /// otherwise applied on `InputEvent::DeviceAdded`). No-op under winit.
+    ReapplyInputConfig,
     /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
     /// fork from the calling thread: forking from the Guile REPL
     /// server thread wedged mesa/llvmpipe in the parent (the main
@@ -210,6 +215,67 @@ pub struct HeadInfo {
 
 /// Current head list, readable from any thread for `(wm-outputs)`.
 static HEADS: std::sync::Mutex<Vec<HeadInfo>> = std::sync::Mutex::new(Vec::new());
+
+/// A stored libinput configuration rule (see `wm-configure-input!`).
+///
+/// Backend-agnostic: this layer only stores normalized values. The udev
+/// backend (`src/udev.rs`) maps them onto the libinput `input`-crate enums
+/// and applies them to matching devices as they arrive (and re-applies to
+/// devices already present). Under winit there is no libinput context, so
+/// rules are stored and never applied.
+#[derive(Debug, Clone)]
+pub struct InputRule {
+    /// Substring matched against the device name; the empty string matches
+    /// every device (`#t` in Scheme).
+    pub match_name: String,
+    /// tap-to-click: `Some(true/false)` to set, `None` to leave unchanged.
+    pub tap: Option<bool>,
+    /// natural scrolling: `Some(true/false)` to set, `None` to leave.
+    pub natural_scroll: Option<bool>,
+    /// acceleration profile: `"flat"` | `"adaptive"`, or `None` to leave.
+    pub accel_profile: Option<String>,
+    /// click method: `"button-areas"` | `"clickfinger"`, or `None` to leave.
+    pub click_method: Option<String>,
+}
+
+/// All rules registered through `wm-configure-input!`, applied in order
+/// (later rules win). De-duplicated by `match_name` so repeated config
+/// reloads cannot grow the list without bound.
+static INPUT_RULES: std::sync::Mutex<Vec<InputRule>> = std::sync::Mutex::new(Vec::new());
+
+/// One input device as reported to Scheme by `(wm-input-devices)`.
+#[derive(Debug, Clone)]
+pub struct InputDeviceInfo {
+    pub name: String,
+    pub capabilities: Vec<String>,
+}
+
+/// Currently-present libinput devices, maintained by the udev backend on
+/// device add/remove. Empty under winit (no libinput context).
+static INPUT_DEVICES: std::sync::Mutex<Vec<InputDeviceInfo>> = std::sync::Mutex::new(Vec::new());
+
+/// Snapshot of the stored input rules, for the udev backend to apply.
+pub fn input_rules() -> Vec<InputRule> {
+    INPUT_RULES.lock().unwrap().clone()
+}
+
+/// Records a present input device for `(wm-input-devices)`. Called by the
+/// udev backend on `InputEvent::DeviceAdded`.
+pub fn register_input_device(name: String, capabilities: Vec<String>) {
+    INPUT_DEVICES
+        .lock()
+        .unwrap()
+        .push(InputDeviceInfo { name, capabilities });
+}
+
+/// Drops the first device registered under `name` (udev
+/// `InputEvent::DeviceRemoved`).
+pub fn unregister_input_device(name: &str) {
+    let mut devices = INPUT_DEVICES.lock().unwrap();
+    if let Some(pos) = devices.iter().position(|d| d.name == name) {
+        devices.remove(pos);
+    }
+}
 
 pub fn set_command_sender(sender: Sender<WmCommand>) {
     let _ = COMMAND_SENDER.set(sender);
@@ -739,6 +805,64 @@ unsafe extern "C" fn wm_outputs() -> Scm {
     scm_list(&entries)
 }
 
+/// `(wm-input-devices)` -> `((name cap ...) ...)`: the libinput devices
+/// present on the seat, each with its capability names ("keyboard",
+/// "pointer", "touch", ...). Empty under the winit backend (no libinput).
+unsafe extern "C" fn wm_input_devices() -> Scm {
+    let devices = INPUT_DEVICES.lock().unwrap().clone();
+    let entries: Vec<Scm> = devices
+        .iter()
+        .map(|device| {
+            let mut items = vec![from_str(&device.name)];
+            items.extend(device.capabilities.iter().map(|c| from_str(c)));
+            scm_list(&items)
+        })
+        .collect();
+    scm_list(&entries)
+}
+
+/// Low-level primitive behind the Scheme `wm-configure-input!` wrapper
+/// (see `scheme/init.scm`). All arguments are pre-normalized scalars so
+/// the FFI stays simple:
+/// - `match_`: device-name substring; the empty string matches every device.
+/// - `tap`, `natural`: `1` = enable, `0` = disable, anything else = leave.
+/// - `accel`, `click`: the profile/method string, or `""` to leave unchanged.
+///
+/// Stores the rule (replacing any earlier rule with the same match) and
+/// asks the main thread to re-apply to devices already present.
+unsafe extern "C" fn wm_configure_input_rule(
+    match_: Scm,
+    tap: Scm,
+    natural: Scm,
+    accel: Scm,
+    click: Scm,
+) -> Scm {
+    let tri = |v: Scm| match to_i64(v) {
+        1 => Some(true),
+        0 => Some(false),
+        _ => None,
+    };
+    let opt = |v: Scm| {
+        to_string_lossy(v)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    let rule = InputRule {
+        match_name: to_string_lossy(match_).unwrap_or_default(),
+        tap: tri(tap),
+        natural_scroll: tri(natural),
+        accel_profile: opt(accel),
+        click_method: opt(click),
+    };
+    {
+        let mut rules = INPUT_RULES.lock().unwrap();
+        rules.retain(|r| r.match_name != rule.match_name);
+        rules.push(rule);
+    }
+    send_command(WmCommand::ReapplyInputConfig);
+    from_bool(true)
+}
+
 /// `(wm-runtime-info)` -> `(backend xwayland-status xdisplay uptime-ms)`.
 unsafe extern "C" fn wm_runtime_info() -> Scm {
     let backend = match RUNTIME_BACKEND.load(Ordering::SeqCst) {
@@ -965,6 +1089,19 @@ pub fn init(loop_signal: LoopSignal) {
             std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_key_repeat),
         );
         register_gsubr("wm-idle-ms", 0, 0, 0, wm_idle_ms);
+        // libinput device query + low-level configuration primitive. The
+        // friendly keyword-argument `wm-configure-input!` wraps the latter
+        // in scheme/init.scm. Neither is part of a frozen public module.
+        register_gsubr("wm-input-devices", 0, 0, 0, wm_input_devices);
+        register_gsubr(
+            "wm-configure-input-rule!",
+            5,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_configure_input_rule,
+            ),
+        );
         // Zero-arg, boolean return: matches Gsubr exactly, no transmute.
         register_gsubr("wm-session-locked?", 0, 0, 0, wm_session_locked);
     }
@@ -1179,6 +1316,20 @@ pub fn on_output_configured() {
     if let Some(proc) = lookup("handle-output-configured!") {
         let _ = protected_call(move || unsafe { ffi::scm_call_0(proc) });
     }
+}
+
+/// Calls `(handle-input-device-added!)` if bound, once a libinput device
+/// arrives (udev backend only) and its stored `wm-configure-input!` rules
+/// have been applied. Passes the device name and its capability-name list,
+/// letting a config apply imperative per-device policy. Missing definition
+/// is a no-op, same as the other hooks.
+pub fn on_input_device_added(name: &str, capabilities: &[String]) {
+    let Some(proc) = lookup("handle-input-device-added!") else {
+        return;
+    };
+    let caps: Vec<Scm> = capabilities.iter().map(|c| from_str(c)).collect();
+    let list = scm_list(&caps);
+    let _ = call2(proc, from_str(name), list);
 }
 
 /// Calls `(handle-startup!)` if bound, once the first output is up and
