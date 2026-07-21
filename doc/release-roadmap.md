@@ -109,6 +109,11 @@ as unavailable on the current hardware.
   swayidle auto-lock, fcitx5 round trip, wtype on the udev backend,
   presentation-time/syncobj behavior on the DRM backend, and per-device
   libinput rules taking effect.
+- Sprint 15: not started. Agent interface — runtime API introspection, rich
+  IPC error payloads, an event subscription stream, a one-command
+  screenshot, and an optional thin MCP server, derived from five concrete
+  LLM-agent workflows (see the sprint section). Post-protocol work: extends
+  the IPC layer and tooling only, no frozen-module API changes.
 
 ## Release decisions
 
@@ -668,6 +673,94 @@ Exercise each protocol with its canonical external client (cliphist,
 wl-clipboard primary selection, kanshi, a pointer-lock game or test client,
 a fractional-scale display, swayidle, fcitx5, wtype) on the nested backend
 where possible and on real hardware where not, and retain the session report.
+
+## Sprint 15 — Agent interface: REPL-driven control for humans and LLMs
+
+Status: not started. The main-thread IPC eval socket, the state-as-data
+surface (`dump-frames`/`restore-frames!`, `dump-desktop`, layout specs), and
+the command catalog already make minde genuinely REPL-driven. This sprint
+closes the remaining gap between "a scripting target" and "a surface an LLM
+agent can drive in real time": runtime discoverability, self-correcting
+errors, event push, and a screenshot/act toolset. No frozen-module API
+changes; everything extends the IPC layer, the catalog, and tooling.
+
+### Design: workflows first, architecture derived
+
+The architecture is derived from five concrete workflows, ordered by how much
+machinery each actually needs. The guiding rule: prefer the cheapest tier
+that satisfies the workflow — a single LLM call beats an agent loop, and
+generated persistent Scheme beats both.
+
+- W1 — one-shot command ("move every terminal to group 2", "tile these two
+  side by side"). One LLM call with the API catalog in context, emitting one
+  s-expression for `mindectl eval`. Needs: a machine-readable catalog
+  (names, signatures, docstrings, command schemas), data-only return values,
+  and error payloads good enough to self-correct in one retry.
+- W2 — visual arrange/verify ("make this look balanced", "which window is
+  blank?"). An agent loop alternating screenshot → eval → screenshot. Needs:
+  a one-command screenshot tool (the wlr-screencopy path from Sprint 13b
+  already provides the protocol; this is packaging, not engineering) plus
+  everything from W1.
+- W3 — persistent automation ("whenever zoom opens, move it to group 3").
+  The correct output is not a running agent: the LLM writes a Scheme hook
+  once, validates it, and installs it into the user configuration. Runtime
+  cost zero, no LLM in the loop after authoring. Needs: discoverable hook
+  documentation in the catalog and a validate-then-reload path (both mostly
+  exist: `mindectl check-config`, C-t R).
+- W4 — reactive assistant (a daemon that watches events and occasionally
+  consults an LLM: urgency triage, meeting-detected layout switches). Needs:
+  an event subscription channel — the only workflow that cannot be built on
+  today's poll-only observation (`status.json`).
+- W5 — computer-use actuator. With `wm-send-key`, `wm-send-string`,
+  `wm-click`, `wm-warp-pointer`, and virtual input already present, eval +
+  screenshot makes minde a native computer-use backend for driving
+  arbitrary applications — no extra compositor work, only documentation and
+  the same screenshot tool as W2.
+
+Derived decisions: the deliverable is a small, composable toolset —
+describe, eval, subscribe, screenshot, send-input — not a built-in agent;
+LLM/agent orchestration stays outside the compositor (same externalization
+stance as the locker and idle daemon). An optional thin MCP server packages
+those five tools for any MCP-speaking agent; it is a client of the public
+sockets, never a new privilege domain. The eval socket remains full-power
+`eval` under the user's own session (0600), documented as such: an agent
+plugged into it has exactly the user's authority, which is the intended
+trust model, not an oversight.
+
+### Implementation
+
+- Rich IPC errors: include the condition message and a bounded backtrace in
+  the `(error ...)` payload so a model (or a human) can self-correct without
+  guessing; keep the reply a readable datum.
+- Runtime introspection: a `describe-api` entry point returning the full
+  catalog — public procedures with signatures and docstrings, registered
+  commands with schemas, hooks with their event payload shapes — as data
+  over IPC, plus a generated machine-readable artifact (via
+  `scripts/generate-docs`) suitable for dropping into an agent's context or
+  tool definition.
+- Writable-data guarantee: every public procedure reachable over IPC returns
+  `write`-able data (no opaque records/procedures in replies), enforced by a
+  test over the catalog.
+- Event subscription: a read-only event socket (or `subscribe` verb)
+  streaming the existing hook events as s-expression lines — window
+  map/unmap/title, focus, group and head changes — with slow-consumer
+  eviction so a stuck client cannot block the compositor.
+- `mindectl screenshot [--output NAME] FILE`: wrap the existing capture
+  path (grim over wlr-screencopy) into one predictable command for W2/W5.
+- Optional `minde-mcp`: a thin stdio MCP server exposing describe / eval /
+  subscribe / screenshot / send-input as tools, packaged like the other
+  helper scripts; document the three integration tiers (one LLM call, agent
+  loop, generated persistent Scheme) with one worked example each.
+- Bounded e2e gate: scripted agent round trip nested — describe, eval a
+  layout mutation, observe the matching event on the subscription socket,
+  capture and validate a screenshot.
+
+### Owner verification
+
+Drive one real session end to end with an actual LLM agent (e.g. Claude Code
+against `minde-mcp` or plain `mindectl`): a W1 one-shot command, a W2
+screenshot-verify loop, and authoring a W3 hook that survives reload.
+Retain the transcript as the evidence record.
 
 ## 1.0 acceptance gates
 
