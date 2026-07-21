@@ -18,6 +18,26 @@ The local Unix socket is owned by the session user and accepts one Scheme datum
 per request. Evaluation runs on the compositor event-loop thread, serializing
 window-policy mutation with protocol events.
 
+## Reply shape
+
+Every reply is a single readable Scheme datum:
+
+- `(ok RESULT)` on success;
+- `(error KEY ARGS MESSAGE BACKTRACE)` on failure, where `KEY` is the Guile
+  exception key (a symbol), `ARGS` its raw throw arguments, `MESSAGE` a
+  human-readable rendering of the condition, and `BACKTRACE` a bounded Guile
+  backtrace string. `MESSAGE` and `BACKTRACE` let an LLM or a human self-correct
+  without a second round trip; the backtrace is capped to a few frames and a
+  bounded length, and error formatting is itself guarded so it never throws.
+
+**Writable-data guarantee.** `RESULT` is always `write`-able and re-`read`-able
+data. Public catalog commands return plain data (lists, symbols, strings,
+numbers, booleans), never opaque records, procedures, or other objects that
+print as `#<...>`. The IPC reply path enforces this: an unreadable result is
+converted into an `(error unreadable-result ...)` datum rather than emitted as
+an unparseable reply, so a client's `read` never fails on a well-formed
+response.
+
 ## Published files
 
 - `$XDG_RUNTIME_DIR/minde/status.json`: atomic schema-v1 JSON;

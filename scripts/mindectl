@@ -46,7 +46,21 @@ ipc_request() {
                     (write (cadr response)))
                 (newline))
               (begin
-                (format (current-error-port) "mindectl: ~s~%" response)
+                ;; Error replies are (error KEY ARGS MESSAGE BACKTRACE); surface
+                ;; the human-readable message and bounded backtrace when present,
+                ;; falling back to the raw datum for any other shape.
+                (if (and (pair? response) (eq? (car response) (quote error)))
+                    (let ((tail (cdddr response)))
+                      (format (current-error-port) "mindectl: ~a: ~s~%"
+                              (cadr response) (caddr response))
+                      (when (and (pair? tail) (string? (car tail))
+                                 (not (string-null? (car tail))))
+                        (format (current-error-port) "  ~a~%" (car tail)))
+                      (when (and (pair? tail) (pair? (cdr tail))
+                                 (string? (cadr tail))
+                                 (not (string-null? (cadr tail))))
+                        (format (current-error-port) "~a~%" (cadr tail))))
+                    (format (current-error-port) "mindectl: ~s~%" response))
                 (exit 1)))))' -- "$mode" "$expression"
 }
 

@@ -1755,21 +1755,22 @@ reload baseline. Call once after adding imperative user bindings."
 ;; Rust calls this from its calloop-owned Unix socket source. Reading,
 ;; evaluation and every resulting compositor mutation therefore happen on
 ;; the event-loop thread. The returned string is a one-datum response.
-(define (minde-ipc-eval source)
-  (call-with-output-string
-    (lambda (port)
-      (call-with-scheme-backtrace "IPC evaluation failure"
-        (lambda ()
-          (let ((datum
-                 (call-with-input-string source
-                   (lambda (input)
-                     (let ((value (read input)))
-                       (unless (eof-object? (read input))
-                         (error "IPC accepts exactly one datum"))
-                       value)))))
-            (write (list 'ok (eval datum (interaction-environment))) port)))
-        (lambda (key . arguments)
-          (write (list 'error key arguments) port))))))
+;;
+;; Reply shape (always a single readable Scheme datum):
+;;   (ok RESULT)
+;;   (error KEY ARGS MESSAGE-STRING BACKTRACE-STRING)
+;; MESSAGE-STRING is a human-readable rendering of the condition and
+;; BACKTRACE-STRING a bounded Guile backtrace, so an LLM or human can
+;; self-correct without a second round trip. RESULT is guaranteed to be
+;; `write`-able and re-`read`-able data: an unreadable value (a record,
+;; procedure or other object printing as #<...>) is reported as an
+;; `unreadable-result` error rather than emitted as an unparseable datum.
+;;
+;; The reply envelope (minde-ipc-eval and its helpers) lives in the plain
+;; file ipc-reply.scm so it can be exercised headlessly by
+;; tests/ipc-reply-test.scm. `load` searches the load path, which already
+;; contains the scheme/ directory (added above and via -L at startup).
+(load-from-path "ipc-reply.scm")
 
 ;; The Guile REPL server owns another thread and can race policy mutation.
 ;; Keep it solely as an explicit development escape hatch.

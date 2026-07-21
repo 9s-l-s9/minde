@@ -19,7 +19,8 @@ SCHEME_TESTS := \
 	tests/menu-test.scm \
 	tests/winmgmt-test.scm \
 	tests/placement-test.scm \
-	tests/dynamic-test.scm
+	tests/dynamic-test.scm \
+	tests/ipc-reply-test.scm
 
 .PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
