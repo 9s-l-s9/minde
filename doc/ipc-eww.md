@@ -10,9 +10,13 @@ layout without parsing compositor logs.
 mindectl query state --json
 mindectl query status
 mindectl subscribe --json
+mindectl subscribe --events
 mindectl eval '(current-group-name)'
 minde-msg -t 1500 "hello from a script"
 ```
+
+`subscribe --json` re-emits `status.json` on change by polling; `subscribe
+--events` is the real-time push interface described below.
 
 The local Unix socket is owned by the session user and accepts one Scheme datum
 per request. Evaluation runs on the compositor event-loop thread, serializing
@@ -70,11 +74,59 @@ The same procedure produces the machine-readable
 committed catalog and the live reply are generated from one source and cannot
 drift.
 
+## Event subscription (push)
+
+Polling `status.json` cannot observe transitions an agent wants to react to
+(a window mapping, a focus change). A second, read-only socket pushes them:
+
+- `$XDG_RUNTIME_DIR/minde-events.sock` (mode `0600`, session user only).
+
+Every accepted client receives each fired compositor event as one s-expression
+line — the event name followed by its hook payload, matching the shapes in
+`describe-api`'s `hooks` section (and `%api-hook-metadata`):
+
+```
+(new-window 42 "firefox" "org.mozilla.firefox")
+(focus-window 42)
+(focus-frame 0 0 1280 760)
+(destroy-window 42)
+```
+
+`mindectl subscribe --events` connects and streams these lines to stdout, one
+per line, until the compositor exits. The stream is read-only: it carries
+events, it does not accept commands (use the eval socket for those).
+
+Every firing is mirrored automatically at the hook layer
+(`run-event-hook!` → `minde-mirror-event`, in `scheme/event-stream.scm`), so
+no user-installed hook is required and every event reaches subscribers. Each
+payload value honors the same **writable-data guarantee** as the eval reply: a
+value that would print as `#<...>` is bounded to a string, so a subscriber's
+`read` never fails on a well-formed line.
+
+**Privacy while locked.** When the session is locked (ext-session-lock),
+title- and content-bearing events are filtered, mirroring `status.json`'s
+`redact?` policy (window id retained; human-readable title and app-id omitted):
+
+- `new-window` keeps its id but reports empty `""` title and app-id;
+- `message` events (arbitrary on-screen text) are suppressed entirely;
+- id-only lifecycle and geometry events (`focus-window`, `destroy-window`,
+  `focus-frame`, `focus-group`, `session-lock`, `session-unlock`) keep flowing,
+  so an agent can still track focus and window churn while locked.
+
+**Slow-consumer and eviction policy.** Delivery never blocks the compositor
+event loop. Writes to a subscriber are non-blocking; unsent bytes are buffered
+per subscriber up to a bounded backlog (256 KiB). A subscriber that falls
+further behind is evicted — its connection is closed and the eviction is
+logged. A clean client disconnect is likewise detected on the next write and
+dropped. Multiple simultaneous subscribers are supported up to a fixed cap (16);
+connections beyond the cap are rejected.
+
 ## Published files
 
 - `$XDG_RUNTIME_DIR/minde/status.json`: atomic schema-v1 JSON;
 - `$XDG_RUNTIME_DIR/minde-status`: compatibility one-line status;
-- `$XDG_RUNTIME_DIR/minde-ipc.sock`: main-thread request socket.
+- `$XDG_RUNTIME_DIR/minde-ipc.sock`: main-thread request socket;
+- `$XDG_RUNTIME_DIR/minde-events.sock`: read-only event push socket.
 
 Unchanged state is not rewritten. New consumers should use the JSON query or
 subscription interfaces. Schema details and redaction guarantees are in

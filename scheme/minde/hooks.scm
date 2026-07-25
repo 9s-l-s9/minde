@@ -46,6 +46,17 @@
 (define (run-event-hook! name . args)
   "Runs every procedure registered on NAME with ARGS; errors are logged
 via the wm-log subr (when present) and swallowed."
+  ;; Mirror every firing to the read-only event push socket before running
+  ;; user hooks. The mirror procedure (minde-mirror-event, defined in the
+  ;; plain-loaded event-stream.scm) is resolved from guile-user so this module
+  ;; stays decoupled and testable in isolation; a missing mirror or a throwing
+  ;; one must never break the event path.
+  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+         (var (and mod (module-variable mod 'minde-mirror-event))))
+    (when var
+      (catch #t
+        (lambda () ((variable-ref var) name args))
+        (lambda _ #f))))
   (apply foundation:run-hook! %hooks name
          (lambda (key . eargs)
            (let* ((mod (resolve-module '(guile-user) #:ensure #f))

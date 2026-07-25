@@ -330,7 +330,8 @@
    ((name . wm-idle-ms) (signature . "(wm-idle-ms)") (documentation . "Return milliseconds elapsed since the last input event."))
    ((name . wm-input-devices) (signature . "(wm-input-devices)") (documentation . "Return ((name cap ...) ...): the present libinput devices."))
    ((name . wm-configure-input-rule!) (signature . "(wm-configure-input-rule! match key value kind flag)") (documentation . "Low-level libinput rule primitive wrapped by wm-configure-input!."))
-   ((name . wm-session-locked?) (signature . "(wm-session-locked?)") (documentation . "Return whether the session is currently locked.")))
+   ((name . wm-session-locked?) (signature . "(wm-session-locked?)") (documentation . "Return whether the session is currently locked."))
+   ((name . wm-publish-event) (signature . "(wm-publish-event line)") (documentation . "Mirror one serialized event LINE to every event-socket subscriber.")))
   (hooks
    ((name . new-window) (arguments id title app-id) (documentation . "A window was mapped and placed."))
    ((name . destroy-window) (arguments id) (documentation . "A window was unmapped."))

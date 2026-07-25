@@ -1772,6 +1772,15 @@ reload baseline. Call once after adding imperative user bindings."
 ;; contains the scheme/ directory (added above and via -L at startup).
 (load-from-path "ipc-reply.scm")
 
+;; Event push socket glue: run-event-hook! (in (minde hooks)) resolves and
+;; calls the top-level `minde-mirror-event' defined here on every firing, so
+;; every event is serialized to one readable s-expression line and mirrored to
+;; $XDG_RUNTIME_DIR/minde-events.sock subscribers with no user-installed
+;; hook. Loaded after ipc-reply.scm because it reuses ipc-writable-datum for the
+;; writable-data guarantee. Kept in a plain file for headless testing
+;; (tests/event-stream-test.scm).
+(load-from-path "event-stream.scm")
+
 ;; Runtime API introspection: `describe-api' returns the whole control surface
 ;; (commands, public module procedures, wm-* gsubrs and event hooks) as plain
 ;; re-readable data, so an agent's first IPC call can discover what is callable

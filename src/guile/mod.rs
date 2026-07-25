@@ -604,6 +604,17 @@ unsafe extern "C" fn wm_session_locked() -> Scm {
     from_bool(SESSION_LOCKED.load(Ordering::SeqCst))
 }
 
+/// `(wm-publish-event line)` -- mirror one already-serialized event LINE (an
+/// s-expression string) to every event-socket subscriber. The Scheme hook glue
+/// (event-stream.scm) does the serialization, sanitization and lock-privacy
+/// filtering; this just hands the finished line to the fan-out delivery path.
+unsafe extern "C" fn wm_publish_event(line: Scm) -> Scm {
+    if let Some(line) = to_string_lossy(line) {
+        crate::events::publish_line(&line);
+    }
+    from_bool(true)
+}
+
 unsafe extern "C" fn wm_send_string(text: Scm) -> Scm {
     let Some(text) = to_string_lossy(text) else {
         return from_bool(false);
@@ -1104,6 +1115,13 @@ pub fn init(loop_signal: LoopSignal) {
         );
         // Zero-arg, boolean return: matches Gsubr exactly, no transmute.
         register_gsubr("wm-session-locked?", 0, 0, 0, wm_session_locked);
+        register_gsubr(
+            "wm-publish-event",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_publish_event),
+        );
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >

@@ -97,7 +97,9 @@
     (wm-configure-input-rule! "(wm-configure-input-rule! match key value kind flag)"
      "Low-level libinput rule primitive wrapped by wm-configure-input!.")
     (wm-session-locked? "(wm-session-locked?)"
-     "Return whether the session is currently locked.")))
+     "Return whether the session is currently locked.")
+    (wm-publish-event "(wm-publish-event line)"
+     "Mirror one serialized event LINE to every event-socket subscriber.")))
 
 ;; Event hooks fired by the bundled modules (see scheme/minde/hooks.scm).
 ;; name, payload argument names, one-line description.

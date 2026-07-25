@@ -5,6 +5,7 @@
 //! adapted from Smithay's `smallvil` example; see README.md for credit and
 //! the exact upstream revision used.
 
+mod events;
 mod guile;
 mod handlers;
 
@@ -187,6 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `handle-output-geometry!`) as soon as it knows the output size.
     guile::init(state.loop_signal.clone());
     ipc::init(&mut event_loop)?;
+    events::init(&mut event_loop)?;
 
     match backend {
         Backend::Winit => {
