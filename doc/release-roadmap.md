@@ -109,7 +109,16 @@ as unavailable on the current hardware.
   swayidle auto-lock, fcitx5 round trip, wtype on the udev backend,
   presentation-time/syncobj behavior on the DRM backend, and per-device
   libinput rules taking effect.
-- Sprint 15: not started. Agent interface — runtime API introspection, rich
+- Sprint 15: core IPC items done (2026-07-17, commits c8b2275, 500ca53,
+  499b0d6): rich error payloads `(error KEY ARGS MESSAGE BACKTRACE)` with the
+  writable-data reply guarantee; `describe-api` runtime introspection with
+  the drift-gated generated `doc/generated/api-catalog.scm` and a test
+  enforcing gsubr-metadata coverage against the Rust registration sites; and
+  the read-only event push socket (`minde-events.sock`, bounded fan-out,
+  slow-consumer eviction, lock-time redaction, `mindectl subscribe
+  --events`). Remaining: screenshot command, optional MCP server, workflow
+  documentation and the scripted agent round-trip gate; the one-shot 64KB
+  IPC protocol ceiling stays documented-only. Agent interface — runtime API introspection, rich
   IPC error payloads, an event subscription stream, a one-command
   screenshot, and an optional thin MCP server, derived from five concrete
   LLM-agent workflows (see the sprint section). Post-protocol work: extends
