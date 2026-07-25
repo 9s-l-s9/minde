@@ -118,11 +118,13 @@ as unavailable on the current hardware.
   slow-consumer eviction, lock-time redaction, `mindectl subscribe
   --events`). Remaining: screenshot command, optional MCP server, workflow
   documentation and the scripted agent round-trip gate; the one-shot 64KB
-  IPC protocol ceiling stays documented-only. Agent interface — runtime API introspection, rich
-  IPC error payloads, an event subscription stream, a one-command
-  screenshot, and an optional thin MCP server, derived from five concrete
-  LLM-agent workflows (see the sprint section). Post-protocol work: extends
-  the IPC layer and tooling only, no frozen-module API changes.
+  IPC protocol ceiling stays documented-only. Post-protocol work: extends
+  the IPC layer and tooling only, no frozen-module API changes (see the
+  sprint section for the workflow derivation).
+- Sprint 16: not started. Touch and tablet/stylus input — the touchscreen
+  and pencil found dead during sprint 14 hardware verification; seat touch
+  capability, the five touch event arms, `GrabType::Touch`, and
+  `zwp_tablet_v2` with pointer emulation (see the sprint section).
 
 ## Release decisions
 
@@ -770,6 +772,64 @@ Drive one real session end to end with an actual LLM agent (e.g. Claude Code
 against `minde-mcp` or plain `mindectl`): a W1 one-shot command, a W2
 screenshot-verify loop, and authoring a W3 hook that survives reload.
 Retain the transcript as the evidence record.
+
+## Sprint 16 — Touch and tablet input
+
+Status: not started. Found during sprint 14 owner hardware verification: the
+laptop's touchscreen produces no input at all, and the same gap covers its
+stylus. Root cause is absence, not breakage — the seat never calls
+`add_touch()` (so clients see no `wl_touch` capability), `process_input_event`
+has no `TouchDown/Up/Motion/Frame/Cancel` arms (libinput touch events fall
+through the catch-all and are dropped, without even resetting the idle
+timer, contrary to the idle module's comment), and `GrabType::Touch` is an
+inherited smallvil stub. libinput/udev already see the devices —
+`(wm-input-devices)` lists the `touch` and `tablet-tool` capabilities — the
+events just have nowhere to go. The vendored Smithay revision ships the full
+seat touch machinery and `zwp_tablet_v2` (`wayland::tablet_manager`), so
+this is the same integration-not-engineering shape as sprint 14.
+
+### Implementation
+
+- Touch: `add_touch()` on the seat; handle the five touch event kinds in
+  `process_input_event`, mapping absolute touchscreen coordinates to output
+  space and routing to the surface under the touch point; wire
+  `notify_idle_activity` so touches reset idle (making the idle module's
+  "uniform activity" comment true); implement the `GrabType::Touch` arm.
+- Touch semantics: a tap on an unfocused window focuses it, consistent with
+  click-to-focus; touch respects the session-lock gate exactly like pointer
+  input (no touch reaches ordinary clients while locked, lock-surface
+  interaction allowed) and the existing input-policy hooks where they apply.
+- Tablet/stylus: create the `zwp_tablet_manager_v2` global
+  (`wayland::tablet_manager`, `TabletSeatHandle`), advertise
+  tablet/tool/pad devices from libinput, and handle tool proximity, tip
+  down/up, motion, pressure/tilt axes and tool buttons in
+  `process_input_event`; the stylus moves the visible cursor and delivers
+  `zwp_tablet_tool_v2` events to tablet-aware clients, with pointer
+  emulation as the fallback for clients that never bind the tablet
+  protocol, so the pencil always at least points and clicks.
+- Same lock-gating and idle wiring for tablet events as for touch; tablet
+  tools respect keyboard-focus rules on tip-down like a click.
+- Scheme surface: extend the libinput rule surface where applicable to the
+  new device types (calibration/rotation only if libinput exposes it
+  simply); no new frozen-module exports — follow the sprint 14 pattern of
+  top-level glue only if policy is actually needed.
+- Capability matrix and generated docs updated in the same change; the
+  `%api-hook-metadata`/event-stream surface gains nothing unless a real
+  policy hook is added.
+- Tests: nested e2e is limited (no virtual touchscreen in the harness), so
+  gate what is testable headlessly (coordinate transform, tap-to-focus
+  policy, lock gating) with unit/Scheme tests, assert the tablet global is
+  advertised nested (`wayland-info`), and leave device behavior to owner
+  verification.
+
+### Owner verification
+
+On the touch laptop: scroll and tap in a browser and foot, tap-to-focus
+between two windows, confirm no touch input leaks through the lock screen,
+and confirm touches keep swayidle from firing. With the pencil: hover moves
+the cursor, tip-down draws in a tablet-aware app (e.g. GIMP, Xournal++)
+with pressure if the app shows it, and tip-down clicks/focuses in ordinary
+apps via pointer emulation. Retain the session report.
 
 ## 1.0 acceptance gates
 
