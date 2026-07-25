@@ -205,8 +205,20 @@ impl WaylandDndGrabHandler for MindeState {
                 ptr.set_grab(self, grab, serial, Focus::Keep);
             }
             GrabType::Touch => {
-                // smallvil lacks touch handling
-                source.cancel();
+                let Some(touch) = seat.get_touch() else {
+                    tracing::warn!("touch DnD requested on seat without touch");
+                    source.cancel();
+                    return;
+                };
+                let Some(start_data) = touch.grab_start_data() else {
+                    tracing::warn!("touch DnD requested without an active grab");
+                    source.cancel();
+                    return;
+                };
+
+                // create a dnd grab to start the operation
+                let grab = DnDGrab::new_touch(&self.display_handle, start_data, source, seat);
+                touch.set_grab(self, grab, serial);
             }
         }
     }

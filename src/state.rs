@@ -455,6 +455,9 @@ impl MindeState {
         };
         seat.add_keyboard(xkb_config, 200, 25).unwrap();
         seat.add_pointer();
+        // wl_touch capability: touchscreens on the udev backend and touch
+        // events synthesized by the winit backend both route through here.
+        seat.add_touch();
 
         let space = Space::default();
 
