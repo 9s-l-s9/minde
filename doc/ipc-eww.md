@@ -38,6 +38,38 @@ converted into an `(error unreadable-result ...)` datum rather than emitted as
 an unparseable reply, so a client's `read` never fails on a well-formed
 response.
 
+## Discovering the API (`describe-api`)
+
+An agent's first question is "what can I do here?" One IPC call answers it:
+
+```
+(describe-api)          ; the whole control surface
+(describe-api "float")  ; only items whose name contains "float" (apropos)
+```
+
+`describe-api` is a top-level procedure (defined in `scheme/api-introspect.scm`,
+loaded by `init.scm`), so it is callable over the eval socket without being part
+of any frozen public module. It returns an alist of four sections, each a list
+of per-item alists — all plain, re-readable data honoring the writable-data
+guarantee above:
+
+- `commands` — the registered command catalog: `name`, `category`, `summary`,
+  `arguments`, `documentation`;
+- `procedures` — the public bindings of the eight documented `(minde …)`
+  modules: `name`, `module`, `signature`, `documentation`;
+- `gsubrs` — the `wm-*` Rust primitives: `name`, `signature`, `documentation`;
+- `hooks` — the `(minde hooks)` event hooks: `name`, `arguments` (the payload
+  shape), `documentation`.
+
+The optional string argument is an apropos filter: only items whose name
+contains it (case-insensitively) are returned, in every section at once.
+
+The same procedure produces the machine-readable
+[`doc/generated/api-catalog.scm`](generated/api-catalog.scm) (emitted by
+`scripts/generate-api-catalog.scm` and checked by the doc-drift gate), so the
+committed catalog and the live reply are generated from one source and cannot
+drift.
+
 ## Published files
 
 - `$XDG_RUNTIME_DIR/minde/status.json`: atomic schema-v1 JSON;

@@ -10,6 +10,8 @@ guile --no-auto-compile -L scheme scripts/generate-keymap-reference.scm \
     >"$out/keybindings.md"
 guile --no-auto-compile -L scheme scripts/generate-demo-manifest.scm \
     >"$out/demo-manifest.json"
+guile --no-auto-compile -L scheme scripts/generate-api-catalog.scm \
+    >"$out/api-catalog.scm"
 guile --no-auto-compile -L scheme scripts/generate-manual.scm \
     >"$out/manual.html"
 sh scripts/generate-testing-reference doc/testing.md

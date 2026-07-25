@@ -1772,6 +1772,13 @@ reload baseline. Call once after adding imperative user bindings."
 ;; contains the scheme/ directory (added above and via -L at startup).
 (load-from-path "ipc-reply.scm")
 
+;; Runtime API introspection: `describe-api' returns the whole control surface
+;; (commands, public module procedures, wm-* gsubrs and event hooks) as plain
+;; re-readable data, so an agent's first IPC call can discover what is callable
+;; here. Kept in a plain file for headless testing and to feed the generated
+;; doc/generated/api-catalog.scm from the same source (see api-introspect.scm).
+(load-from-path "api-introspect.scm")
+
 ;; The Guile REPL server owns another thread and can race policy mutation.
 ;; Keep it solely as an explicit development escape hatch.
 (when (getenv "MINDE_UNSAFE_REPL")
