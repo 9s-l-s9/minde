@@ -502,6 +502,17 @@ impl MindeState {
         info!(device = %name, ?capabilities, "input device added");
         apply_input_rules(&mut device, &guile::input_rules());
         guile::register_input_device(name.clone(), capabilities.clone());
+        // Tablet devices are advertised via zwp_tablet_manager_v2 so a stylus
+        // (e.g. a laptop's built-in pencil) reaches tablet-aware clients. The
+        // tool devices themselves are added lazily on first proximity (see
+        // `process_input_event`). `add_tablet` is idempotent per descriptor.
+        if device.has_capability(DeviceCapability::TabletTool) {
+            use smithay::wayland::tablet_manager::TabletSeatTrait;
+            let desc = smithay::wayland::tablet_manager::TabletDescriptor::from(&device);
+            self.seat
+                .tablet_seat()
+                .add_tablet::<Self>(&self.display_handle, &desc);
+        }
         if let Some(udev) = self.udev_data.as_mut() {
             udev.input_devices.push(device);
         }
@@ -514,6 +525,14 @@ impl MindeState {
         let name = device.name().to_string();
         info!(device = %name, "input device removed");
         guile::unregister_input_device(&name);
+        // Drop the tablet from the seat so clients stop seeing it. Tools added
+        // on proximity are left registered (a tool may outlive one tablet and
+        // is cheap to keep; Smithay documents tool-removal as compositor policy).
+        if device.has_capability(DeviceCapability::TabletTool) {
+            use smithay::wayland::tablet_manager::TabletSeatTrait;
+            let desc = smithay::wayland::tablet_manager::TabletDescriptor::from(device);
+            self.seat.tablet_seat().remove_tablet(&desc);
+        }
         if let Some(udev) = self.udev_data.as_mut() {
             udev.input_devices.retain(|d| d != device);
         }

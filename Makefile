@@ -126,6 +126,7 @@ check-e2e:
 	sh tests/presentation-tearing-e2e.sh
 	sh tests/input-config-e2e.sh
 	sh tests/touch-e2e.sh
+	sh tests/tablet-e2e.sh
 
 check-stress:
 	@command -v Xvfb >/dev/null 2>&1 || { echo "error: Xvfb is required" >&2; exit 127; }

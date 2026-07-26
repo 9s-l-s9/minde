@@ -71,12 +71,21 @@ impl SeatHandler for MindeState {
     }
 }
 
-// `wp_cursor_shape_v1` can also target tablet tools. We do not advertise a
-// tablet manager, so this is never driven, but Smithay's cursor-shape device
-// dispatch is generic over `TabletSeatHandler`; the default (no-op) image
-// callback satisfies the bound. Tablet cursor images therefore fall through
-// to the default themed pointer.
-impl smithay::wayland::tablet_manager::TabletSeatHandler for MindeState {}
+// A tablet-aware client can set its own tool cursor (via `zwp_tablet_tool_v2`'s
+// set_cursor, and `wp_cursor_shape_v1` can also target tablet tools). Route the
+// requested image into the shared `CursorState` the pointer uses, so the stylus
+// cursor renders through the same path (themed/shape/client-surface). A client
+// that sets no tool cursor falls through to the default themed pointer, which
+// already follows the stylus via `self.pointer_location`.
+impl smithay::wayland::tablet_manager::TabletSeatHandler for MindeState {
+    fn tablet_tool_image(
+        &mut self,
+        _tool: &smithay::backend::input::TabletToolDescriptor,
+        image: smithay::input::pointer::CursorImageStatus,
+    ) {
+        self.cursor_state.set_status(image);
+    }
+}
 
 //
 // Primary selection & data control (clipboard managers)

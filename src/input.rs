@@ -5,7 +5,8 @@ use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend,
         InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
-        PointerMotionEvent, TouchEvent,
+        PointerMotionEvent, ProximityState, TabletToolAxisEvent, TabletToolButtonEvent,
+        TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
     },
     input::{
         keyboard::{FilterResult, keysyms as xkb},
@@ -14,7 +15,33 @@ use smithay::{
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, SERIAL_COUNTER},
+    wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
 };
+
+/// BTN_LEFT in the libinput/evdev button namespace. Emulated as the tool's
+/// tip-down/up "click" for tablet-unaware clients.
+const BTN_LEFT: u32 = 0x110;
+
+/// Whether a tablet tool's input drives the real tablet protocol (the surface
+/// under the tool is tablet-aware) or falls back to emulating the pointer so a
+/// stylus still points and clicks in tablet-unaware apps. Factored out so the
+/// decision is unit-testable without a live seat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolRoute {
+    Tablet,
+    Pointer,
+}
+
+/// The tool routes to the real tablet protocol only when a tool resource is
+/// registered *and* the focused surface's client has bound it; otherwise the
+/// event is emulated on the pointer.
+fn tool_route(tool_registered: bool, focus_is_tablet_aware: bool) -> ToolRoute {
+    if tool_registered && focus_is_tablet_aware {
+        ToolRoute::Tablet
+    } else {
+        ToolRoute::Pointer
+    }
+}
 
 use crate::guile;
 use crate::state::MindeState;
@@ -52,8 +79,9 @@ impl MindeState {
         self.notify_idle_activity();
         // While locked, only keyboard events are processed (they reach the
         // focused lock surface, gated further below so they never hit the
-        // Scheme keybinding layer). Pointer, touch, and axis events are
-        // dropped so no regular client ever sees them.
+        // Scheme keybinding layer). Pointer, touch, tablet-tool, and axis
+        // events are all dropped -- the allowlist is Keyboard-only, so every
+        // TabletTool* event is covered -- so no regular client ever sees them.
         if self.locked && !matches!(event, InputEvent::Keyboard { .. }) {
             return;
         }
@@ -319,10 +347,17 @@ impl MindeState {
                     touch.frame(self);
                 }
             }
-            InputEvent::TouchCancel { .. } => {
-                if let Some(touch) = self.seat.get_touch() {
-                    touch.cancel(self);
-                }
+            InputEvent::TabletToolAxis { event, .. } => {
+                self.on_tablet_tool_axis(&event);
+            }
+            InputEvent::TabletToolProximity { event, .. } => {
+                self.on_tablet_tool_proximity(&event);
+            }
+            InputEvent::TabletToolTip { event, .. } => {
+                self.on_tablet_tool_tip(&event);
+            }
+            InputEvent::TabletToolButton { event, .. } => {
+                self.on_tablet_tool_button(&event);
             }
             InputEvent::DeviceAdded { device } => {
                 tracing::info!(name = device.name(), "input device added");
@@ -616,6 +651,193 @@ impl MindeState {
             });
         }
     }
+
+    /// Tablet tool axis (motion + pressure/tilt/distance/etc.). Transforms the
+    /// absolute tool position into global space, always keeps the visible
+    /// cursor following the stylus, and either delivers a real tablet motion to
+    /// a tablet-aware client or emulates pointer motion for a tablet-unaware
+    /// one. The tablet/tool must already be registered (tablet from
+    /// DeviceAdded, tool from proximity) for the tablet path; otherwise this is
+    /// pure pointer emulation.
+    fn on_tablet_tool_axis<I: InputBackend>(&mut self, event: &impl TabletToolAxisEvent<I>) {
+        let Some(location) = self.touch_global_position(event) else {
+            return;
+        };
+        let tablet_seat = self.seat.tablet_seat();
+        let tablet = tablet_seat.get_tablet(&TabletDescriptor::from(&event.device()));
+        let tool = tablet_seat.get_tool(&event.tool());
+        let under = self.surface_under(location);
+        // Decide against the surface's client *before* handing `under` to
+        // motion() (which consumes it).
+        let aware = under
+            .as_ref()
+            .map(|(s, _)| self.client_is_tablet_aware(s))
+            .unwrap_or(false);
+
+        let route = if let (Some(tablet), Some(tool)) = (tablet, tool) {
+            // Queue the axes so they ride the next motion frame (the tool
+            // handle batches pending axes until motion is emitted).
+            if event.pressure_has_changed() {
+                tool.pressure(event.pressure());
+            }
+            if event.distance_has_changed() {
+                tool.distance(event.distance());
+            }
+            if event.tilt_has_changed() {
+                tool.tilt(event.tilt());
+            }
+            if event.slider_has_changed() {
+                tool.slider_position(event.slider_position());
+            }
+            if event.rotation_has_changed() {
+                tool.rotation(event.rotation());
+            }
+            if event.wheel_has_changed() {
+                tool.wheel(event.wheel_delta(), event.wheel_delta_discrete());
+            }
+            let serial = SERIAL_COUNTER.next_serial();
+            // motion() internally drives proximity_in/out; delivery to the
+            // client is a no-op when it never bound the tool.
+            tool.motion(location, under, &tablet, serial, event.time_msec());
+            tool_route(true, aware)
+        } else {
+            tool_route(false, false)
+        };
+
+        match route {
+            ToolRoute::Tablet => {
+                // Tablet-aware client owns the tool events; move only the
+                // visible cursor (no wl_pointer events, which would double up).
+                self.pointer_location = location;
+            }
+            ToolRoute::Pointer => {
+                // Emulate the pointer so the stylus points in unaware apps.
+                // This reuses the shared pointer path, so the cursor follows and
+                // hover/enter-leave are delivered; constraints only ever apply
+                // to real pointer focus, which a stylus never grabs.
+                self.pointer_absolute_motion(location, event.time_msec(), event.time());
+            }
+        }
+    }
+
+    /// Tablet tool proximity in/out. On the first proximity-in the tool is
+    /// registered with the seat (per the protocol, tools are advertised on
+    /// use), and the tablet is ensured to exist (winit has no DeviceAdded
+    /// tablet). Proximity-out notifies the focused client the tool left.
+    fn on_tablet_tool_proximity<I: InputBackend>(
+        &mut self,
+        event: &impl TabletToolProximityEvent<I>,
+    ) {
+        let tablet_seat = self.seat.tablet_seat();
+        let dh = self.display_handle.clone();
+        let tablet_desc = TabletDescriptor::from(&event.device());
+        // Idempotent: ensures a tablet exists even under winit / before a
+        // DeviceAdded was seen for it.
+        tablet_seat.add_tablet::<Self>(&dh, &tablet_desc);
+
+        match event.state() {
+            ProximityState::In => {
+                let tool = tablet_seat.add_tool::<Self>(self, &dh, &event.tool());
+                // proximity_in requires a focused surface and an initial
+                // motion; drive it through motion() when a surface is under the
+                // tool so the client gets proximity_in + motion in one go.
+                if let Some(location) = self.touch_global_position(event) {
+                    let under = self.surface_under(location);
+                    if let Some(tablet) = tablet_seat.get_tablet(&tablet_desc) {
+                        let serial = SERIAL_COUNTER.next_serial();
+                        tool.motion(location, under, &tablet, serial, event.time_msec());
+                    }
+                }
+            }
+            ProximityState::Out => {
+                if let Some(tool) = tablet_seat.get_tool(&event.tool()) {
+                    tool.proximity_out(event.time_msec());
+                }
+            }
+        }
+    }
+
+    /// Tablet tool tip down/up. Tip-down focuses the toplevel under the tool
+    /// (tap-to-focus, like touch and click), then either sends a real tablet
+    /// tip event to a tablet-aware client or emulates a BTN_LEFT press. Tip-up
+    /// mirrors it so an emulated button is always released.
+    fn on_tablet_tool_tip<I: InputBackend>(&mut self, event: &impl TabletToolTipEvent<I>) {
+        let tablet_seat = self.seat.tablet_seat();
+        let tool = tablet_seat.get_tool(&event.tool());
+        let serial = SERIAL_COUNTER.next_serial();
+        match event.tip_state() {
+            TabletToolTipState::Down => {
+                // The tool sits at the cursor (kept following the stylus by
+                // the axis arm). The route is decided at tip-down and
+                // remembered in `stylus_tip_emulated`: tip-up must release
+                // iff the press was emulated, even if awareness or the
+                // surface under the tool changes mid-stroke -- recomputing on
+                // tip-up could leave a stuck emulated button.
+                let aware = self
+                    .surface_under(self.pointer_location)
+                    .map(|(s, _)| self.client_is_tablet_aware(&s))
+                    .unwrap_or(false);
+                let route = tool_route(tool.is_some(), aware);
+                self.focus_toplevel_under(self.pointer_location, serial);
+                if let Some(tool) = tool.as_ref() {
+                    tool.tip_down(serial, event.time_msec());
+                }
+                self.stylus_tip_emulated = route == ToolRoute::Pointer;
+                if self.stylus_tip_emulated {
+                    self.pointer_button_event(BTN_LEFT, ButtonState::Pressed, event.time_msec());
+                }
+            }
+            TabletToolTipState::Up => {
+                if let Some(tool) = tool.as_ref() {
+                    tool.tip_up(event.time_msec());
+                }
+                if self.stylus_tip_emulated {
+                    self.stylus_tip_emulated = false;
+                    self.pointer_button_event(BTN_LEFT, ButtonState::Released, event.time_msec());
+                }
+            }
+        }
+    }
+
+    /// Tablet tool barrel button. Delivered to tablet-aware clients as a tool
+    /// button; there is no sensible pointer mapping for a stylus barrel button,
+    /// so unaware clients simply don't see it (no-op when no tool resource).
+    fn on_tablet_tool_button<I: InputBackend>(&mut self, event: &impl TabletToolButtonEvent<I>) {
+        let tablet_seat = self.seat.tablet_seat();
+        if let Some(tool) = tablet_seat.get_tool(&event.tool()) {
+            let serial = SERIAL_COUNTER.next_serial();
+            tool.button(
+                event.button(),
+                event.button_state(),
+                serial,
+                event.time_msec(),
+            );
+        }
+    }
+
+    /// Whether the surface's client is tablet-aware, i.e. it bound
+    /// `zwp_tablet_manager_v2` and holds a `zwp_tablet_tool_v2` resource. Drives
+    /// the pointer-emulation fallback: unaware clients get emulated pointer
+    /// input so a stylus still points and clicks. Smithay exposes no per-client
+    /// tablet-binding query, so we inspect the client's live protocol objects.
+    fn client_is_tablet_aware(&self, surface: &WlSurface) -> bool {
+        use smithay::reexports::wayland_server::Resource;
+        let Ok(client) = self.display_handle.get_client(surface.id()) else {
+            return false;
+        };
+        let mut aware = false;
+        // `interface()` reads the object's own metadata (no backend lock), so it
+        // is safe to call inside the enumeration closure.
+        let _ = self
+            .display_handle
+            .backend_handle()
+            .with_all_objects_for(client.id(), |obj| {
+                if obj.interface().name == "zwp_tablet_tool_v2" {
+                    aware = true;
+                }
+            });
+        aware
+    }
 }
 
 /// Add the output's origin to an output-relative transformed point to obtain a
@@ -630,7 +852,7 @@ fn map_absolute_to_global(
 
 #[cfg(test)]
 mod tests {
-    use super::{map_absolute_to_global, modifier_bitmask};
+    use super::{ToolRoute, map_absolute_to_global, modifier_bitmask, tool_route};
     use smithay::utils::Point;
 
     #[test]
@@ -651,5 +873,19 @@ mod tests {
         // space by adding the output origin.
         let p = map_absolute_to_global(Point::from((5.5, 7.25)), Point::from((1920, 0)));
         assert_eq!(p, Point::from((1925.5, 7.25)));
+    }
+
+    #[test]
+    fn tablet_tool_routes_to_tablet_only_when_registered_and_aware() {
+        // The real tablet protocol is used only when a tool resource exists and
+        // the focused client has bound it.
+        assert_eq!(tool_route(true, true), ToolRoute::Tablet);
+        // A tablet-unaware client (bound no tool) falls back to the pointer,
+        // so the stylus still points and clicks.
+        assert_eq!(tool_route(true, false), ToolRoute::Pointer);
+        // No registered tool yet (proximity not seen) is pure pointer emulation,
+        // regardless of the awareness flag.
+        assert_eq!(tool_route(false, false), ToolRoute::Pointer);
+        assert_eq!(tool_route(false, true), ToolRoute::Pointer);
     }
 }

@@ -250,6 +250,13 @@ pub struct MindeState {
     /// `PointerConstraintsHandler` in `handlers::pointer_constraints`.
     pub pointer_lock_hint: Option<(WlSurface, Point<f64, Logical>)>,
 
+    /// Whether the current stylus tip-down was delivered as an emulated
+    /// BTN_LEFT press (tablet-unaware client under the tool). Tip-up releases
+    /// iff the press was emulated, even if the client's tablet awareness or
+    /// the surface under the tool changed mid-stroke -- recomputing the route
+    /// on tip-up could leave a stuck button.
+    pub stylus_tip_emulated: bool,
+
     /// `ext-idle-notify-v1` notifier state: per-seat idle timers that fire
     /// `idled`/`resumed` to clients (swayidle &c.). Reset on every input
     /// event from `process_input_event`; suppressed while an idle inhibitor
@@ -298,6 +305,13 @@ pub struct MindeState {
     /// loss). See `update_keyboard_shortcuts_inhibitors`.
     pub active_shortcuts_inhibitor:
         Option<smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor>,
+    /// `zwp_tablet_manager_v2` global state. Advertised on both backends; the
+    /// winit backend simply never adds any tablet/tool devices. Tablets are
+    /// registered from libinput `TabletTool`-capable devices (see
+    /// `libinput_device_added`) and tools on first proximity; input routing and
+    /// the pointer-emulation fallback live in `process_input_event`. See
+    /// `handlers::mod`'s `TabletSeatHandler` for the tool cursor callback.
+    pub tablet_manager_state: smithay::wayland::tablet_manager::TabletManagerState,
 }
 
 impl MindeState {
@@ -433,6 +447,12 @@ impl MindeState {
                 &dh,
             );
 
+        // zwp_tablet_manager_v2: advertised on both backends so tablet-aware
+        // clients (Krita/GIMP, laptop pencils) find the protocol. The udev
+        // backend adds real tablet/tool devices from libinput; winit has none.
+        let tablet_manager_state =
+            smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(&dh);
+
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
@@ -529,6 +549,7 @@ impl MindeState {
             fractional_scale_manager_state,
             viewporter_state,
             pointer_lock_hint: None,
+            stylus_tip_emulated: false,
             idle_notifier_state,
             idle_inhibit_state,
             idle_inhibitors: std::collections::HashSet::new(),
@@ -538,6 +559,7 @@ impl MindeState {
             virtual_keyboard_manager_state,
             keyboard_shortcuts_inhibit_state,
             active_shortcuts_inhibitor: None,
+            tablet_manager_state,
         }
     }
 
