@@ -10,6 +10,13 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
              (minde commands)
              (minde command-catalog))
 
+;; Source positions, so the reference can link each binding straight to its
+;; definition (like Zig's autodoc: docs that go to code, not just about it).
+(read-enable 'positions)
+
+(define %github-blob-base
+  "https://github.com/9s-l-s9/minde/blob/main/")
+
 (define public-modules
   '((minde windows)
     (minde frames)
@@ -52,6 +59,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 ;; Guix shell.
 (define source-signatures (make-hash-table))
 (define source-documentation (make-hash-table))
+(define source-locations (make-hash-table))
 
 (define (source-key module-name name)
   (format #f "~s/~a" module-name name))
@@ -62,6 +70,14 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
   (when (and module-name (symbol? name))
     (hash-set! source-signatures (source-key module-name name)
                (cons name arguments))))
+
+(define (record-location! module-name name path line)
+  (when (and (symbol? name) path line)
+    (let ((location (cons path (+ line 1)))) ; 1-index for display/GitHub links
+      (unless (hash-ref source-locations name)
+        (hash-set! source-locations name location))
+      (when module-name
+        (hash-set! source-locations (source-key module-name name) location)))))
 
 (define (record-documentation! module-name name body)
   (when (and (symbol? name) (pair? body) (string? (car body))
@@ -92,7 +108,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
          (hash-set! source-documentation (car entry) (cdr entry))))
      (car (cdaddr form)))))
 
-(define (record-definition! module-name form)
+(define (record-definition! module-name form path line)
   (when (pair? form)
     (record-documentation-metadata! module-name form)
     (cond
@@ -102,27 +118,33 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
         (cond
          ((and (pair? target) (symbol? (car target)))
           (record-signature! module-name (car target) (cdr target))
-          (record-documentation! module-name (car target) (cddr form)))
+          (record-documentation! module-name (car target) (cddr form))
+          (record-location! module-name (car target) path line))
          ((and (symbol? target)
                (pair? (caddr form))
                (eq? (caaddr form) 'lambda))
           (record-signature! module-name target (cadr (caddr form)))
-          (record-documentation! module-name target (cddr (caddr form)))))))
+          (record-documentation! module-name target (cddr (caddr form)))
+          (record-location! module-name target path line)))))
      ((and (eq? (car form) 'define-record-type)
            (> (length form) 3))
       (let ((constructor (list-ref form 2))
             (predicate (list-ref form 3))
             (fields (drop form 4)))
         (when (pair? constructor)
-          (record-signature! module-name (car constructor) (cdr constructor)))
+          (record-signature! module-name (car constructor) (cdr constructor))
+          (record-location! module-name (car constructor) path line))
         (record-signature! module-name predicate '(RECORD))
+        (record-location! module-name predicate path line)
         (for-each
          (lambda (field)
            (when (and (list? field) (> (length field) 1))
              (record-signature! module-name (list-ref field 1) '(RECORD))
+             (record-location! module-name (list-ref field 1) path line)
              (when (> (length field) 2)
                (record-signature! module-name (list-ref field 2)
-                                  '(RECORD VALUE)))))
+                                  '(RECORD VALUE))
+               (record-location! module-name (list-ref field 2) path line))))
          fields))))))
 
 (define (scheme-files directory)
@@ -147,8 +169,9 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
              (let ((next-module
                     (if (and (pair? form) (eq? (car form) 'define-module))
                         (cadr form)
-                        module-name)))
-               (record-definition! next-module form)
+                        module-name))
+                   (line (assq-ref (source-properties form) 'line)))
+               (record-definition! next-module form path line)
                (loop next-module))))))))
  (scheme-files "scheme"))
 
@@ -194,6 +217,14 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
      (command (command-documentation command))
      (else "No Guile docstring is attached."))))
 
+(define (binding-source module-name name)
+  (let ((location (source-ref source-locations module-name name)))
+    (if location
+        (format #f "[`~a:~a`](~a~a#L~a)"
+                (car location) (cdr location)
+                %github-blob-base (car location) (cdr location))
+        "—")))
+
 (define (binding-demo name)
   (let ((command (command-for name)))
     (if command
@@ -227,17 +258,18 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
  (lambda (module-name)
    (let ((bindings (module-bindings module-name)))
      (format #t "## `~s`\n\n" module-name)
-     (display "| Binding | Kind | Signature | Description | Demonstration |\n")
-     (display "|---|---|---|---|---|\n")
+     (display "| Binding | Kind | Signature | Description | Demonstration | Source |\n")
+     (display "|---|---|---|---|---|---|\n")
      (for-each
       (lambda (binding)
         (let ((name (car binding)) (value (cdr binding)))
-          (format #t "| `~a` | ~a | `~a` | ~a | `~a` |\n"
+          (format #t "| `~a` | ~a | `~a` | ~a | `~a` | ~a |\n"
                   name
                   (binding-kind value)
                   (binding-signature module-name name value)
                   (markdown (binding-documentation module-name name value))
-                  (binding-demo name))))
+                  (binding-demo name)
+                  (binding-source module-name name))))
       bindings)
      (newline)))
  public-modules)
