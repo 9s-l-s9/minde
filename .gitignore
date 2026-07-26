@@ -4,3 +4,4 @@
 /.cache
 /build
 /.local
+/doc/_site

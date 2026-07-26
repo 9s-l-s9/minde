@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Publishes doc/ as a GitHub Pages site via Jekyll (the github-pages gem, the
-# same one GitHub's own build service uses, so a local `bundle exec jekyll
-# serve` in doc/ matches the published result). Deliberately does not touch
-# the compositor build: this workflow only ever reads doc/, never runs
-# scripts/ci or needs Guix.
+# Publishes doc/ as a GitHub Pages site, built with Haunt (Guile Scheme)
+# via doc/haunt.scm -- the same language Minde's own policy layer and
+# doc generator scripts are written in, run through the same Guix
+# environment mechanism as scripts/ci, just a smaller manifest
+# (doc/manifest.scm) since this never needs the Rust/Smithay side.
 #
-# Requires the repository to be public, or a GitHub plan that supports Pages
-# on private repositories -- Pages sites are published to the public
+# Requires the repository to be public, or a GitHub plan that supports
+# Pages on private repositories -- Pages sites are published to the public
 # internet regardless of source-repo visibility. Once that's true, enable
 # Settings -> Pages -> Build and deployment -> Source: GitHub Actions; this
 # workflow then deploys on every push to main that touches doc/.
@@ -39,27 +39,29 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Pages
-        id: pages
         uses: actions/configure-pages@v5
 
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Cache Guix store
+        uses: actions/cache@v4
         with:
-          ruby-version: '3.3'
-          bundler-cache: true
-          working-directory: doc
+          path: |
+            /gnu/store
+            /var/guix
+          key: guix-store-docs-${{ runner.os }}-${{ hashFiles('doc/manifest.scm') }}
+          restore-keys: |
+            guix-store-docs-${{ runner.os }}-
 
-      - name: Build with Jekyll
+      - name: Install Guix
+        uses: PromyLOPh/guix-install-action@v1
+
+      - name: Build with Haunt
         working-directory: doc
-        run: bundle exec jekyll build --destination ../_site
-        env:
-          JEKYLL_ENV: production
-          PAGES_REPO_NWO: ${{ github.repository }}
+        run: guix shell -m manifest.scm -- haunt build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: doc/_site
 
   deploy:
     needs: build
