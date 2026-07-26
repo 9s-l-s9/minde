@@ -121,10 +121,17 @@ as unavailable on the current hardware.
   IPC protocol ceiling stays documented-only. Post-protocol work: extends
   the IPC layer and tooling only, no frozen-module API changes (see the
   sprint section for the workflow derivation).
-- Sprint 16: not started. Touch and tablet/stylus input — the touchscreen
-  and pencil found dead during sprint 14 hardware verification; seat touch
-  capability, the five touch event arms, `GrabType::Touch`, and
-  `zwp_tablet_v2` with pointer emulation (see the sprint section).
+- Sprint 16: implementation complete (2026-07-17, commits dc60838, fc48be1).
+  Touchscreen: `wl_touch` on both backends, the five event arms with
+  output-space mapping, tap-to-focus mirroring click-to-focus, locked-gate
+  drop, idle reset, touch DnD replacing the smallvil stub. Tablet/stylus:
+  `zwp_tablet_manager_v2` on both backends, udev tablet registration and
+  proximity-time tool registration, axis/pressure/tilt/tip/barrel-button
+  routing, tool cursor via the shared cursor path, and a pointer-emulation
+  fallback (tip-down route remembered across the stroke so an emulated
+  BTN_LEFT can never stick) for tablet-unaware clients. Nested e2e asserts
+  both capabilities; real touch and pencil behavior (tap, scroll, pressure,
+  lock-leak check) is owner verification on the touch laptop.
 
 ## Release decisions
 
