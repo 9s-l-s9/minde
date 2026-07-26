@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Publishes doc/ as a GitHub Pages site via Jekyll (the github-pages gem, the
+# same one GitHub's own build service uses, so a local `bundle exec jekyll
+# serve` in doc/ matches the published result). Deliberately does not touch
+# the compositor build: this workflow only ever reads doc/, never runs
+# scripts/ci or needs Guix.
+#
+# Requires the repository to be public, or a GitHub plan that supports Pages
+# on private repositories -- Pages sites are published to the public
+# internet regardless of source-repo visibility. Once that's true, enable
+# Settings -> Pages -> Build and deployment -> Source: GitHub Actions; this
+# workflow then deploys on every push to main that touches doc/.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'doc/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: doc
+
+      - name: Build with Jekyll
+        working-directory: doc
+        run: bundle exec jekyll build --destination ../_site
+        env:
+          JEKYLL_ENV: production
+          PAGES_REPO_NWO: ${{ github.repository }}
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

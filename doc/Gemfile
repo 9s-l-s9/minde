@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The github-pages gem pins the exact Jekyll + plugin versions GitHub's own
+# Pages build service runs, so `bundle exec jekyll build` here matches what
+# .github/workflows/pages.yml produces.
+
+source 'https://rubygems.org'
+
+gem 'github-pages', group: :jekyll_plugins
+gem 'jekyll-relative-links'
+gem 'webrick' # not a default gem on Ruby 3.x, needed for `jekyll serve`
