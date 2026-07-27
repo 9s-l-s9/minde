@@ -1,0 +1,3 @@
+[submodule "tools/guile-autodoc"]
+	path = tools/guile-autodoc
+	url = https://github.com/9s-l-s9/guile-autodoc.git

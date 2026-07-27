@@ -4,7 +4,7 @@ set -eu
 out=${1:-doc/generated}
 mkdir -p "$out"
 
-guile --no-auto-compile -L scheme scripts/generate-api-reference.scm \
+guile --no-auto-compile -L scheme -L tools/guile-autodoc scripts/generate-api-reference.scm \
     >"$out/api-reference.md"
 guile --no-auto-compile -L scheme scripts/generate-keymap-reference.scm \
     >"$out/keybindings.md"
