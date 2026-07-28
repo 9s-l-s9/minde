@@ -15,6 +15,17 @@
 #                             (check-static) gates, so they are not repeated.
 #   * check-release-metadata -- executable-helper and release-contract checks.
 #
+# --ci-rust and --ci-scheme each run half of that (./check --rust-only /
+# --scheme-only; --ci-rust also runs check-release-metadata) in the smaller
+# manifest-check.scm / manifest-scheme.scm environments instead of the full
+# manifest.scm -- used by .github/workflows/ci.yml as two parallel jobs so
+# neither installs tools the other half needs (a full Rust+Wayland+Mesa
+# toolchain for gates that never touch Rust, or vice versa) and so the
+# (usually faster, more actionable) Scheme/static/docs failures surface
+# without waiting on `cargo check` to finish compiling Smithay. Together
+# they cover exactly the default mode; local development should keep using
+# plain `scripts/ci` or `./check`.
+#
 # --release-artifacts additionally builds the deterministic source and vendored
 # archives via the existing scripts/create-release-archives +
 # tests/check-release-archives.sh path, verifies they are byte-reproducible,
@@ -36,28 +47,44 @@ set -eu
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 
+usage() {
+    echo "usage: scripts/ci [--release-artifacts | --ci-rust | --ci-scheme]" >&2
+}
+
 release_artifacts=0
+ci_mode=full
 case ${1:-} in
     '')
         ;;
     --release-artifacts)
-        [ "$#" -eq 1 ] || { echo "usage: scripts/ci [--release-artifacts]" >&2; exit 2; }
+        [ "$#" -eq 1 ] || { usage; exit 2; }
         release_artifacts=1
+        ;;
+    --ci-rust)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        ci_mode=rust
+        ;;
+    --ci-scheme)
+        [ "$#" -eq 1 ] || { usage; exit 2; }
+        ci_mode=scheme
         ;;
     -h|--help)
         cat <<'EOF'
-usage: scripts/ci [--release-artifacts]
+usage: scripts/ci [--release-artifacts | --ci-rust | --ci-scheme]
 
 Default: run the fast gate (./check, which includes doc and static gates) and
 the release-metadata check. --release-artifacts also builds the deterministic
 source/vendored archives and writes them with SHA256SUMS to build/ci/artifacts
-(override with MINDE_CI_OUTPUT). Re-execs inside `guix shell -m manifest.scm`
-when run outside it. See the header comment for excluded heavyweight gates.
+(override with MINDE_CI_OUTPUT). --ci-rust and --ci-scheme each run half
+of the default gate in a smaller Guix environment (manifest-check.scm /
+manifest-scheme.scm) -- see the header comment; local development should use
+plain scripts/ci or ./check instead. Re-execs inside the right `guix shell`
+when run outside one. See the header comment for excluded heavyweight gates.
 EOF
         exit 0
         ;;
     *)
-        echo "usage: scripts/ci [--release-artifacts]" >&2
+        usage
         exit 2
         ;;
 esac
@@ -66,16 +93,31 @@ esac
 # the same tools whether or not the caller already ran `guix shell`.
 if [ "${MINDE_CI_ENV:-0}" != 1 ]; then
     set --
-    [ "$release_artifacts" -eq 1 ] && set -- --release-artifacts
-    # tar and gzip are not in manifest.scm but the deterministic-archive path
-    # (scripts/create-release-archives) needs them; add them like scripts/release
-    # adds its extra tools.
-    # nss-certs: cargo fetches the crates.io index and the pinned Smithay git
-    # checkout over TLS on a fresh runner; without a CA bundle in the
-    # environment that fails with "CAfile: none" (locally the host
-    # environment usually leaks one in, which masks the gap).
-    exec guix shell -m manifest.scm shellcheck tar gzip nss-certs -- \
-        env MINDE_CI_ENV=1 sh scripts/ci "$@"
+    case $ci_mode in
+        full)
+            [ "$release_artifacts" -eq 1 ] && set -- --release-artifacts
+            # tar and gzip are not in manifest.scm but the deterministic-archive
+            # path (scripts/create-release-archives) needs them; add them like
+            # scripts/release adds its extra tools.
+            # nss-certs: cargo fetches the crates.io index and the pinned
+            # Smithay git checkout over TLS on a fresh runner; without a CA
+            # bundle in the environment that fails with "CAfile: none"
+            # (locally the host environment usually leaks one in, which masks
+            # the gap).
+            exec guix shell -m manifest.scm tar gzip nss-certs -- \
+                env MINDE_CI_ENV=1 sh scripts/ci "$@"
+            ;;
+        rust)
+            # Same network need as above: `cargo check` fetches crates.io and
+            # the pinned Smithay git checkout over TLS.
+            exec guix shell -m manifest-check.scm nss-certs -- \
+                env MINDE_CI_ENV=1 sh scripts/ci --ci-rust
+            ;;
+        scheme)
+            exec guix shell -m manifest-scheme.scm -- \
+                env MINDE_CI_ENV=1 sh scripts/ci --ci-scheme
+            ;;
+    esac
 fi
 
 if [ -z "${SSL_CERT_FILE:-}" ] \
@@ -85,11 +127,32 @@ if [ -z "${SSL_CERT_FILE:-}" ] \
     export GIT_SSL_CAINFO="$SSL_CERT_FILE"
 fi
 
-echo "== ci gate: check =="
-./check
+case $ci_mode in
+    full)
+        echo "== ci gate: check =="
+        ./check
 
-echo "== ci gate: check-release-metadata =="
-sh tests/check-release-metadata.sh
+        echo "== ci gate: check-release-metadata =="
+        sh tests/check-release-metadata.sh
+        ;;
+    rust)
+        echo "== ci gate: check --rust-only =="
+        ./check --rust-only
+
+        echo "== ci gate: check-release-metadata =="
+        sh tests/check-release-metadata.sh
+
+        echo "ci: rust gates passed"
+        exit 0
+        ;;
+    scheme)
+        echo "== ci gate: check --scheme-only =="
+        ./check --scheme-only
+
+        echo "ci: scheme gates passed"
+        exit 0
+        ;;
+esac
 
 if [ "$release_artifacts" -eq 0 ]; then
     echo "ci: default gates passed"

@@ -2,10 +2,20 @@
 #
 # Hosted CI. This workflow contains no gate logic: every check lives in
 # scripts/ci, the same noninteractive entry point a developer runs locally
-# inside `guix shell -m manifest.scm`. YAML here only checks out the code,
-# installs Guix, caches the store, calls scripts/ci, and uploads artifacts.
-# If a hosted run and a local run disagree, that is a bug in scripts/ci, not
-# here.
+# (`scripts/ci`, `scripts/ci --ci-rust`, `scripts/ci --ci-scheme`). YAML here
+# only checks out the code, installs Guix, caches the store and Rust build
+# artifacts, calls scripts/ci, and uploads artifacts. If a hosted run and a
+# local run disagree, that is a bug in scripts/ci, not here.
+#
+# check-rust and check-scheme are scripts/ci --ci-rust / --ci-scheme (see its
+# header comment) run as two parallel jobs instead of one serial `scripts/ci`:
+# together they cover exactly the same gates, but check-rust's environment
+# (manifest-check.scm: the Rust toolchain and Smithay's native deps) and
+# check-scheme's (manifest-scheme.scm: just Guile and text-processing tools)
+# no longer block on each other's Guix install, and check-scheme's usually-
+# faster, more-actionable failures (Scheme suites, static analysis, doc
+# drift) surface without waiting on `cargo check` to finish compiling
+# Smithay.
 name: ci
 
 on:
@@ -19,7 +29,7 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  check-rust:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,21 +45,57 @@ jobs:
           path: |
             /gnu/store
             /var/guix
-          key: guix-store-${{ runner.os }}-${{ hashFiles('manifest.scm', 'guix.scm') }}
+          key: guix-store-rust-${{ runner.os }}-${{ hashFiles('manifest-check.scm', 'guix.scm') }}
           restore-keys: |
-            guix-store-${{ runner.os }}-
+            guix-store-rust-${{ runner.os }}-
+
+      # `cargo check` compiles the full dependency graph (Smithay and its
+      # transitive deps) from network-fetched sources -- not the vendored
+      # crate mirror, which is only materialized for --release-artifacts.
+      # Without this, every run recompiles all of it from scratch.
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: rust-target-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
+          restore-keys: |
+            rust-target-${{ runner.os }}-
 
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1
 
       - name: Run CI entry point
-        run: scripts/ci
+        run: scripts/ci --ci-rust
+
+  check-scheme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache Guix store
+        uses: actions/cache@v4
+        with:
+          path: |
+            /gnu/store
+            /var/guix
+          key: guix-store-scheme-${{ runner.os }}-${{ hashFiles('manifest-scheme.scm', 'guix.scm') }}
+          restore-keys: |
+            guix-store-scheme-${{ runner.os }}-
+
+      - name: Install Guix
+        uses: PromyLOPh/guix-install-action@v1
+
+      - name: Run CI entry point
+        run: scripts/ci --ci-scheme
 
   release-artifacts:
     # Only version tags publish artifacts; the gates themselves already ran in
-    # the check job via the same scripts/ci entry point.
+    # the check-rust/check-scheme jobs via the same scripts/ci entry point.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: check
+    needs: [check-rust, check-scheme]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,6 +117,14 @@ jobs:
           key: guix-store-${{ runner.os }}-${{ hashFiles('manifest.scm', 'guix.scm') }}
           restore-keys: |
             guix-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: rust-target-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
+          restore-keys: |
+            rust-target-${{ runner.os }}-
 
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1

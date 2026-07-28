@@ -16,8 +16,17 @@ With no arguments, run the fixed fast development gate: Rust format/check,
 Scheme/API/configuration/keymap suites, static analysis, and documentation.
 
 Optional maintainer modes:
-  --all       bounded nested integration suite
-  --release   integration, videos, package, and archive verification
+  --all          bounded nested integration suite
+  --release      integration, videos, package, and archive verification
+  --rust-only    just Rust format/check (no Guile required; see
+                 manifest-check.scm)
+  --scheme-only  just the Scheme suites, static analysis, and docs (no
+                 Rust/native toolchain required; see manifest-scheme.scm)
+
+--rust-only and --scheme-only exist so scripts/ci can run them as two
+parallel CI jobs in two smaller Guix environments instead of one serial job
+in the full manifest.scm; together they cover exactly the no-argument
+default. Prefer plain ./check for local development.
 ```
 
 ## `make` targets
