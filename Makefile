@@ -186,6 +186,7 @@ check-docs: check-generated-docs
 	@test -s doc/demonstrations.md
 	@test -s doc/releasing.md
 	@test -s doc/generated/api-reference.md
+	@test -s doc/generated/api-browser.html
 	@test -s doc/generated/keybindings.md
 	@test -s doc/generated/demo-manifest.json
 	@test -s doc/generated/manual.html

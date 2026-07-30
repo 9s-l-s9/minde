@@ -20,6 +20,9 @@ The project is unreleased and breaking changes remain intentional before
 
 - [Scheme API reference](generated/api-reference.md) — live module exports
   and docstrings, generated from source.
+- [API browser](generated/api-browser.html) — the same reference as an
+  interactive page: navigation, docs, and a source panel showing each
+  binding's real source text on click, not just a link to it.
 - [Default keymap](generated/keybindings.md) — loaded key tables, generated.
 - [Field manual](generated/manual.html) — a single-page index of the
   reference docs plus scripted command demonstrations (video capture is

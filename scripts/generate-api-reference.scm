@@ -9,10 +9,11 @@ exec guile --no-auto-compile -L scheme -L tools/guile-autodoc -s "$0" "$@"
 ;;; live in tools/guile-autodoc (github.com/9s-l-s9/guile-autodoc,
 ;;; vendored as a submodule) -- pulled out from an earlier version of this
 ;;; script so the same source-scanning and doc-to-code linking logic isn't
-;;; maintained twice. Only what's specific to Minde stays here: the
-;;; %api-binding-documentation convention (see below), the Demonstration
-;;; column sourced from the command catalog, and the "Registered commands"
-;;; table.
+;;; maintained twice. What's specific to Minde (which modules are
+;;; public, the %api-binding-documentation convention, the Demonstration
+;;; column) lives in scripts/lib/api-doc-support.scm, shared with
+;;; scripts/generate-api-browser.scm. Only the "Registered commands" table
+;;; stays here -- the interactive browser has no equivalent of it (yet).
 
 (use-modules (srfi srfi-1)
              (srfi srfi-13)
@@ -21,61 +22,13 @@ exec guile --no-auto-compile -L scheme -L tools/guile-autodoc -s "$0" "$@"
              (minde commands)
              (minde command-catalog))
 
-(define %github-blob-base
-  "https://github.com/9s-l-s9/minde/blob/main/")
-
-(define public-modules
-  '((minde windows)
-    (minde frames)
-    (minde groups)
-    (minde layouts)
-    (minde input)
-    (minde commands)
-    (minde hooks)
-    (minde status)))
+(load (string-append (dirname (current-filename)) "/lib/api-doc-support.scm"))
 
 (define (one-line text)
   (string-join (string-tokenize text) " "))
 
 (define (markdown text)
   (string-join (string-split (one-line text) #\|) "\\|"))
-
-;; SRFI-9 accessors are syntax transformers, and exported constants are
-;; values; neither can carry a procedure docstring. Their defining module
-;; may keep an adjacent, quoted %api-binding-documentation alist as the
-;; source of truth -- fed into the scan via autodoc's on-form hook.
-(define (register-documentation-metadata! scan module-name form path line)
-  (when (and module-name
-             (pair? form)
-             (memq (car form) '(define define-public))
-             (> (length form) 2)
-             (eq? (cadr form) '%api-binding-documentation)
-             (pair? (caddr form))
-             (eq? (caaddr form) 'quote)
-             (list? (car (cdaddr form))))
-    (for-each
-     (lambda (entry)
-       (unless (and (pair? entry) (symbol? (car entry)) (string? (cdr entry)))
-         (error "invalid %api-binding-documentation entry" entry))
-       (register-documentation! scan module-name (car entry) (cdr entry))
-       (register-documentation! scan #f (car entry) (cdr entry)))
-     (car (cdaddr form)))))
-
-(define (command-for name)
-  (command-ref name))
-
-(define (binding-demo module-name name value info)
-  (let ((command (command-for name)))
-    (string-append "`" (if command (symbol->string (command-demo-id command)) "non-visual") "`")))
-
-(define (documentation-fallback module-name name value)
-  (let ((command (command-for name)))
-    (and command (command-documentation command))))
-
-(define (documented? module-name name value info)
-  (or (source-info-documentation info)
-      (and (procedure? value) (procedure-documentation value))
-      (command-for name)))
 
 (register-builtin-command-schemas!)
 
@@ -88,12 +41,6 @@ exec guile --no-auto-compile -L scheme -L tools/guile-autodoc -s "$0" "$@"
 (define scan
   (scan-source-files (scan-tree "scheme")
                      #:on-form register-documentation-metadata!))
-
-(define (module-bindings module-name)
-  (sort
-   (module-map (lambda (name variable) (cons name (variable-ref variable)))
-               (resolve-interface module-name))
-   (lambda (l r) (string<? (symbol->string (car l)) (symbol->string (car r))))))
 
 (define all-bindings
   (append-map (lambda (module-name)
@@ -118,7 +65,9 @@ exec guile --no-auto-compile -L scheme -L tools/guile-autodoc -s "$0" "$@"
           #:source-directory "scheme"
           #:repo-blob-prefix %github-blob-base
           #:title #f
-          #:extra-columns (list (cons "Demonstration" binding-demo))
+          #:extra-columns (list (cons "Demonstration"
+                                     (lambda (m n v i)
+                                       (string-append "`" (binding-demo-id m n v i) "`"))))
           #:missing-docstring-text "No Guile docstring is attached."
           #:documentation-fallback documentation-fallback
           #:on-form register-documentation-metadata!))
