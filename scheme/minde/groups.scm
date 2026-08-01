@@ -675,16 +675,25 @@ retile)."
 (define %placement-rules '())
 
 (define* (add-placement-rule! matcher #:key (group #f) (frame 0)
-                              (follow? #f) (raise? #f) (lock? #t))
-  "Appends a placement rule for MATCHER with group/frame/follow/lock policy."
+                              (follow? #f) (raise? #f) (lock? #t)
+                              (float? #f))
+  "Appends a placement rule for MATCHER with group/frame/follow/lock policy.
+#:float? #t makes matching windows float instead of joining a frame --
+e.g. Firefox's Picture-in-Picture player, which would otherwise hijack
+the current frame and push the browser window offscreen."
   ;; #:raise? is StumpWM's name for what our #:follow? does.
   (set! %placement-rules
         (append %placement-rules
-                (list (list matcher group frame (or follow? raise?) lock?)))))
+                (list (list matcher group frame (or follow? raise?) lock?
+                            float?)))))
 
 (define (rule-lock? rule)
   ;; Rules loaded from an old 4-element file default to locked.
   (or (< (length rule) 5) (list-ref rule 4)))
+
+(define (rule-float? rule)
+  ;; Rules from files predating #:float? are 5 elements and never float.
+  (and (>= (length rule) 6) (list-ref rule 5)))
 
 (define (clear-placement-rules!)
   "Removes every in-memory placement rule without writing the rules file."
@@ -760,6 +769,13 @@ app-id (or title) to its current group and frame (StumpWM remember)."
           (save-placement-rules!)
           (echo (format #f "forgot ~a rule(s)"
                         (- before (length %placement-rules))))))))
+
+(define (window-in-active-group? id)
+  "True when ID is tiled in one of the active group's frame trees."
+  (any (lambda (tree)
+         (any (lambda (leaf) (and (member id (frame-window-ids leaf)) #t))
+              (frame-leaves tree)))
+       (group-all-trees (current-group))))
 
 (define (rule-matches? rule title app-id)
   (let ((m (car rule)))
@@ -931,9 +947,10 @@ geometries re-applied. Groups not in the dump are left alone."
   (let ((rule (find (lambda (r) (and (rule-lock? r)
                                      (rule-matches? r title app-id)))
                     %placement-rules)))
-    (if rule
-        (place-by-rule! rule id title app-id)
-        (track-window-map! id title app-id))
+    (cond
+     ((and rule (rule-float? rule)) (track-float-map! id title app-id))
+     (rule (place-by-rule! rule id title app-id))
+     (else (track-window-map! id title app-id)))
     ;; New tiled window in a dynamic group: it becomes the master.
     (when (and (dynamic-group?) (not (window-floating? id)))
       (retile-dynamic!))))
@@ -945,12 +962,28 @@ empty strings and the real values arrive here (and again on every
 retitle). Refreshes the bookkeeping (windowlist, remapped keys, rules,
 status line); when the app-id first becomes known, a lock placement
 rule that missed the window at map time is applied now."
-  (let ((first-app-id? (let ((old (window-app-id id)))
+  (let ((old-title (window-title id))
+        (old-app-id (window-app-id id))
+        (first-app-id? (let ((old (window-app-id id)))
                          (and (or (not old) (string-null? old))
                               (not (string-null? app-id))))))
     (update-window-title! id title app-id)
+    ;; Float rules mostly fire here, not at map: Wayland clients set
+    ;; title/app-id only after the initial configure, so e.g. Firefox's
+    ;; Picture-in-Picture window maps with empty strings. Only the edge
+    ;; where the rule newly matches floats, so unfloating by hand isn't
+    ;; overridden by later retitles.
+    (when (and (not (window-floating? id))
+               (window-in-active-group? id))
+      (let ((rule (find (lambda (r) (and (rule-lock? r) (rule-float? r)
+                                         (rule-matches? r title app-id)
+                                         (not (rule-matches? r old-title
+                                                             old-app-id))))
+                        %placement-rules)))
+        (when rule (float-window! id))))
     (when (and first-app-id? (not (window-floating? id)))
       (let ((rule (find (lambda (r) (and (rule-lock? r)
+                                         (not (rule-float? r))
                                          (rule-matches? r title app-id)))
                         %placement-rules)))
         (when (and rule (apply-rule-to-mapped! id rule))

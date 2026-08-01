@@ -3,7 +3,8 @@
 use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     desktop::{
-        PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
+        PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space,
+        Window, find_popup_root_surface, get_popup_toplevel_coords,
     },
     input::{
         Seat,
@@ -204,17 +205,56 @@ impl XdgShellHandler for MindeState {
         }
     }
 
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
-        // TODO popup grabs
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        let Some(seat) = Seat::<MindeState>::from_resource(&seat) else {
+            tracing::warn!("popup grab used an unknown seat");
+            return;
+        };
+        let kind = PopupKind::Xdg(surface.clone());
+        let Ok(root) = find_popup_root_surface(&kind) else {
+            return;
+        };
+        match self.popups.grab_popup(root, kind, &seat, serial) {
+            Ok(mut grab) => {
+                if let Some(keyboard) = seat.get_keyboard() {
+                    if keyboard.is_grabbed()
+                        && !(keyboard.has_grab(serial)
+                            || keyboard.has_grab(grab.previous_serial().unwrap_or(serial)))
+                    {
+                        grab.ungrab(PopupUngrabStrategy::All);
+                        return;
+                    }
+                    keyboard.set_focus(self, grab.current_grab(), serial);
+                    keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
+                }
+                if let Some(pointer) = seat.get_pointer() {
+                    if pointer.is_grabbed()
+                        && !(pointer.has_grab(serial)
+                            || pointer
+                                .has_grab(grab.previous_serial().unwrap_or_else(|| grab.serial())))
+                    {
+                        grab.ungrab(PopupUngrabStrategy::All);
+                        return;
+                    }
+                    pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+                }
+            }
+            Err(error) => {
+                // A denied grab must dismiss the popup (xdg-shell spec);
+                // leaving it hanging strands Firefox-family clients in
+                // menu-open state, eating all keyboard input.
+                tracing::debug!(%error, "popup grab denied, dismissing popup");
+                surface.send_popup_done();
+            }
+        }
     }
 
-    // The frame tree owns all geometry, so (un)maximize and
-    // (un)fullscreen requests are never granted. The protocol still
-    // demands a configure in reply either way -- Firefox-family clients
-    // (zen restoring a maximized session calls set_maximized right at
-    // startup) otherwise stop obeying our sizes entirely. The pending
-    // state already carries the frame geometry from wm-place-window, so
-    // replying re-asserts it.
+    // The frame tree owns all geometry, so (un)maximize requests are
+    // never granted. The protocol still demands a configure in reply
+    // either way -- Firefox-family clients (zen restoring a maximized
+    // session calls set_maximized right at startup) otherwise stop
+    // obeying our sizes entirely. The pending state already carries the
+    // frame geometry from wm-place-window, so replying re-asserts it.
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         if surface.is_initial_configure_sent() {
             surface.send_configure();
@@ -227,19 +267,32 @@ impl XdgShellHandler for MindeState {
         }
     }
 
+    // Client (un)fullscreen requests route through the same Scheme path
+    // as taskbar requests (handle-foreign-fullscreen!), so the single-
+    // fullscreen model stays authoritative and the frame layout re-syncs
+    // on exit. A surface not yet registered (request before map) just
+    // gets the configure reply the protocol demands.
     fn fullscreen_request(
         &mut self,
         surface: ToplevelSurface,
         _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
     ) {
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
+        match self.id_for_toplevel(&surface) {
+            Some(id) => guile::on_foreign_fullscreen(id, true),
+            None if surface.is_initial_configure_sent() => {
+                surface.send_configure();
+            }
+            None => {}
         }
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        if surface.is_initial_configure_sent() {
-            surface.send_configure();
+        match self.id_for_toplevel(&surface) {
+            Some(id) => guile::on_foreign_fullscreen(id, false),
+            None if surface.is_initial_configure_sent() => {
+                surface.send_configure();
+            }
+            None => {}
         }
     }
 }

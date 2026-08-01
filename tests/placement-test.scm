@@ -177,6 +177,32 @@
             (group-has-window? " III " 11))
 
 ;; ---------------------------------------------------------------------
+;; Float rules: #:float? floats the window instead of framing it -- at
+;; map when the title is already known, and on the late retitle Wayland
+;; clients do (Firefox Picture-in-Picture maps with empty strings).
+;; ---------------------------------------------------------------------
+
+(add-placement-rule! "Picture-in-Picture" #:float? #t)
+(handle-window-map! 12 "Picture-in-Picture" "firefox")
+(check-true "float rule floats at map" (window-floating? 12))
+(check-true "float-rule window is in no frame"
+            (not (member 12 (current-frame-window-ids))))
+
+(handle-window-map! 13 "" "")
+(check-true "empty title+app-id maps tiled" (not (window-floating? 13)))
+(handle-window-title-change! 13 "Picture-in-Picture" "firefox")
+(check-true "float rule floats on late retitle" (window-floating? 13))
+
+;; A hand-unfloated window stays put on a retitle that still matches.
+(unfloat-window! 13)
+(handle-window-title-change! 13 "Picture-in-Picture again" "firefox")
+(check-true "unfloat survives a still-matching retitle"
+            (not (window-floating? 13)))
+
+(track-window-unmap! 12)
+(track-window-unmap! 13)
+
+;; ---------------------------------------------------------------------
 ;; remember! / forget! + persistence round-trip
 ;; ---------------------------------------------------------------------
 
@@ -196,7 +222,7 @@
 (check-true "forget! removed the remembered rule, keeping the others"
             (let ((rules (read-versioned-datum-file
                           %rules-path 'minde-placement-rules 1)))
-              (and (= (length rules) 2)
+              (and (= (length rules) 3) ; term + zen + the float rule
                    (not (find (lambda (r) (string=? (car r) "foot")) rules)))))
 
 ;; ---------------------------------------------------------------------

@@ -173,6 +173,7 @@
    ((name . toggle-always-on-top!) (module minde frames) (signature . "toggle-always-on-top!") (documentation . ""))
    ((name . toggle-always-show!) (module minde frames) (signature . "toggle-always-show!") (documentation . ""))
    ((name . toggle-remapped-keys!) (module minde frames) (signature . "toggle-remapped-keys!") (documentation . ""))
+   ((name . track-float-map!) (module minde frames) (signature . "track-float-map!") (documentation . ""))
    ((name . track-window-map!) (module minde frames) (signature . "track-window-map!") (documentation . ""))
    ((name . track-window-unmap!) (module minde frames) (signature . "track-window-unmap!") (documentation . ""))
    ((name . unbind-remapped-keys!) (module minde frames) (signature . "unbind-remapped-keys!") (documentation . ""))

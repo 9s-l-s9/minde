@@ -931,6 +931,7 @@ unbound-variable path."
 
 ;; (add-placement-rule! "zen" #:group "II" #:frame 0)
 ;; (add-placement-rule! "emacs" #:frame 1 #:follow? #t)
+;; (add-placement-rule! "Picture-in-Picture" #:float? #t)
 
 ;; Miscellaneous built-in operations. Personal launchers and desktop policy
 ;; belong in a user configuration layered over this portable file.
@@ -1322,6 +1323,12 @@ refresh)."
 
 ;; Placement rules saved by remember!/forget! in earlier sessions.
 (load-placement-rules!)
+
+;; Utility windows that would otherwise hijack the current frame float
+;; instead (#:float? rules match on retitle too, since Wayland clients
+;; set the title only after mapping). After load-placement-rules!, which
+;; replaces the rule list wholesale.
+(add-placement-rule! "Picture-in-Picture" #:float? #t)
 
 ;; ---------------------------------------------------------------------
 ;; Keys & help parity (StumpWM parity sprint 10)

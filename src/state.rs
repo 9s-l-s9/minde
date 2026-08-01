@@ -1203,6 +1203,21 @@ impl MindeState {
             .map(|(id, _)| *id)
     }
 
+    /// The registered id owning TOPLEVEL's wl_surface, if any.
+    pub fn id_for_toplevel(
+        &self,
+        toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
+    ) -> Option<u64> {
+        self.windows
+            .iter()
+            .find(|(_, w)| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == toplevel.wl_surface())
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| *id)
+    }
+
     /// Registers a newly-mapped toplevel window and returns its assigned id.
     pub fn register_window(&mut self, window: Window) -> u64 {
         let id = self.next_window_id;

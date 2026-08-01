@@ -130,6 +130,7 @@
             head-of-window
             group-all-trees
             track-window-map!
+            track-float-map!
             track-window-unmap!
             update-output-geometry!
             remove-window-from-active-tree!
@@ -2211,6 +2212,15 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
       (frame-add-window! %current-frame id))
   (run-event-hook! 'new-window id title app-id)
   (sync-frames!))
+
+(define (track-float-map! id title app-id)
+  "Like track-window-map!, but floats the new window immediately (a
+#:float? placement rule matched) instead of adding it to the current
+frame -- the frame's window keeps its place and focus geometry."
+  (remember-window-title! id title app-id)
+  (assign-window-number! id (group-all-trees %active-group))
+  (run-event-hook! 'new-window id title app-id)
+  (float-window! id))
 
 (define (track-window-unmap! id)
   "Removes ID from the active group's tree, if present there. Returns #t
