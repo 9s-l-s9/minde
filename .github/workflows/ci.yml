@@ -62,9 +62,12 @@ jobs:
       # the old build's now-nonexistent store path -- "cannot open shared
       # object file" at build-script *run* time, not link time, so it only
       # ever affected a cache hit, not a cold build. Bumping the key
-      # abandons those stale binaries; scripts/ci also now sets
-      # LD_LIBRARY_PATH as defense in depth against the same class of gap
-      # recurring silently.
+      # abandons those stale binaries; ./check's rust_gate also now sets
+      # LD_LIBRARY_PATH scoped to just the `cargo check` invocation as
+      # defense in depth against the same class of gap recurring silently
+      # -- exporting it for the rest of the process instead, an earlier
+      # version of this fix, broke plain shell tools further down the gate
+      # (a segfault) by feeding them mismatched libraries.
       - name: Cache Rust build artifacts
         uses: actions/cache@v4
         with:

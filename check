@@ -38,7 +38,17 @@ run_release() {
 
 rust_gate() {
     cargo fmt --all -- --check
-    cargo check --locked
+    # Scoped to this one command, not exported: cargo check runs build-script
+    # binaries (e.g. x11-dl's, libudev-sys's) that dynamically link
+    # libgcc_s.so.1 from gcc-toolchain and need it findable at *run* time, not
+    # just link time -- the same class of gap scripts/run-nested and
+    # tests/lib/nested-compositor.sh already work around for the compiled
+    # compositor binary. Exporting LD_LIBRARY_PATH for the rest of the
+    # process (as an earlier version of this fix did) instead broke plain
+    # shell tools like grep/sed further down the gate with a segfault, by
+    # feeding them mismatched libraries from the same directory.
+    LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        cargo check --locked
 }
 
 scheme_gate() {
