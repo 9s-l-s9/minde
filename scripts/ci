@@ -127,6 +127,16 @@ if [ -z "${SSL_CERT_FILE:-}" ] \
     export GIT_SSL_CAINFO="$SSL_CERT_FILE"
 fi
 
+# Compiled build-script binaries (e.g. x11-dl's, libudev-sys's) dynamically
+# link libgcc_s.so.1 from gcc-toolchain and need it findable at *run* time,
+# not just link time -- the same class of gap scripts/run-nested and
+# tests/lib/nested-compositor.sh already work around for the compositor
+# binary itself. Harmless when GUIX_ENVIRONMENT is unset (--ci-scheme mode
+# never runs cargo).
+if [ -n "${GUIX_ENVIRONMENT:-}" ]; then
+    export LD_LIBRARY_PATH="$GUIX_ENVIRONMENT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 case $ci_mode in
     full)
         echo "== ci gate: check =="
