@@ -3,9 +3,9 @@
 # Hosted CI. This workflow contains no gate logic: every check lives in
 # scripts/ci, the same noninteractive entry point a developer runs locally
 # (`scripts/ci`, `scripts/ci --ci-rust`, `scripts/ci --ci-scheme`). YAML here
-# only checks out the code, installs Guix, caches the store and Rust build
-# artifacts, calls scripts/ci, and uploads artifacts. If a hosted run and a
-# local run disagree, that is a bug in scripts/ci, not here.
+# only checks out the code, installs Guix, caches Rust build artifacts,
+# calls scripts/ci, and uploads artifacts. If a hosted run and a local run
+# disagree, that is a bug in scripts/ci, not here.
 #
 # check-rust and check-scheme are scripts/ci --ci-rust / --ci-scheme (see its
 # header comment) run as two parallel jobs instead of one serial `scripts/ci`:
@@ -16,6 +16,19 @@
 # faster, more-actionable failures (Scheme suites, static analysis, doc
 # drift) surface without waiting on `cargo check` to finish compiling
 # Smithay.
+#
+# `pullAfterInstall: false` on every Install Guix step: measured directly
+# (job logs), `guix pull` -- rebuilding Guix's entire channel from
+# git.guix.gnu.org -- costs ~25 of every ~30 minute run, dwarfing
+# everything else in this file combined; the actual gate afterward takes
+# minutes. It's skipped in favor of whatever's in the nightly guix-binary
+# tarball guix-install-action downloads first anyway (also built from the
+# same channel, just without a redundant local rebuild). There is no
+# `/gnu/store` cache here: it was tried and confirmed non-functional --
+# `/var/guix/substitute/cache/*` is owned by the Guix daemon/build users,
+# unreadable by the unprivileged runner account actions/cache saves as
+# ("Cannot open: Permission denied" on every save, so it always missed on
+# restore too), pure overhead for zero benefit.
 name: ci
 
 on:
@@ -37,18 +50,6 @@ jobs:
         with:
           submodules: true
 
-      - name: Cache Guix store
-        uses: actions/cache@v4
-        with:
-          # /var/guix holds the daemon's store database; a cached /gnu/store
-          # without it is invisible to the daemon and the cache is wasted.
-          path: |
-            /gnu/store
-            /var/guix
-          key: guix-store-rust-${{ runner.os }}-${{ hashFiles('manifest-check.scm', 'guix.scm') }}
-          restore-keys: |
-            guix-store-rust-${{ runner.os }}-
-
       # `cargo check` compiles the full dependency graph (Smithay and its
       # transitive deps) from network-fetched sources -- not the vendored
       # crate mirror, which is only materialized for --release-artifacts.
@@ -63,6 +64,8 @@ jobs:
 
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1
+        with:
+          pullAfterInstall: false
 
       - name: Run CI entry point
         run: scripts/ci --ci-rust
@@ -75,18 +78,10 @@ jobs:
         with:
           submodules: true
 
-      - name: Cache Guix store
-        uses: actions/cache@v4
-        with:
-          path: |
-            /gnu/store
-            /var/guix
-          key: guix-store-scheme-${{ runner.os }}-${{ hashFiles('manifest-scheme.scm', 'guix.scm') }}
-          restore-keys: |
-            guix-store-scheme-${{ runner.os }}-
-
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1
+        with:
+          pullAfterInstall: false
 
       - name: Run CI entry point
         run: scripts/ci --ci-scheme
@@ -106,18 +101,6 @@ jobs:
           fetch-depth: 0
           submodules: true
 
-      - name: Cache Guix store
-        uses: actions/cache@v4
-        with:
-          # /var/guix holds the daemon's store database; a cached /gnu/store
-          # without it is invisible to the daemon and the cache is wasted.
-          path: |
-            /gnu/store
-            /var/guix
-          key: guix-store-${{ runner.os }}-${{ hashFiles('manifest.scm', 'guix.scm') }}
-          restore-keys: |
-            guix-store-${{ runner.os }}-
-
       - name: Cache Rust build artifacts
         uses: actions/cache@v4
         with:
@@ -128,6 +111,8 @@ jobs:
 
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1
+        with:
+          pullAfterInstall: false
 
       - name: Build release artifacts
         run: scripts/ci --release-artifacts

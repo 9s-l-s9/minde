@@ -43,18 +43,14 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Cache Guix store
-        uses: actions/cache@v4
-        with:
-          path: |
-            /gnu/store
-            /var/guix
-          key: guix-store-docs-${{ runner.os }}-${{ hashFiles('doc/manifest.scm') }}
-          restore-keys: |
-            guix-store-docs-${{ runner.os }}-
-
+      # No /gnu/store cache: confirmed non-functional in ci.yml (the daemon/
+      # build-user-owned substitute cache can't be tar'd up by the
+      # unprivileged runner account actions/cache saves as). pullAfterInstall
+      # is the real lever -- see ci.yml's header comment for measurements.
       - name: Install Guix
         uses: PromyLOPh/guix-install-action@v1
+        with:
+          pullAfterInstall: false
 
       - name: Build with Haunt
         working-directory: doc
