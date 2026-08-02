@@ -7,7 +7,7 @@ compositor event entry points begin with `handle-`.
 | Module | Purpose |
 |---|---|
 | `(minde windows)` | Curated window queries and actions |
-| `(minde frames)` | Frame trees, focus, splitting, and heads |
+| `(minde frames)` | Curated frame focus, splitting, layout, and interaction |
 | `(minde groups)` | Workspaces, placement, and dynamic groups |
 | `(minde layouts)` | Named layout registry and persistence |
 | `(minde input)` | Key notation, registries, and prompts |
@@ -20,10 +20,30 @@ Rust-to-Scheme handlers are also an internal compositor boundary, not user
 configuration API.
 
 The generated inventory in [`generated/api-reference.md`](generated/api-reference.md)
-enumerates the actual Guile interfaces rather than copying this table. It
-currently demonstrates that `(minde frames)` exposes too much internal
-state; those bindings remain visible until they are moved under
-`(minde compositor ...)`.
+enumerates the actual Guile interfaces rather than copying this table. The
+mutable frame model, Rust synchronization functions, and event adapters live
+in the private `(minde compositor frames)` implementation module; the
+public `(minde frames)` facade exports only configuration-facing actions.
+Its `frame-api-groups` value classifies that surface for discovery and review:
+
+| Capability group | Responsibility |
+|---|---|
+| `topology-and-layout` | Split, remove, resize, balance, and apply frame layouts |
+| `focus-and-navigation` | Move focus among frames and windows |
+| `window-placement` | Pull, move, exchange, select, and number windows |
+| `window-lifecycle` | Fullscreen, close, rename, and persistent visibility state |
+| `floating-windows` | Convert, position, and normalize floating windows |
+| `input-and-pointer` | Synthetic keyboard, pointer, and remapping operations |
+| `visual-interaction` | Overlays, expose mode, properties, and window summaries |
+| `persistence-and-inspection` | Serialize and restore frame/layout state |
+
+Every public frame operation belongs to exactly one group; the API contract
+test rejects unclassified or multiply classified exports.
+
+`frame-api-tags` adds overlapping, cross-cutting labels: `layout`, `focus`,
+`window-placement`, `window-state`, `floating`, `keyboard`, `pointer`,
+`visual`, `persistence`, and `inspection`. Tags may overlap, but contract tests
+ensure that every tagged name is part of the curated public surface.
 
 ## Source documentation contract
 

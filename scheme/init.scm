@@ -8,8 +8,9 @@
              (srfi srfi-1)
              (system vm trace))
 
-;; scheme/frames.scm lives next to this file; add it to the load path so
-;; `(use-modules (minde frames))` finds it regardless of cwd.
+;; The minde modules live below this file; add the directory to the load
+;; path so public facades and private compositor modules resolve regardless of
+;; cwd.
 ;; current-filename can be #f when this file is re-(load)ed at runtime
 ;; (Print R); the module dir is then already on the load path anyway
 ;; (MINDE_SCHEME_DIR, plus the initial load added it).
@@ -17,7 +18,7 @@
   (when (string? f)
     (add-to-load-path (dirname f))))
 
-(use-modules (minde frames)
+(use-modules (minde compositor frames)
              (minde groups)
              (minde ui prompt)
              (minde ui menu)
@@ -1394,7 +1395,8 @@ refresh)."
                    "\n")))))))
 
 (define %describe-modules
-  '((guile-user) (minde frames) (minde groups) (minde ui prompt)
+  '((guile-user) (minde frames) (minde compositor frames)
+    (minde groups) (minde ui prompt)
     (minde ui menu) (minde layouts) (minde hooks)))
 
 (define (lookup-symbol-value name)

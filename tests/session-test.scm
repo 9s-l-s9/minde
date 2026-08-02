@@ -28,7 +28,7 @@
 (define (wm-session-locked?) %already-locked?)
 
 ;; Now it's safe to load the modules under test.
-(use-modules (minde frames))
+(use-modules (minde compositor frames))
 (use-modules (minde hooks))
 (use-modules (minde groups))
 (use-modules (minde ui prompt))

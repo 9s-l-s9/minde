@@ -22,7 +22,7 @@
 (define (wm-log msg) #t)
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 
-(use-modules (minde frames))
+(use-modules (minde compositor frames))
 (use-modules (minde groups))
 
 (define %failures 0)

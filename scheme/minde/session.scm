@@ -34,7 +34,7 @@
   ;; the user's override. #:declarative? #f keeps those cross-references
   ;; going through the live variable, honoring the set! contract.
   #:declarative? #f
-  #:use-module (minde frames)
+  #:use-module (minde compositor frames)
   #:use-module (minde hooks)
   #:use-module (minde ui prompt)
   #:export (logout!

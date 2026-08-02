@@ -17,7 +17,7 @@
 (define (wm-output-geometry) (list 0 0 1280 720))
 (define (wm-log msg) #t)
 
-(use-modules (minde frames))
+(use-modules (minde compositor frames))
 
 (define %failures 0)
 (define (check name got expected)

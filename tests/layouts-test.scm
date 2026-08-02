@@ -33,7 +33,7 @@
 (setenv "MINDE_LAYOUTS_FILE" %layouts-file)
 (when (file-exists? %layouts-file) (delete-file %layouts-file))
 
-(use-modules (minde frames))
+(use-modules (minde compositor frames))
 (use-modules (minde layouts))
 
 ;; ---------------------------------------------------------------------

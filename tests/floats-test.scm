@@ -38,7 +38,7 @@
 (define (wm-click button) (set! %clicks (cons button %clicks)) #t)
 (define (wm-idle-ms) 1234)
 
-(use-modules (minde frames) (minde groups))
+(use-modules (minde compositor frames) (minde groups))
 
 ;; ---------------------------------------------------------------------
 ;; Assertion helpers

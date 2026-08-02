@@ -2,10 +2,10 @@
 ;;; frame tree.
 ;;;
 ;;; Owns the ordered list of groups and "which one is current" (delegated
-;;; to (minde frames)'s notion of the active group -- see
+;;; to (minde compositor frames)'s notion of the active group -- see
 ;;; activate-group! there). Higher-level operations (switching, creating
 ;;; groups, moving a window between groups) live here; the frame-tree
-;;; internals stay in (minde frames).
+;;; internals stay in (minde compositor frames).
 ;;;
 ;;; Same load-time constraint as frames.scm (see its header comment):
 ;;; nothing here may call a wm-* Rust subr at module load time. Creating
@@ -16,7 +16,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (ice-9 optargs)
   #:use-module (minde hooks)
-  #:use-module (minde frames)
+  #:use-module (minde compositor frames)
   #:use-module (minde compositor model)
   #:use-module (minde foundation serialization)
   #:re-export (focus-next-head! focus-previous-head!)

@@ -5,7 +5,7 @@
   #:use-module (ice-9 ftw)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
-  #:use-module (minde frames)
+  #:use-module (minde compositor frames)
   #:use-module (minde groups)
   #:export (status-schema-version
             current-status-text

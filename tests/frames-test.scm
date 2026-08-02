@@ -40,7 +40,7 @@
   #t)
 
 ;; Now it's safe to load the module under test.
-(use-modules (minde frames))
+(use-modules (minde compositor frames))
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers

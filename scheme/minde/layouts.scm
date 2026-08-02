@@ -12,7 +12,7 @@
 
 (define-module (minde layouts)
   #:use-module (srfi srfi-1)
-  #:use-module (minde frames)
+  #:use-module (minde compositor frames)
   #:use-module (minde foundation serialization)
   #:export (define-layout!
             layout-names

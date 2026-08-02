@@ -200,7 +200,7 @@ fi
 # persist across a focus cycle.
 xdotool key Print; sleep 0.2; xdotool key shift+f; sleep 0.5
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (wm-log (format #f "e2e-float ~s ~s"
                   (window-floating? (focused-window-id))
                   (float-geometry (focused-window-id)))))' >/dev/null 2>&1 || true
@@ -208,7 +208,7 @@ sleep 1
 loggrep "e2e-float #t (" || fail "float-this did not float the window"
 xdotool key Print; sleep 0.2; xdotool key f; sleep 0.3
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (wm-log (format #f "e2e-float-still ~s"
                   (pair? (group-floats (current-group))))))' >/dev/null 2>&1 || true
 sleep 1
@@ -217,7 +217,7 @@ import -window root "$OUT/float.png"
 # Unfloat via IPC (key-cycling back onto the float would depend on
 # how many windows earlier blocks left open).
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (unfloat-window! (car (group-floats (current-group))))
   (wm-log (format #f "e2e-unfloat ~s"
                   (null? (group-floats (current-group))))))' >/dev/null 2>&1 || true
@@ -239,7 +239,7 @@ ok "menu windowlist: open / navigate / select"
 # flatten must all execute without erroring (send-string types into
 # whatever is focused; we only assert the round-trip).
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (window-send-string "echo hi")
   (ratclick! 1)
   (rename-window! "e2e-renamed")
@@ -262,7 +262,7 @@ ok "command mode: enter / bare keys / exit"
 # Sprint 8: gnewbg (created, not switched), sticky follows a group
 # switch, and the pull-from-windowlist menu -- all via REPL markers.
 scripts/minde-cmd '(begin
-  (use-modules (minde frames) (minde groups))
+  (use-modules (minde compositor frames) (minde groups))
   (let ((before (current-group-name)))
     (create-group-in-background! " e2eBG ")
     (wm-log (format #f "e2e-gnewbg ~s ~s"
@@ -271,7 +271,7 @@ scripts/minde-cmd '(begin
 sleep 1
 loggrep "e2e-gnewbg #t #t" || fail "gnewbg did not create in the background"
 scripts/minde-cmd '(begin
-  (use-modules (minde frames) (minde groups))
+  (use-modules (minde compositor frames) (minde groups))
   (toggle-always-show!)
   (switch-to-group! " e2eBG ")
   (wm-log (format #f "e2e-sticky ~s"
@@ -298,7 +298,7 @@ import -window root "$OUT/expose.png"
 xdotool key Escape; sleep 0.4
 loggrep "error in keybinding" && fail "fselect/expose errored (see log)"
 scripts/minde-cmd '(begin
-  (use-modules (minde frames) (minde groups))
+  (use-modules (minde compositor frames) (minde groups))
   (remember!)
   (place-existing-windows!)
   (forget!)
@@ -313,7 +313,7 @@ ok "fselect / expose / remember"
 scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
 sleep 2
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (define-remapped-keys! (list (list ".*" (cons "C-F9" "Down"))))
   (wm-log (format #f "e2e-remap ~s" (remap-target "C-F9")))
   (wm-log (format #f "e2e-appids ~s"
@@ -329,7 +329,7 @@ loggrep "e2e-sendkey-ok" || fail "send-key errored"
 # then drop the table again.
 xdotool key ctrl+F9; sleep 0.3
 scripts/minde-cmd '(begin
-  (use-modules (minde frames))
+  (use-modules (minde compositor frames))
   (unbind-remapped-keys!))' >/dev/null 2>&1 || true
 # which-key auto-echo: arm the prefix, wait past the delay, screenshot.
 scripts/minde-cmd '(which-key-mode!)' >/dev/null 2>&1 || true
@@ -354,7 +354,7 @@ sleep 2
 scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
 sleep 2
 scripts/minde-cmd '(begin
-  (use-modules (minde frames) (minde groups))
+  (use-modules (minde compositor frames) (minde groups))
   (wm-log (format #f "e2e-dynamic frames=~a dynamic=~a"
                   (length (frame-leaves (current-tree)))
                   (dynamic-group?))))' >/dev/null 2>&1 || true
@@ -378,7 +378,7 @@ ok "dynamic groups: auto-tile / rotate / exchange / split guard"
 
 # Layouts + gaps via main-thread IPC, with a log marker to assert on.
 scripts/minde-cmd '(begin
-  (use-modules (minde layouts) (minde frames))
+  (use-modules (minde layouts) (minde compositor frames))
   (apply-layout! "grid4")
   (set-gaps! 8 8)
   (wm-log "e2e-layout-and-gaps-ok"))' >/dev/null 2>&1 || true

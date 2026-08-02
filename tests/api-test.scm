@@ -1,7 +1,9 @@
 ;;; SPDX-License-Identifier: GPL-3.0-or-later
 (use-modules (ice-9 regex)
+             (srfi srfi-1)
              (minde commands)
-             (minde command-catalog))
+             (minde command-catalog)
+             (minde frames))
 
 (define failures 0)
 (define (check name value)
@@ -24,6 +26,32 @@
    (check (format #f "public module ~s resolves" module-name)
           (resolve-interface module-name)))
  public-modules)
+(check "private compositor frame implementation resolves"
+       (resolve-module '(minde compositor frames) #:ensure #f))
+(define frame-interface (resolve-interface '(minde frames)))
+(define grouped-frame-bindings (append-map cdr frame-api-groups))
+(define public-frame-operations
+  (filter (lambda (name) (not (memq name '(frame-api-groups frame-api-tags))))
+          (module-map (lambda (name variable) name) frame-interface)))
+(define (symbol-name<? left right)
+  (string<? (symbol->string left) (symbol->string right)))
+(check "frame API has eight named capability groups"
+       (= 8 (length frame-api-groups)))
+(check "frame API groups contain no duplicate bindings"
+       (= (length grouped-frame-bindings)
+          (length (delete-duplicates grouped-frame-bindings))))
+(check "frame API groups classify every public operation exactly once"
+       (equal? (sort grouped-frame-bindings symbol-name<?)
+               (sort public-frame-operations symbol-name<?)))
+(check "curated frame facade has the frozen 65-operation surface"
+       (= 65 (length public-frame-operations)))
+(for-each
+ (lambda (entry)
+   (check (format #f "frame API tag ~a has no duplicate bindings" (car entry))
+          (= (length (cdr entry)) (length (delete-duplicates (cdr entry)))))
+   (check (format #f "frame API tag ~a names only public operations" (car entry))
+          (every (lambda (name) (memq name public-frame-operations)) (cdr entry))))
+ frame-api-tags)
 (check "catalog is non-empty" (pair? (command-names)))
 (for-each
  (lambda (name)
@@ -55,6 +83,15 @@
                (not (module-variable interface name))))
       forbidden-api-names)))
  '((minde frames) (minde groups)))
+
+(for-each
+ (lambda (name)
+   (check (format #f "public frame facade hides compositor internal ~a" name)
+          (not (module-variable (resolve-interface '(minde frames)) name))))
+ '(activate-group! current-group current-tree frame-add-window! hide-window!
+   heads-changed! park-group-windows! set-sync-hook! sync-frames!
+   track-float-map! track-window-map! track-window-unmap!
+   update-floating-window-geometry! update-output-geometry!))
 
 (if (zero? failures)
     (format #t "all API contract tests passed~%")

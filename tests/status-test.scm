@@ -13,7 +13,7 @@
 (define (wm-runtime-info) '("winit" "ready" 2 1234))
 (define (wm-log . arguments) #t)
 
-(use-modules (minde frames)
+(use-modules (minde compositor frames)
              (minde groups)
              (minde status))
 

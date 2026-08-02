@@ -2,7 +2,7 @@
 ;;; Stable, curated window-management API.
 
 (define-module (minde windows)
-  #:use-module (minde frames)
+  #:use-module (minde compositor frames)
   #:re-export (focused-window-id
                current-frame-window
                all-window-ids
