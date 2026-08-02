@@ -3,6 +3,7 @@
 
 (define (wm-spawn command) #t)
 (define (wm-quit) #t)
+(define (wm-session-locked?) #f)
 (define (wm-log message) #t)
 (define (wm-place-window . arguments) #t)
 (define (wm-focus-window . arguments) #t)

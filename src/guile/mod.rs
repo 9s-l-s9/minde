@@ -8,7 +8,10 @@
 //! `scheme/init.scm`) spawns its own internal thread that Guile itself
 //! manages -- we never touch libguile from other Rust threads.
 
+mod command;
 pub mod ffi;
+
+pub use command::WmCommand;
 
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
@@ -29,150 +32,6 @@ pub fn set_loop_signal(signal: LoopSignal) {
 /// Commands enqueued from Scheme (possibly from the REPL thread) to be
 /// applied against `&mut MindeState` on the compositor's main thread via
 /// a calloop channel.
-#[derive(Debug, Clone)]
-pub enum WmCommand {
-    Place {
-        id: u64,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-    },
-    Focus {
-        id: u64,
-    },
-    ClearFocus,
-    Close {
-        id: u64,
-    },
-    /// Rectangle of the currently-selected frame; the render pass draws
-    /// the focus border around this (not around the focused window), so an
-    /// empty frame is still visibly selected.
-    FocusRect {
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-    },
-    /// Show text in the centered message overlay (StumpWM's message
-    /// window); auto-hides after `timeout_ms` (0 = sticky until replaced
-    /// or cleared).
-    Message {
-        text: String,
-        timeout_ms: u64,
-    },
-    ClearMessage,
-    /// Focus-border color (prefix-state indicator).
-    BorderColor {
-        rgba: [f32; 4],
-    },
-    /// One-shot timer: after `ms`, call `(handle-timer! token)` on the main
-    /// thread. The Scheme side keeps the token->thunk table.
-    RunAfter {
-        ms: u64,
-        token: i64,
-    },
-    /// Set/unset xdg fullscreen state on a window; Scheme re-syncs frame
-    /// geometry itself when unsetting.
-    Fullscreen {
-        id: u64,
-        on: bool,
-    },
-    /// Force-kill: drop the window's client connection (StumpWM
-    /// kill-window, vs. the polite `Close`).
-    Kill {
-        id: u64,
-    },
-    /// Warp the pointer to a global logical position (banish/ratwarp).
-    WarpPointer {
-        x: i32,
-        y: i32,
-    },
-    /// Read the current clipboard selection; delivers the text to Scheme
-    /// via `(handle-paste! text)` when it arrives.
-    Paste,
-    /// Own the clipboard selection with this text (StumpWM putsel).
-    SetClipboard {
-        text: String,
-    },
-    /// Place a floating window: same as `Place` but without the Tiled*
-    /// states (floats keep their CSD shadows/rounded corners) and with a
-    /// raise, so a newly-floated window pops above the tiling.
-    PlaceFloat {
-        id: u64,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-    },
-    /// Raise a window to the top of the stacking order without focusing
-    /// it (raise is otherwise only a side effect of `Focus`).
-    Raise {
-        id: u64,
-    },
-    /// Mark/unmark a window as floating on the Rust side; gates the
-    /// super+drag move/resize grabs in `input.rs`. Scheme's `%floating`
-    /// table remains the authority on float geometry.
-    SetFloating {
-        id: u64,
-        on: bool,
-    },
-    /// Type TEXT into the focused window (StumpWM window-send-string):
-    /// synthesized key press/release pairs looked up in the active
-    /// keymap (chars not reachable at shift level 0/1 are skipped).
-    SendString {
-        text: String,
-    },
-    /// Synthesize a pointer click at the current location (StumpWM
-    /// ratclick); BUTTON is 1=left 2=middle 3=right.
-    Click {
-        button: u32,
-    },
-    /// Synthesize one modifier-wrapped key press/release pair into the
-    /// focused window (send-raw-key / meta / remapped keys). MODS is
-    /// the Scheme-side bitmask (shift=1 ctrl=4 alt=8 super=64); KEYSYM
-    /// is an xkb keysym name ("Down", "Escape", "t").
-    SendKey {
-        mods: u32,
-        keysym: String,
-    },
-    /// Warp the pointer by a delta from its current position
-    /// (StumpWM ratrelwarp).
-    WarpPointerRel {
-        dx: i32,
-        dy: i32,
-    },
-    /// Enable/disable compositor-side auto-repeat for consumed key
-    /// presses. Wayland clients repeat held keys themselves, but keys
-    /// the compositor swallows (prompts, armed keymaps) never repeat
-    /// unless we re-fire them from a timer (see `input.rs`).
-    SetKeyRepeat {
-        on: bool,
-    },
-    /// Add a small positioned text overlay (fselect/expose frame-number
-    /// labels) at a global logical position. One command per label;
-    /// they accumulate until cleared.
-    AddOverlay {
-        x: i32,
-        y: i32,
-        text: String,
-    },
-    ClearOverlays,
-    /// Re-apply the stored libinput configuration rules to every
-    /// currently-present device. Enqueued by `wm-configure-input!` so a
-    /// runtime reconfigure reaches devices already plugged in (rules are
-    /// otherwise applied on `InputEvent::DeviceAdded`). No-op under winit.
-    ReapplyInputConfig,
-    /// Spawn a child process ON THE MAIN THREAD. wm-spawn must not
-    /// fork from the calling thread: forking from the Guile REPL
-    /// server thread wedged mesa/llvmpipe in the parent (the main
-    /// thread froze inside eglSwapBuffers with the software
-    /// rasterizer spinning forever).
-    Spawn {
-        cmd: String,
-    },
-}
-
 /// The sending half of the command channel. Set once from `main`/`state.rs`
 /// after the channel and its calloop source are created. Reachable from any
 /// thread (including the Guile REPL's own thread), unlike direct access to

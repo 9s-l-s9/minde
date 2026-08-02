@@ -18,6 +18,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2.2"
 thiserror = "1"
+libc = "0.2"
 fontdue = "0.9"
 # Xcursor theme parsing for cursor-shape-v1 / themed cursors. Same version
 # Smithay already pulls in transitively (wayland-cursor / x11rb), so the

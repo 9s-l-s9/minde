@@ -14,6 +14,7 @@ mod input;
 mod ipc;
 mod logging;
 mod render;
+mod runtime_dir;
 mod state;
 mod udev;
 mod winit;

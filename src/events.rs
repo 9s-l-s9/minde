@@ -53,11 +53,8 @@ fn subscribers() -> &'static Mutex<Vec<Subscriber>> {
     SUBSCRIBERS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub fn socket_path() -> PathBuf {
-    let directory = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    directory.join("minde-events.sock")
+pub fn socket_path() -> std::io::Result<PathBuf> {
+    crate::runtime_dir::socket_path("minde-events.sock")
 }
 
 /// Writes as much of a subscriber's pending backlog as the socket will take
@@ -113,10 +110,8 @@ pub fn publish_line(line: &str) {
 pub fn init(
     event_loop: &mut EventLoop<'static, MindeState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let path = socket_path();
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-    }
+    let path = socket_path()?;
+    crate::runtime_dir::remove_stale_socket(&path)?;
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
@@ -178,6 +173,7 @@ mod tests {
     #[test]
     fn socket_is_scoped_to_the_current_user() {
         let name = socket_path()
+            .unwrap()
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -187,7 +183,7 @@ mod tests {
 
     #[test]
     fn flush_drains_a_ready_socket_and_leaves_nothing_pending() {
-        let (mut a, b) = UnixStream::pair().unwrap();
+        let (a, b) = UnixStream::pair().unwrap();
         a.set_nonblocking(true).unwrap();
         // The peer `b` stays open, so writes to `a` are accepted immediately.
         let mut subscriber = Subscriber {

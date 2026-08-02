@@ -128,6 +128,12 @@ connections beyond the cap are rejected.
 - `$XDG_RUNTIME_DIR/minde-ipc.sock`: main-thread request socket;
 - `$XDG_RUNTIME_DIR/minde-events.sock`: read-only event push socket.
 
+If `XDG_RUNTIME_DIR` is unavailable, both sockets use the private fallback
+directory `/tmp/minde-UID` (mode `0700`). Startup refuses a runtime
+directory owned by another user or accessible to group/other users, and never
+unlinks a non-socket entry or an active compositor's socket found at a socket
+path.
+
 Unchanged state is not rewritten. New consumers should use the JSON query or
 subscription interfaces. Schema details and redaction guarantees are in
 [`diagnostics.md`](diagnostics.md).

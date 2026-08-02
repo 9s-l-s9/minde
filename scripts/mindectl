@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
-runtime_root=${XDG_RUNTIME_DIR:-/tmp}
+runtime_root=${XDG_RUNTIME_DIR:-/tmp/minde-$(id -u)}
 socket_path=$runtime_root/minde-ipc.sock
 events_socket_path=$runtime_root/minde-events.sock
 if [ -n "${MINDE_STATUS_PATH:-}" ]; then
@@ -33,7 +33,9 @@ ipc_request() {
       (let* ((mode (caddr (command-line)))
              (expression (cadddr (command-line)))
              (path (string-append
-                    (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                    (or (getenv "XDG_RUNTIME_DIR")
+                        (string-append "/tmp/minde-"
+                                       (number->string (getuid))))
                     "/minde-ipc.sock"))
              (sock (socket PF_UNIX SOCK_STREAM 0)))
         (connect sock AF_UNIX path)
@@ -196,7 +198,9 @@ case "$command" in
                 exec guile -q -c '
                   (use-modules (ice-9 rdelim))
                   (let* ((path (string-append
-                                (or (getenv "XDG_RUNTIME_DIR") "/tmp")
+                                (or (getenv "XDG_RUNTIME_DIR")
+                                    (string-append "/tmp/minde-"
+                                                   (number->string (getuid))))
                                 "/minde-events.sock"))
                          (sock (socket PF_UNIX SOCK_STREAM 0)))
                     (connect sock AF_UNIX path)

@@ -676,6 +676,16 @@ focused client), #f otherwise."
         (lambda (key . args)
           (wm-log (format #f "error in timer: ~a ~a" key args)))))))
 
+;; Session operations are security-sensitive and therefore use an explicit,
+;; validated capability boundary instead of resolving wm-* names dynamically.
+;; This belongs after wm-run-after is defined, while still completing during
+;; init.scm loading before any keybinding can invoke lock/suspend/logout.
+((@@ (minde session) configure-session-runtime!)
+ #:spawn wm-spawn
+ #:quit wm-quit
+ #:run-after wm-run-after
+ #:session-locked? wm-session-locked?)
+
 ;; ---------------------------------------------------------------------
 ;; libinput device configuration (per-device tap-to-click, natural
 ;; scrolling, acceleration profile, click method).

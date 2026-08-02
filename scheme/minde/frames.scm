@@ -506,13 +506,20 @@ and 'span (one tree over the union of all monitors)."
 ;; module itself is compiled). So look them up dynamically by name at call
 ;; time instead, exactly like the Rust side's own `guile::lookup` does for
 ;; `wm-handle-key` -- a missing definition is simply a no-op.
+(define %reported-missing-rust-calls (make-hash-table))
+
 (define (rust-call name . args)
   (let* ((mod (resolve-module '(guile-user) #:ensure #f))
          (var (and mod (module-variable mod name))))
     (if var
         (apply (variable-ref var) args)
         (begin
-          (format #t "minde: ~a unbound, ignoring call~%" name)
+          ;; Unit tests intentionally omit capabilities irrelevant to the
+          ;; behavior under test. Report each missing name once so that signal
+          ;; remains visible without burying real failures in repeated noise.
+          (unless (hash-ref %reported-missing-rust-calls name)
+            (hash-set! %reported-missing-rust-calls name #t)
+            (format #t "minde: ~a unbound, ignoring call~%" name))
           #f))))
 
 (define (wm-place-window id x y w h) (rust-call 'wm-place-window id x y w h))

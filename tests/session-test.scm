@@ -6,13 +6,9 @@
 ;;; Run with:
 ;;;   guile -L scheme tests/session-test.scm
 ;;;
-;;; Stubs every wm-* Rust subr, and init.scm's own wm-run-after wrapper
-;;; (looked up the same dynamic way -- see session.scm's rust-call
-;;; comment), before loading the modules under test. Same pattern as
-;;; tests/frames-test.scm / tests/groups-test.scm; the real Rust side
-;;; isn't built while this runs, so wm-session-locked? is never called
-;;; here either -- suspend! learns the lock is up purely from the
-;;; 'session-lock hook that wm-on-session-lock runs.
+;;; Injects the four callbacks required by the module's explicit runtime
+;;; boundary. The real Rust side is not built while this runs; lock state and
+;;; timer delivery are controlled by the fakes below.
 
 (use-modules (srfi srfi-1))
 
@@ -26,9 +22,10 @@
 (define (wm-quit) (set! %quit? #t) #t)
 (define (wm-log msg) (set! %log-lines (cons msg %log-lines)) #t)
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
-;; Stands in for init.scm's own (define (wm-run-after ms thunk) ...)
-;; wrapper (not a Rust subr, but looked up the identical dynamic way).
+;; Stands in for init.scm's own (define (wm-run-after ms thunk) ...) wrapper.
 (define (wm-run-after ms thunk) (set! %timers (cons (cons ms thunk) %timers)) #t)
+(define %already-locked? #f)
+(define (wm-session-locked?) %already-locked?)
 
 ;; Now it's safe to load the modules under test.
 (use-modules (minde frames))
@@ -36,6 +33,19 @@
 (use-modules (minde groups))
 (use-modules (minde ui prompt))
 (use-modules (minde session))
+
+;; Security-sensitive operations must not silently no-op before the runtime
+;; boundary is registered.
+(define %unconfigured-runtime-rejected?
+  (catch #t
+    (lambda () (lock-screen!) #f)
+    (lambda _ #t)))
+
+((@@ (minde session) configure-session-runtime!)
+ #:spawn wm-spawn
+ #:quit wm-quit
+ #:run-after wm-run-after
+ #:session-locked? wm-session-locked?)
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -53,6 +63,9 @@
 (define (spawned? cmd) (and (member cmd %spawned) #t))
 (define (echoed-containing? substring)
   (and (any (lambda (m) (string-contains m substring)) %messages) #t))
+
+(check "unconfigured session runtime is rejected"
+       %unconfigured-runtime-rejected? #t)
 
 ;; ---------------------------------------------------------------------
 ;; logout!: prompts, only "y"/"yes" actually quits, and it's the exact
@@ -174,12 +187,11 @@
 ;; suspend! while the session is ALREADY locked: the 'session-lock hook
 ;; only fires on a real unlocked->locked edge, so suspend! must not
 ;; lock-and-wait (it would just time out) -- it asks wm-session-locked?
-;; and suspends immediately. Stubbed here the same dynamic-lookup way
-;; the real subr is found; every earlier suspend! call above exercised
-;; the unbound-subr (#f) fallback.
+;; and suspends immediately. The injected predicate reads the mutable fake
+;; above, so every earlier suspend! call exercised the unlocked result.
 ;; ---------------------------------------------------------------------
 
-(define (wm-session-locked?) #t)
+(set! %already-locked? #t)
 (set! %spawned '())
 (set! %timers '())
 (suspend!)
@@ -188,7 +200,7 @@
 (check "suspend! while already locked does not respawn the locker"
        (spawned? "true") #f)
 (check "suspend! while already locked arms no timeout" %timers '())
-(set! wm-session-locked? (lambda () #f))
+(set! %already-locked? #f)
 
 ;; ---------------------------------------------------------------------
 ;; wm-on-session-lock / wm-on-session-unlock ((minde groups)) run

@@ -132,10 +132,10 @@ import -window root "$OUT/windows-echo.png"
 loggrep "error in keybinding" && fail "navigation keys errored (see log)"
 ok "navigation: arrows / Tab / 0 / W"
 
-# Sprint 2: which-key, describe-key and marks -- no errors. Eval prompt
-# behavior is covered by keys-test.scm; typing a long expression through
-# XTEST redraws the software-rendered prompt for every character and is too
-# timing-sensitive to be a useful end-to-end gate.
+# Sprint 2: which-key, describe-key and marks -- no errors. Prompt editing is
+# covered by input-test.scm and evaluation envelopes by ipc-reply-test.scm;
+# typing a long expression through XTEST redraws the software-rendered prompt
+# for every character and is too timing-sensitive to be a useful e2e gate.
 xdotool key Print; sleep 0.2; xdotool key question; sleep 0.3
 xdotool key Escape; sleep 0.2 # leave the armed prefix
 xdotool key Print; sleep 0.2; xdotool key F1; sleep 0.2; xdotool key v; sleep 0.3
@@ -143,9 +143,9 @@ xdotool key Print; sleep 0.2; xdotool key x; sleep 0.3
 loggrep "error in keybinding" && fail "sprint-2 keys errored (see log)"
 ok "which-key / describe-key / marks"
 
-# Sprint 3: fullscreen toggle, banish, frame flash, clipboard. Timer behavior
-# is covered by keys-test.scm until Sprint 5 replaces the unsafe threaded REPL
-# with serialized IPC and can exercise the real callback deterministically.
+# Sprint 3: fullscreen toggle, banish, frame flash, clipboard. Timer delivery
+# and lock-timeout behavior are covered deterministically by session-test.scm;
+# the nested path below checks that timer-backed commands do not log errors.
 xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
 xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
 xdotool key Print; sleep 0.2; xdotool key shift+b; sleep 0.3

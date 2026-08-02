@@ -11,6 +11,7 @@
 
 (define (wm-spawn cmd) (set! %spawned (cons cmd %spawned)) #t)
 (define (wm-quit) #t)
+(define (wm-session-locked?) #f)
 (define (wm-log msg) #t)
 (define (wm-place-window id x y w h) #t)
 (define (wm-focus-window id) #t)

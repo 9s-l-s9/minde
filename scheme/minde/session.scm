@@ -21,8 +21,8 @@
 ;;;
 ;;; Same load-time constraint as frames.scm: nothing here may call a
 ;;; wm-* Rust subr, or wm-run-after (a Scheme wrapper defined by
-;;; init.scm itself, looked up the same dynamic way -- see rust-call
-;;; below), at module load time.
+;;; init.scm itself), at module load time. init.scm injects those capabilities
+;;; after defining the wrapper.
 
 (define-module (minde session)
   ;; Non-declarative: the config variables below are documented (README,
@@ -61,26 +61,46 @@
 (define %lock-timeout-ms 5000)
 
 ;; ---------------------------------------------------------------------
-;; Rust subrs (and init.scm's own wm-run-after), looked up dynamically at
-;; call time -- see (minde frames)'s rust-call comment for why: a
-;; module compiled with define-module can't #:use-module something that
-;; doesn't exist yet at its own compile time, and these are registered
-;; (or, for wm-run-after, defined) only once the compositor/init.scm
-;; actually starts. A missing definition (old binary, test stubs) is a
-;; no-op, same policy as everywhere else in this codebase.
+;; Runtime capabilities are injected explicitly by init.scm after its timer
+;; wrapper has been defined. Session locking and suspension are security
+;; boundaries: silently treating an absent or misspelled primitive as #f can
+;; turn a lock request into a no-op, and also conflates absence with a
+;; legitimate false result from wm-session-locked?. Keeping the callbacks in
+;; this module also makes standalone tests independent of Guile's global-module
+;; lookup rules.
 ;; ---------------------------------------------------------------------
 
-(define (rust-call name . args)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod name))))
-    (if var
-        (apply (variable-ref var) args)
-        (begin
-          (format #t "minde: ~a unbound, ignoring call~%" name)
-          #f))))
+(define %runtime-spawn #f)
+(define %runtime-quit #f)
+(define %runtime-run-after #f)
+(define %runtime-session-locked? #f)
 
-(define (spawn! cmd) (rust-call 'wm-spawn cmd))
-(define (run-after ms thunk) (rust-call 'wm-run-after ms thunk))
+(define (require-procedure name value)
+  (unless (procedure? value)
+    (error "session runtime capability must be a procedure" name value)))
+
+(define* (configure-session-runtime! #:key spawn quit run-after session-locked?)
+  "Registers the four runtime callbacks required by session management.
+All callbacks are validated before any are installed, so a bad registration
+cannot leave the module partially configured."
+  (for-each (lambda (entry) (require-procedure (car entry) (cdr entry)))
+            `((spawn . ,spawn)
+              (quit . ,quit)
+              (run-after . ,run-after)
+              (session-locked? . ,session-locked?)))
+  (set! %runtime-spawn spawn)
+  (set! %runtime-quit quit)
+  (set! %runtime-run-after run-after)
+  (set! %runtime-session-locked? session-locked?)
+  #t)
+
+(define (runtime-capability name value)
+  (or value (error "session runtime has not been configured" name)))
+
+(define (spawn! cmd)
+  ((runtime-capability 'spawn %runtime-spawn) cmd))
+(define (run-after ms thunk)
+  ((runtime-capability 'run-after %runtime-run-after) ms thunk))
 
 ;; ---------------------------------------------------------------------
 ;; Best-effort "is this installed" hint. wm-spawn can't itself report a
@@ -122,7 +142,7 @@ is answered \"y\" or \"yes\"."
   (read-one-line "log out (ends the session)? (yes/n) "
     (lambda (answer)
       (when (member answer '("y" "yes"))
-        (rust-call 'wm-quit)))))
+        ((runtime-capability 'quit %runtime-quit))))))
 
 ;; ---------------------------------------------------------------------
 ;; Lock
@@ -177,9 +197,10 @@ suspends immediately without locking."
    ;; Already locked (locker running before suspend! was called): the
    ;; 'session-lock hook only fires on a real unlocked->locked edge, so
    ;; waiting for it here would just time out. wm-session-locked? is a
-   ;; boolean subr; an unbound one (old binary, test stubs) is #f via
-   ;; rust-call, which safely falls through to the lock-and-wait path.
-   ((rust-call 'wm-session-locked?) (spawn! %suspend-command))
+   ;; boolean callback. Unlike the former dynamic lookup, an absent callback
+   ;; is a configuration error rather than being mistaken for "unlocked".
+   (((runtime-capability 'session-locked? %runtime-session-locked?))
+    (spawn! %suspend-command))
    (%suspend-armed? (echo "suspend already pending"))
    (else
     (set! %suspend-armed? #t)
