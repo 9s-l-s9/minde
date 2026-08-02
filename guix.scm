@@ -17,6 +17,8 @@
              (guix gexp)
              (guix build-system gnu)
              (srfi srfi-1)
+             (ice-9 popen)
+             (ice-9 textual-ports)
              ((guix licenses) #:prefix license:)
              (gnu packages base)
              (gnu packages rust)
@@ -35,6 +37,23 @@
 (define %source-archive (getenv "MINDE_SOURCE_ARCHIVE"))
 (define %build-revision
   (or (getenv "MINDE_BUILD_REVISION") "local-checkout"))
+
+;; A dirty checkout ships whatever is on disk -- including half-finished
+;; edits -- straight into the system generation via local-file. Warn
+;; loudly so a reconfigure never bakes in work-in-progress silently.
+;; (The archive path is exempt: it builds from a fixed tarball.)
+(unless %source-archive
+  (let* ((port (open-input-pipe
+                (string-append "git -C " %source-dir
+                               " status --porcelain 2>/dev/null")))
+         (dirt (get-string-all port)))
+    (close-pipe port)
+    (unless (or (eof-object? dirt) (string-null? (string-trim-both dirt)))
+      (format (current-error-port) "~%minde guix.scm: WARNING: \
+building from a DIRTY working tree:~%~a\
+Uncommitted changes will be baked into this build.  Commit or stash \
+first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
+              dirt))))
 
 (define (source-select? file stat)
   ;; Everything except top-level build/agent artifacts and VCS metadata. Only
