@@ -84,11 +84,7 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
         handle.axis(data, details)
     }
 
-    fn frame(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-    ) {
+    fn frame(&mut self, data: &mut MindeState, handle: &mut PointerInnerHandle<'_, MindeState>) {
         handle.frame(data);
     }
 

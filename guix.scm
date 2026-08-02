@@ -146,7 +146,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
               (for-each
                (lambda (file) (install-file file doc-out))
                '("README.md" "CHANGELOG.md" "CONTRIBUTING.md" "SECURITY.md"
-                 "SUPPORT.md" "UNEXPECTED.md" "NOTICE" "COPYING"))
+                 "SUPPORT.md" "NOTICE" "COPYING"))
               (copy-recursively "LICENSES" (string-append doc-out "/LICENSES"))
               (copy-recursively "doc" (string-append doc-out "/doc"))
               (copy-recursively "release" (string-append doc-out "/release"))

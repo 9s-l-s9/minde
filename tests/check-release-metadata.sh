@@ -54,7 +54,7 @@ grep -q "Development version: \`$version\`" README.md ||
 grep -q 'github.com/9s-l-s9/minde' Cargo.toml guix.scm ||
     fail "canonical repository is absent from package metadata"
 
-for file in COPYING NOTICE CHANGELOG.md CONTRIBUTING.md SECURITY.md SUPPORT.md UNEXPECTED.md \
+for file in COPYING NOTICE CHANGELOG.md CONTRIBUTING.md SECURITY.md SUPPORT.md \
     LICENSES/GPL-3.0-or-later.txt LICENSES/MIT.txt; do
     [ -s "$file" ] || fail "$file is missing or empty"
 done

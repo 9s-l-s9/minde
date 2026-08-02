@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Bounded nested e2e gate for the Sprint 14 timing/sync protocols:
+# Bounded nested e2e gate for the timing/sync protocols:
 # wp-presentation-time, wp-tearing-control-v1 and linux-drm-syncobj-v1.
 #
 # Backend coverage (see doc/capability-matrix.md):

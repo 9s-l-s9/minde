@@ -150,10 +150,8 @@ mod tests {
 
     #[test]
     fn refuses_to_remove_an_active_socket() {
-        let path = std::env::temp_dir().join(format!(
-            "minde-runtime-socket-test-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("minde-runtime-socket-test-{}", std::process::id()));
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
         assert_eq!(
             remove_stale_socket(&path).unwrap_err().kind(),

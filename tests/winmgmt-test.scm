@@ -1,4 +1,4 @@
-;;; winmgmt-test.scm -- sprint 8 window-management additions in
+;;; winmgmt-test.scm -- window-management additions in
 ;;; (minde frames): app-id bookkeeping, pull-window-by-id!,
 ;;; show-window-properties!, unmark-window!, sticky list.
 ;;;
@@ -117,7 +117,7 @@
 (check "clear-sticky! removed it" (sticky-windows) '())
 
 ;; ---------------------------------------------------------------------
-;; update-window-title! (sprint 10 handle-window-title-change! backing): late
+;; update-window-title! (handle-window-title-change! backing): late
 ;; title/app-id arrival updates the books; rename override sticks.
 ;; ---------------------------------------------------------------------
 

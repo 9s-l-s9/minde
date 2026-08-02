@@ -1,5 +1,5 @@
 ;;; dynamic-test.scm -- Guile-only unit test of dynamic (auto-tiling)
-;;; groups in (minde groups), sprint 11.
+;;; groups in (minde groups).
 ;;;
 ;;; Run with:
 ;;;   guile -L scheme tests/dynamic-test.scm

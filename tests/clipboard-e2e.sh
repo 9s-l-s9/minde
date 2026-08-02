@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Bounded nested e2e gate for the sprint-14 clipboard ecosystem:
+# Bounded nested e2e gate for the clipboard ecosystem:
 #   * zwlr_data_control_manager_v1 and ext_data_control_manager_v1
 #     (clipboard managers), and
 #   * zwp_primary_selection_device_manager_v1 (middle-click paste).

@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Bounded nested e2e gate for the libinput configuration surface
-# (`wm-input-devices` / `wm-configure-input!`), Sprint 14.
+# (`wm-input-devices` / `wm-configure-input!`).
 #
 # The nested backend is winit, which has no libinput context, so this gate
 # proves the Scheme surface exists and behaves sanely on the no-device path:

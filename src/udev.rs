@@ -575,11 +575,7 @@ fn setup_dmabuf_global(state: &mut MindeState) {
     udev.dmabuf_state = Some((dmabuf_state, global));
 }
 
-fn device_added(
-    state: &mut MindeState,
-    node: DrmNode,
-    path: &Path,
-) -> Result<(), DeviceAddError> {
+fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
     let handle = state.handle.clone();
     let dh = state.display_handle.clone();
     let udev = state.udev_data.as_mut().unwrap();

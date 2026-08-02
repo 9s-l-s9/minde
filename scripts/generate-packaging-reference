@@ -217,7 +217,7 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
     echo "\`ext-image-copy-capture-v1\` directly (such as"
     echo "\`xdg-desktop-portal-luminous\`) remains an alternative but is not"
     echo "currently packaged in Guix. See"
-    echo "[\`../release-roadmap.md\`](../release-roadmap.md#sprint-13--screen-capture-and-desktop-portal)"
+    echo "[\`../release-roadmap.md\`](../release-roadmap.md#screen-capture-and-desktop-portal)"
     echo "for the tracked follow-up."
     echo
 

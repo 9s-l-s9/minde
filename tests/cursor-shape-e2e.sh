@@ -9,7 +9,7 @@
 # the nested winit backend to render its own on-screen cursor, which it does
 # not -- the host compositor draws the pointer, so the themed cursor only
 # appears in screen captures. So this gate asserts the manager global is
-# advertised (wayland-info, the same client the other Sprint 14 gates use)
+# advertised (wayland-info, the same client the other protocol gates use)
 # and that the compositor starts cleanly under an explicit XCURSOR_THEME /
 # XCURSOR_SIZE environment (exercising the theme-load and fallback paths in
 # `crate::render::XCursorLoader`). Shape-name mapping and integer size

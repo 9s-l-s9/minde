@@ -563,7 +563,7 @@ focused client), #f otherwise."
 
 ;; ---------------------------------------------------------------------
 ;; Help, eval prompt, message history, marks, group management
-;; (StumpWM parity sprint 2)
+;; (StumpWM parity)
 ;; ---------------------------------------------------------------------
 
 ;; While the prefix (or a submap) is armed, ? echoes its bindings and
@@ -647,7 +647,7 @@ focused client), #f otherwise."
 
 ;; ---------------------------------------------------------------------
 ;; Timers, fullscreen, force kill, banish, urgency, clipboard
-;; (StumpWM parity sprint 3)
+;; (StumpWM parity)
 ;; ---------------------------------------------------------------------
 
 ;; One-shot timers: Rust arms a calloop timer and calls (handle-timer!
@@ -1058,7 +1058,7 @@ unbound-variable path."
 (bind-prefix-key! "l" (lambda () (windowlist!)))
 
 ;; ---------------------------------------------------------------------
-;; Group & window management parity (StumpWM sprint 8)
+;; Group & window management parity (StumpWM)
 ;; ---------------------------------------------------------------------
 
 ;; Windowlist variants: current frame only, by class, pull instead of
@@ -1185,7 +1185,7 @@ refresh)."
 (bind-prefix-key! "M-t" (lambda () (select-floating-window!)) "select floating window (menu)")
 (bind-prefix-key! "C-r" (lambda () (redisplay!)) "redisplay windows")
 
-;; Dynamic groups (StumpWM sprint 11): prompts and per-group commands.
+;; Dynamic groups (StumpWM parity): prompts and per-group commands.
 (define (gnew-dynamic-prompt!)
   (read-one-line "new dynamic group: "
     (lambda (name)
@@ -1261,7 +1261,7 @@ refresh)."
    ("t" . "retile")))
 
 ;; ---------------------------------------------------------------------
-;; Frames & placement parity (StumpWM sprint 9): fselect, expose,
+;; Frames & placement parity (StumpWM): fselect, expose,
 ;; sibling, uniform splits, rules persistence, desktop dump/restore
 ;; ---------------------------------------------------------------------
 
@@ -1342,7 +1342,7 @@ refresh)."
 (add-placement-rule! "Picture-in-Picture" #:float? #t)
 
 ;; ---------------------------------------------------------------------
-;; Keys & help parity (StumpWM parity sprint 10)
+;; Keys & help parity (StumpWM parity)
 ;; ---------------------------------------------------------------------
 
 ;; send-raw-key: capture the next key press and synthesize it into the
@@ -1779,7 +1779,7 @@ reload baseline. Call once after adding imperative user bindings."
 ;;   (ok RESULT)
 ;;   (error KEY ARGS MESSAGE-STRING BACKTRACE-STRING)
 ;; MESSAGE-STRING is a human-readable rendering of the condition and
-;; BACKTRACE-STRING a bounded Guile backtrace, so an LLM or human can
+;; BACKTRACE-STRING a bounded Guile backtrace, so an automated client or human can
 ;; self-correct without a second round trip. RESULT is guaranteed to be
 ;; `write`-able and re-`read`-able data: an unreadable value (a record,
 ;; procedure or other object printing as #<...>) is reported as an

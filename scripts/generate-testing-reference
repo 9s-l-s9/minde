@@ -17,7 +17,7 @@ out=${1:-doc/testing.md}
     echo
     echo "This index is generated from \`./check --help\` and the \`Makefile\`'s"
     echo "phony targets so it cannot drift from the real commands. For narrative"
-    echo "guidance see [\`../README.md\`](../README.md#development-and-verification)"
+    echo "guidance see [\`../README.md\`](../README.md#development)"
     echo "and [\`debugging.md\`](debugging.md)."
     echo
     echo "## \`./check\`"

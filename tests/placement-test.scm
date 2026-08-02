@@ -1,4 +1,4 @@
-;;; placement-test.scm -- sprint 9: frame dumps, sibling, expose,
+;;; placement-test.scm -- frame dumps, sibling, expose,
 ;;; unmaximize/gravity, rule lock flag + persistence, desktop dump.
 ;;;
 ;;; Run with:

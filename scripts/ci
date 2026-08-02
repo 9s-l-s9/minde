@@ -36,8 +36,9 @@
 # application matrices (check-apps*), demos, stress, and soak. Those launch
 # real graphical processes and heavyweight Guix closures that headless CI
 # runners cannot support; the project treats them as escalation paths run
-# locally or on real hardware (see doc/application-testing.md and the roadmap's
-# Sprint 12 notes). Run them with ./check --all or the granular make targets.
+# locally or on real hardware (see doc/application-testing.md and
+# doc/release-roadmap.md). Run them with ./check --all or the granular make
+# targets.
 #
 # Runs identically inside `guix shell -m manifest.scm` and from outside: when
 # invoked outside the environment it re-executes itself inside it, matching the

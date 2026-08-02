@@ -136,13 +136,13 @@ run_clipboard() {
         return
     fi
     started=$(date +%s%3N)
-    nested_wayland wl-copy --type text/plain minde-sprint-7 >"$OUT/wl-clipboard.log" 2>&1 &
+    nested_wayland wl-copy --type text/plain minde-clipboard-check >"$OUT/wl-clipboard.log" 2>&1 &
     copy_pid=$!
     sleep 1
     actual=$(nested_wayland timeout 5 wl-paste --no-newline 2>>"$OUT/wl-clipboard.log" || true)
     kill "$copy_pid" 2>/dev/null || true
     wait "$copy_pid" 2>/dev/null || true
-    if [ "$actual" = minde-sprint-7 ]; then
+    if [ "$actual" = minde-clipboard-check ]; then
         PASSES=$((PASSES + 1))
         record wl-clipboard wlroots wayland required pass "$(($(date +%s%3N) - started))" "$OUT/wl-clipboard.log" ""
     else

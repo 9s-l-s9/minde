@@ -259,7 +259,7 @@
               (find (lambda (g) (group-has-window? g id)) (group-names))))
 
 ;; ---------------------------------------------------------------------
-;; Sprint 8: gnewbg / switching gnew, *-with-window, gmerge, gkill-other,
+;; gnewbg / switching gnew, *-with-window, gmerge, gkill-other,
 ;; gmove-marked, kill-windows, always-show, groups echo
 ;; ---------------------------------------------------------------------
 
@@ -354,7 +354,7 @@
             (group-has-window? " F " 80))
 
 ;; ---------------------------------------------------------------------
-;; Sprint 14: the foreign-toplevel activate hook (defined in init.scm) is
+;; The foreign-toplevel activate hook (defined in init.scm) is
 ;; thin glue over these exported group operations. Exercise the exact
 ;; building blocks it uses -- find the group holding an id, switch to it,
 ;; focus the window -- across freshly-created groups.

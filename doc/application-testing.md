@@ -1,6 +1,6 @@
 # Application compatibility and soak testing
 
-Sprint 7 separates the small always-run compatibility gate from heavyweight
+The test layout separates the small always-run compatibility gate from heavyweight
 toolkit/browser checks. Tests never require every application in one Guix
 environment.
 

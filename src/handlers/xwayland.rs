@@ -189,7 +189,7 @@ impl XwmHandler for MindeState {
     ) -> bool {
         use smithay::wayland::selection::SelectionTarget;
         // Both clipboard and primary selection are wired (the latter added
-        // with the primary-selection protocol state in sprint 14).
+        // with the primary-selection protocol state).
         matches!(
             selection,
             SelectionTarget::Clipboard | SelectionTarget::Primary

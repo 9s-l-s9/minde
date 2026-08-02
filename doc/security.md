@@ -46,4 +46,4 @@ runtime ownership assumptions. Never enable it in a normal login session.
 
 Smithay-derived files retain MIT identifiers and provenance in `NOTICE`; project
 code is GPL-3.0-or-later. Guix definitions and Cargo.lock pin the build inputs.
-Release archive/offline reproducibility remains Sprint 9 work.
+Release archives are offline-reproducible by construction (see doc/releasing.md).

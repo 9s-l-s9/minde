@@ -26,9 +26,9 @@
 ;;;    *vendored release archive* fetched by URL and verified by hash
 ;;;    (MINDE_SOURCE_ARCHIVE) -- exactly the shape a channel package needs
 ;;;    (origin + url-fetch + sha256), but only once a tagged release has
-;;;    published that archive at a stable URL. As of this writing (the
-;;;    Sprint 12 in-repo channel work) no such release has been published
-;;;    yet, so there is no URL+hash pair to pin. Once one exists, add a
+;;;    published that archive at a stable URL. As of this writing no such
+;;;    release has been published yet, so there is no URL+hash pair to pin.
+;;;    Once one exists, add a
 ;;;    `minde` variable here whose `origin` is a `url-fetch` of the
 ;;;    published `minde-<version>-vendored.tar.gz` archive (with its
 ;;;    published sha256 from SHA256SUMS, see doc/releasing.md) feeding the

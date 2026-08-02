@@ -160,7 +160,7 @@
 (check-false "pull unfloats" (window-floating? 2))
 
 ;; ---------------------------------------------------------------------
-;; Sprint 7 polish: flatten-floats, always-on-top, rename, place
+;; flatten-floats, always-on-top, rename, place
 ;; existing, send-string/ratclick/idle wrappers
 ;; ---------------------------------------------------------------------
 

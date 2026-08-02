@@ -55,7 +55,7 @@ Do not reconfigure the display manager merely to debug a direct TTY failure.
 
 ## Login-session validation
 
-After System/Home dry-runs and the complete sprint changelog, apply the intended
+After System/Home dry-runs and reviewing the changelog, apply the intended
 machine configuration, inspect the generated files/store package, then log out
 and select Minde. Confirm personal Eww, wallpaper, brightness policy,
 autostart and Print-prefix behavior separately from repository defaults.

@@ -9,7 +9,7 @@
 ;;;   (ok RESULT)
 ;;;   (error KEY ARGS MESSAGE-STRING BACKTRACE-STRING)
 ;;; MESSAGE-STRING is a human-readable rendering of the condition and
-;;; BACKTRACE-STRING a bounded Guile backtrace, so an LLM or human can
+;;; BACKTRACE-STRING a bounded Guile backtrace, so an automated client or human can
 ;;; self-correct without a second round trip. RESULT is guaranteed to be
 ;;; `write`-able and re-`read`-able data: an unreadable value (a record,
 ;;; procedure or other object printing as #<...>) is reported as an

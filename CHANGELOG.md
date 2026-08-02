@@ -10,7 +10,7 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
-- Clipboard ecosystem (sprint 14): primary selection
+- Clipboard ecosystem: primary selection
   (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
   across Wayland clients and Xwayland (the X11 selection loop now mirrors the
   primary selection in both directions), plus clipboard-manager support via
@@ -40,7 +40,7 @@ Target version: `1.0.0-rc1`.
   refused under the winit backend (the host window fixes the size). A bounded
   nested e2e gate (`tests/output-management-e2e.sh`) queries the head and
   applies a scale via wlr-randr.
-- Pointer constraints and relative pointer (sprint 14): `zwp_pointer_constraints_v1`
+- Pointer constraints and relative pointer: `zwp_pointer_constraints_v1`
   (pointer lock and confinement) and `zwp_relative_pointer_manager_v1` (raw
   relative motion) via Smithay's server modules, for games and pointer-lock
   clients. A locked pointer stays parked while relative motion still flows, and
@@ -54,11 +54,11 @@ Target version: `1.0.0-rc1`.
   gate (`tests/pointer-constraints-e2e.sh`, wired into `make check-e2e`) asserts
   both manager globals are advertised; Rust unit tests cover the region-clamp
   and membership logic.
-- Fractional scaling and viewport (sprint 14): `wp-fractional-scale-v1` and
+- Fractional scaling and viewport: `wp-fractional-scale-v1` and
   `wp-viewporter` served on both backends via Smithay's server modules.
   Clients learn each surface's preferred fractional scale, which follows the
   output the surface sits on and is re-sent to every mapped surface when an
-  output's scale changes (e.g. wlr-randr `--scale 1.5`, through the sprint-14
+  output's scale changes (e.g. wlr-randr `--scale 1.5`, through the
   output-management path). The render and screencopy paths now use the
   output's `f64` fractional scale throughout -- window content, the
   compositor chrome (focus border, message and frame-number overlays) and
@@ -74,7 +74,7 @@ Target version: `1.0.0-rc1`.
   globals via wayland-info, applies a 1.5 scale with wlr-randr and confirms
   the compositor reflects it and stays alive, then runs foot at that scale
   without a protocol error.
-- Idle notify and idle inhibit (sprint 14): `ext-idle-notify-v1` and
+- Idle notify and idle inhibit: `ext-idle-notify-v1` and
   `zwp_idle_inhibit_manager_v1` (idle-inhibit) via Smithay's server modules,
   advertised on both backends. Per-seat idle timers reset on every input
   event at the central `process_input_event` dispatch, so a swayidle-style
@@ -88,7 +88,7 @@ Target version: `1.0.0-rc1`.
   e2e gate (`tests/idle-e2e.sh`, wired into `make check-e2e`) asserts both
   globals via wayland-info and runs swayidle with a one-second timeout,
   confirming the compositor actually fires an idle notification.
-- Cursor shape and Xcursor theming (sprint 14): `wp_cursor_shape_manager_v1`
+- Cursor shape and Xcursor theming: `wp_cursor_shape_manager_v1`
   (`cursor-shape-v1`) via Smithay's `cursor_shape` module, advertised on both
   backends, so clients request a named cursor shape instead of attaching their
   own surface. Named cursors (the default pointer and every cursor-shape
@@ -108,7 +108,7 @@ Target version: `1.0.0-rc1`.
   that the compositor stays stable under an explicit theme/size environment;
   Rust unit tests in `src/render.rs` cover shape-name resolution and integer
   size selection.
-- Input methods via `text-input-v3` and `input-method-v2` (sprint 14):
+- Input methods via `text-input-v3` and `input-method-v2`:
   `zwp_text_input_manager_v3` and `zwp_input_method_manager_v2` advertised on
   both backends through Smithay's `text_input`/`input_method` modules, so an
   IME (fcitx5/ibus) or on-screen keyboard can drive preedit and commit into
@@ -123,7 +123,7 @@ Target version: `1.0.0-rc1`.
   (`tests/text-input-e2e.sh`, wired into `make check-e2e`) asserts both manager
   globals via wayland-info and that a real text-input-v3 client (foot) maps,
   gains focus, and stays connected with no protocol error.
-- Virtual keyboard and pointer (sprint 14): `zwp_virtual_keyboard_manager_v1`
+- Virtual keyboard and pointer: `zwp_virtual_keyboard_manager_v1`
   (Smithay's `virtual_keyboard` module, client filter admits every client --
   these are user-session automation and accessibility tools) and a hand-written
   `zwlr_virtual_pointer_manager_v1` v2 on the wlr bindings (Smithay ships no
@@ -135,7 +135,7 @@ Target version: `1.0.0-rc1`.
   `pointer_button_event`/`pointer_axis_frame` in `src/input.rs`), so pointer
   constraints, idle-activity reset and the locked-session gate all apply to
   virtual input. No Scheme surface.
-- Keyboard shortcuts inhibit (sprint 14): `zwp_keyboard_shortcuts_inhibit_manager_v1`
+- Keyboard shortcuts inhibit: `zwp_keyboard_shortcuts_inhibit_manager_v1`
   (Smithay's `keyboard_shortcuts_inhibit` module) for remote-desktop and VM
   clients. Inhibitors are auto-granted (documented; no user prompt) but active
   only while their surface has keyboard focus. An active inhibitor makes
@@ -149,7 +149,7 @@ Target version: `1.0.0-rc1`.
   marker line into a focused foot client and asserts the text lands, and drives
   the hand-rolled virtual pointer with wlrctl while asserting the compositor
   stays alive and logs no protocol error.
-- Presentation timing, tearing control and explicit sync (sprint 14):
+- Presentation timing, tearing control and explicit sync:
   - `wp-presentation-time` (Smithay's `PresentationState`) is served
     **udev-only**. Each output's DRM frame now carries an
     `OutputPresentationFeedback` as its queue user-data; on the matching vblank
@@ -178,7 +178,7 @@ Target version: `1.0.0-rc1`.
     that neither `wp_presentation` nor `wp_linux_drm_syncobj_manager_v1` appear
     on the winit backend (locking in the udev-only split); the udev presentation
     and syncobj paths are flagged for hardware-owner verification.
-- libinput device configuration surface in Scheme (sprint 14): two compositor
+- libinput device configuration surface in Scheme: two compositor
   primitives, `(wm-input-devices)` (enumerate seat devices with their
   capability names) and
   `(wm-configure-input! match #:tap-to-click #:natural-scroll #:accel-profile

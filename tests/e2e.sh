@@ -72,7 +72,7 @@ done
 sleep 1
 ok "compositor up, scheme layer loaded"
 
-# Sprint 6: the supported state query and file-backed subscription expose the
+# The supported state query and file-backed subscription expose the
 # same versioned JSON document without arbitrary caller-side parsing.
 state=$(scripts/mindectl query state --json) || fail "structured state query"
 printf '%s\n' "$state" | grep -q '"schema_version":1' || fail "state schema version"
@@ -122,7 +122,7 @@ xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "iresize errored (see log)"
 ok "iresize mode"
 
-# Navigation sprint: directional focus, last-window toggle, select by
+# Navigation: directional focus, last-window toggle, select by
 # number, windows echo -- none may error.
 xdotool key Print; sleep 0.2; xdotool key Down; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key Tab; sleep 0.3
@@ -132,7 +132,7 @@ import -window root "$OUT/windows-echo.png"
 loggrep "error in keybinding" && fail "navigation keys errored (see log)"
 ok "navigation: arrows / Tab / 0 / W"
 
-# Sprint 2: which-key, describe-key and marks -- no errors. Prompt editing is
+# Which-key, describe-key and marks -- no errors. Prompt editing is
 # covered by input-test.scm and evaluation envelopes by ipc-reply-test.scm;
 # typing a long expression through XTEST redraws the software-rendered prompt
 # for every character and is too timing-sensitive to be a useful e2e gate.
@@ -140,17 +140,17 @@ xdotool key Print; sleep 0.2; xdotool key question; sleep 0.3
 xdotool key Escape; sleep 0.2 # leave the armed prefix
 xdotool key Print; sleep 0.2; xdotool key F1; sleep 0.2; xdotool key v; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key x; sleep 0.3
-loggrep "error in keybinding" && fail "sprint-2 keys errored (see log)"
+loggrep "error in keybinding" && fail "which-key/describe-key/marks keys errored (see log)"
 ok "which-key / describe-key / marks"
 
-# Sprint 3: fullscreen toggle, banish, frame flash, clipboard. Timer delivery
+# Fullscreen toggle, banish, frame flash, clipboard. Timer delivery
 # and lock-timeout behavior are covered deterministically by session-test.scm;
 # the nested path below checks that timer-backed commands do not log errors.
 xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
 xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
 xdotool key Print; sleep 0.2; xdotool key shift+b; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key ctrl+c; sleep 0.6
-loggrep "error in keybinding" && fail "sprint-3 keys errored (see log)"
+loggrep "error in keybinding" && fail "fullscreen/banish/clipboard keys errored (see log)"
 loggrep "error in timer" && fail "a timer thunk errored (see log)"
 # Clipboard: own the selection compositor-side, paste it into the eval
 # prompt with C-y, evaluate.
@@ -235,7 +235,7 @@ xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "menu windowlist errored (see log)"
 ok "menu windowlist: open / navigate / select"
 
-# Polish sprint: send-string / ratclick / idle / rename / ontop /
+# send-string / ratclick / idle / rename / ontop /
 # flatten must all execute without erroring (send-string types into
 # whatever is focused; we only assert the round-trip).
 scripts/minde-cmd '(begin
@@ -259,7 +259,7 @@ xdotool key Return; sleep 0.3     # leave command mode
 loggrep "error in keybinding" && fail "command mode errored (see log)"
 ok "command mode: enter / bare keys / exit"
 
-# Sprint 8: gnewbg (created, not switched), sticky follows a group
+# gnewbg (created, not switched), sticky follows a group
 # switch, and the pull-from-windowlist menu -- all via REPL markers.
 scripts/minde-cmd '(begin
   (use-modules (minde compositor frames) (minde groups))
@@ -288,7 +288,7 @@ xdotool key Return; sleep 0.5
 loggrep "error in keybinding" && fail "pull-from-windowlist errored (see log)"
 ok "gnewbg / always-show / pull-from-windowlist"
 
-# Sprint 9: fselect (overlays + digit jump), expose in/out, remember +
+# fselect (overlays + digit jump), expose in/out, remember +
 # place-existing round-trip.
 xdotool key Print; sleep 0.2; xdotool key j; sleep 0.4
 import -window root "$OUT/fselect.png"
@@ -307,7 +307,7 @@ sleep 1
 loggrep "e2e-remember-ok" || fail "remember/forget round-trip"
 ok "fselect / expose / remember"
 
-# Sprint 10: remapped keys + send-key through the real subr, which-key
+# Remapped keys + send-key through the real subr, which-key
 # auto-echo, help prompts. A fresh Wayland client first: its app-id
 # only arrives after map, via handle-window-title-change!.
 scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
@@ -342,10 +342,10 @@ xdotool key Print; sleep 0.2; xdotool key F2; sleep 0.4
 xdotool key Escape; sleep 0.3
 xdotool key Print; sleep 0.2; xdotool key F5; sleep 0.4
 xdotool key Escape; sleep 0.3
-loggrep "error in keybinding" && fail "sprint-10 keys/help errored (see log)"
+loggrep "error in keybinding" && fail "remapped-keys/help keys errored (see log)"
 ok "remapped keys / send-key / which-key / help prompts"
 
-# Sprint 11: dynamic groups -- master/stack auto-tiling, rotate,
+# Dynamic groups -- master/stack auto-tiling, rotate,
 # exchange, retile; manual split refused.
 scripts/minde-cmd '(create-dynamic-group! " dyn ")' >/dev/null 2>&1 || true
 sleep 1

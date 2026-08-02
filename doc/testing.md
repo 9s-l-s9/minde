@@ -4,7 +4,7 @@
 
 This index is generated from `./check --help` and the `Makefile`'s
 phony targets so it cannot drift from the real commands. For narrative
-guidance see [`../README.md`](../README.md#development-and-verification)
+guidance see [`../README.md`](../README.md#development)
 and [`debugging.md`](debugging.md).
 
 ## `./check`

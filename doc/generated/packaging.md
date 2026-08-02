@@ -178,7 +178,7 @@ hardware/PipeWire; a portal backend speaking
 `ext-image-copy-capture-v1` directly (such as
 `xdg-desktop-portal-luminous`) remains an alternative but is not
 currently packaged in Guix. See
-[`../release-roadmap.md`](../release-roadmap.md#sprint-13--screen-capture-and-desktop-portal)
+[`../release-roadmap.md`](../release-roadmap.md#screen-capture-and-desktop-portal)
 for the tracked follow-up.
 
 ## Support boundary

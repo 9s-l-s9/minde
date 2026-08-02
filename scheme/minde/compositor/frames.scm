@@ -1047,7 +1047,7 @@ authoritative and treat the dragged float as focused/topmost."
 
 ;; ---------------------------------------------------------------------
 ;; Key synthesis + remapped keys (StumpWM send-raw-key / meta /
-;; define-remapped-keys) -- sprint 10
+;; define-remapped-keys)
 ;; ---------------------------------------------------------------------
 
 (define (parse-key-spec spec)
@@ -2118,7 +2118,7 @@ syncs, restoring the frame layout."
     (sync-frames-now!)))
 
 ;; ---------------------------------------------------------------------
-;; Fullscreen, force kill, pointer control, urgency (sprint 3)
+;; Fullscreen, force kill, pointer control, urgency
 ;; ---------------------------------------------------------------------
 
 ;; Window id currently fullscreen, or #f. Only ever one at a time.

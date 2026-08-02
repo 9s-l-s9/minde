@@ -36,8 +36,7 @@ inventory is [`generated/api-reference.md`](generated/api-reference.md).
 
 Modules under `(minde compositor ...)` are intended as implementation
 details. The current boundary still exposes internal frame/model helpers; that
-debt is recorded in `UNEXPECTED.md` and must be curated before API stability is
-claimed.
+debt must be curated before API stability is claimed.
 
 ## Reusable packages
 

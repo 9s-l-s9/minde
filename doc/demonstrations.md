@@ -48,5 +48,5 @@ one scenario. Manifest generation fails on missing, duplicate or stale IDs.
 Public bindings without a command scenario remain in the generated API
 inventory with the explicit classification `non-visual`; their behavior is
 covered by the focused Scheme suites rather than by meaningless UI clips. The
-live boundary is fully described, while its pre-1.0 curation debt remains
-recorded in `UNEXPECTED.md`.
+live boundary is fully described; some pre-1.0 curation debt remains (see
+`architecture.md`).

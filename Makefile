@@ -167,7 +167,6 @@ check-generated-docs:
 
 check-docs: check-generated-docs
 	@test -s README.md
-	@test -s PLAN.md
 	@test -s doc/release-roadmap.md
 	@test -s doc/api.md
 	@test -s doc/tutorial.md
@@ -191,7 +190,6 @@ check-docs: check-generated-docs
 	@test -s doc/generated/demo-manifest.json
 	@test -s doc/generated/manual.html
 	@test -s doc/reusable-packages.md
-	@test -s UNEXPECTED.md
 	sh tests/check-doc-links.sh
 	sh tests/check-release-metadata.sh
 

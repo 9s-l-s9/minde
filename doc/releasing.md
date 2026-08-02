@@ -82,7 +82,7 @@ under `build/release/VERSION/`.
 `MINDE_RELEASE_GATES` exists only to shorten development of the release
 script. A published artifact must use the default gate set.
 
-## Owner verification after Sprint 9
+## Owner verification of release archives
 
 No system or Home reconfiguration is required for archive verification. Use a
 clean temporary checkout so personal untracked files cannot weaken the clean
@@ -127,4 +127,4 @@ To test the SDDM entry in a real login, install the package through the System
 configuration, reconfigure, and restart into a fresh session. Keep the prior
 Guix generation and StumpWM session available for rollback. That live-login
 step and switching `~/Projects/System` from the checkout to the actual RC
-artifact belong to Sprint 10 and remain pending until performed by the owner.
+artifact remain pending until performed by the owner.

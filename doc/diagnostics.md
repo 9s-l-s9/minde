@@ -1,6 +1,6 @@
 # Diagnostics, status, and reports
 
-Sprint 6 defines schema version 1 for external status consumers and diagnostic
+This interface defines schema version 1 for external status consumers and diagnostic
 reports. The public interfaces are `mindectl`, `(minde status)`, and the
 atomic status file. Arbitrary `eval` remains available for trusted local
 automation, but bars and monitoring tools should use `query` or `subscribe`.
@@ -90,7 +90,7 @@ with `~`. It never records clipboard contents or dumps the environment. Inspect
 the bundle before sharing it because application and driver error text can
 still contain information not known to minde.
 
-## Sprint 6 owner verification
+## Owner verification
 
 Run the local checks first:
 
@@ -115,7 +115,7 @@ that no title, clipboard text, command argument, or absolute home path appears.
 Then deliberately evaluate an error:
 
 ```sh
-scripts/mindectl eval '(error "sprint-6-backtrace-check")'
+scripts/mindectl eval '(error "backtrace-check")'
 ```
 
 It must fail without terminating minde, and `session.log` must contain a

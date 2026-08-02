@@ -367,7 +367,7 @@
           (list 20 21 22))
 
 ;; ---------------------------------------------------------------------
-;; Sprint 3: fullscreen freeze, urgency bookkeeping
+;; Fullscreen freeze, urgency bookkeeping
 ;; ---------------------------------------------------------------------
 
 (define %fullscreen-calls '())

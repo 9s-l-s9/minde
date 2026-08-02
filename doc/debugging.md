@@ -111,13 +111,12 @@ preference:
 The vendored crate graph (`vendor/`, git-pinned Smithay and its
 dependents) is large -- roughly 373 MB on disk -- so expect the first
 `cargo build`/`cargo check` after a clean checkout, a `Cargo.lock` change,
-or a manifest change to take a while: `UNEXPECTED.md` records a cold
-fixed-gate run of about two minutes versus 16 seconds warm on an unchanged
-profile, and a cold `cargo check` of 2m10s versus 0.67s immediately
-repeated. `./check` uses `cargo check` rather than a full link so that
+or a manifest change to take a while: a measured cold fixed-gate run took
+about two minutes versus 16 seconds warm on an unchanged profile, and a
+cold `cargo check` took 2m10s versus 0.67s immediately repeated. `./check` uses `cargo check` rather than a full link so that
 warm loops stay fast even though the initial one does not.
 
-Per `UNEXPECTED.md`, `mold` is available in the pinned Guix channels but
+`mold` is available in the pinned Guix channels but
 `sccache` is not, adding a third-party compiler-cache package would
 complicate the default environment, and sccache cannot cache incrementally
 compiled workspace crates anyway -- so neither is part of the default

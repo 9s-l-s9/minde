@@ -30,7 +30,7 @@ Every reply is a single readable Scheme datum:
 - `(error KEY ARGS MESSAGE BACKTRACE)` on failure, where `KEY` is the Guile
   exception key (a symbol), `ARGS` its raw throw arguments, `MESSAGE` a
   human-readable rendering of the condition, and `BACKTRACE` a bounded Guile
-  backtrace string. `MESSAGE` and `BACKTRACE` let an LLM or a human self-correct
+  backtrace string. `MESSAGE` and `BACKTRACE` let an automated client or a human self-correct
   without a second round trip; the backtrace is capped to a few frames and a
   bounded length, and error formatting is itself guarded so it never throws.
 
