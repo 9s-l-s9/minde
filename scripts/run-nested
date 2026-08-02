@@ -60,12 +60,14 @@ export XDG_RUNTIME_DIR="$nested_rt"
 echo "run-nested: nested runtime directory: $nested_rt" >&2
 echo "run-nested: control the nested instance with:" >&2
 echo "run-nested:   XDG_RUNTIME_DIR=$nested_rt scripts/mindectl ..." >&2
+echo "run-nested: reload Scheme edits with:" >&2
+echo "run-nested:   XDG_RUNTIME_DIR=$nested_rt scripts/mindectl eval '(reload-configuration!)'" >&2
 # Default to a legible log level for interactive use without clobbering an
 # explicit developer choice.
 export RUST_LOG="${RUST_LOG:-minde=info,scheme=info}"
 
 # Build the binary; a clear message beats a stale or missing target.
-cargo build || {
+cargo build --locked || {
     echo "run-nested: cargo build failed; fix the errors above and retry" >&2
     exit 1
 }
