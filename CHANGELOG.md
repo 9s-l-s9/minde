@@ -32,6 +32,18 @@ Target version: `1.0.0-rc1`.
   key press, pointer button or pointer motion powers every head back on
   (`wake_on_input`, default on; a Scheme toggle is planned). New nested e2e
   gate `tests/output-power-e2e.sh`.
+- udev backend: mode changes requested through wlr-output-management
+  (`wlr-randr --output DP-1 --mode 1920x1080@60`, kanshi/shikane `mode`)
+  are real modesets on the connector's CRTC. Custom modes are matched to a
+  connector mode of the same size whose refresh is within 1 Hz; custom
+  modelines are refused, and a failed modeset (or any other head in the same
+  configuration failing) restores the previous scanout mode. Known
+  limitation: when the new mode exceeds the available bandwidth, Smithay's
+  fallback may show a single black frame on the other heads.
+- udev backend: adaptive sync (VRR) per head through wlr-output-management
+  (`wlr-randr --output DP-1 --adaptive-sync enabled`). Heads report the real
+  `Adaptive Sync` state, enabling it on a connector without VRR fails the
+  configuration, and the setting survives disabling and re-enabling the head.
 - udev backend: heads can be disabled and re-enabled through
   wlr-output-management (`wlr-randr --output DP-1 --off` / `--on`, kanshi and
   shikane profiles). Every connector is tracked as a head whether or not it

@@ -122,6 +122,14 @@ if nested_wayland timeout 15 wlr-randr --output winit --adaptive-sync enabled \
 fi
 echo "ok - adaptive sync enable is refused where unsupported"
 
+# --- mode changes: the winit window has a fixed size, so they must fail --
+if nested_wayland timeout 15 wlr-randr --output winit --custom-mode 640x480@60 \
+    >"$OUT/mode.log" 2>&1; then
+    echo "error: --custom-mode succeeded on the winit backend" >&2
+    exit 1
+fi
+echo "ok - a mode change is refused where the backend cannot modeset"
+
 kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died during refused configurations" >&2
     exit 1

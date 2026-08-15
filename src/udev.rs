@@ -57,7 +57,7 @@ use smithay::{
         },
         drm::{
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
-            DrmEventTime, DrmNode, NodeType,
+            DrmEventTime, DrmNode, NodeType, VrrSupport,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -225,6 +225,12 @@ struct HeadEntry {
     /// DPMS state; only meaningful while enabled (reset to `On` on
     /// disable so a re-enabled head always lights up).
     power: PowerState,
+    /// What the connector reports about variable refresh rate, cached
+    /// when the head is enabled (`NotSupported` while disabled or unknown).
+    vrr_support: VrrSupport,
+    /// Desired adaptive-sync state; re-applied whenever the CRTC is
+    /// (re)initialised so it survives disable/enable cycles.
+    vrr: bool,
 }
 
 impl HeadEntry {
@@ -233,6 +239,35 @@ impl HeadEntry {
     fn enabled(&self) -> bool {
         self.global.is_some()
     }
+}
+
+/// Translates a mode requested through wlr-output-management into the
+/// connector mode to set. An advertised mode (`custom == false`) must match
+/// exactly; a custom mode matches a connector mode of the same size whose
+/// refresh is within +-1000 mHz (a `wlr-randr --custom-mode 1920x1080@60`
+/// is meant to hit the connector's 59.94 Hz mode). Real custom modelines
+/// are not supported: they would need `drmModeAttachMode` and the kernel
+/// tends to reject them anyway. Generic over the connector-mode type only
+/// so it can be unit-tested without a DRM device (`control::Mode` cannot
+/// be constructed outside the drm crate).
+fn resolve_connector_mode<M: Copy>(
+    modes: &[(WlMode, M)],
+    wanted: WlMode,
+    custom: bool,
+) -> Option<M> {
+    if let Some((_, drm)) = modes.iter().find(|(wl, _)| *wl == wanted) {
+        return Some(*drm);
+    }
+    if !custom {
+        return None;
+    }
+    modes
+        .iter()
+        .filter(|(wl, _)| wl.size == wanted.size)
+        .map(|(wl, drm)| ((wl.refresh - wanted.refresh).abs(), *drm))
+        .filter(|(diff, _)| *diff <= 1000)
+        .min_by_key(|(diff, _)| *diff)
+        .map(|(_, drm)| drm)
 }
 
 struct DeviceData {
@@ -819,6 +854,8 @@ fn create_head(
             global: None,
             surface: None,
             power: PowerState::On,
+            vrr_support: VrrSupport::NotSupported,
+            vrr: false,
         },
     );
     // Assign the stable head id now so it survives disable/enable cycles.
@@ -926,6 +963,23 @@ fn init_surface(
         )
         .map_err(|err| format!("failed to initialize drm output: {err}"))?;
     drop(renderer);
+    // Cache what the connector says about VRR and re-apply the desired
+    // state so a disable/enable (or power) cycle keeps adaptive sync.
+    entry.vrr_support = drm_output
+        .with_compositor(|c| c.vrr_supported(entry.connector))
+        .unwrap_or_else(|err| {
+            warn!(%err, "failed to query vrr support");
+            VrrSupport::NotSupported
+        });
+    if entry.vrr {
+        if entry.vrr_support == VrrSupport::NotSupported {
+            warn!(output = %entry.output.name(), "adaptive sync no longer supported; dropping it");
+            entry.vrr = false;
+        } else if let Err(err) = drm_output.with_compositor(|c| c.use_vrr(true)) {
+            warn!(%err, output = %entry.output.name(), "failed to re-enable adaptive sync");
+            entry.vrr = false;
+        }
+    }
     entry.surface = Some(OutputSurface {
         drm_output,
         border_buffers: BorderBuffers::default(),
@@ -1378,12 +1432,12 @@ impl MindeState {
     }
 
     /// The udev backend's `backend_realize_head`: enables or disables the
-    /// head as requested. A disabled head is enabled at `change.mode`
-    /// (already resolved by validation to an advertised mode, translated
-    /// back to the connector mode it came from) at `change.position` or,
-    /// absent that, right of every enabled output. Mode changes on an
-    /// enabled head and adaptive sync are not realised yet and fail the
-    /// configuration honestly.
+    /// head, sets its mode and its adaptive-sync state as requested. A
+    /// disabled head is enabled at `change.mode` (already resolved by
+    /// validation to an advertised mode, translated back to the connector
+    /// mode it came from) at `change.position` or, absent that, right of
+    /// every enabled output. Position, scale and transform are left to
+    /// `commit_head`; only the pieces that need the DRM device happen here.
     pub(crate) fn udev_realize_head(
         &mut self,
         output: &Output,
@@ -1392,9 +1446,6 @@ impl MindeState {
         let (node, crtc) = self
             .udev_head_for_output(output)
             .ok_or("head is not driven by the udev backend")?;
-        if change.adaptive_sync == Some(true) {
-            return Err("adaptive sync not yet supported on udev".into());
-        }
         let enabled = self.output_enabled(output);
         if !change.enabled {
             if enabled {
@@ -1406,33 +1457,157 @@ impl MindeState {
             if let Some(mode) = change.requested_mode()
                 && Some(mode) != output.current_mode()
             {
-                return Err("mode changes not yet supported on udev".into());
+                self.udev_set_mode(output, mode, change.custom_mode.is_some())?;
             }
+        } else {
+            let wl_mode = change
+                .requested_mode()
+                .or_else(|| output.preferred_mode())
+                .or_else(|| output.current_mode())
+                .ok_or("head has no mode to enable with")?;
+            let drm_mode = self
+                .udev_data
+                .as_ref()
+                .and_then(|u| u.devices.get(&node))
+                .and_then(|d| d.heads.get(&crtc))
+                .and_then(|entry| {
+                    resolve_connector_mode(&entry.modes, wl_mode, change.custom_mode.is_some())
+                })
+                .ok_or("requested mode is not a connector mode")?;
+            let position: Point<i32, Logical> = change
+                .position
+                .map(Into::into)
+                .unwrap_or_else(|| right_edge_of_outputs(self));
+            enable_head(self, node, crtc, drm_mode, position)?;
+        }
+        if let Some(on) = change.adaptive_sync {
+            self.udev_set_adaptive_sync(node, crtc, on)?;
+        }
+        Ok(())
+    }
+
+    /// Switches the scanout mode of an enabled head to `wl_mode`, which is
+    /// translated to a connector mode with [`resolve_connector_mode`]
+    /// (`custom` selects the tolerant match for custom modes). The DRM
+    /// compositor keeps sizing its frames from the [`Output`], so the
+    /// output's current mode is updated in the same step, and a frame is
+    /// rendered right away so the modeset commits. A head without a live
+    /// surface (disabled, or powered off by output-power-management) only
+    /// gets the mode recorded on the Output; the next `enable_head` /
+    /// power-on initialises the CRTC from that.
+    ///
+    /// Known limitation: the mode is set with
+    /// `DrmOutputRenderElements::default()`, so if the new mode exceeds the
+    /// available bandwidth Smithay's fallback path re-submits the *other*
+    /// heads with empty element lists to free planes -- those may show a
+    /// black frame for one refresh. Collecting all heads' elements without
+    /// submitting them is a follow-up.
+    pub(crate) fn udev_set_mode(
+        &mut self,
+        output: &Output,
+        wl_mode: WlMode,
+        custom: bool,
+    ) -> Result<(), String> {
+        let (node, crtc) = self
+            .udev_head_for_output(output)
+            .ok_or("head is not driven by the udev backend")?;
+        let udev = self.udev_data.as_mut().ok_or("no udev backend")?;
+        let primary_gpu = udev.primary_gpu;
+        // Split borrows (see `render_surface`): surface in `devices`,
+        // renderer in `gpus`.
+        let UdevBackendData { gpus, devices, .. } = udev;
+        let entry = devices
+            .get_mut(&node)
+            .and_then(|d| d.heads.get_mut(&crtc))
+            .ok_or("unknown head")?;
+        let drm_mode = resolve_connector_mode(&entry.modes, wl_mode, custom)
+            .ok_or("no matching connector mode; custom modelines are not supported")?;
+        let Some(surface) = entry.surface.as_mut() else {
+            output.change_current_state(Some(wl_mode), None, None, None);
+            return Ok(());
+        };
+        if output.current_mode() == Some(wl_mode) {
             return Ok(());
         }
-        let wl_mode = change
-            .requested_mode()
-            .or_else(|| output.preferred_mode())
-            .or_else(|| output.current_mode())
-            .ok_or("head has no mode to enable with")?;
-        let drm_mode = self
+        info!(?crtc, output = %output.name(), ?wl_mode, "setting mode");
+        let mut renderer = gpus
+            .single_renderer(&primary_gpu)
+            .map_err(|err| format!("failed to get renderer for modeset: {err}"))?;
+        surface
+            .drm_output
+            .use_mode::<_, MindeRenderElements<UdevRenderer<'_>>>(
+                drm_mode,
+                &mut renderer,
+                &DrmOutputRenderElements::default(),
+            )
+            .map_err(|err| format!("modeset failed: {err}"))?;
+        drop(renderer);
+        output.change_current_state(Some(wl_mode), None, None, None);
+        self.render_now(node, crtc);
+        Ok(())
+    }
+
+    /// Enables or disables adaptive sync (VRR) on an enabled head and
+    /// remembers the choice in its [`HeadEntry`]. Fails where the
+    /// connector does not support VRR; on a `RequiresModeset` connector
+    /// the next frame carries the modeset.
+    fn udev_set_adaptive_sync(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+        on: bool,
+    ) -> Result<(), String> {
+        let entry = self
             .udev_data
-            .as_ref()
-            .and_then(|u| u.devices.get(&node))
-            .and_then(|d| d.heads.get(&crtc))
-            .and_then(|entry| {
-                entry
-                    .modes
-                    .iter()
-                    .find(|(wl, _)| *wl == wl_mode)
-                    .map(|(_, drm)| *drm)
-            })
-            .ok_or("requested mode is not a connector mode")?;
-        let position: Point<i32, Logical> = change
-            .position
-            .map(Into::into)
-            .unwrap_or_else(|| right_edge_of_outputs(self));
-        enable_head(self, node, crtc, drm_mode, position)
+            .as_mut()
+            .and_then(|u| u.devices.get_mut(&node))
+            .and_then(|d| d.heads.get_mut(&crtc))
+            .ok_or("unknown head")?;
+        let Some(surface) = entry.surface.as_ref() else {
+            // No CRTC to talk to: remember the wish for the next enable.
+            entry.vrr = on;
+            return Ok(());
+        };
+        if entry.vrr_support == VrrSupport::NotSupported {
+            return if on {
+                Err("adaptive sync not supported on this head".into())
+            } else {
+                entry.vrr = false;
+                Ok(())
+            };
+        }
+        surface
+            .drm_output
+            .with_compositor(|c| c.use_vrr(on))
+            .map_err(|err| format!("failed to set adaptive sync: {err}"))?;
+        entry.vrr = on;
+        info!(?crtc, output = %entry.output.name(), on, "adaptive sync");
+        self.render_now(node, crtc);
+        Ok(())
+    }
+
+    /// The udev backend's answer to `output_adaptive_sync`: `Some(on)` on
+    /// a connector that supports VRR (with or without a modeset) -- the
+    /// live state while the head is enabled, the remembered wish while it
+    /// is disabled (support is only learnt on the first enable, so a
+    /// never-enabled head reports `None`) -- and `None` where the
+    /// connector cannot do it.
+    pub(crate) fn udev_output_adaptive_sync(&self, output: &Output) -> Option<bool> {
+        let (node, crtc) = self.udev_head_for_output(output)?;
+        let entry = self
+            .udev_data
+            .as_ref()?
+            .devices
+            .get(&node)?
+            .heads
+            .get(&crtc)?;
+        if entry.vrr_support == VrrSupport::NotSupported {
+            return None;
+        }
+        match entry.surface.as_ref() {
+            Some(surface) => Some(surface.drm_output.with_compositor(|c| c.vrr_enabled())),
+            None => Some(entry.vrr),
+        }
     }
 
     /// Resolves an output to the DRM device fd, CRTC, and gamma ramp length
@@ -1850,5 +2025,76 @@ impl MindeState {
         let _ = self.display_handle.flush_clients();
 
         Ok(queued)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wl(w: i32, h: i32, refresh: i32) -> WlMode {
+        WlMode {
+            size: (w, h).into(),
+            refresh,
+        }
+    }
+
+    fn modes() -> Vec<(WlMode, &'static str)> {
+        vec![
+            (wl(1920, 1080, 60_000), "1080p60"),
+            (wl(1920, 1080, 59_940), "1080p59.94"),
+            (wl(1920, 1080, 144_000), "1080p144"),
+            (wl(2560, 1440, 60_000), "1440p60"),
+        ]
+    }
+
+    #[test]
+    fn advertised_mode_matches_exactly_or_not_at_all() {
+        let m = modes();
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 59_940), false),
+            Some("1080p59.94")
+        );
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 59_950), false),
+            None
+        );
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1280, 720, 60_000), false),
+            None
+        );
+    }
+
+    #[test]
+    fn custom_mode_matches_size_and_refresh_within_a_hertz() {
+        let m = modes();
+        // Exact hit wins over the tolerant search.
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 60_000), true),
+            Some("1080p60")
+        );
+        // Nearest refresh within +-1000 mHz.
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 59_500), true),
+            Some("1080p59.94")
+        );
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 143_100), true),
+            Some("1080p144")
+        );
+        // Same size, refresh too far off: no modeline synthesis.
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1920, 1080, 75_000), true),
+            None
+        );
+        // Different size: refused even with tolerance.
+        assert_eq!(
+            resolve_connector_mode(&m, wl(1921, 1080, 60_000), true),
+            None
+        );
+        assert_eq!(
+            resolve_connector_mode(&[], wl(1920, 1080, 60_000), true),
+            None::<&str>
+        );
     }
 }

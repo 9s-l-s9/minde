@@ -203,7 +203,13 @@ pub(crate) fn validate(
                 if m.size.w <= 0 || m.size.h <= 0 {
                     return Err(OutputConfigError::new("custom mode has non-positive size"));
                 }
-                mode = Some(m);
+                // A custom mode that names an advertised mode (same size,
+                // refresh within 1 Hz -- `--custom-mode 1920x1080@60` for
+                // a 59.94 Hz panel) is that mode; the backend then sees an
+                // exact match and the output state stays coherent with the
+                // mode list. Anything else stays custom for the backend to
+                // accept or refuse.
+                mode = Some(nearest_advertised_mode(&change.output, m).unwrap_or(m));
             } else if !facts.enabled {
                 // EnableHead without a mode: preferred, else current.
                 mode = change
@@ -248,6 +254,19 @@ pub(crate) fn validate(
         ));
     }
     Ok(resolved)
+}
+
+/// The advertised mode of `output` with the same size as `wanted` and the
+/// nearest refresh within +-1000 mHz, if any.
+fn nearest_advertised_mode(output: &Output, wanted: Mode) -> Option<Mode> {
+    output
+        .modes()
+        .into_iter()
+        .filter(|m| m.size == wanted.size)
+        .map(|m| ((m.refresh - wanted.refresh).abs(), m))
+        .filter(|(diff, _)| *diff <= 1000)
+        .min_by_key(|(diff, _)| *diff)
+        .map(|(_, m)| m)
 }
 
 /// Shared state of a `ZwlrOutputConfigurationV1` (mutated from its own and
@@ -431,11 +450,12 @@ impl MindeState {
     }
 
     /// The backend's adaptive-sync (VRR) state for `output`: `Some(on)`
-    /// where supported, `None` where the backend cannot do it (winit; udev
-    /// until VRR lands).
+    /// where supported (udev, on a VRR-capable connector while the head is
+    /// enabled), `None` where the backend cannot do it (winit; udev heads
+    /// whose connector reports no VRR or that are disabled).
     pub fn output_adaptive_sync(&self, output: &Output) -> Option<bool> {
-        let _ = output;
-        None
+        self.udev_data.as_ref()?;
+        self.udev_output_adaptive_sync(output)
     }
 
     /// Backend-specific part of applying one head change: mode set,
@@ -1123,6 +1143,28 @@ mod tests {
         assert!(validate(&heads, &[c.clone()], false).is_err());
         c.mode = Some(mode(800, 600));
         assert!(validate(&heads, &[c], false).is_ok());
+    }
+
+    #[test]
+    fn custom_mode_resolves_to_a_nearby_advertised_mode() {
+        let heads = [head("a", true, None)];
+        let mut c = HeadChange::new(heads[0].output.clone(), true);
+        // 800x600 is advertised at 60 Hz: 59.5 Hz custom lands on it.
+        c.custom_mode = Some((800, 600, 59_500));
+        let r = validate(&heads, &[c.clone()], false).unwrap();
+        assert_eq!(r[0].mode, Some(mode(800, 600)));
+        // Too far off (or another size): stays custom for the backend.
+        c.custom_mode = Some((800, 600, 75_000));
+        let r = validate(&heads, &[c.clone()], false).unwrap();
+        assert_eq!(
+            r[0].mode,
+            Some(Mode {
+                size: (800, 600).into(),
+                refresh: 75_000
+            })
+        );
+        c.custom_mode = Some((0, 600, 60_000));
+        assert!(validate(&heads, &[c], false).is_err());
     }
 
     #[test]

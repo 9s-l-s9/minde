@@ -83,6 +83,31 @@ Output power management (udev; `wlopm` and `swayidle` are in `manifest.scm`):
   and a running `wlopm` gets `failed`; plug it back in: it comes up on;
 - `wlopm --off eDP-1` on a disabled head (`wlr-randr --output eDP-1 --off`
   first) fails rather than blanking a head that is not lit.
+Mode setting (udev):
+
+- `wlr-randr --output DP-1 --mode 1920x1080@60`: the monitor's OSD reports
+  the new mode (scanout really changed, not just the advertised size),
+  `wlr-randr` shows it as current, windows reflow to the new size and the
+  pointer stays on screen;
+- switch back to the preferred mode; then `--custom-mode 1920x1080@59.94`
+  lands on the connector's 59.94 Hz mode (size equal, refresh within 1 Hz);
+- an impossible custom mode (`--custom-mode 1234x567@60`) fails
+  (`wlr-randr` reports failure) and nothing changes on the monitor;
+- two heads in one configuration where one requests a bad mode
+  (`--output DP-1 --mode 1920x1080@60 --output eDP-1 --custom-mode 1x1@1`):
+  the whole configuration fails and *both* heads keep their previous mode;
+- `--scale 2` on a HiDPI head re-renders fractional-scale clients (foot,
+  GTK4) at the new density.
+
+Adaptive sync (udev, needs a FreeSync/G-Sync-compatible monitor):
+
+- `cat /sys/class/drm/card*-DP-1/vrr_capable` prints `1`;
+- `wlr-randr --output DP-1 --adaptive-sync enabled` succeeds and
+  `wlr-randr` then reports `Adaptive Sync: enabled`; `--adaptive-sync
+  disabled` reports `disabled` again;
+- on a head whose `vrr_capable` is `0`, `--adaptive-sync enabled` fails
+  and the head still reports `Adaptive Sync: disabled`;
+- `--off` then `--on` the VRR head: `Adaptive Sync` comes back as it was.
 
 If the compositor wedges, switch VTs and terminate it from the spare console.
 Do not reconfigure the display manager merely to debug a direct TTY failure.

@@ -2123,6 +2123,9 @@ impl MindeState {
         self.update_usable_area();
         self.update_fractional_scales();
         self.reconfigure_lock_surfaces();
+        // A smaller mode or a moved head can leave the pointer outside
+        // every output.
+        self.pointer_location = self.clamp_to_outputs(self.pointer_location);
         self.schedule_redraw();
         guile::on_output_configured();
     }
