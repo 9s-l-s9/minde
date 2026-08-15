@@ -455,6 +455,37 @@ impl MindeState {
         self.udev_realize_head(output, change)
     }
 
+    /// A Scheme-facing snapshot of every known head (disabled ones
+    /// included) for `(wm-output-heads)`: identity, mode list and the
+    /// current mode/position/scale/transform/enabled/adaptive-sync state.
+    /// Pushed to the Guile layer by [`Self::output_management_refresh`].
+    pub(crate) fn output_head_snapshot(&self) -> Vec<crate::guile::OutputHeadInfo> {
+        let mode_tuple = |m: Mode| (m.size.w, m.size.h, m.refresh);
+        self.output_management
+            .heads_all
+            .iter()
+            .map(|o| {
+                let phys = o.physical_properties();
+                let loc = o.current_location();
+                crate::guile::OutputHeadInfo {
+                    name: o.name(),
+                    enabled: self.output_enabled(o),
+                    make: phys.make.clone(),
+                    model: phys.model.clone(),
+                    serial: phys.serial_number.clone(),
+                    description: head_description(o),
+                    current_mode: o.current_mode().map(mode_tuple),
+                    preferred_mode: o.preferred_mode().map(mode_tuple),
+                    position: (loc.x, loc.y),
+                    scale: o.current_scale().fractional_scale(),
+                    transform: o.current_transform(),
+                    adaptive_sync: self.output_adaptive_sync(o),
+                    modes: o.modes().into_iter().map(mode_tuple).collect(),
+                }
+            })
+            .collect()
+    }
+
     /// Facts about every known head, for [`validate`].
     fn head_facts(&self) -> Vec<HeadFacts> {
         self.output_management
@@ -471,9 +502,7 @@ impl MindeState {
     /// Validates `changes` and, unless `test_only`, applies them head by
     /// head, reverting every head already changed if a later one fails.
     /// Does *not* reflow the Scheme model or re-advertise: the caller runs
-    /// the post-success sequence (`reported_heads.clear()`,
-    /// `update_usable_area`, `update_fractional_scales`,
-    /// `reconfigure_lock_surfaces`, `guile::on_output_configured`).
+    /// the post-success sequence, [`MindeState::output_configuration_applied`].
     pub(crate) fn apply_output_configuration(
         &mut self,
         changes: &[HeadChange],
@@ -706,6 +735,7 @@ impl MindeState {
     pub fn output_management_refresh(&mut self) {
         let outputs = self.output_management_outputs();
         let dh = self.display_handle.clone();
+        crate::guile::set_output_heads(self.output_head_snapshot());
         self.output_management.serial = self.output_management.serial.wrapping_add(1);
         let serial = self.output_management.serial;
 
@@ -930,20 +960,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     Ok(()) => {
                         config.succeeded();
                         if !test_only {
-                            // Reflow the Scheme head model and re-advertise to
-                            // output-management clients. update_usable_area
-                            // does both (it calls output_management_refresh
-                            // itself); clearing reported_heads defeats its
-                            // unchanged-geometry short-circuit.
-                            state.reported_heads.clear();
-                            state.update_usable_area();
-                            // A scale change must reach fractional-scale
-                            // clients so they repaint at the new density.
-                            state.update_fractional_scales();
-                            // Lock surfaces must keep covering each output.
-                            state.reconfigure_lock_surfaces();
-                            state.schedule_redraw();
-                            crate::guile::on_output_configured();
+                            state.output_configuration_applied();
                         }
                     }
                     Err(reason) => {

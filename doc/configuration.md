@@ -197,28 +197,70 @@ Start it with `(wm-spawn "kanshi")` instead of shikane; run only one daemon.
 
 The compositor keeps its head model in Scheme (`(wm-outputs)`,
 `handle-heads-change!` in `(minde groups)`), so an accepted external change
-reconciles into groups and frames exactly as a hotplug or resize does. Three
-knobs are relevant:
+reconciles into groups and frames exactly as a hotplug or resize does. The
+relevant knobs, all exported by `(minde groups)`:
 
 - `(set-head-mode! 'per-head)` (default) gives every group one frame tree per
   head, StumpWM style; `(set-head-mode! 'span)` uses a single tree over the
   union of all heads. See [Concepts](concepts.md).
-- `(output-configuration-allowed?)` is an optional predicate consulted before
-  a client's apply request is honored. Unbound (the default) means accept;
-  define it to return `#f` to refuse external changes, or gate them on your
-  own state.
-- `(handle-output-configured!)` is an optional hook that fires after an
-  external change was applied, for re-tiling, persisting or logging.
+- `(output-configuration-allowed?)` is the policy predicate consulted before
+  an external client's test or apply request is honored. The default returns
+  `#t`; redefine it in your init file to return `#f` to refuse external
+  changes, or gate them on your own state.
+- `(handle-output-configured!)` fires after a change was applied -- by an
+  external client or by `configure-output!` -- for re-tiling, persisting or
+  logging. The default does nothing.
+- `(handle-output-configure-failed! name reason)` fires when a
+  `configure-output!` request was rejected. The default logs it.
 
 ```scheme
 (define (output-configuration-allowed?) #t)
 (define (handle-output-configured!)
-  (wm-log "output layout changed by an external client"))
+  (wm-log "output layout changed"))
 ```
 
-Both are compositor entry points looked up by plain top-level name in the
-init file, like `handle-startup!`; neither is part of the versioned
-`(minde …)` module API.
+The three hooks are compositor entry points looked up by plain top-level
+name, like `handle-startup!`: a definition in your init file shadows the
+default from `(minde groups)`.
+
+#### Configuring outputs from Scheme
+
+Without any daemon, the same apply path is reachable from Scheme --
+imperatively from a hook, or interactively over IPC:
+
+```sh
+mindectl eval '(output-heads)'
+mindectl eval '(configure-output! "DP-1" #:scale 1.5 #:position (quote (1920 0)))'
+```
+
+`(output-heads)` returns every known head, disabled ones included, as a list
+of alists -- `name`, `enabled`, `make`, `model`, `serial`, `description`,
+`mode` and `preferred-mode` as `(width height refresh-mhz)` (or `#f`),
+`position` as `(x y)`, `scale`, `transform` (`normal`, `90`, `flipped-90`,
+...), `adaptive-sync` (`#t`, `#f` or `unsupported`) and `modes`, the full
+mode list. It is the raw per-connector view a wlr-output-management client
+sees; `(wm-outputs)` remains the enabled heads' usable rectangles.
+
+`(configure-output! name #:mode #:position #:scale #:transform #:enabled
+#:adaptive-sync)` queues a change for the head called `name`; every omitted
+keyword is left unchanged. `#:mode` accepts `'(w h refresh-mhz)`, `'(w h)`
+(any refresh at that size) or a string `"1920x1080@60"`; `#:transform` a
+symbol or the rotation in degrees. The request is validated and applied
+through the same revert-on-failure routine as external clients (unknown
+head or mode, unsupported adaptive sync, disabling the last head and -- under
+the nested winit backend -- mode changes are refused, in which case
+`handle-output-configure-failed!` receives the reason). Because this is your
+own policy speaking, `configure-output!` does **not** consult
+`output-configuration-allowed?`; that predicate gates external clients only.
+A malformed setting (`#:scale "big"`) is a Scheme error rather than a silent
+no-op. The primitives underneath, `wm-output-heads` and
+`wm-configure-output!` (name, alist), are listed by `mindectl help` like the
+other `wm-*` gsubrs.
+
+A daemon and `configure-output!` may coexist, but the last writer wins: a
+profile daemon re-applies its profile on every head change, so use
+`configure-output!` either without a daemon or for state the daemon does not
+manage.
 
 ### Hardware status
 

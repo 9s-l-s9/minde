@@ -17,7 +17,13 @@ compositor event entry points begin with `handle-`.
 
 The modules under `(minde compositor ...)` are implementation details.
 Rust-to-Scheme handlers are also an internal compositor boundary, not user
-configuration API.
+configuration API, with one deliberate exception: `(minde groups)` exports
+the default definitions of the output-policy entry points
+`output-configuration-allowed?`, `handle-output-configured!` and
+`handle-output-configure-failed!` (documented so a user redefinition has a
+reference to shadow), next to the output surface `output-heads` and
+`configure-output!` that wrap the `wm-output-heads` / `wm-configure-output!`
+primitives. See [configuration.md](configuration.md#the-scheme-side).
 
 The generated inventory in [`generated/api-reference.md`](generated/api-reference.md)
 enumerates the actual Guile interfaces rather than copying this table. The

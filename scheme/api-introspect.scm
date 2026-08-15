@@ -74,6 +74,10 @@
      "Read CLIPBOARD asynchronously and deliver it to minde's active prompt.")
     (wm-outputs "(wm-outputs)"
      "Return ((id x y w h name) ...): every output's usable rectangle.")
+    (wm-output-heads "(wm-output-heads)"
+     "Return one alist per known head (disabled too): name, enabled, make, model, serial, description, mode, preferred-mode, position, scale, transform, adaptive-sync, modes.")
+    (wm-configure-output! "(wm-configure-output! name alist)"
+     "Queue an output change for head NAME from an alist of mode/position/scale/transform/enabled/adaptive-sync; wrapped by configure-output!.")
     (wm-runtime-info "(wm-runtime-info)"
      "Return (backend xwayland-status xdisplay uptime-ms).")
     (wm-set-clipboard "(wm-set-clipboard text)"

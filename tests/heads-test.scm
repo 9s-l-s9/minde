@@ -149,6 +149,66 @@
 (check "back to per-head: two heads again" (map car (heads)) '(10 11))
 
 ;; ---------------------------------------------------------------------
+;; Output configuration wrappers: `configure-output!' forwards only the
+;; keywords given as an alist to the `wm-configure-output!' primitive
+;; and `output-heads' returns the `wm-output-heads' snapshot verbatim.
+;; The primitives are stubbed at (guile-user) top level exactly as Rust
+;; registers them.
+;; ---------------------------------------------------------------------
+
+(check "output-heads without the primitive is empty" (output-heads) '())
+(check "configure-output! without the primitive is #f"
+       (configure-output! "DP-1" #:scale 2) #f)
+
+(define %configure-calls '())
+(define (wm-configure-output! name alist)
+  (set! %configure-calls (cons (cons name alist) %configure-calls))
+  #t)
+(define %fake-heads
+  '(((name . "eDP-1") (enabled . #t) (make . "AUO") (model . "B140HAN")
+     (serial . "") (description . "AUO B140HAN")
+     (mode . (1920 1080 60000)) (preferred-mode . (1920 1080 60000))
+     (position . (0 0)) (scale . 1.0) (transform . normal)
+     (adaptive-sync . unsupported) (modes . ((1920 1080 60000))))
+    ((name . "DP-1") (enabled . #f) (make . "DEL") (model . "U2723QE")
+     (serial . "ABC") (description . "DEL U2723QE ABC")
+     (mode . #f) (preferred-mode . (3840 2160 60000))
+     (position . (1920 0)) (scale . 1.5) (transform . normal)
+     (adaptive-sync . #f) (modes . ((3840 2160 60000) (1920 1080 60000))))))
+(define (wm-output-heads) %fake-heads)
+
+(check "output-heads returns every head, disabled ones too"
+       (map (lambda (h) (assq-ref h 'name)) (output-heads))
+       '("eDP-1" "DP-1"))
+(check "output-heads keeps the disabled head's identity and modes"
+       (let ((dp (cadr (output-heads))))
+         (list (assq-ref dp 'enabled) (assq-ref dp 'model)
+               (length (assq-ref dp 'modes))))
+       '(#f "U2723QE" 2))
+
+(check-true "configure-output! returns #t when queued"
+            (configure-output! "DP-1" #:scale 1.5 #:position '(1920 0)))
+(check "configure-output! forwards only the given keywords"
+       (car %configure-calls)
+       '("DP-1" (position . (1920 0)) (scale . 1.5)))
+(configure-output! "DP-1")
+(check "configure-output! with no settings sends an empty alist"
+       (car %configure-calls) '("DP-1"))
+(configure-output! "eDP-1" #:mode "1920x1080@60" #:transform '90
+                   #:enabled #t #:adaptive-sync #f)
+(check "configure-output! forwards mode/transform/enabled/adaptive-sync"
+       (car %configure-calls)
+       '("eDP-1" (mode . "1920x1080@60") (transform . 90)
+         (enabled . #t) (adaptive-sync . #f)))
+
+(check "output-configuration-allowed? defaults to accept"
+       (output-configuration-allowed?) #t)
+(check-true "handle-output-configured! default is a no-op"
+            (begin (handle-output-configured!) #t))
+(check-true "handle-output-configure-failed! default logs, never raises"
+            (begin (handle-output-configure-failed! "DP-1" "unknown mode") #t))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

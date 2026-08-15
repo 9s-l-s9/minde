@@ -2,6 +2,8 @@
 
 //! Typed commands crossing from Scheme policy to compositor state.
 
+use super::output_config::OutputChangeSpec;
+
 #[derive(Debug, Clone)]
 pub enum WmCommand {
     Place {
@@ -119,5 +121,12 @@ pub enum WmCommand {
     /// graphics libraries in the parent process.
     Spawn {
         cmd: String,
+    },
+    /// `(wm-configure-output! name alist)`: apply an output change to the
+    /// head called `name` through the same routine as the
+    /// wlr-output-management protocol.
+    ConfigureOutput {
+        name: String,
+        spec: OutputChangeSpec,
     },
 }

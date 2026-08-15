@@ -57,6 +57,11 @@
             next-urgent!
             handle-heads-change!
             set-head-mode!
+            output-heads
+            configure-output!
+            output-configuration-allowed?
+            handle-output-configured!
+            handle-output-configure-failed!
             handle-window-map!
             handle-window-title-change!
             handle-window-unmap!
@@ -1047,6 +1052,86 @@ a sync since nothing hidden is on-screen)."
   "'per-head (a frame tree per monitor, StumpWM style) or 'span (one
 tree over the union of all monitors)."
   (set-heads-mode! mode %groups))
+
+;; ---------------------------------------------------------------------
+;; Output (monitor) configuration. Thin, keyword-argument wrappers over
+;; the Rust primitives `wm-output-heads` and `wm-configure-output!`
+;; (src/guile/mod.rs), plus the default definitions of the three
+;; output-policy entry points Rust looks up by plain top-level name.
+;; ---------------------------------------------------------------------
+
+(define (output-heads)
+  "Every known output head, disabled ones included, as a list of alists:
+((name . \"DP-1\") (enabled . #t) (make . \"DEL\") (model . \"U2723QE\")
+ (serial . \"ABC\") (description . \"DEL U2723QE ABC\")
+ (mode . (3840 2160 60000)) (preferred-mode . (3840 2160 60000))
+ (position . (1920 0)) (scale . 1.5) (transform . normal)
+ (adaptive-sync . #f) (modes . ((3840 2160 60000) ...))).
+Modes are (width height refresh-mhz); MODE and PREFERRED-MODE are #f
+when unknown; ADAPTIVE-SYNC is #t, #f or the symbol `unsupported'.
+Unlike `wm-outputs' (enabled heads' usable rectangles, keyed by the
+compositor's head id) this is the raw per-connector view a
+wlr-output-management client sees. Returns '() without a compositor."
+  (let ((heads (rust-call 'wm-output-heads)))
+    (if (list? heads) heads '())))
+
+(define* (configure-output! name #:key (mode 'unset) (position 'unset)
+                            (scale 'unset) (transform 'unset)
+                            (enabled 'unset) (adaptive-sync 'unset))
+  "Ask the compositor to reconfigure the head called NAME (a connector
+name as listed by `output-heads'). Keyword settings, each left unchanged
+when omitted:
+  #:mode          (w h refresh-mhz), (w h) or a string \"WxH@R\" (R in Hz)
+  #:position      (x y) in global logical coordinates
+  #:scale         a positive number, e.g. 1.5
+  #:transform     normal, 90, 180, 270, flipped, flipped-90, ... (symbol)
+                  or the rotation in degrees
+  #:enabled       #t or #f
+  #:adaptive-sync #t or #f
+Example: (configure-output! \"DP-1\" #:scale 1.5 #:position '(1920 0)).
+The change is queued to the compositor thread, validated (unknown head
+or mode, unsupported adaptive sync, disabling the last head are refused)
+and applied through the same revert-on-failure routine external
+wlr-output-management clients use; `handle-output-configured!' runs on
+success and `handle-output-configure-failed!' receives NAME and a reason
+string on rejection. Because this is the user's own policy speaking it
+does not consult `output-configuration-allowed?', which gates external
+clients only. Under the nested winit backend mode changes are refused
+(the host window fixes the size). Malformed settings raise an error;
+returns #t once queued, #f without a compositor."
+  (let ((alist
+         (filter (lambda (entry) (not (eq? (cdr entry) 'unset)))
+                 (list (cons 'mode mode)
+                       (cons 'position position)
+                       (cons 'scale scale)
+                       (cons 'transform transform)
+                       (cons 'enabled enabled)
+                       (cons 'adaptive-sync adaptive-sync)))))
+    (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+           (var (and mod (module-variable mod 'wm-configure-output!))))
+      (and var ((variable-ref var) name alist) #t))))
+
+(define (output-configuration-allowed?)
+  "Policy predicate consulted before an external wlr-output-management
+client (wlr-randr, kanshi, shikane, wdisplays) may test or apply an
+output configuration. The default accepts everything; redefine it in
+your init file to return #f (or gate on your own state) to refuse
+external changes. `configure-output!' does not consult it."
+  #t)
+
+(define (handle-output-configured!)
+  "Rust: the output layout was just changed -- by an external
+wlr-output-management client or by `configure-output!'. The default
+does nothing; redefine it to re-tile, persist or log. The head model
+has already been reflowed through `handle-heads-change!' by the time
+this runs."
+  *unspecified*)
+
+(define (handle-output-configure-failed! name reason)
+  "Rust: a `configure-output!' request for the head NAME was rejected
+for REASON (a string). The default logs it through `wm-log'."
+  (rust-call 'wm-log
+             (format #f "configure-output!: ~a: ~a" name reason)))
 
 ;; ---------------------------------------------------------------------
 ;; Session lock/unlock (Rust-facing, interface contract with the

@@ -10,8 +10,11 @@
 
 mod command;
 pub mod ffi;
+pub mod output_config;
 
 pub use command::WmCommand;
+pub use output_config::OutputHeadInfo;
+use output_config::{SpecValue, parse_output_change_spec, transform_name};
 
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
@@ -120,6 +123,17 @@ pub struct HeadInfo {
 
 /// Current head list, readable from any thread for `(wm-outputs)`.
 static HEADS: std::sync::Mutex<Vec<HeadInfo>> = std::sync::Mutex::new(Vec::new());
+
+/// Every known output head (enabled or not) with its identity, modes and
+/// current configuration, for `(wm-output-heads)`. Replaced wholesale by
+/// `MindeState::output_management_refresh` (see `set_output_heads`).
+static OUTPUT_HEADS: std::sync::Mutex<Vec<OutputHeadInfo>> = std::sync::Mutex::new(Vec::new());
+
+/// Publishes the `(wm-output-heads)` snapshot. Called by the compositor
+/// after every output-management refresh (hotplug, resize, apply).
+pub fn set_output_heads(heads: Vec<OutputHeadInfo>) {
+    *OUTPUT_HEADS.lock().unwrap() = heads;
+}
 
 /// A stored libinput configuration rule (see `wm-configure-input!`).
 ///
@@ -452,6 +466,7 @@ static FOREIGN_FULLSCREEN: Hook = Hook::new("handle-foreign-fullscreen!");
 static FOREIGN_MINIMIZE: Hook = Hook::new("handle-foreign-minimize!");
 static OUTPUT_CONFIG_ALLOWED: Hook = Hook::new("output-configuration-allowed?");
 static OUTPUT_CONFIGURED: Hook = Hook::new("handle-output-configured!");
+static OUTPUT_CONFIGURE_FAILED: Hook = Hook::new("handle-output-configure-failed!");
 static INPUT_DEVICE_ADDED: Hook = Hook::new("handle-input-device-added!");
 static STARTUP: Hook = Hook::new("handle-startup!");
 static SESSION_LOCK: Hook = Hook::new("wm-on-session-lock");
@@ -1146,6 +1161,168 @@ unsafe extern "C" fn wm_outputs() -> Scm {
     scm_list(&entries)
 }
 
+/// `(symbol . value)` pair, for building alists.
+fn scm_field(key: &str, value: Scm) -> Scm {
+    unsafe { ffi::scm_cons(from_symbol(key), value) }
+}
+
+fn from_f64(v: f64) -> Scm {
+    unsafe { ffi::scm_from_double(v) }
+}
+
+fn scm_mode(m: (i32, i32, i32)) -> Scm {
+    scm_list(&[
+        from_i64(m.0 as i64),
+        from_i64(m.1 as i64),
+        from_i64(m.2 as i64),
+    ])
+}
+
+/// `(wm-output-heads)` -> one alist per known head, disabled ones
+/// included:
+/// `((name . "DP-1") (enabled . #t) (make . "DEL") (model . "U2723QE")
+///   (serial . "ABC") (description . "DEL U2723QE ABC")
+///   (mode . (3840 2160 60000)) (preferred-mode . (3840 2160 60000))
+///   (position . (1920 0)) (scale . 1.5) (transform . normal)
+///   (adaptive-sync . #f) (modes . ((3840 2160 60000) ...)))`.
+/// `mode`/`preferred-mode` are `#f` when unknown; `adaptive-sync` is
+/// `#t`/`#f`, or the symbol `unsupported` where the backend cannot do it.
+unsafe extern "C" fn wm_output_heads() -> Scm {
+    let heads = OUTPUT_HEADS.lock().unwrap().clone();
+    let opt_mode = |m: Option<(i32, i32, i32)>| m.map_or(ffi::SCM_BOOL_F, scm_mode);
+    let entries: Vec<Scm> = heads
+        .iter()
+        .map(|h| {
+            let modes: Vec<Scm> = h.modes.iter().map(|m| scm_mode(*m)).collect();
+            scm_list(&[
+                scm_field("name", from_str(&h.name)),
+                scm_field("enabled", from_bool(h.enabled)),
+                scm_field("make", from_str(&h.make)),
+                scm_field("model", from_str(&h.model)),
+                scm_field("serial", from_str(&h.serial)),
+                scm_field("description", from_str(&h.description)),
+                scm_field("mode", opt_mode(h.current_mode)),
+                scm_field("preferred-mode", opt_mode(h.preferred_mode)),
+                scm_field(
+                    "position",
+                    scm_list(&[from_i64(h.position.0 as i64), from_i64(h.position.1 as i64)]),
+                ),
+                scm_field("scale", from_f64(h.scale)),
+                scm_field("transform", from_symbol(transform_name(h.transform))),
+                scm_field(
+                    "adaptive-sync",
+                    match h.adaptive_sync {
+                        Some(on) => from_bool(on),
+                        None => from_symbol("unsupported"),
+                    },
+                ),
+                scm_field("modes", scm_list(&modes)),
+            ])
+        })
+        .collect();
+    scm_list(&entries)
+}
+
+/// Converts an SCM datum into a [`SpecValue`] (booleans, exact integers,
+/// reals, strings, symbols and proper lists). `Err` names the offending
+/// value's kind.
+fn scm_to_spec_value(v: Scm) -> Result<SpecValue, String> {
+    unsafe {
+        if to_bool(ffi::scm_boolean_p(v)) {
+            return Ok(SpecValue::Bool(to_bool(v)));
+        }
+        if to_bool(ffi::scm_exact_integer_p(v)) {
+            return Ok(SpecValue::Int(ffi::scm_to_int64(v)));
+        }
+        if to_bool(ffi::scm_real_p(v)) {
+            return Ok(SpecValue::Real(ffi::scm_to_double(v)));
+        }
+        if to_bool(ffi::scm_string_p(v)) {
+            return Ok(SpecValue::Str(to_string_lossy(v).unwrap_or_default()));
+        }
+        if to_bool(ffi::scm_symbol_p(v)) {
+            let s = ffi::scm_symbol_to_string(v);
+            return Ok(SpecValue::Sym(to_string_lossy(s).unwrap_or_default()));
+        }
+        if to_bool(ffi::scm_null_p(v)) {
+            return Ok(SpecValue::List(Vec::new()));
+        }
+        if to_bool(ffi::scm_pair_p(v)) {
+            let mut items = Vec::new();
+            let mut cur = v;
+            while to_bool(ffi::scm_pair_p(cur)) {
+                items.push(scm_to_spec_value(ffi::scm_car(cur))?);
+                cur = ffi::scm_cdr(cur);
+            }
+            if !to_bool(ffi::scm_null_p(cur)) {
+                return Err("improper list".into());
+            }
+            return Ok(SpecValue::List(items));
+        }
+    }
+    Err("unsupported value (expected boolean, number, string, symbol or list)".into())
+}
+
+/// Reads an alist `((key . value) ...)` whose keys are symbols or strings.
+fn scm_to_alist(v: Scm) -> Result<Vec<(String, SpecValue)>, String> {
+    let mut entries = Vec::new();
+    let mut cur = v;
+    unsafe {
+        while to_bool(ffi::scm_pair_p(cur)) {
+            let pair = ffi::scm_car(cur);
+            if !to_bool(ffi::scm_pair_p(pair)) {
+                return Err("expected an alist of (key . value) pairs".into());
+            }
+            let key = ffi::scm_car(pair);
+            let key = if to_bool(ffi::scm_symbol_p(key)) {
+                to_string_lossy(ffi::scm_symbol_to_string(key)).unwrap_or_default()
+            } else if to_bool(ffi::scm_string_p(key)) {
+                to_string_lossy(key).unwrap_or_default()
+            } else {
+                return Err("alist keys must be symbols or strings".into());
+            };
+            entries.push((key, scm_to_spec_value(ffi::scm_cdr(pair))?));
+            cur = ffi::scm_cdr(cur);
+        }
+        if !to_bool(ffi::scm_null_p(cur)) {
+            return Err("expected an alist of (key . value) pairs".into());
+        }
+    }
+    Ok(entries)
+}
+
+/// Raises a Scheme `misc-error` from inside a gsubr (never returns; Guile
+/// unwinds to the caller, so `mindectl eval` reports the message).
+fn scheme_error(subr: &str, message: &str) -> ! {
+    let subr = to_cstring(subr);
+    let msg = to_cstring(&message.replace('~', "~~"));
+    unsafe { ffi::scm_misc_error(subr.as_ptr(), msg.as_ptr(), ffi::SCM_EOL) }
+}
+
+/// `(wm-configure-output! name alist)`: queue an output change for the
+/// head called NAME (as reported by `wm-output-heads`). ALIST keys:
+/// `mode` (`(w h refresh-mhz)`, `(w h)` or `"WxH@R"`), `position`
+/// (`(x y)`), `scale`, `transform` (`normal`, `90`, `flipped-90`, ...),
+/// `enabled`, `adaptive-sync`. Parse errors raise a Scheme error; a valid
+/// request returns `#t` once queued. The change is validated and applied
+/// on the compositor thread through the same routine as external
+/// wlr-output-management clients, but *without* consulting
+/// `output-configuration-allowed?` (that predicate gates external
+/// clients; this is the user's own policy speaking). A rejected change is
+/// logged and reported to `(handle-output-configure-failed! name reason)`
+/// when that is bound.
+unsafe extern "C" fn wm_configure_output(name: Scm, alist: Scm) -> Scm {
+    if !to_bool(unsafe { ffi::scm_string_p(name) }) {
+        scheme_error("wm-configure-output!", "output name must be a string");
+    }
+    let name = to_string_lossy(name).unwrap_or_default();
+    let spec = match scm_to_alist(alist).and_then(|entries| parse_output_change_spec(&entries)) {
+        Ok(spec) => spec,
+        Err(msg) => scheme_error("wm-configure-output!", &msg),
+    };
+    from_bool(send_command(WmCommand::ConfigureOutput { name, spec }))
+}
+
 /// `(wm-input-devices)` -> `((name cap ...) ...)`: the libinput devices
 /// present on the seat, each with its capability names ("keyboard",
 /// "pointer", "touch", ...). Empty under the winit backend (no libinput).
@@ -1352,6 +1529,11 @@ pub fn init(loop_signal: LoopSignal) {
         );
         register_gsubr("wm-request-paste", 0, 0, gsubr!(wm_request_paste, 0));
         register_gsubr("wm-outputs", 0, 0, gsubr!(wm_outputs, 0));
+        // Output heads (all, incl. disabled) and the Scheme-side output
+        // configuration primitive; `configure-output!`/`output-heads` in
+        // (minde groups) wrap them.
+        register_gsubr("wm-output-heads", 0, 0, gsubr!(wm_output_heads, 0));
+        register_gsubr("wm-configure-output!", 2, 0, gsubr!(wm_configure_output, 2));
         register_gsubr("wm-runtime-info", 0, 0, gsubr!(wm_runtime_info, 0));
         register_gsubr("wm-set-clipboard", 1, 0, gsubr!(wm_set_clipboard, 1));
         register_gsubr("wm-set-primary", 1, 0, gsubr!(wm_set_primary, 1));
@@ -1592,11 +1774,19 @@ pub fn output_config_allowed() -> bool {
     OUTPUT_CONFIG_ALLOWED.call(&[]).map(to_bool).unwrap_or(true)
 }
 
-/// Notifies Scheme that the output layout was changed by an external
-/// `wlr-output-management` client, via `(handle-output-configured!)` if
-/// bound, so a config can react (re-tile, persist, log). A no-op otherwise.
+/// Notifies Scheme that the output layout was changed -- by an external
+/// `wlr-output-management` client or by `configure-output!` -- via
+/// `(handle-output-configured!)` if bound, so a config can react (re-tile,
+/// persist, log). A no-op otherwise.
 pub fn on_output_configured() {
     OUTPUT_CONFIGURED.call(&[]);
+}
+
+/// Reports a `configure-output!` request the compositor rejected, via
+/// `(handle-output-configure-failed! name reason)` if bound. A no-op
+/// otherwise (the rejection is always logged by the caller).
+pub fn on_output_configure_failed(name: &str, reason: &str) {
+    OUTPUT_CONFIGURE_FAILED.call(&[from_str(name), from_str(reason)]);
 }
 
 /// Calls `(handle-input-device-added!)` if bound, once a libinput device

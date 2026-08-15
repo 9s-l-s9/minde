@@ -32,6 +32,21 @@ Target version: `1.0.0-rc1`.
   requested or preferred mode, right of the other heads unless a position was
   given, and the head keeps its stable Scheme id across the cycle. Hotplugged
   connectors still come up enabled by default.
+- Scheme output API: `(output-heads)` returns every known head (disabled
+  ones included) as alists with make/model/serial/description, mode list,
+  current mode, position, scale, transform, enabled and adaptive-sync state,
+  and `(configure-output! name #:mode #:position #:scale #:transform
+  #:enabled #:adaptive-sync)` applies a change through the same validated,
+  revert-on-failure routine as wlr-output-management clients (bypassing
+  `output-configuration-allowed?`, which gates external clients only). Both
+  are exported by `(minde groups)` over the new primitives `wm-output-heads`
+  and `wm-configure-output!` (name, alist). `(minde groups)` now also ships
+  documented defaults for `output-configuration-allowed?` (`#t`),
+  `handle-output-configured!` (no-op) and the new
+  `handle-output-configure-failed!` (logs), which a user init file may
+  shadow. Malformed settings raise a Scheme error. A nested e2e gate
+  (`tests/output-scheme-e2e.sh`) drives both through `mindectl eval` and
+  cross-checks with wlr-randr.
 - udev backend: every non-interlaced connector mode is advertised (with the
   DRM `PREFERRED` mode flagged as preferred), and monitor identity is read
   from the connector's EDID blob by a small in-tree parser (`src/edid.rs`,

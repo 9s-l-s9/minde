@@ -747,6 +747,9 @@ impl MindeState {
                 token,
             } => self.queue_screenshot(path, window_id, token),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
+            WmCommand::ConfigureOutput { name, spec } => {
+                self.configure_output_from_scheme(&name, &spec)
+            }
             other @ (WmCommand::Paste
             | WmCommand::SetClipboard { .. }
             | WmCommand::SetPrimary { .. }) => self.apply_clipboard_command(other),
@@ -2084,6 +2087,90 @@ impl MindeState {
             guile::set_xwayland_status("failed", None);
             tracing::warn!(%err, "failed to insert the Xwayland event source");
             guile::publish_status();
+        }
+    }
+
+    /// Post-success sequence shared by every output configuration path
+    /// (the wlr-output-management `apply` and `configure-output!`): reflow
+    /// the Scheme head model and re-advertise to output-management clients
+    /// (`update_usable_area` does both, it calls `output_management_refresh`
+    /// itself; clearing `reported_heads` defeats its unchanged-geometry
+    /// short-circuit), push the new scale to fractional-scale clients, keep
+    /// lock surfaces covering each output, then tell Scheme.
+    pub(crate) fn output_configuration_applied(&mut self) {
+        self.reported_heads.clear();
+        self.update_usable_area();
+        self.update_fractional_scales();
+        self.reconfigure_lock_surfaces();
+        self.schedule_redraw();
+        guile::on_output_configured();
+    }
+
+    /// `(wm-configure-output! name alist)` arriving on the compositor
+    /// thread: resolves the head by name among every known head (disabled
+    /// ones too), turns the parsed spec into a `HeadChange` and applies it
+    /// through the same validated, revert-on-failure routine the protocol
+    /// uses. This is the user's own policy speaking, so it bypasses
+    /// `output-configuration-allowed?` (that gates external clients). A
+    /// rejection is logged and reported to Scheme via
+    /// `handle-output-configure-failed!`.
+    fn configure_output_from_scheme(
+        &mut self,
+        name: &str,
+        spec: &guile::output_config::OutputChangeSpec,
+    ) {
+        use crate::handlers::output_management::HeadChange;
+
+        let Some(output) = self
+            .output_management
+            .heads_all()
+            .iter()
+            .find(|o| o.name() == name)
+            .cloned()
+        else {
+            let reason = format!("no output head named {name:?}");
+            tracing::warn!(output = name, "configure-output!: {reason}");
+            guile::on_output_configure_failed(name, &reason);
+            return;
+        };
+        let enabled = spec.enabled.unwrap_or_else(|| self.output_enabled(&output));
+        let mut change = HeadChange::new(output.clone(), enabled);
+        if let Some((w, h, refresh)) = spec.mode {
+            let advertised = output.modes();
+            let exact = advertised
+                .iter()
+                .find(|m| m.size.w == w && m.size.h == h && m.refresh == refresh)
+                .copied();
+            // `(w h)` / "WxH" without a refresh: the highest advertised
+            // refresh at that size, if any.
+            let by_size = (refresh == 0)
+                .then(|| {
+                    advertised
+                        .iter()
+                        .filter(|m| m.size.w == w && m.size.h == h)
+                        .max_by_key(|m| m.refresh)
+                        .copied()
+                })
+                .flatten();
+            match exact.or(by_size) {
+                Some(mode) => change.mode = Some(mode),
+                None => change.custom_mode = Some((w, h, refresh)),
+            }
+        }
+        change.position = spec.position;
+        change.scale = spec.scale;
+        change.transform = spec.transform.map(Into::into);
+        change.adaptive_sync = spec.adaptive_sync;
+
+        match self.apply_output_configuration(&[change], false) {
+            Ok(()) => {
+                tracing::info!(output = name, ?spec, "configure-output!: applied");
+                self.output_configuration_applied();
+            }
+            Err(reason) => {
+                tracing::warn!(output = name, %reason, "configure-output!: rejected");
+                guile::on_output_configure_failed(name, &reason.0);
+            }
         }
     }
 

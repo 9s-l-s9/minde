@@ -79,6 +79,18 @@ unsafe extern "C" {
     /// `(cons a b)` -- for building lists of arbitrary length from Rust.
     pub fn scm_cons(a: Scm, b: Scm) -> Scm;
 
+    /// Alist/list traversal and type predicates for reading structured
+    /// arguments (see `guile::output_config`). The `*_p` predicates return
+    /// SCM booleans (`scm_is_*` are header-only macros).
+    pub fn scm_boolean_p(x: Scm) -> Scm;
+    pub fn scm_exact_integer_p(x: Scm) -> Scm;
+    pub fn scm_real_p(x: Scm) -> Scm;
+    pub fn scm_to_double(x: Scm) -> f64;
+    pub fn scm_from_double(x: f64) -> Scm;
+    /// Raises a Scheme `misc-error` (`message` may use `~A`/`~S` with
+    /// `args`, or be a plain string with `args` = SCM_EOL). Never returns.
+    pub fn scm_misc_error(subr: *const c_char, message: *const c_char, args: Scm) -> !;
+
     /// The module top-level code currently evaluates in (`(guile-user)` for
     /// the embedded policy layer).
     pub fn scm_current_module() -> Scm;
