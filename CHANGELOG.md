@@ -23,6 +23,14 @@ Target version: `1.0.0-rc1`.
   token status history via `wm-automation-status`, capturing an output or
   a single window to PNG without an external screenshot tool (see
   `doc/notes/issue-wm-screenshot-primitive.md`).
+- udev backend: every non-interlaced connector mode is advertised (with the
+  DRM `PREFERRED` mode flagged as preferred), and monitor identity is read
+  from the connector's EDID blob by a small in-tree parser (`src/edid.rs`,
+  base block only: PNP manufacturer ID, monitor-name and serial descriptors,
+  product/serial fallbacks). Outputs carry real make/model/serial and subpixel
+  layout, and `crate::edid::output_description` yields the wlroots-style
+  `"Make Model Serial"` string that kanshi/shikane match against (falling
+  back to the connector name, never `Unknown Unknown Unknown`).
 - Clipboard ecosystem: primary selection
   (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
   across Wayland clients and Xwayland (the X11 selection loop now mirrors the

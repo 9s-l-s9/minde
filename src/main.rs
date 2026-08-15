@@ -7,6 +7,7 @@
 
 mod automation_dnd;
 mod automation_observe;
+mod edid;
 mod events;
 mod guile;
 mod handlers;

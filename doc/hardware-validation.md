@@ -47,6 +47,9 @@ Validate:
 - native Wayland and Xterm/Xwayland windows;
 - clipboard in both directions;
 - output arrangement and physical hotplug when available;
+- `wlr-randr` lists every (non-interlaced) connector mode with the preferred
+  one flagged, make/model/serial are populated from EDID, and the head
+  description reads `Make Model Serial` (connector name if no EDID);
 - VT switch away and back;
 - clean exit to the console.
 

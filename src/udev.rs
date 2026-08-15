@@ -81,7 +81,7 @@ use smithay::{
             EventLoop, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        drm::control::{ModeTypeFlags, connector, crtc},
+        drm::control::{self, Device as ControlDevice, ModeFlags, ModeTypeFlags, connector, crtc},
         input::{Device as LibinputDevice, Libinput},
         rustix::fs::OFlags,
         wayland_server::{DisplayHandle, backend::GlobalId},
@@ -96,6 +96,7 @@ use smithay::{
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, warn};
 
+use crate::edid::{EdidInfo, parse_edid};
 use crate::render::{BorderBuffers, MindeRenderElements};
 use crate::{MindeState, guile};
 
@@ -152,6 +153,11 @@ enum RedrawState {
 /// device's `surfaces` map.
 struct OutputSurface {
     output: Output,
+    /// Advertised (non-interlaced) connector modes paired with the DRM
+    /// mode they came from, so a mode requested via wlr-output-management
+    /// can be translated back to a modeset.
+    #[allow(dead_code)]
+    modes: Vec<(WlMode, control::Mode)>,
     global: Option<GlobalId>,
     dh: DisplayHandle,
     drm_output: DrmOutput<
@@ -635,6 +641,24 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
     }
 }
 
+/// The single `control::Mode` -> `WlMode` conversion used by this backend
+/// (Smithay's `From` impl, wrapped so every site agrees on refresh rounding).
+fn wl_mode_from_drm(mode: control::Mode) -> WlMode {
+    WlMode::from(mode)
+}
+
+/// Read and parse the connector's `EDID` blob property, if any.
+fn read_edid(device: &impl ControlDevice, connector: connector::Handle) -> Option<EdidInfo> {
+    let props = device.get_properties(connector).ok()?;
+    let (info, value) = props
+        .into_iter()
+        .filter_map(|(handle, value)| Some((device.get_property(handle).ok()?, value)))
+        .find(|(info, _)| info.name().to_str() == Ok("EDID"))?;
+    let blob = info.value_type().convert_value(value).as_blob()?;
+    let data = device.get_property_blob(blob).ok()?;
+    parse_edid(&data)
+}
+
 fn connector_connected(
     state: &mut MindeState,
     node: DrmNode,
@@ -658,19 +682,52 @@ fn connector_connected(
         warn!(%output_name, "connector reports no modes");
         return false;
     };
-    let wl_mode = WlMode::from(drm_mode);
+    let wl_mode = wl_mode_from_drm(drm_mode);
+
+    // Every non-interlaced connector mode, deduplicated on the advertised
+    // (size, refresh) pair; the first DRM mode wins for a given WlMode.
+    let mut modes: Vec<(WlMode, control::Mode)> = Vec::new();
+    for &m in info.modes() {
+        if m.flags().contains(ModeFlags::INTERLACE) {
+            continue;
+        }
+        let wl = wl_mode_from_drm(m);
+        if modes.iter().all(|(existing, _)| *existing != wl) {
+            modes.push((wl, m));
+        }
+    }
+
+    let edid = read_edid(device.drm_output_manager.device(), info.handle());
+    let (make, model, serial) = match &edid {
+        Some(e) => (e.make.clone(), e.model.clone(), e.serial.clone()),
+        None => ("Unknown".into(), "Unknown".into(), "Unknown".into()),
+    };
+    info!(
+        %output_name, %make, %model, %serial,
+        modes = modes.len(), current = ?wl_mode,
+        "output identity and mode list"
+    );
 
     let (phys_w, phys_h) = info.size().unwrap_or((0, 0));
     let output = Output::new(
         output_name.clone(),
         PhysicalProperties {
             size: (phys_w as i32, phys_h as i32).into(),
-            subpixel: Subpixel::Unknown,
-            make: "Unknown".into(),
-            model: "Unknown".into(),
-            serial_number: "Unknown".into(),
+            subpixel: Subpixel::from(info.subpixel()),
+            make,
+            model,
+            serial_number: serial,
         },
     );
+    if let Some(edid) = edid {
+        // Smithay's description string is fixed at construction; the EDID
+        // identity lives in user data so protocol handlers can build the
+        // wlroots-style "Make Model Serial" description (crate::edid).
+        output.user_data().insert_if_missing(|| edid);
+    }
+    for (wl, _) in &modes {
+        output.add_mode(*wl);
+    }
     let global = output.create_global::<MindeState>(&state.display_handle);
     // Lay outputs out left-to-right in connection order (anvil's policy).
     let position_x = state.space.outputs().fold(0, |acc, o| {
@@ -722,6 +779,7 @@ fn connector_connected(
         crtc,
         OutputSurface {
             output: output.clone(),
+            modes,
             global: Some(global),
             dh: state.display_handle.clone(),
             drm_output,
