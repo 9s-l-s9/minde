@@ -70,6 +70,18 @@ fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
     modifier_bitmask(mods.shift, mods.ctrl, mods.alt, mods.logo)
 }
 
+/// Whether `event` counts as user activity that should wake DPMS-off
+/// outputs: key presses, pointer button presses and pointer motion
+/// (relative or absolute). Releases and axis/touch/tablet events do not.
+fn wakes_outputs<I: InputBackend>(event: &InputEvent<I>) -> bool {
+    match event {
+        InputEvent::Keyboard { event } => event.state() == KeyState::Pressed,
+        InputEvent::PointerButton { event } => event.state() == ButtonState::Pressed,
+        InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. } => true,
+        _ => false,
+    }
+}
+
 impl MindeState {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         guile::note_activity();
@@ -85,6 +97,14 @@ impl MindeState {
         // TabletTool* event is covered -- so no regular client ever sees them.
         if self.locked && !matches!(event, InputEvent::Keyboard { .. }) {
             return;
+        }
+        // DPMS wake: a key press, button press or any pointer motion powers
+        // every output back on (wlr-output-power-management controllers are
+        // told `mode(on)`), before the event is otherwise processed, so the
+        // screen a blanked user is typing at lights up. Policy-togglable via
+        // `wake_on_input`.
+        if self.wake_on_input && wakes_outputs(&event) {
+            self.output_power_wake();
         }
         match event {
             InputEvent::Keyboard { event, .. } => {

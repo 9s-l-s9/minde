@@ -283,6 +283,21 @@ pub struct MindeState {
     /// `handlers::output_management`.
     pub output_management: crate::handlers::output_management::OutputManagementState,
 
+    /// `wlr-output-power-management-unstable-v1` state: lets wlopm and
+    /// swayidle switch outputs to DPMS off/on without changing the layout.
+    /// See `handlers::output_power`.
+    pub output_power: crate::handlers::output_power::OutputPowerState,
+    /// Power every output back on at the first keyboard press, pointer
+    /// button or pointer motion (see `handlers::output_power` and
+    /// `process_input_event`). Default `true`; intended to become togglable
+    /// from Scheme (a `wm-set-wake-on-input!` primitive, not yet added).
+    pub wake_on_input: bool,
+    /// winit backend: the single output is DPMS off -- the redraw paints
+    /// black and sends no frame callbacks (like a disabled head), until
+    /// power comes back. Never set under udev (which drops the head's
+    /// render surface instead).
+    pub winit_powered_off: bool,
+
     /// `zwp_pointer_constraints_v1` global state (pointer lock/confinement)
     /// and `zwp_relative_pointer_manager_v1` global state (raw relative
     /// motion). Both are per-surface client protocols for games and
@@ -436,6 +451,9 @@ impl MindeState {
         // output size is fixed, so mode changes fail rather than lie; scale,
         // transform and position still apply.
         let output_management = crate::handlers::output_management::init_output_management(&dh);
+        // wlr-output-power-management: advertised on both backends (winit
+        // paints black while "off").
+        let output_power = crate::handlers::output_power::init_output_power(&dh);
 
         // Pointer constraints (lock/confine) and relative pointer. Both are
         // advertised on both backends; the relative-motion source differs
@@ -606,6 +624,9 @@ impl MindeState {
             gamma_controls: std::collections::HashMap::new(),
             foreign_toplevel,
             output_management,
+            output_power,
+            wake_on_input: true,
+            winit_powered_off: false,
             pointer_constraints_state,
             relative_pointer_manager_state,
             fractional_scale_manager_state,
@@ -2183,6 +2204,66 @@ impl MindeState {
         self.next_output_id += 1;
         output.user_data().insert_if_missing(|| OutputId(id));
         id
+    }
+
+    /// DPMS switch for `output` (wlr-output-power-management, and the
+    /// wake-on-input path). Power is orthogonal to enabled: the head stays
+    /// mapped and advertised, only the backend stops driving it. Under
+    /// udev the head's CRTC is switched off/re-initialised
+    /// (`udev_set_output_power`); under winit the redraw paints black
+    /// while off. `Err` for a disabled or unknown output.
+    pub(crate) fn set_output_power(
+        &mut self,
+        output: &smithay::output::Output,
+        on: bool,
+    ) -> Result<(), String> {
+        if self.udev_data.is_some() {
+            return self.udev_set_output_power(output, on);
+        }
+        if !self.output_enabled(output) {
+            return Err("output is disabled".into());
+        }
+        if self.winit_powered_off == !on {
+            return Ok(());
+        }
+        tracing::info!(output = %output.name(), on, "winit output power");
+        self.winit_powered_off = !on;
+        Ok(())
+    }
+
+    /// Whether `output` is powered on (DPMS). Disabled outputs count as
+    /// "on" (their power state is irrelevant until they are enabled).
+    pub(crate) fn output_power_is_on(&self, output: &smithay::output::Output) -> bool {
+        if self.udev_data.is_some() {
+            return self.udev_output_power(output).unwrap_or(true);
+        }
+        !self.winit_powered_off || !self.output_enabled(output)
+    }
+
+    /// Whether `output` is a head some backend drives (a power control
+    /// can be created for it).
+    pub(crate) fn output_power_is_known(&self, output: &smithay::output::Output) -> bool {
+        self.output_management.heads_all().contains(output)
+    }
+
+    /// Every enabled output that is currently powered off.
+    pub(crate) fn powered_off_outputs(&self) -> Vec<smithay::output::Output> {
+        self.space
+            .outputs()
+            .filter(|o| !self.output_power_is_on(o))
+            .cloned()
+            .collect()
+    }
+
+    /// Powers every output back on (best-effort; failures are logged).
+    /// Does not notify power controls -- see `output_power_wake` for the
+    /// input-driven path that does.
+    pub(crate) fn power_all_outputs_on(&mut self) {
+        for output in self.powered_off_outputs() {
+            if let Err(err) = self.set_output_power(&output, true) {
+                tracing::warn!(output = %output.name(), %err, "failed to power output on");
+            }
+        }
     }
 
     /// Recomputes every output's usable area (geometry minus layer-shell

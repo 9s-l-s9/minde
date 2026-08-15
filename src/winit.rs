@@ -23,7 +23,7 @@ use crate::render::{BorderBuffers, MindeRenderElements};
 /// the output from the space and the redraw paints black); adaptive sync
 /// is never supported (already rejected by validation).
 pub fn realize_head(
-    _state: &mut MindeState,
+    state: &mut MindeState,
     output: &Output,
     change: &HeadChange,
 ) -> Result<(), String> {
@@ -34,6 +34,11 @@ pub fn realize_head(
     }
     if change.adaptive_sync == Some(true) {
         return Err("adaptive sync is not supported on the winit backend".into());
+    }
+    if !change.enabled {
+        // Like udev's disable_head: DPMS state is forgotten on disable so
+        // a re-enabled head always lights up.
+        state.winit_powered_off = false;
     }
     Ok(())
 }
@@ -154,10 +159,12 @@ pub fn init_winit(
                     let _ = state.display_handle.flush_clients();
                     backend.window().request_redraw();
                 }
-                WinitEvent::Redraw if !state.output_enabled(&output) => {
-                    // Disabled via wlr-output-management: the head stays
+                WinitEvent::Redraw if !state.output_enabled(&output) || state.winit_powered_off => {
+                    // Disabled via wlr-output-management, or DPMS off via
+                    // wlr-output-power-management: the head stays
                     // advertised but shows nothing -- paint black, no
-                    // elements, no frame callbacks.
+                    // elements, no frame callbacks. (Redraws keep being
+                    // requested so power-on repaints on the next frame.)
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
                     {

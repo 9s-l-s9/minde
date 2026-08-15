@@ -8,6 +8,7 @@ pub mod input_method;
 pub mod keyboard_shortcuts_inhibit;
 mod layer_shell;
 pub mod output_management;
+pub mod output_power;
 pub mod pointer_constraints;
 pub mod screencopy;
 mod session_lock;

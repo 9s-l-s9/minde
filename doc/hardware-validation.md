@@ -66,6 +66,24 @@ Enabling and disabling heads (udev, needs two monitors):
 - a shikane profile with `enable = false` for `eDP-1` (lid-closed profile)
   turns the panel off and windows follow to the external head.
 
+Output power management (udev; `wlopm` and `swayidle` are in `manifest.scm`):
+
+- `wlopm --off '*'`: every monitor blanks (DPMS standby), `wlopm` reports
+  `off`, and `wlr-randr` still lists each head with `Enabled: yes` -- windows
+  and the layout are untouched;
+- move the mouse or press a key: every monitor lights up again and `wlopm`
+  reports `on` (wake on input);
+- `swayidle -w timeout 5 'wlopm --off *' resume 'wlopm --on *'`: after 5 s
+  idle the screens blank, activity brings them back, and repeating the cycle
+  a few times leaves no stuck-black or duplicated-repaint output (watch the
+  log for a single "powering head on" per head per cycle);
+- VT switch away while a head is off and back: the head stays off until
+  input or `wlopm --on`;
+- unplug a monitor while it is off: it disappears from `wlopm`/`wlr-randr`
+  and a running `wlopm` gets `failed`; plug it back in: it comes up on;
+- `wlopm --off eDP-1` on a disabled head (`wlr-randr --output eDP-1 --off`
+  first) fails rather than blanking a head that is not lit.
+
 If the compositor wedges, switch VTs and terminate it from the spare console.
 Do not reconfigure the display manager merely to debug a direct TTY failure.
 

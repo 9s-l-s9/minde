@@ -23,6 +23,15 @@ Target version: `1.0.0-rc1`.
   token status history via `wm-automation-status`, capturing an output or
   a single window to PNG without an external screenshot tool (see
   `doc/notes/issue-wm-screenshot-primitive.md`).
+- `wlr-output-power-management-unstable-v1` (hand-written, both backends) so
+  `wlopm` and `swayidle` (`timeout N 'wlopm --off *' resume 'wlopm --on *'`)
+  can blank outputs and light them again. Power is orthogonal to the layout:
+  a powered-off head stays enabled and mapped with its windows and
+  `wl_output` global, wlr-randr keeps reporting `Enabled: yes`, and only the
+  backend stops driving it (udev releases the CRTC, winit paints black). Any
+  key press, pointer button or pointer motion powers every head back on
+  (`wake_on_input`, default on; a Scheme toggle is planned). New nested e2e
+  gate `tests/output-power-e2e.sh`.
 - udev backend: heads can be disabled and re-enabled through
   wlr-output-management (`wlr-randr --output DP-1 --off` / `--on`, kanshi and
   shikane profiles). Every connector is tracked as a head whether or not it

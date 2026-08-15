@@ -195,6 +195,15 @@ impl OutputSurface {
     }
 }
 
+/// DPMS state of an enabled head (`wlr-output-power-management`). `Off`
+/// means the CRTC is switched off (no [`OutputSurface`]) while the head
+/// stays enabled: mapped, `wl_output` global present, windows in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PowerState {
+    On,
+    Off,
+}
+
 /// One connected connector and its CRTC, whether or not it is currently
 /// enabled. Lives in its device's `heads` map, keyed by CRTC. The
 /// [`Output`] (and its stable id in user data) survives disable/enable so
@@ -210,13 +219,19 @@ struct HeadEntry {
     /// The `wl_output` global; present only while the head is enabled
     /// (like wlroots, so layer clients don't stall on a dead output).
     global: Option<GlobalId>,
-    /// `Some` while enabled and rendering; `None` while disabled.
+    /// `Some` while enabled and powered on; `None` while disabled or
+    /// powered off (DPMS).
     surface: Option<OutputSurface>,
+    /// DPMS state; only meaningful while enabled (reset to `On` on
+    /// disable so a re-enabled head always lights up).
+    power: PowerState,
 }
 
 impl HeadEntry {
+    /// Enabled: has a `wl_output` global (and a surface unless powered
+    /// off).
     fn enabled(&self) -> bool {
-        self.surface.is_some()
+        self.global.is_some()
     }
 }
 
@@ -803,6 +818,7 @@ fn create_head(
             modes,
             global: None,
             surface: None,
+            power: PowerState::On,
         },
     );
     // Assign the stable head id now so it survives disable/enable cycles.
@@ -835,50 +851,30 @@ pub(crate) fn enable_head(
         return Ok(());
     }
     let output = entry.output.clone();
-    let connector = entry.connector;
     let wl_mode = wl_mode_from_drm(mode);
     info!(?crtc, output = %output.name(), ?wl_mode, ?position, "enabling head");
 
     if entry.global.is_none() {
         entry.global = Some(output.create_global::<MindeState>(&dh));
     }
+    entry.power = PowerState::On;
     output.change_current_state(Some(wl_mode), None, None, Some(position));
     state.space.map_output(&output, position);
 
-    let mut renderer = match udev.gpus.single_renderer(&udev.primary_gpu) {
-        Ok(r) => r,
-        Err(err) => {
-            state.space.unmap_output(&output);
-            return Err(format!("failed to get renderer for output init: {err}"));
+    if let Err(err) = init_surface(udev, node, crtc, mode) {
+        // Back to fully disabled: no global (that is what `enabled()`
+        // means), not mapped.
+        if let Some(global) = udev
+            .devices
+            .get_mut(&node)
+            .and_then(|d| d.heads.get_mut(&crtc))
+            .and_then(|e| e.global.take())
+        {
+            dh.remove_global::<MindeState>(global);
         }
-    };
-
-    let drm_output = match device
-        .drm_output_manager
-        .lock()
-        .initialize_output::<_, MindeRenderElements<UdevRenderer<'_>>>(
-            crtc,
-            mode,
-            &[connector],
-            &output,
-            None,
-            &mut renderer,
-            &DrmOutputRenderElements::default(),
-        ) {
-        Ok(drm_output) => drm_output,
-        Err(err) => {
-            state.space.unmap_output(&output);
-            return Err(format!("failed to initialize drm output: {err}"));
-        }
-    };
-    drop(renderer);
-
-    entry.surface = Some(OutputSurface {
-        drm_output,
-        border_buffers: BorderBuffers::default(),
-        dirty: true,
-        redraw: RedrawState::Idle,
-    });
+        state.space.unmap_output(&output);
+        return Err(err);
+    }
 
     let first_output = !udev.started;
     udev.started = true;
@@ -892,6 +888,50 @@ pub(crate) fn enable_head(
     }
 
     state.render_now(node, crtc);
+    Ok(())
+}
+
+/// Starts driving the CRTC of the head on `(node, crtc)` at `mode`:
+/// creates the [`OutputSurface`] in the idle redraw state. The output must
+/// already carry its mode and be mapped in the space (the render loop
+/// reads both). Shared by [`enable_head`] and the DPMS power-on path.
+fn init_surface(
+    udev: &mut UdevBackendData,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    mode: control::Mode,
+) -> Result<(), String> {
+    let UdevBackendData {
+        gpus,
+        devices,
+        primary_gpu,
+        ..
+    } = udev;
+    let device = devices.get_mut(&node).ok_or("unknown drm device")?;
+    let entry = device.heads.get_mut(&crtc).ok_or("unknown head")?;
+    let mut renderer = gpus
+        .single_renderer(primary_gpu)
+        .map_err(|err| format!("failed to get renderer for output init: {err}"))?;
+    let drm_output = device
+        .drm_output_manager
+        .lock()
+        .initialize_output::<_, MindeRenderElements<UdevRenderer<'_>>>(
+            crtc,
+            mode,
+            &[entry.connector],
+            &entry.output,
+            None,
+            &mut renderer,
+            &DrmOutputRenderElements::default(),
+        )
+        .map_err(|err| format!("failed to initialize drm output: {err}"))?;
+    drop(renderer);
+    entry.surface = Some(OutputSurface {
+        drm_output,
+        border_buffers: BorderBuffers::default(),
+        dirty: true,
+        redraw: RedrawState::Idle,
+    });
     Ok(())
 }
 
@@ -913,12 +953,18 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     let Some(entry) = device.heads.get_mut(&crtc) else {
         return;
     };
-    let Some(mut surface) = entry.surface.take() else {
+    if !entry.enabled() {
         return;
-    };
+    }
+    // `None` when the head was powered off (DPMS) before being disabled.
+    let mut surface = entry.surface.take();
     // Cancel any pending watchdog/rate-limit timer for this surface so a
     // stale token cannot fire into a disabled head.
-    surface.park_redraw(&handle);
+    if let Some(surface) = surface.as_mut() {
+        surface.park_redraw(&handle);
+    }
+    entry.power = PowerState::On;
+
     let output = entry.output.clone();
     let global = entry.global.take();
     info!(?crtc, output = %output.name(), "disabling head");
@@ -974,6 +1020,7 @@ fn remove_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Handle) {
         return;
     };
     debug_assert!(!entry.enabled(), "remove_head on an enabled head");
+    state.output_power_output_removed(&entry.output);
     state.output_management_remove_output(&entry.output);
 }
 
@@ -1254,6 +1301,80 @@ impl MindeState {
             }
         }
         None
+    }
+
+    /// The udev backend's DPMS switch. Off: the CRTC is released by
+    /// dropping the head's [`OutputSurface`] (ending its repaint chain --
+    /// `render_now`/`frame_finish` return without rescheduling when there
+    /// is no surface) while the head stays enabled: mapped, `wl_output`
+    /// global kept, windows untouched. On: the surface is re-created at
+    /// the output's current mode and repainted. Refused
+    /// for a disabled head.
+    pub(crate) fn udev_set_output_power(
+        &mut self,
+        output: &Output,
+        on: bool,
+    ) -> Result<(), String> {
+        let (node, crtc) = self
+            .udev_head_for_output(output)
+            .ok_or("head is not driven by the udev backend")?;
+        let handle = self.handle.clone();
+        let udev = self.udev_data.as_mut().ok_or("no udev backend")?;
+        let entry = udev
+            .devices
+            .get_mut(&node)
+            .and_then(|d| d.heads.get_mut(&crtc))
+            .ok_or("unknown head")?;
+        if !entry.enabled() {
+            return Err("output is disabled".into());
+        }
+        if on == (entry.power == PowerState::On) {
+            return Ok(());
+        }
+        if !on {
+            info!(?crtc, output = %output.name(), "powering head off");
+            entry.power = PowerState::Off;
+            // Cancel any pending watchdog/rate-limit timer, then release
+            // the CRTC (Drop for DrmOutput); with no surface the damage
+            // loop simply stays idle for this head.
+            if let Some(mut surface) = entry.surface.take() {
+                surface.park_redraw(&handle);
+                drop(surface);
+            }
+            return Ok(());
+        }
+        let wl_mode = output.current_mode().ok_or("output has no current mode")?;
+        let mode = entry
+            .modes
+            .iter()
+            .find(|(wl, _)| *wl == wl_mode)
+            .map(|(_, drm)| *drm)
+            .ok_or("current mode is not a connector mode")?;
+        info!(?crtc, output = %output.name(), "powering head on");
+        init_surface(udev, node, crtc, mode)?;
+        if let Some(entry) = udev
+            .devices
+            .get_mut(&node)
+            .and_then(|d| d.heads.get_mut(&crtc))
+        {
+            entry.power = PowerState::On;
+        }
+        self.render_now(node, crtc);
+        Ok(())
+    }
+
+    /// Whether the udev head for `output` is powered on. `None` if the
+    /// output is not a udev head.
+    pub(crate) fn udev_output_power(&self, output: &Output) -> Option<bool> {
+        let (node, crtc) = self.udev_head_for_output(output)?;
+        let entry = self
+            .udev_data
+            .as_ref()?
+            .devices
+            .get(&node)?
+            .heads
+            .get(&crtc)?;
+        Some(entry.power == PowerState::On)
     }
 
     /// The udev backend's `backend_realize_head`: enables or disables the
