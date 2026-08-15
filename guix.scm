@@ -15,7 +15,7 @@
 ;;;
 ;;; This package contains the compositor only. A session usually also wants
 ;;; runtime tools that minde spawns from `handle-startup!` rather than
-;;; depending on: a wallpaper setter (swaybg), a bar (eww), and for
+;;; depending on: a wallpaper setter, a bar (eww), and for
 ;;; multi-monitor layouts an output daemon -- shikane (packaged in
 ;;; guix-channel/minde/packages.scm) or kanshi (in Guix), see
 ;;; doc/configuration.md "Outputs and multiple monitors". Install those in

@@ -378,7 +378,9 @@ fn wl_to_transform(t: WlTransform) -> Transform {
 /// The description advertised for a head. (A later stage swaps the body
 /// for the EDID-derived "Make Model Serial" string.)
 fn head_description(output: &Output) -> String {
-    output.description()
+    // wlroots format "Make Model Serial" from EDID (udev), else the
+    // output name; this is the string kanshi/shikane profiles match.
+    crate::edid::output_description(output)
 }
 
 /// Protocol scale (f64) -> Smithay scale, integer where exact.

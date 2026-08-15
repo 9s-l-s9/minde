@@ -38,7 +38,6 @@ impl EdidInfo {
 /// Smithay's own `Output::description()` is fixed at construction time in
 /// this revision (`"{make} - {model} - {name}"`), so the wlr-output-management
 /// handler should advertise this instead.
-#[allow(dead_code)] // wired up by the output-management handler
 pub fn output_description(output: &Output) -> String {
     output
         .user_data()
