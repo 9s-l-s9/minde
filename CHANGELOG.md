@@ -23,6 +23,15 @@ Target version: `1.0.0-rc1`.
   token status history via `wm-automation-status`, capturing an output or
   a single window to PNG without an external screenshot tool (see
   `doc/notes/issue-wm-screenshot-primitive.md`).
+- udev backend: heads can be disabled and re-enabled through
+  wlr-output-management (`wlr-randr --output DP-1 --off` / `--on`, kanshi and
+  shikane profiles). Every connector is tracked as a head whether or not it
+  is enabled: disabling switches the CRTC off, withdraws the `wl_output`
+  global (as wlroots does) and moves windows to the remaining heads while the
+  head stays advertised with `Enabled: no`; enabling brings it back at the
+  requested or preferred mode, right of the other heads unless a position was
+  given, and the head keeps its stable Scheme id across the cycle. Hotplugged
+  connectors still come up enabled by default.
 - udev backend: every non-interlaced connector mode is advertised (with the
   DRM `PREFERRED` mode flagged as preferred), and monitor identity is read
   from the connector's EDID blob by a small in-tree parser (`src/edid.rs`,

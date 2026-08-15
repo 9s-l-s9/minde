@@ -1,0 +1,70 @@
+:root {
+  --bg: #0c0b09;
+  --ink: #ece7dc;
+  --muted: #a49f93;
+  --line: #35322c;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --measure: 34rem;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--ink); }
+body {
+  margin: 0;
+  font: 18px/1.6 var(--serif);
+  max-width: var(--measure);
+  margin-inline: auto;
+  padding: 0 20px;
+}
+a { color: inherit; text-underline-offset: 4px; text-decoration-color: var(--muted); }
+a:hover { text-decoration-color: var(--ink); }
+
+/* Dictionary entry */
+.hero { padding: clamp(5rem, 18vh, 11rem) 0 clamp(4rem, 10vh, 7rem); }
+h1 {
+  margin: 0;
+  font-weight: 400;
+  font-size: clamp(3.4rem, 11vw, 5.6rem);
+  line-height: 1;
+  letter-spacing: .01em;
+}
+.lexical { margin: 1.1rem 0 0; color: var(--muted); font-size: 1.05rem; }
+.pronunciation { color: var(--ink); }
+.rule { width: 11rem; max-width: 55%; height: 1px; margin: 1.4rem 0 1.8rem; background: var(--ink); }
+.definition {
+  margin: 0;
+  max-width: 22ch;
+  font-size: clamp(1.5rem, 4.4vw, 2rem);
+  line-height: 1.3;
+}
+
+/* Sections */
+.section { padding: 2.6rem 0; border-top: 1px solid var(--line); }
+.lead { margin: 0; font-size: 1.15rem; }
+.feature { margin: 0 0 1.6rem; }
+.feature:last-child { margin-bottom: 0; }
+.feature h3 { margin: 0 0 .25rem; font-weight: 400; font-size: 1.15rem; font-style: italic; }
+.feature p { margin: 0; color: var(--muted); }
+pre {
+  margin: 1.2rem 0;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  font: 15px/1.6 ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.links { color: var(--muted); }
+
+footer {
+  padding: 2.2rem 0 3rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .9rem;
+}
+footer p { margin: 0; }
+
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+
+@media print {
+  :root { --bg: #fff; --ink: #000; --muted: #333; --line: #aaa; }
+  .hero { padding: 2rem 0; }
+}

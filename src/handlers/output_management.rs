@@ -442,26 +442,17 @@ impl MindeState {
     /// enable/disable and adaptive sync where the backend can realize
     /// them. `change.mode` is already resolved (an enable-without-mode
     /// carries the preferred one; `custom_mode` is folded in). The generic
-    /// caller has validated the change and takes care of
-    /// `change_current_state` and space (un)mapping afterwards; this hook
-    /// must not touch either. `Err` reverts the whole configuration.
+    /// caller has validated the change and runs [`Self::commit_head`]
+    /// afterwards, which sets the output state and (un)maps the output in
+    /// the space; `commit_head` is idempotent, so a backend whose
+    /// enable/disable needs the output mapped and mode-bearing up front
+    /// (udev: the CRTC is initialised from the output's current mode) may
+    /// do that bookkeeping itself. `Err` reverts the whole configuration.
     fn backend_realize_head(&mut self, output: &Output, change: &HeadChange) -> Result<(), String> {
         if self.udev_data.is_none() {
             return crate::winit::realize_head(self, output, change);
         }
-        // udev: modeset (S3), enable/disable (S4) and VRR (S6) follow.
-        if let Some(mode) = change.requested_mode()
-            && Some(mode) != output.current_mode()
-        {
-            return Err("mode changes not yet supported on udev".into());
-        }
-        if change.enabled != self.output_enabled(output) {
-            return Err("enabling/disabling heads not yet supported on udev".into());
-        }
-        if change.adaptive_sync == Some(true) {
-            return Err("adaptive sync not yet supported on udev".into());
-        }
-        Ok(())
+        self.udev_realize_head(output, change)
     }
 
     /// Facts about every known head, for [`validate`].
@@ -546,7 +537,9 @@ impl MindeState {
     }
 
     /// Generic part of applying one (already backend-realized) change:
-    /// output state and space membership.
+    /// output state and space membership. Idempotent: re-applying values
+    /// the backend hook already set is harmless, and unmapping an output
+    /// the hook already unmapped is a no-op.
     fn commit_head(&mut self, change: &HeadChange) {
         let output = &change.output;
         if !change.enabled {

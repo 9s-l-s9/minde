@@ -6,10 +6,12 @@
 //! README for the exact upstream revision this mirrors.
 //!
 //! Trimmed vs. anvil, per this compositor's needs:
-//! - multi-output: every connected connector becomes an output, laid out
-//!   left-to-right in connection order (anvil's policy); hotplug adds and
-//!   removes outputs at runtime via `DrmScanner`, and Scheme is told
-//!   through `update_usable_area` -> `handle-heads-change!`.
+//! - multi-output: every connected connector becomes a head
+//!   ([`HeadEntry`]), enabled by default and laid out left-to-right in
+//!   connection order (anvil's policy); hotplug adds and removes heads at
+//!   runtime via `DrmScanner`, wlr-output-management (`enable_head` /
+//!   `disable_head`) switches CRTCs on and off, and Scheme is told through
+//!   `update_usable_area` -> `handle-heads-change!`.
 //! - primary GPU only: no `all_gpus`/multi-GPU render-node handling beyond
 //!   what's needed to keep the `GpuManager`/`MultiRenderer` plumbing
 //!   working (anvil's structure is kept here since fighting the API to
@@ -84,9 +86,9 @@ use smithay::{
         drm::control::{self, Device as ControlDevice, ModeFlags, ModeTypeFlags, connector, crtc},
         input::{Device as LibinputDevice, Libinput},
         rustix::fs::OFlags,
-        wayland_server::{DisplayHandle, backend::GlobalId},
+        wayland_server::backend::GlobalId,
     },
-    utils::{DeviceFd, Logical, Monotonic, Point, Transform},
+    utils::{DeviceFd, Logical, Monotonic, Point},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState, supports_syncobj_eventfd},
@@ -97,6 +99,7 @@ use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, warn};
 
 use crate::edid::{EdidInfo, parse_edid};
+use crate::handlers::output_management::HeadChange;
 use crate::render::{BorderBuffers, MindeRenderElements};
 use crate::{MindeState, guile};
 
@@ -149,17 +152,11 @@ enum RedrawState {
     WaitingForTimer { token: RegistrationToken },
 }
 
-/// One output: a connected connector driving a CRTC. Lives in its
-/// device's `surfaces` map.
+/// The render-side half of an enabled head: the DRM output driving the
+/// CRTC plus per-output render caches. `None` in [`HeadEntry::surface`]
+/// means the CRTC is off (head disabled); dropping it releases the CRTC
+/// (see `Drop for DrmOutput` in Smithay's `backend/drm/output.rs`).
 struct OutputSurface {
-    output: Output,
-    /// Advertised (non-interlaced) connector modes paired with the DRM
-    /// mode they came from, so a mode requested via wlr-output-management
-    /// can be translated back to a modeset.
-    #[allow(dead_code)]
-    modes: Vec<(WlMode, control::Mode)>,
-    global: Option<GlobalId>,
-    dh: DisplayHandle,
     drm_output: DrmOutput<
         GbmAllocator<DrmDeviceFd>,
         GbmFramebufferExporter<DrmDeviceFd>,
@@ -198,12 +195,28 @@ impl OutputSurface {
     }
 }
 
-impl Drop for OutputSurface {
-    fn drop(&mut self) {
-        self.output.leave_all();
-        if let Some(global) = self.global.take() {
-            self.dh.remove_global::<MindeState>(global);
-        }
+/// One connected connector and its CRTC, whether or not it is currently
+/// enabled. Lives in its device's `heads` map, keyed by CRTC. The
+/// [`Output`] (and its stable id in user data) survives disable/enable so
+/// Scheme frames restore per head; only the `wl_output` global and the
+/// render surface come and go with the enabled state.
+struct HeadEntry {
+    output: Output,
+    connector: connector::Handle,
+    /// Advertised (non-interlaced) connector modes paired with the DRM
+    /// mode they came from, so a mode requested via wlr-output-management
+    /// can be translated back to a modeset.
+    modes: Vec<(WlMode, control::Mode)>,
+    /// The `wl_output` global; present only while the head is enabled
+    /// (like wlroots, so layer clients don't stall on a dead output).
+    global: Option<GlobalId>,
+    /// `Some` while enabled and rendering; `None` while disabled.
+    surface: Option<OutputSurface>,
+}
+
+impl HeadEntry {
+    fn enabled(&self) -> bool {
+        self.surface.is_some()
     }
 }
 
@@ -211,7 +224,7 @@ struct DeviceData {
     drm_output_manager: GbmDrmOutputManager,
     registration_token: RegistrationToken,
     drm_scanner: DrmScanner,
-    surfaces: HashMap<crtc::Handle, OutputSurface>,
+    heads: HashMap<crtc::Handle, HeadEntry>,
 }
 
 /// State private to the udev backend, held inside `MindeState` for the
@@ -404,8 +417,10 @@ pub fn init_udev(
                         // Park every repaint loop: no timer may fire into an
                         // inactive device, and a vblank for a flip that was
                         // in flight may never arrive.
-                        for surface in device.surfaces.values_mut() {
-                            surface.park_redraw(&handle);
+                        for head in device.heads.values_mut() {
+                            if let Some(surface) = head.surface.as_mut() {
+                                surface.park_redraw(&handle);
+                            }
                         }
                     }
                 }
@@ -420,8 +435,10 @@ pub fn init_udev(
                     udev.paused = false;
                     for (node, device) in udev.devices.iter_mut() {
                         let _ = device.drm_output_manager.lock().activate(false);
-                        for crtc in device.surfaces.keys() {
-                            to_repaint.push((*node, *crtc));
+                        for (crtc, head) in device.heads.iter() {
+                            if head.enabled() {
+                                to_repaint.push((*node, *crtc));
+                            }
                         }
                     }
                 }
@@ -592,7 +609,7 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
             drm_output_manager,
             registration_token,
             drm_scanner: DrmScanner::new(),
-            surfaces: HashMap::new(),
+            heads: HashMap::new(),
         },
     );
 
@@ -659,19 +676,58 @@ fn read_edid(device: &impl ControlDevice, connector: connector::Handle) -> Optio
     parse_edid(&data)
 }
 
+/// A connector was connected: register it as a head and bring it up at
+/// its preferred mode, to the right of the outputs already enabled
+/// (anvil's left-to-right policy). Heads default to enabled; a daemon such
+/// as kanshi/shikane may disable it again through wlr-output-management.
 fn connector_connected(
     state: &mut MindeState,
     node: DrmNode,
     info: &connector::Info,
     crtc: crtc::Handle,
 ) -> bool {
-    let udev = state.udev_data.as_mut().unwrap();
-    let Some(device) = udev.devices.get_mut(&node) else {
+    let Some(preferred) = create_head(state, node, info, crtc) else {
         return false;
     };
+    let position = right_edge_of_outputs(state);
+    match enable_head(state, node, crtc, preferred, position) {
+        Ok(()) => true,
+        Err(err) => {
+            warn!(%err, "failed to enable hotplugged head");
+            false
+        }
+    }
+}
+
+/// The x coordinate just right of every enabled output: where a newly
+/// enabled head goes when nobody asked for a position.
+pub(crate) fn right_edge_of_outputs(state: &MindeState) -> Point<i32, Logical> {
+    let x = state
+        .space
+        .outputs()
+        .filter_map(|o| state.space.output_geometry(o))
+        .map(|g| g.loc.x + g.size.w)
+        .max()
+        .unwrap_or(0);
+    (x, 0).into()
+}
+
+/// Creates the [`Output`] for a freshly connected connector -- identity
+/// from EDID, the full mode list, preferred mode -- registers it as a
+/// (still disabled) head with wlr-output-management and stores the
+/// [`HeadEntry`]. Returns the preferred DRM mode, `None` if the connector
+/// is unusable (no modes).
+fn create_head(
+    state: &mut MindeState,
+    node: DrmNode,
+    info: &connector::Info,
+    crtc: crtc::Handle,
+) -> Option<control::Mode> {
+    let udev = state.udev_data.as_mut().unwrap();
+    let device = udev.devices.get_mut(&node)?;
 
     let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
-    info!(?crtc, %output_name, "setting up connector as an output");
+    info!(?crtc, %output_name, "setting up connector as a head");
 
     let mode_id = info
         .modes()
@@ -680,7 +736,7 @@ fn connector_connected(
         .unwrap_or(0);
     let Some(&drm_mode) = info.modes().get(mode_id) else {
         warn!(%output_name, "connector reports no modes");
-        return false;
+        return None;
     };
     let wl_mode = wl_mode_from_drm(drm_mode);
 
@@ -704,7 +760,7 @@ fn connector_connected(
     };
     info!(
         %output_name, %make, %model, %serial,
-        modes = modes.len(), current = ?wl_mode,
+        modes = modes.len(), preferred = ?wl_mode,
         "output identity and mode list"
     );
 
@@ -728,30 +784,72 @@ fn connector_connected(
     for (wl, _) in &modes {
         output.add_mode(*wl);
     }
-    let global = output.create_global::<MindeState>(&state.display_handle);
-    // Lay outputs out left-to-right in connection order (anvil's policy).
-    let position_x = state.space.outputs().fold(0, |acc, o| {
-        acc + state
-            .space
-            .output_geometry(o)
-            .map(|g| g.size.w)
-            .unwrap_or(0)
-    });
     output.set_preferred(wl_mode);
-    output.change_current_state(
-        Some(wl_mode),
-        Some(Transform::Normal),
-        None,
-        Some((position_x, 0).into()),
+
+    // A previous entry on this CRTC (should not happen: DrmScanner reports
+    // a disconnect first) is torn down so its CRTC is free.
+    if device.heads.contains_key(&crtc) {
+        warn!(?crtc, "replacing an existing head on this crtc");
+        disable_head(state, node, crtc);
+        remove_head(state, node, crtc);
+    }
+    let udev = state.udev_data.as_mut().unwrap();
+    let device = udev.devices.get_mut(&node)?;
+    device.heads.insert(
+        crtc,
+        HeadEntry {
+            output: output.clone(),
+            connector: info.handle(),
+            modes,
+            global: None,
+            surface: None,
+        },
     );
-    state.space.map_output(&output, (position_x, 0));
+    // Assign the stable head id now so it survives disable/enable cycles.
+    state.output_id(&output);
+    state.output_management_add_output(&output);
+    Some(drm_mode)
+}
+
+/// Enables a known head: creates its `wl_output` global, sets `mode` and
+/// `position`, maps it into the space and starts driving the CRTC. A
+/// no-op for an already enabled head. Used on hotplug and by the
+/// wlr-output-management apply path (`backend_realize_head`).
+///
+/// This does the output-state and space bookkeeping itself (rather than
+/// leaving it to `commit_head`) because `initialize_output` reads the
+/// output's current mode and the render loop needs the output mapped;
+/// `commit_head` re-applying the same values afterwards is idempotent.
+pub(crate) fn enable_head(
+    state: &mut MindeState,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    mode: control::Mode,
+    position: Point<i32, Logical>,
+) -> Result<(), String> {
+    let dh = state.display_handle.clone();
+    let udev = state.udev_data.as_mut().ok_or("no udev backend")?;
+    let device = udev.devices.get_mut(&node).ok_or("unknown drm device")?;
+    let entry = device.heads.get_mut(&crtc).ok_or("unknown head")?;
+    if entry.enabled() {
+        return Ok(());
+    }
+    let output = entry.output.clone();
+    let connector = entry.connector;
+    let wl_mode = wl_mode_from_drm(mode);
+    info!(?crtc, output = %output.name(), ?wl_mode, ?position, "enabling head");
+
+    if entry.global.is_none() {
+        entry.global = Some(output.create_global::<MindeState>(&dh));
+    }
+    output.change_current_state(Some(wl_mode), None, None, Some(position));
+    state.space.map_output(&output, position);
 
     let mut renderer = match udev.gpus.single_renderer(&udev.primary_gpu) {
         Ok(r) => r,
         Err(err) => {
-            warn!(%err, "failed to get renderer for output init");
             state.space.unmap_output(&output);
-            return false;
+            return Err(format!("failed to get renderer for output init: {err}"));
         }
     };
 
@@ -760,8 +858,8 @@ fn connector_connected(
         .lock()
         .initialize_output::<_, MindeRenderElements<UdevRenderer<'_>>>(
             crtc,
-            drm_mode,
-            &[info.handle()],
+            mode,
+            &[connector],
             &output,
             None,
             &mut renderer,
@@ -769,37 +867,114 @@ fn connector_connected(
         ) {
         Ok(drm_output) => drm_output,
         Err(err) => {
-            warn!(%err, "failed to initialize drm output");
             state.space.unmap_output(&output);
-            return false;
+            return Err(format!("failed to initialize drm output: {err}"));
         }
     };
+    drop(renderer);
 
-    device.surfaces.insert(
-        crtc,
-        OutputSurface {
-            output: output.clone(),
-            modes,
-            global: Some(global),
-            dh: state.display_handle.clone(),
-            drm_output,
-            border_buffers: BorderBuffers::default(),
-            dirty: true,
-            redraw: RedrawState::Idle,
-        },
-    );
+    entry.surface = Some(OutputSurface {
+        drm_output,
+        border_buffers: BorderBuffers::default(),
+        dirty: true,
+        redraw: RedrawState::Idle,
+    });
 
     let first_output = !udev.started;
     udev.started = true;
-    state.output_management_add_output(&output);
 
+    state.space.refresh();
     state.update_usable_area();
+    state.update_fractional_scales();
+    state.pointer_location = state.clamp_to_outputs(state.pointer_location);
     if first_output {
         guile::on_startup();
     }
 
     state.render_now(node, crtc);
-    true
+    Ok(())
+}
+
+/// Disables an enabled head: the CRTC is switched off (by dropping the
+/// [`OutputSurface`]), the output leaves the space and every surface, and
+/// its `wl_output` global is removed like wlroots does. The [`HeadEntry`]
+/// (and the Output with its stable id) stays, so the head remains
+/// advertised to wlr-output-management clients and can be re-enabled. A
+/// no-op for a head that is already disabled.
+pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Handle) {
+    let dh = state.display_handle.clone();
+    let handle = state.handle.clone();
+    let Some(udev) = state.udev_data.as_mut() else {
+        return;
+    };
+    let Some(device) = udev.devices.get_mut(&node) else {
+        return;
+    };
+    let Some(entry) = device.heads.get_mut(&crtc) else {
+        return;
+    };
+    let Some(mut surface) = entry.surface.take() else {
+        return;
+    };
+    // Cancel any pending watchdog/rate-limit timer for this surface so a
+    // stale token cannot fire into a disabled head.
+    surface.park_redraw(&handle);
+    let output = entry.output.clone();
+    let global = entry.global.take();
+    info!(?crtc, output = %output.name(), "disabling head");
+
+    // Void any gamma control on this output before its CRTC goes away
+    // (no restore possible once the surface is gone).
+    state.gamma_output_removed(&output);
+    state.space.unmap_output(&output);
+    output.leave_all();
+    // Releases the CRTC (Drop for DrmOutput).
+    drop(surface);
+    if let Some(global) = global {
+        dh.remove_global::<MindeState>(global);
+    }
+
+    // The remaining outputs may have fallen back to implicit modifiers to
+    // satisfy the bandwidth of the one just removed; try to undo that.
+    let udev = state.udev_data.as_mut().unwrap();
+    let primary_gpu = udev.primary_gpu;
+    let UdevBackendData { gpus, devices, .. } = udev;
+    if let Some(device) = devices.get_mut(&node) {
+        match gpus.single_renderer(&primary_gpu) {
+            Ok(mut renderer) => {
+                if let Err(err) = device
+                    .drm_output_manager
+                    .lock()
+                    .try_to_restore_modifiers::<_, MindeRenderElements<UdevRenderer<'_>>>(
+                        &mut renderer,
+                        &DrmOutputRenderElements::default(),
+                    )
+                {
+                    warn!(%err, "failed to restore modifiers after disabling head");
+                }
+            }
+            Err(err) => warn!(%err, "no renderer to restore modifiers with"),
+        }
+    }
+
+    state.space.refresh();
+    state.update_usable_area();
+    state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+}
+
+/// Forgets a (disabled) head entirely and tells wlr-output-management
+/// clients it is gone.
+fn remove_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Handle) {
+    let Some(entry) = state
+        .udev_data
+        .as_mut()
+        .and_then(|u| u.devices.get_mut(&node))
+        .and_then(|d| d.heads.remove(&crtc))
+    else {
+        return;
+    };
+    debug_assert!(!entry.enabled(), "remove_head on an enabled head");
+    state.output_management_remove_output(&entry.output);
 }
 
 fn connector_disconnected(
@@ -809,24 +984,9 @@ fn connector_disconnected(
     crtc: crtc::Handle,
 ) {
     let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
-    info!(?crtc, %output_name, "connector disconnected; removing its output");
-    let Some(udev) = state.udev_data.as_mut() else {
-        return;
-    };
-    let Some(device) = udev.devices.get_mut(&node) else {
-        return;
-    };
-    if let Some(surface) = device.surfaces.remove(&crtc) {
-        // Void any gamma control on this output before its CRTC goes away
-        // (no restore possible once the surface is gone).
-        state.gamma_output_removed(&surface.output);
-        // OutputSurface::drop removes the global; unmap first.
-        state.space.unmap_output(&surface.output);
-        state.output_management_remove_output(&surface.output);
-        drop(surface);
-        state.space.refresh();
-        state.update_usable_area();
-    }
+    info!(?crtc, %output_name, "connector disconnected; removing its head");
+    disable_head(state, node, crtc);
+    remove_head(state, node, crtc);
 }
 
 fn device_changed(state: &mut MindeState, node: DrmNode) {
@@ -884,10 +1044,13 @@ impl MindeState {
             let Some(device) = udev.devices.get_mut(&node) else {
                 return;
             };
-            let Some(surface) = device.surfaces.get_mut(&crtc) else {
+            let Some(entry) = device.heads.get_mut(&crtc) else {
                 return; // output vanished (unplug); don't reschedule repaints
             };
-            (surface.output.clone(), surface.drm_output.frame_submitted())
+            let Some(surface) = entry.surface.as_mut() else {
+                return; // head disabled meanwhile; nothing to account for
+            };
+            (entry.output.clone(), surface.drm_output.frame_submitted())
         };
 
         // wp-presentation-time: mark every surface scanned out on this output
@@ -951,8 +1114,10 @@ impl MindeState {
             .as_mut()?
             .devices
             .get_mut(&node)?
-            .surfaces
-            .get_mut(&crtc)
+            .heads
+            .get_mut(&crtc)?
+            .surface
+            .as_mut()
     }
 
     /// Marks every udev output dirty and schedules a render for each one that
@@ -981,8 +1146,11 @@ impl MindeState {
         let paused = udev.paused;
         let mut to_schedule = Vec::new();
         for (node, device) in udev.devices.iter_mut() {
-            for (crtc, surface) in device.surfaces.iter_mut() {
-                let Some(geo) = self.space.output_geometry(&surface.output) else {
+            for (crtc, entry) in device.heads.iter_mut() {
+                let Some(surface) = entry.surface.as_mut() else {
+                    continue;
+                };
+                let Some(geo) = self.space.output_geometry(&entry.output) else {
                     continue;
                 };
                 if !wanted(geo) {
@@ -1075,6 +1243,77 @@ impl MindeState {
         self.render_now(node, crtc);
     }
 
+    /// Locates the udev head whose [`Output`] is `output`.
+    fn udev_head_for_output(&self, output: &Output) -> Option<(DrmNode, crtc::Handle)> {
+        let udev = self.udev_data.as_ref()?;
+        for (node, device) in udev.devices.iter() {
+            for (crtc, entry) in device.heads.iter() {
+                if &entry.output == output {
+                    return Some((*node, *crtc));
+                }
+            }
+        }
+        None
+    }
+
+    /// The udev backend's `backend_realize_head`: enables or disables the
+    /// head as requested. A disabled head is enabled at `change.mode`
+    /// (already resolved by validation to an advertised mode, translated
+    /// back to the connector mode it came from) at `change.position` or,
+    /// absent that, right of every enabled output. Mode changes on an
+    /// enabled head and adaptive sync are not realised yet and fail the
+    /// configuration honestly.
+    pub(crate) fn udev_realize_head(
+        &mut self,
+        output: &Output,
+        change: &HeadChange,
+    ) -> Result<(), String> {
+        let (node, crtc) = self
+            .udev_head_for_output(output)
+            .ok_or("head is not driven by the udev backend")?;
+        if change.adaptive_sync == Some(true) {
+            return Err("adaptive sync not yet supported on udev".into());
+        }
+        let enabled = self.output_enabled(output);
+        if !change.enabled {
+            if enabled {
+                disable_head(self, node, crtc);
+            }
+            return Ok(());
+        }
+        if enabled {
+            if let Some(mode) = change.requested_mode()
+                && Some(mode) != output.current_mode()
+            {
+                return Err("mode changes not yet supported on udev".into());
+            }
+            return Ok(());
+        }
+        let wl_mode = change
+            .requested_mode()
+            .or_else(|| output.preferred_mode())
+            .or_else(|| output.current_mode())
+            .ok_or("head has no mode to enable with")?;
+        let drm_mode = self
+            .udev_data
+            .as_ref()
+            .and_then(|u| u.devices.get(&node))
+            .and_then(|d| d.heads.get(&crtc))
+            .and_then(|entry| {
+                entry
+                    .modes
+                    .iter()
+                    .find(|(wl, _)| *wl == wl_mode)
+                    .map(|(_, drm)| *drm)
+            })
+            .ok_or("requested mode is not a connector mode")?;
+        let position: Point<i32, Logical> = change
+            .position
+            .map(Into::into)
+            .unwrap_or_else(|| right_edge_of_outputs(self));
+        enable_head(self, node, crtc, drm_mode, position)
+    }
+
     /// Resolves an output to the DRM device fd, CRTC, and gamma ramp length
     /// needed to drive its gamma ramps. `None` if the output isn't a udev
     /// surface or its CRTC reports no gamma. Used by the gamma-control
@@ -1086,10 +1325,13 @@ impl MindeState {
         use smithay::reexports::drm::control::Device as ControlDevice;
         let udev = self.udev_data.as_ref()?;
         for device in udev.devices.values() {
-            for surface in device.surfaces.values() {
-                if &surface.output != output {
+            for entry in device.heads.values() {
+                if &entry.output != output {
                     continue;
                 }
+                let Some(surface) = entry.surface.as_ref() else {
+                    return None; // disabled: no CRTC to drive
+                };
                 let (fd, crtc) = surface.drm_output.with_compositor(|compositor| {
                     let drm_surface = compositor.surface();
                     (drm_surface.device_fd().clone(), drm_surface.crtc())
@@ -1117,7 +1359,13 @@ impl MindeState {
         let targets: Vec<(DrmNode, crtc::Handle)> = udev
             .devices
             .iter()
-            .flat_map(|(node, device)| device.surfaces.keys().map(move |crtc| (*node, *crtc)))
+            .flat_map(|(node, device)| {
+                device
+                    .heads
+                    .iter()
+                    .filter(|(_, head)| head.enabled())
+                    .map(move |(crtc, _)| (*node, *crtc))
+            })
             .collect();
         for (node, crtc) in targets {
             self.render_now(node, crtc);
@@ -1130,12 +1378,24 @@ impl MindeState {
     /// so the timer retries, matching the old fixed-interval behaviour).
     fn render_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
         let handle = self.handle.clone();
+        // A disabled or vanished head has no surface to render to; the
+        // damage loop simply ends here.
+        let Some(output) = self
+            .udev_data
+            .as_ref()
+            .and_then(|u| u.devices.get(&node))
+            .and_then(|d| d.heads.get(&crtc))
+            .filter(|entry| entry.enabled())
+            .map(|entry| entry.output.clone())
+        else {
+            return;
+        };
         let Some(surface) = self.output_surface_mut(node, crtc) else {
             return;
         };
         surface.park_redraw(&handle);
         surface.dirty = false;
-        let interval = refresh_interval(&surface.output);
+        let interval = refresh_interval(&output);
 
         let started = std::time::Instant::now();
         let rendered = self.render_surface(node, crtc);
@@ -1202,18 +1462,17 @@ impl MindeState {
         // Split borrows: the surface lives in `devices`, the renderer in
         // `gpus` -- disjoint fields of the same UdevBackendData.
         let UdevBackendData { gpus, devices, .. } = udev;
-        let Some(output_surface) = devices
-            .get_mut(&node)
-            .and_then(|d| d.surfaces.get_mut(&crtc))
-        else {
+        let Some(entry) = devices.get_mut(&node).and_then(|d| d.heads.get_mut(&crtc)) else {
+            return Ok(false);
+        };
+        let output = entry.output.clone();
+        let Some(output_surface) = entry.surface.as_mut() else {
             return Ok(false);
         };
 
         let mut renderer = gpus
             .single_renderer(&primary_gpu)
             .map_err(|_| SwapBuffersError::AlreadySwapped)?;
-
-        let output = output_surface.output.clone();
         let Some(output_geo) = self.space.output_geometry(&output) else {
             tracing::warn!("render requested for disconnected output");
             return Ok(false);

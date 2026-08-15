@@ -53,6 +53,19 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+Enabling and disabling heads (udev, needs two monitors):
+
+- `wlr-randr --output DP-1 --off`: the monitor goes to standby, `wlr-randr`
+  still lists the head with `Enabled: no` and its full mode list, and every
+  window that lived on it moves to a remaining head;
+- `wlr-randr --output DP-1 --on`: the monitor comes back at its preferred
+  mode, placed right of the other heads, and frames restore per head;
+- unplug the monitor while it is disabled: the head disappears from
+  `wlr-randr`; plug it back in: it reappears enabled at its preferred mode;
+- VT switch away and back while a head is disabled: it stays off;
+- a shikane profile with `enable = false` for `eDP-1` (lid-closed profile)
+  turns the panel off and windows follow to the external head.
+
 If the compositor wedges, switch VTs and terminate it from the spare console.
 Do not reconfigure the display manager merely to debug a direct TTY failure.
 

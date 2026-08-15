@@ -1,0 +1,51 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>minde — full entry</title><link rel="stylesheet" href="assets/fonts/ebgaramond.css" /><style>
+:root { --bg:#0c0b09; --ink:#ece7dc; --muted:#a49f93; --line:#35322c;
+  --accent:#b3543f;
+  --serif:&quot;Iowan Old Style&quot;,&quot;Palatino Linotype&quot;,Palatino,Georgia,serif; }
+* { box-sizing:border-box; }
+html { background:var(--bg); color:var(--ink); }
+body { margin:0 auto; max-width:34rem; padding:0 20px;
+  font:18px/1.6 var(--serif); }
+a { color:inherit; text-underline-offset:4px; text-decoration-color:var(--muted); }
+a:hover { text-decoration-color:var(--ink); }
+.hero { padding:clamp(5rem,16vh,10rem) 0 0; }
+h1 { margin:0; font-weight:400; line-height:1; letter-spacing:.01em;
+  font-size:clamp(3.4rem,11vw,5.6rem); }
+h1.headword-italic { font-style:italic; font-size:clamp(3.8rem,12vw,6.2rem); }
+h1.headword-caps { text-transform:uppercase; }
+.lexical { margin:1.1rem 0 0; color:var(--muted); font-size:1.05rem; }
+.pronunciation { color:var(--ink); }
+.pos { font-variant:small-caps; letter-spacing:.06em; }
+.rule { width:11rem; max-width:55%; height:1px; margin:1.4rem 0 1.8rem;
+  background:var(--ink); }
+.definition { margin:0; max-width:22ch; line-height:1.3;
+  font-size:clamp(1.5rem,4.4vw,2rem); }
+.etymology { margin:1.6rem 0 0; color:var(--muted); font-size:.95rem; }
+.section { padding:0 0 .4rem; }
+.lead { margin:0; font-size:1.12rem; }
+.lead::first-letter { float:left; padding:.08em .09em 0 0;
+  font-size:3.1em; line-height:.8; }
+.sense { margin:0 0 1.1rem; }
+.sense:last-child { margin-bottom:0; }
+.sense-num { color:var(--muted); font-feature-settings:'onum'; }
+.sense-word { }
+.usage-label { margin:0 0 .6rem; color:var(--muted);
+  font-variant:small-caps; letter-spacing:.08em; }
+pre { margin:0 0 1.2rem; padding:1rem 1.2rem; overflow-x:auto;
+  border:1px solid var(--line);
+  font:15px/1.6 ui-monospace,&quot;SFMono-Regular&quot;,Consolas,monospace; }
+.links { margin:0; color:var(--muted); }
+footer { padding-bottom:3rem; color:var(--muted); font-size:.9rem; }
+footer p { margin:0; }
+:focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
+
+.divider { width:4rem; height:1px; margin:3rem 0; background:var(--line); }
+:root { --serif:&quot;EB Garamond&quot;,&quot;Iowan Old Style&quot;,Palatino,Georgia,serif; }</style></head><body><header class="hero"><h1 class="headword-italic">minde</h1><p class="lexical"><span class="pronunciation">/ˈmin.dɛ/</span> <span class="pos">verb · Lojban</span></p><div class="rule" /><p class="definition">To command a desktop through live, inspectable Scheme.</p><p class="etymology">— Lojban gismu <i>minde</i>: to command; x<sub>1</sub> orders x<sub>2</sub> to do x<sub>3</sub>.</p></header><main><div class="divider" aria-hidden="true" /><section class="section"><p class="lead">Minde is a Wayland compositor for people who want to understand
+and alter the machinery they use all day.  Smithay owns the protocol,
+rendering, and input; Guile owns policy.  Inspect it, redefine it, or
+drive it over local IPC while the session is alive.</p></section><div class="divider" aria-hidden="true" /><section class="section"><p class="sense"><span class="sense-num">1.</span> <i class="sense-word">evaluate</i> — keymaps, hooks, placement, groups, and frames are live Guile
+procedures; behavior changes without restarting the session.</p><p class="sense"><span class="sense-num">2.</span> <i class="sense-word">compose</i> — groups, heads, and explicit frames instead of a fixed layout
+algorithm; the window model descends from StumpWM.</p><p class="sense"><span class="sense-num">3.</span> <i class="sense-word">interrogate</i> — the local IPC interface exposes state, evaluation, status, and
+structured events to scripts and Eww.</p><p class="sense"><span class="sense-num">4.</span> <i class="sense-word">hack, safely</i> — the nested backend exercises the real policy layer without
+touching DRM, your VT, or the display manager.</p></section><div class="divider" aria-hidden="true" /><section class="section"><p class="usage-label">usage</p><pre><code>guix shell -m manifest.scm
+scripts/run-nested</code></pre><p class="links"><a href="https://github.com/9s-l-s9/minde">Source</a> · <a href="https://github.com/9s-l-s9/minde/blob/main/doc/concepts.md">Window model</a> · <a href="https://github.com/9s-l-s9/minde#trying-it">Trying it</a></p></section></main><footer><div class="divider" aria-hidden="true" /><p>Minde · GPL-3.0-or-later · Wayland outside, Guile inside.</p></footer></body></html>
