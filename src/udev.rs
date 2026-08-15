@@ -721,7 +721,7 @@ fn connector_connected(
     device.surfaces.insert(
         crtc,
         OutputSurface {
-            output,
+            output: output.clone(),
             global: Some(global),
             dh: state.display_handle.clone(),
             drm_output,
@@ -733,6 +733,7 @@ fn connector_connected(
 
     let first_output = !udev.started;
     udev.started = true;
+    state.output_management_add_output(&output);
 
     state.update_usable_area();
     if first_output {
@@ -763,6 +764,7 @@ fn connector_disconnected(
         state.gamma_output_removed(&surface.output);
         // OutputSurface::drop removes the global; unmap first.
         state.space.unmap_output(&surface.output);
+        state.output_management_remove_output(&surface.output);
         drop(surface);
         state.space.refresh();
         state.update_usable_area();

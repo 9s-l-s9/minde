@@ -14,7 +14,29 @@ use smithay::{
 
 use crate::MindeState;
 use crate::guile;
+use crate::handlers::output_management::HeadChange;
 use crate::render::{BorderBuffers, MindeRenderElements};
+
+/// Backend hook for `MindeState::apply_output_configuration` under winit.
+/// The host window fixes the output size, so a differing mode is refused;
+/// enable/disable needs nothing backend-side (the generic caller unmaps
+/// the output from the space and the redraw paints black); adaptive sync
+/// is never supported (already rejected by validation).
+pub fn realize_head(
+    _state: &mut MindeState,
+    output: &Output,
+    change: &HeadChange,
+) -> Result<(), String> {
+    if let Some(mode) = change.requested_mode()
+        && Some(mode) != output.current_mode()
+    {
+        return Err("mode changes are not supported on the winit backend".into());
+    }
+    if change.adaptive_sync == Some(true) {
+        return Err("adaptive sync is not supported on the winit backend".into());
+    }
+    Ok(())
+}
 
 pub fn init_winit(
     event_loop: &mut EventLoop<MindeState>,
@@ -47,6 +69,7 @@ pub fn init_winit(
     output.set_preferred(mode);
 
     state.space.map_output(&output, (0, 0));
+    state.output_management_add_output(&output);
 
     // Announce the initial usable area (full output; no layers yet).
     state.update_usable_area();
@@ -78,6 +101,9 @@ pub fn init_winit(
                     // exclusive zones re-arranged inside).
                     state.reported_heads.clear();
                     state.update_usable_area();
+                    // Re-send preferred fractional scales (surface/output
+                    // association may have shifted with the geometry).
+                    state.update_fractional_scales();
                     // Keep any lock surface covering the whole (resized) output.
                     state.reconfigure_lock_surfaces();
                 }
@@ -125,6 +151,29 @@ pub fn init_winit(
                         );
                     }
 
+                    let _ = state.display_handle.flush_clients();
+                    backend.window().request_redraw();
+                }
+                WinitEvent::Redraw if !state.output_enabled(&output) => {
+                    // Disabled via wlr-output-management: the head stays
+                    // advertised but shows nothing -- paint black, no
+                    // elements, no frame callbacks.
+                    let size = backend.window_size();
+                    let damage = Rectangle::from_size(size);
+                    {
+                        let (renderer, mut framebuffer) = backend.bind().unwrap();
+                        let elements: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
+                        damage_tracker
+                            .render_output(
+                                &mut *renderer,
+                                &mut framebuffer,
+                                0,
+                                &elements,
+                                [0.0, 0.0, 0.0, 1.0],
+                            )
+                            .unwrap();
+                    }
+                    backend.submit(Some(&[damage])).unwrap();
                     let _ = state.display_handle.flush_clients();
                     backend.window().request_redraw();
                 }

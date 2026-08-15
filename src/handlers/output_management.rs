@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-//! `wlr-output-management-unstable-v1`: lets `wlr-randr`, `kanshi` and
-//! `wdisplays` query the output layout (heads, modes, position, scale,
-//! transform) and request changes to it.
+//! `wlr-output-management-unstable-v1`: lets `wlr-randr`, `kanshi`,
+//! `shikane` and `wdisplays` query the output layout (heads, modes,
+//! position, scale, transform, adaptive sync) and request changes to it.
 //!
 //! Smithay's vendored revision ships no server module for this protocol, so
 //! -- like `gamma_control` and `foreign_toplevel` -- it is hand-written here
@@ -10,27 +10,41 @@
 //! `delegate_dispatch2!` (handlers/mod.rs) covers only Smithay's own
 //! dispatch2 user-data, so all `GlobalDispatch`/`Dispatch` impls live here.
 //!
+//! ## Heads versus enabled outputs
+//!
+//! `Space::outputs()` keeps meaning "enabled and rendering". Every head the
+//! compositor knows about -- including disabled ones -- is registered in
+//! [`OutputManagementState::heads_all`] through
+//! [`MindeState::output_management_add_output`] /
+//! [`MindeState::output_management_remove_output`] (called by the backends
+//! when a connector/window appears or goes away). A head is *enabled* iff
+//! the space contains its output, so a disabled head stays advertised (with
+//! `enabled = 0` and its mode list) instead of being `finished()`.
+//!
 //! ## Reconciliation with the Scheme head model
 //!
 //! The compositor's outputs are the single source of truth. Queries read
-//! straight from each [`Output`]. An accepted configuration is applied with
-//! [`Output::change_current_state`] plus `Space::map_output`, after which
-//! [`MindeState::update_usable_area`] re-derives the usable-rect head list
-//! and hands it to Scheme (`handle-heads-change!`) exactly as a hotplug or
-//! resize would -- so the frame trees reflow through the existing
-//! `(wm-outputs)`/heads path with no separate code. External changes we did
-//! not originate (a winit resize, a DRM hotplug) reconcile the other way:
-//! [`MindeState::output_management_refresh`] re-advertises the current
-//! state to every bound manager.
+//! straight from each [`Output`]. An accepted configuration is applied by
+//! [`MindeState::apply_output_configuration`] (shared with the Scheme
+//! primitive of a later stage): validation first with no side effects, then
+//! per-head application with snapshots that are reverted in reverse order
+//! if a backend refuses. On success the protocol call site clears
+//! `reported_heads` and runs [`MindeState::update_usable_area`], which
+//! re-derives the usable-rect head list, hands it to Scheme
+//! (`handle-heads-change!`) exactly as a hotplug or resize would, and
+//! re-advertises to bound managers. External changes we did not originate
+//! (a winit resize, a DRM hotplug) reconcile the other way through
+//! [`MindeState::output_management_refresh`].
 //!
 //! ## Policy
 //!
-//! Whether an external tool may reconfigure outputs is policy, so an `apply`
-//! is gated on `guile::output_config_allowed()` (the optional Scheme
-//! predicate `output-configuration-allowed?`, default accept). Mode changes
-//! are honoured only where the backend can realize them: under winit the
+//! Whether an external tool may reconfigure outputs is policy, so both
+//! `test` and `apply` are gated on `guile::output_config_allowed()` (the
+//! optional Scheme predicate `output-configuration-allowed?`, default
+//! accept). Backend capabilities are honoured honestly: under winit the
 //! output size is fixed by the host window, so a differing mode fails the
-//! configuration rather than lying about success.
+//! configuration rather than lying about success; adaptive sync is only
+//! accepted where the backend reports support.
 
 use std::sync::{Arc, Mutex};
 
@@ -39,7 +53,7 @@ use smithay::reexports::{
     wayland_protocols_wlr::output_management::v1::server::{
         zwlr_output_configuration_head_v1::{self, ZwlrOutputConfigurationHeadV1},
         zwlr_output_configuration_v1::{self, ZwlrOutputConfigurationV1},
-        zwlr_output_head_v1::{self, ZwlrOutputHeadV1},
+        zwlr_output_head_v1::{self, AdaptiveSyncState, ZwlrOutputHeadV1},
         zwlr_output_manager_v1::{self, ZwlrOutputManagerV1},
         zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
     },
@@ -49,9 +63,15 @@ use smithay::reexports::{
         protocol::wl_output::Transform as WlTransform,
     },
 };
-use smithay::utils::{Point, Transform};
+use smithay::utils::{Logical, Point, Transform};
 
 use crate::MindeState;
+
+/// Environment variable that, when set to `1` at startup, lets a
+/// configuration disable the last enabled head. Test-only: the nested winit
+/// e2e has a single output and needs to exercise disable -> enable; a real
+/// session must never end up with zero enabled heads.
+pub const ALLOW_NO_HEADS_ENV: &str = "MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS";
 
 /// User data on a `ZwlrOutputHeadV1`: the compositor output it describes.
 pub struct HeadData {
@@ -64,16 +84,170 @@ pub struct ModeData {
     mode: Mode,
 }
 
-/// A single head's pending changes inside a configuration.
-#[derive(Clone)]
-struct PendingHead {
-    output: Output,
-    enabled: bool,
-    mode: Option<Mode>,
-    custom_mode: Option<(i32, i32, i32)>,
-    position: Option<(i32, i32)>,
-    scale: Option<f64>,
-    transform: Option<WlTransform>,
+/// A single head's requested changes inside a configuration. Built by the
+/// protocol (`enable_head`/`disable_head` + config-head requests) and, in a
+/// later stage, by the Scheme `configure-output!` primitive.
+#[derive(Clone, Debug)]
+pub(crate) struct HeadChange {
+    pub output: Output,
+    pub enabled: bool,
+    /// An advertised mode (from a `zwlr_output_mode_v1`).
+    pub mode: Option<Mode>,
+    /// A custom `(width, height, refresh_mHz)` mode.
+    pub custom_mode: Option<(i32, i32, i32)>,
+    pub position: Option<(i32, i32)>,
+    pub scale: Option<f64>,
+    pub transform: Option<WlTransform>,
+    /// Requested adaptive-sync (VRR) state.
+    pub adaptive_sync: Option<bool>,
+}
+
+impl HeadChange {
+    /// A change that only enables/disables `output` and leaves everything
+    /// else untouched.
+    pub(crate) fn new(output: Output, enabled: bool) -> Self {
+        HeadChange {
+            output,
+            enabled,
+            mode: None,
+            custom_mode: None,
+            position: None,
+            scale: None,
+            transform: None,
+            adaptive_sync: None,
+        }
+    }
+
+    /// The mode this change asks for, resolving a custom mode to a [`Mode`].
+    pub(crate) fn requested_mode(&self) -> Option<Mode> {
+        self.mode.or_else(|| {
+            self.custom_mode.map(|(w, h, r)| Mode {
+                size: (w, h).into(),
+                refresh: r,
+            })
+        })
+    }
+}
+
+/// Why a configuration was rejected (or could not be applied).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OutputConfigError(pub String);
+
+impl OutputConfigError {
+    fn new(msg: impl Into<String>) -> Self {
+        OutputConfigError(msg.into())
+    }
+}
+
+impl std::fmt::Display for OutputConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// What validation needs to know about one existing head. Decoupled from
+/// the compositor so [`validate`] is unit-testable.
+#[derive(Clone, Debug)]
+pub(crate) struct HeadFacts {
+    pub output: Output,
+    /// Currently enabled (mapped in the space).
+    pub enabled: bool,
+    /// Backend-reported adaptive-sync state; `None` when unsupported.
+    pub adaptive_sync: Option<bool>,
+}
+
+/// A validated [`HeadChange`]: `mode` is the mode to set (already resolved
+/// for an enable-without-mode), `was_enabled` the pre-apply state.
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedChange {
+    pub change: HeadChange,
+    /// The mode to apply, if any (`None` = keep the current one).
+    pub mode: Option<Mode>,
+    pub was_enabled: bool,
+}
+
+/// Pure validation of `changes` against `heads` (no side effects). Returns
+/// the per-head resolved changes in request order.
+///
+/// Rules: every changed head must be known and appear once; an advertised
+/// mode must be in the head's mode list; enabling a disabled head without
+/// a mode picks its preferred (else current) mode; adaptive sync may only
+/// be enabled where the backend supports it; the configuration must leave
+/// at least one head enabled unless `allow_no_heads`. A no-op configuration
+/// is fine.
+pub(crate) fn validate(
+    heads: &[HeadFacts],
+    changes: &[HeadChange],
+    allow_no_heads: bool,
+) -> Result<Vec<ResolvedChange>, OutputConfigError> {
+    let mut resolved: Vec<ResolvedChange> = Vec::with_capacity(changes.len());
+    for change in changes {
+        let Some(facts) = heads.iter().find(|h| h.output == change.output) else {
+            return Err(OutputConfigError::new(
+                "configuration references an unknown head",
+            ));
+        };
+        if resolved.iter().any(|r| r.change.output == change.output) {
+            return Err(OutputConfigError::new("head configured twice"));
+        }
+        let mut mode = None;
+        if change.enabled {
+            if let Some(m) = change.mode {
+                if !change.output.modes().contains(&m) {
+                    return Err(OutputConfigError::new(
+                        "requested mode is not advertised for this head",
+                    ));
+                }
+                mode = Some(m);
+            } else if let Some(m) = change.requested_mode() {
+                if m.size.w <= 0 || m.size.h <= 0 {
+                    return Err(OutputConfigError::new("custom mode has non-positive size"));
+                }
+                mode = Some(m);
+            } else if !facts.enabled {
+                // EnableHead without a mode: preferred, else current.
+                mode = change
+                    .output
+                    .preferred_mode()
+                    .or(change.output.current_mode());
+                if mode.is_none() {
+                    return Err(OutputConfigError::new("head has no mode to enable with"));
+                }
+            }
+            if let Some(s) = change.scale
+                && !(s > 0.0)
+            {
+                return Err(OutputConfigError::new("scale must be positive"));
+            }
+            if change.adaptive_sync == Some(true) && facts.adaptive_sync.is_none() {
+                return Err(OutputConfigError::new(
+                    "adaptive sync is not supported on this head",
+                ));
+            }
+        }
+        resolved.push(ResolvedChange {
+            change: change.clone(),
+            mode,
+            was_enabled: facts.enabled,
+        });
+    }
+
+    let enabled_after = heads
+        .iter()
+        .filter(|h| {
+            resolved
+                .iter()
+                .find(|r| r.change.output == h.output)
+                .map(|r| r.change.enabled)
+                .unwrap_or(h.enabled)
+        })
+        .count();
+    if enabled_after == 0 && !allow_no_heads && !heads.is_empty() {
+        return Err(OutputConfigError::new(
+            "configuration would leave no enabled head",
+        ));
+    }
+    Ok(resolved)
 }
 
 /// Shared state of a `ZwlrOutputConfigurationV1` (mutated from its own and
@@ -81,7 +255,7 @@ struct PendingHead {
 #[derive(Default)]
 struct ConfigInner {
     serial: u32,
-    heads: Vec<PendingHead>,
+    heads: Vec<HeadChange>,
     /// Set once apply/test has been sent (further requests are errors).
     finished: bool,
 }
@@ -97,11 +271,43 @@ pub struct ConfigHeadData {
     output: Output,
 }
 
+/// The identity properties last advertised for a head, so a refresh can
+/// re-send only what changed (and rebuild the mode objects on a mode-list
+/// change).
+#[derive(Clone, PartialEq)]
+struct HeadSnapshot {
+    name: String,
+    description: String,
+    size: smithay::utils::Size<i32, smithay::utils::Raw>,
+    make: String,
+    model: String,
+    serial_number: String,
+    modes: Vec<Mode>,
+    preferred: Option<Mode>,
+}
+
+impl HeadSnapshot {
+    fn of(output: &Output) -> Self {
+        let phys = output.physical_properties();
+        HeadSnapshot {
+            name: output.name(),
+            description: head_description(output),
+            size: phys.size,
+            make: phys.make,
+            model: phys.model,
+            serial_number: phys.serial_number,
+            modes: output.modes(),
+            preferred: output.preferred_mode(),
+        }
+    }
+}
+
 /// Per-head resources created for one bound manager.
 struct HeadState {
     output: Output,
     resource: ZwlrOutputHeadV1,
     modes: Vec<(Mode, ZwlrOutputModeV1)>,
+    snapshot: HeadSnapshot,
 }
 
 /// One bound `zwlr_output_manager_v1` and the head/mode resources created
@@ -117,6 +323,10 @@ pub struct OutputManagementState {
     global: GlobalId,
     managers: Vec<ManagerState>,
     serial: u32,
+    /// Every known head, enabled or not, in registration order.
+    heads_all: Vec<Output>,
+    /// [`ALLOW_NO_HEADS_ENV`] was set at startup.
+    allow_no_heads: bool,
 }
 
 impl OutputManagementState {
@@ -124,15 +334,28 @@ impl OutputManagementState {
     pub fn global(&self) -> GlobalId {
         self.global.clone()
     }
+
+    /// Every known head (enabled or not), in registration order.
+    pub fn heads_all(&self) -> &[Output] {
+        &self.heads_all
+    }
 }
 
 /// Creates the manager global (version 4) and returns the state.
 pub fn init_output_management(dh: &DisplayHandle) -> OutputManagementState {
     let global = dh.create_global::<MindeState, ZwlrOutputManagerV1, ()>(4, ());
+    let allow_no_heads = std::env::var(ALLOW_NO_HEADS_ENV).as_deref() == Ok("1");
+    if allow_no_heads {
+        tracing::warn!(
+            "{ALLOW_NO_HEADS_ENV}=1: output configurations may disable every head (test only)"
+        );
+    }
     OutputManagementState {
         global,
         managers: Vec::new(),
         serial: 0,
+        heads_all: Vec::new(),
+        allow_no_heads,
     }
 }
 
@@ -152,10 +375,252 @@ fn wl_to_transform(t: WlTransform) -> Transform {
     }
 }
 
+/// The description advertised for a head. (A later stage swaps the body
+/// for the EDID-derived "Make Model Serial" string.)
+fn head_description(output: &Output) -> String {
+    output.description()
+}
+
+/// Protocol scale (f64) -> Smithay scale, integer where exact.
+fn to_scale(s: f64) -> Scale {
+    if s.fract() == 0.0 {
+        Scale::Integer(s as i32)
+    } else {
+        Scale::Fractional(s)
+    }
+}
+
+/// Pre-apply state of one head, restored on failure.
+struct HeadBackup {
+    output: Output,
+    mode: Option<Mode>,
+    location: Point<i32, Logical>,
+    scale: Scale,
+    transform: Transform,
+    enabled: bool,
+    adaptive_sync: Option<bool>,
+}
+
 impl MindeState {
-    /// The compositor outputs, in a stable order (space order).
+    /// Registers `output` as a known head (call once the backend has created
+    /// it, whether or not it is mapped) and re-advertises the layout.
+    pub fn output_management_add_output(&mut self, output: &Output) {
+        if !self.output_management.heads_all.contains(output) {
+            self.output_management.heads_all.push(output.clone());
+        }
+        self.output_management_refresh();
+    }
+
+    /// Forgets `output` (connector gone / window closed) and re-advertises,
+    /// which `finished()`s its head on every bound manager.
+    pub fn output_management_remove_output(&mut self, output: &Output) {
+        self.output_management.heads_all.retain(|o| o != output);
+        self.output_management_refresh();
+    }
+
+    /// Every known head, in registration order.
     fn output_management_outputs(&self) -> Vec<Output> {
-        self.space.outputs().cloned().collect()
+        self.output_management.heads_all.clone()
+    }
+
+    /// Whether `output` is enabled: mapped in the space.
+    pub fn output_enabled(&self, output: &Output) -> bool {
+        self.space.outputs().any(|o| o == output)
+    }
+
+    /// The backend's adaptive-sync (VRR) state for `output`: `Some(on)`
+    /// where supported, `None` where the backend cannot do it (winit; udev
+    /// until VRR lands).
+    pub fn output_adaptive_sync(&self, output: &Output) -> Option<bool> {
+        let _ = output;
+        None
+    }
+
+    /// Backend-specific part of applying one head change: mode set,
+    /// enable/disable and adaptive sync where the backend can realize
+    /// them. `change.mode` is already resolved (an enable-without-mode
+    /// carries the preferred one; `custom_mode` is folded in). The generic
+    /// caller has validated the change and takes care of
+    /// `change_current_state` and space (un)mapping afterwards; this hook
+    /// must not touch either. `Err` reverts the whole configuration.
+    fn backend_realize_head(&mut self, output: &Output, change: &HeadChange) -> Result<(), String> {
+        if self.udev_data.is_none() {
+            return crate::winit::realize_head(self, output, change);
+        }
+        // udev: modeset (S3), enable/disable (S4) and VRR (S6) follow.
+        if let Some(mode) = change.requested_mode()
+            && Some(mode) != output.current_mode()
+        {
+            return Err("mode changes not yet supported on udev".into());
+        }
+        if change.enabled != self.output_enabled(output) {
+            return Err("enabling/disabling heads not yet supported on udev".into());
+        }
+        if change.adaptive_sync == Some(true) {
+            return Err("adaptive sync not yet supported on udev".into());
+        }
+        Ok(())
+    }
+
+    /// Facts about every known head, for [`validate`].
+    fn head_facts(&self) -> Vec<HeadFacts> {
+        self.output_management
+            .heads_all
+            .iter()
+            .map(|o| HeadFacts {
+                output: o.clone(),
+                enabled: self.output_enabled(o),
+                adaptive_sync: self.output_adaptive_sync(o),
+            })
+            .collect()
+    }
+
+    /// Validates `changes` and, unless `test_only`, applies them head by
+    /// head, reverting every head already changed if a later one fails.
+    /// Does *not* reflow the Scheme model or re-advertise: the caller runs
+    /// the post-success sequence (`reported_heads.clear()`,
+    /// `update_usable_area`, `update_fractional_scales`,
+    /// `reconfigure_lock_surfaces`, `guile::on_output_configured`).
+    pub(crate) fn apply_output_configuration(
+        &mut self,
+        changes: &[HeadChange],
+        test_only: bool,
+    ) -> Result<(), OutputConfigError> {
+        let facts = self.head_facts();
+        let resolved = validate(&facts, changes, self.output_management.allow_no_heads)?;
+        if test_only {
+            return Ok(());
+        }
+
+        let mut backups: Vec<HeadBackup> = Vec::with_capacity(resolved.len());
+        let mut failure: Option<OutputConfigError> = None;
+        for r in &resolved {
+            let output = &r.change.output;
+            backups.push(HeadBackup {
+                output: output.clone(),
+                mode: output.current_mode(),
+                location: output.current_location(),
+                scale: output.current_scale(),
+                transform: output.current_transform(),
+                enabled: r.was_enabled,
+                adaptive_sync: self.output_adaptive_sync(output),
+            });
+            let mut change = r.change.clone();
+            change.mode = r.mode;
+            change.custom_mode = None;
+            if let Err(msg) = self.backend_realize_head(output, &change) {
+                failure = Some(OutputConfigError(msg));
+                break;
+            }
+            self.commit_head(&change);
+        }
+
+        if let Some(err) = failure {
+            // Reverse revert: last changed head first. The failed head's
+            // backup is in the list too; restoring it is harmless.
+            for b in backups.iter().rev() {
+                let mut revert = HeadChange::new(b.output.clone(), b.enabled);
+                revert.mode = b.mode;
+                revert.position = Some((b.location.x, b.location.y));
+                revert.adaptive_sync = b.adaptive_sync;
+                if let Err(msg) = self.backend_realize_head(&b.output, &revert) {
+                    tracing::warn!(%msg, output = %b.output.name(), "output config revert failed");
+                }
+                b.output.change_current_state(
+                    b.mode,
+                    Some(b.transform),
+                    Some(b.scale),
+                    Some(b.location),
+                );
+                if b.enabled {
+                    self.space.map_output(&b.output, b.location);
+                } else {
+                    self.space.unmap_output(&b.output);
+                }
+            }
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Generic part of applying one (already backend-realized) change:
+    /// output state and space membership.
+    fn commit_head(&mut self, change: &HeadChange) {
+        let output = &change.output;
+        if !change.enabled {
+            self.space.unmap_output(output);
+            return;
+        }
+        let new_transform = change.transform.map(wl_to_transform);
+        let new_scale = change.scale.map(to_scale);
+        let new_location: Option<Point<i32, Logical>> = change.position.map(|(x, y)| (x, y).into());
+        output.change_current_state(change.mode, new_transform, new_scale, new_location);
+        let mapped = self.output_enabled(output);
+        if !mapped || change.position.is_some() {
+            let loc = new_location.unwrap_or_else(|| output.current_location());
+            self.space.map_output(output, loc);
+        }
+    }
+
+    /// Creates the mode resources for `output` on `head` (sends `mode`,
+    /// `size`, `refresh`, `preferred`), returning `(mode, resource)` pairs.
+    fn advertise_modes(
+        &self,
+        dh: &DisplayHandle,
+        client: &Client,
+        head: &ZwlrOutputHeadV1,
+        output: &Output,
+    ) -> Vec<(Mode, ZwlrOutputModeV1)> {
+        let version = head.version();
+        let preferred = output.preferred_mode();
+        let mut mode_resources = Vec::new();
+        for mode in output.modes() {
+            let Ok(mode_res) = client.create_resource::<ZwlrOutputModeV1, _, MindeState>(
+                dh,
+                version,
+                ModeData { mode },
+            ) else {
+                continue;
+            };
+            head.mode(&mode_res);
+            mode_res.size(mode.size.w, mode.size.h);
+            if mode.refresh != 0 {
+                mode_res.refresh(mode.refresh);
+            }
+            if Some(mode) == preferred {
+                mode_res.preferred();
+            }
+            mode_resources.push((mode, mode_res));
+        }
+        mode_resources
+    }
+
+    /// Sends the mutable per-head state: `enabled`, then (only when
+    /// enabled) `current_mode`/`position`/`transform`/`scale`, and
+    /// `adaptive_sync` on v4.
+    fn send_head_state(&self, head: &HeadState) {
+        let output = &head.output;
+        let enabled = self.output_enabled(output);
+        head.resource.enabled(enabled as i32);
+        if enabled {
+            if let Some(mode) = output.current_mode()
+                && let Some((_, res)) = head.modes.iter().find(|(m, _)| *m == mode)
+            {
+                head.resource.current_mode(res);
+            }
+            let loc = output.current_location();
+            head.resource.position(loc.x, loc.y);
+            head.resource.transform(output.current_transform().into());
+            head.resource
+                .scale(output.current_scale().fractional_scale());
+        }
+        if head.resource.version() >= 4 {
+            let vrr = match self.output_adaptive_sync(output) {
+                Some(true) => AdaptiveSyncState::Enabled,
+                _ => AdaptiveSyncState::Disabled,
+            };
+            head.resource.adaptive_sync(vrr);
+        }
     }
 
     /// Creates head + mode resources for `output` on `manager` and sends all
@@ -180,61 +645,67 @@ impl MindeState {
             .ok()?;
         manager.head(&head);
 
-        head.name(output.name());
-        head.description(output.description());
-        let phys = output.physical_properties();
-        if phys.size.w != 0 || phys.size.h != 0 {
-            head.physical_size(phys.size.w, phys.size.h);
+        let snapshot = HeadSnapshot::of(output);
+        head.name(snapshot.name.clone());
+        head.description(snapshot.description.clone());
+        if snapshot.size.w != 0 || snapshot.size.h != 0 {
+            head.physical_size(snapshot.size.w, snapshot.size.h);
         }
-
-        let mut mode_resources = Vec::new();
-        let current = output.current_mode();
-        let preferred = output.preferred_mode();
-        for mode in output.modes() {
-            let Ok(mode_res) = client.create_resource::<ZwlrOutputModeV1, _, MindeState>(
-                dh,
-                version,
-                ModeData { mode },
-            ) else {
-                continue;
-            };
-            head.mode(&mode_res);
-            mode_res.size(mode.size.w, mode.size.h);
-            if mode.refresh != 0 {
-                mode_res.refresh(mode.refresh);
-            }
-            if Some(mode) == preferred {
-                mode_res.preferred();
-            }
-            mode_resources.push((mode, mode_res));
-        }
-
-        // Always enabled in minde (no output is disabled).
-        head.enabled(1);
-        if let Some(mode) = current
-            && let Some((_, res)) = mode_resources.iter().find(|(m, _)| *m == mode)
-        {
-            head.current_mode(res);
-        }
-        let loc = output.current_location();
-        head.position(loc.x, loc.y);
-        head.transform(output.current_transform().into());
-        head.scale(output.current_scale().fractional_scale());
+        let modes = self.advertise_modes(dh, &client, &head, output);
         if version >= 2 {
-            head.make(phys.make.clone());
-            head.model(phys.model.clone());
-            head.serial_number(phys.serial_number.clone());
+            head.make(snapshot.make.clone());
+            head.model(snapshot.model.clone());
+            head.serial_number(snapshot.serial_number.clone());
         }
-
-        Some(HeadState {
+        let state = HeadState {
             output: output.clone(),
             resource: head,
-            modes: mode_resources,
-        })
+            modes,
+            snapshot,
+        };
+        self.send_head_state(&state);
+        Some(state)
+    }
+
+    /// Re-sends whatever identity properties of an existing head changed
+    /// since it was last advertised (name, description, physical size,
+    /// make/model/serial, mode list), then the mutable state.
+    fn refresh_head(&self, dh: &DisplayHandle, client: &Client, head: &mut HeadState) {
+        let now = HeadSnapshot::of(&head.output);
+        let old = &head.snapshot;
+        let res = &head.resource;
+        if now.name != old.name {
+            res.name(now.name.clone());
+        }
+        if now.description != old.description {
+            res.description(now.description.clone());
+        }
+        if now.size != old.size && (now.size.w != 0 || now.size.h != 0) {
+            res.physical_size(now.size.w, now.size.h);
+        }
+        if res.version() >= 2 {
+            if now.make != old.make {
+                res.make(now.make.clone());
+            }
+            if now.model != old.model {
+                res.model(now.model.clone());
+            }
+            if now.serial_number != old.serial_number {
+                res.serial_number(now.serial_number.clone());
+            }
+        }
+        if now.modes != old.modes || now.preferred != old.preferred {
+            for (_, m) in head.modes.drain(..) {
+                m.finished();
+            }
+            head.modes = self.advertise_modes(dh, client, &head.resource, &head.output);
+        }
+        head.snapshot = now;
+        self.send_head_state(head);
     }
 
     /// Re-advertises the current output layout to every bound manager,
-    /// reconciling added/removed outputs and changed head properties, then
+    /// reconciling added/removed heads and changed head properties, then
     /// bumps the serial and sends `done`. Call after applying a
     /// configuration and after any external output change (resize, hotplug).
     pub fn output_management_refresh(&mut self) {
@@ -247,7 +718,7 @@ impl MindeState {
         // advertise_head (which borrows &self).
         let mut managers = std::mem::take(&mut self.output_management.managers);
         for mgr in &mut managers {
-            // Remove heads whose output is gone.
+            // Remove heads whose output is gone (not merely disabled).
             mgr.heads.retain(|h| {
                 if outputs.contains(&h.output) {
                     true
@@ -259,98 +730,24 @@ impl MindeState {
                     false
                 }
             });
-            // Add heads for new outputs.
+            let client = mgr.manager.client();
             for output in &outputs {
-                if !mgr.heads.iter().any(|h| &h.output == output) {
-                    if let Some(head) = self.advertise_head(&dh, &mgr.manager, output) {
-                        mgr.heads.push(head);
+                match mgr.heads.iter_mut().find(|h| &h.output == output) {
+                    None => {
+                        if let Some(head) = self.advertise_head(&dh, &mgr.manager, output) {
+                            mgr.heads.push(head);
+                        }
                     }
-                    continue;
+                    Some(head) => {
+                        if let Some(client) = client.as_ref() {
+                            self.refresh_head(&dh, client, head);
+                        }
+                    }
                 }
-                // Existing head: re-send the mutable properties.
-                let head = mgr.heads.iter().find(|h| &h.output == output).unwrap();
-                if let Some(mode) = output.current_mode()
-                    && let Some((_, res)) = head.modes.iter().find(|(m, _)| *m == mode)
-                {
-                    head.resource.current_mode(res);
-                }
-                let loc = output.current_location();
-                head.resource.position(loc.x, loc.y);
-                head.resource.transform(output.current_transform().into());
-                head.resource
-                    .scale(output.current_scale().fractional_scale());
             }
             mgr.manager.done(serial);
         }
         self.output_management.managers = managers;
-    }
-
-    /// Applies (or, for `test`, only validates) a configuration. Returns
-    /// `Ok(())` if it can be / was applied, `Err(reason)` otherwise.
-    fn output_management_apply(
-        &mut self,
-        inner: &ConfigInner,
-        test_only: bool,
-    ) -> Result<(), &'static str> {
-        let is_winit = self.udev_data.is_none();
-
-        // Validate first so a failed test/apply changes nothing.
-        for ph in &inner.heads {
-            if !ph.enabled {
-                // minde always keeps its outputs enabled; refuse to
-                // disable rather than silently ignore.
-                return Err("disabling outputs is not supported");
-            }
-            // Resolve the requested mode, if any.
-            let requested_mode = ph.mode.or_else(|| {
-                ph.custom_mode.map(|(w, h, r)| Mode {
-                    size: (w, h).into(),
-                    refresh: r,
-                })
-            });
-            if let Some(mode) = requested_mode {
-                let current = ph.output.current_mode();
-                if Some(mode) != current {
-                    if is_winit {
-                        // The host window fixes the size under winit.
-                        return Err("mode changes are not supported on the winit backend");
-                    }
-                    if ph.mode.is_some() && !ph.output.modes().contains(&mode) {
-                        return Err("requested mode is not advertised for this head");
-                    }
-                }
-            }
-        }
-
-        if test_only {
-            return Ok(());
-        }
-
-        // Apply. update_usable_area at the end reflows the Scheme model.
-        for ph in &inner.heads {
-            let requested_mode = ph.mode.or_else(|| {
-                ph.custom_mode.map(|(w, h, r)| Mode {
-                    size: (w, h).into(),
-                    refresh: r,
-                })
-            });
-            let new_scale = ph.scale.map(|s| {
-                if s.fract() == 0.0 {
-                    Scale::Integer(s as i32)
-                } else {
-                    Scale::Fractional(s)
-                }
-            });
-            let new_transform = ph.transform.map(wl_to_transform);
-            let new_location: Option<Point<i32, smithay::utils::Logical>> =
-                ph.position.map(|(x, y)| (x, y).into());
-            ph.output
-                .change_current_state(requested_mode, new_transform, new_scale, new_location);
-            if let Some((x, y)) = ph.position {
-                self.space.map_output(&ph.output, (x, y));
-            }
-        }
-        Ok(())
     }
 }
 
@@ -480,15 +877,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     );
                     return;
                 }
-                inner.heads.push(PendingHead {
-                    output: output.clone(),
-                    enabled: true,
-                    mode: None,
-                    custom_mode: None,
-                    position: None,
-                    scale: None,
-                    transform: None,
-                });
+                inner.heads.push(HeadChange::new(output.clone(), true));
                 data_init.init(
                     id,
                     ConfigHeadData {
@@ -510,19 +899,11 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     );
                     return;
                 }
-                inner.heads.push(PendingHead {
-                    output,
-                    enabled: false,
-                    mode: None,
-                    custom_mode: None,
-                    position: None,
-                    scale: None,
-                    transform: None,
-                });
+                inner.heads.push(HeadChange::new(output, false));
             }
             Request::Apply | Request::Test => {
                 let test_only = matches!(request, Request::Test);
-                let snapshot = {
+                let changes = {
                     let mut inner = data.inner.lock().unwrap();
                     if inner.finished {
                         config.post_error(
@@ -537,26 +918,26 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                         config.cancelled();
                         return;
                     }
-                    ConfigInner {
-                        serial: inner.serial,
-                        heads: inner.heads.clone(),
-                        finished: true,
-                    }
+                    inner.heads.clone()
                 };
 
-                // Policy gate applies only to real applies, not tests.
-                if !test_only && !crate::guile::output_config_allowed() {
+                // Policy gate: a test must answer the same as an apply
+                // would, so it is gated too.
+                if !crate::guile::output_config_allowed() {
+                    tracing::info!(
+                        "wlr-output-management: configuration refused by output-configuration-allowed?"
+                    );
                     config.failed();
                     return;
                 }
 
-                match state.output_management_apply(&snapshot, test_only) {
+                match state.apply_output_configuration(&changes, test_only) {
                     Ok(()) => {
                         config.succeeded();
                         if !test_only {
                             // Reflow the Scheme head model and re-advertise to
                             // output-management clients. update_usable_area
-                            // does both (it now calls output_management_refresh
+                            // does both (it calls output_management_refresh
                             // itself); clearing reported_heads defeats its
                             // unchanged-geometry short-circuit.
                             state.reported_heads.clear();
@@ -564,12 +945,14 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                             // A scale change must reach fractional-scale
                             // clients so they repaint at the new density.
                             state.update_fractional_scales();
+                            // Lock surfaces must keep covering each output.
+                            state.reconfigure_lock_surfaces();
                             state.schedule_redraw();
                             crate::guile::on_output_configured();
                         }
                     }
                     Err(reason) => {
-                        tracing::info!(reason, "wlr-output-management: rejected configuration");
+                        tracing::info!(%reason, "wlr-output-management: rejected configuration");
                         config.failed();
                     }
                 }
@@ -630,7 +1013,16 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData> for MindeState {
                     ph.scale = Some(scale);
                 }
             }
-            Request::SetAdaptiveSync { .. } => {}
+            Request::SetAdaptiveSync { state } => match state.into_result() {
+                Ok(AdaptiveSyncState::Enabled) => ph.adaptive_sync = Some(true),
+                Ok(AdaptiveSyncState::Disabled) => ph.adaptive_sync = Some(false),
+                _ => {
+                    config_head.post_error(
+                        zwlr_output_configuration_head_v1::Error::InvalidAdaptiveSyncState,
+                        "invalid adaptive sync state",
+                    );
+                }
+            },
             _ => {}
         }
     }
@@ -639,6 +1031,7 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData> for MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::output::{PhysicalProperties, Subpixel};
 
     #[test]
     fn transform_roundtrip_matches_wl_output() {
@@ -656,5 +1049,92 @@ mod tests {
             let back: WlTransform = smithay.into();
             assert_eq!(back, t);
         }
+    }
+
+    fn mode(w: i32, h: i32) -> Mode {
+        Mode {
+            size: (w, h).into(),
+            refresh: 60_000,
+        }
+    }
+
+    fn head(name: &str, enabled: bool, vrr: Option<bool>) -> HeadFacts {
+        let output = Output::new(
+            name.to_string(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "t".into(),
+                model: "t".into(),
+                serial_number: "t".into(),
+            },
+        );
+        output.add_mode(mode(800, 600));
+        output.set_preferred(mode(1280, 800));
+        output.change_current_state(Some(mode(1280, 800)), None, None, Some((0, 0).into()));
+        HeadFacts {
+            output,
+            enabled,
+            adaptive_sync: vrr,
+        }
+    }
+
+    #[test]
+    fn noop_configuration_is_ok() {
+        let heads = [head("a", true, None)];
+        let change = HeadChange::new(heads[0].output.clone(), true);
+        let r = validate(&heads, &[change], false).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].mode, None);
+        // Empty configuration too.
+        assert!(validate(&heads, &[], false).is_ok());
+    }
+
+    #[test]
+    fn last_enabled_head_cannot_be_disabled_without_override() {
+        let heads = [head("a", true, None), head("b", false, None)];
+        let off = HeadChange::new(heads[0].output.clone(), false);
+        assert!(validate(&heads, &[off.clone()], false).is_err());
+        assert!(validate(&heads, &[off.clone()], true).is_ok());
+        // Disabling one while enabling the other is fine.
+        let on = HeadChange::new(heads[1].output.clone(), true);
+        let r = validate(&heads, &[off, on], false).unwrap();
+        // Enable without a mode resolves to the preferred one.
+        assert_eq!(r[1].mode, Some(mode(1280, 800)));
+    }
+
+    #[test]
+    fn unknown_mode_is_rejected() {
+        let heads = [head("a", true, None)];
+        let mut c = HeadChange::new(heads[0].output.clone(), true);
+        c.mode = Some(mode(640, 480));
+        assert!(validate(&heads, &[c.clone()], false).is_err());
+        c.mode = Some(mode(800, 600));
+        assert!(validate(&heads, &[c], false).is_ok());
+    }
+
+    #[test]
+    fn unknown_head_and_duplicate_are_rejected() {
+        let heads = [head("a", true, None)];
+        let other = head("b", true, None);
+        let c = HeadChange::new(other.output.clone(), true);
+        assert!(validate(&heads, &[c], false).is_err());
+        let d = HeadChange::new(heads[0].output.clone(), true);
+        assert!(validate(&heads, &[d.clone(), d], false).is_err());
+    }
+
+    #[test]
+    fn adaptive_sync_requires_backend_support() {
+        let heads = [head("a", true, None), head("b", true, Some(false))];
+        let mut c = HeadChange::new(heads[0].output.clone(), true);
+        c.adaptive_sync = Some(true);
+        assert!(validate(&heads, &[c], false).is_err());
+        let mut d = HeadChange::new(heads[1].output.clone(), true);
+        d.adaptive_sync = Some(true);
+        assert!(validate(&heads, &[d], false).is_ok());
+        // Asking for "disabled" is always fine.
+        let mut e = HeadChange::new(heads[0].output.clone(), true);
+        e.adaptive_sync = Some(false);
+        assert!(validate(&heads, &[e], false).is_ok());
     }
 }

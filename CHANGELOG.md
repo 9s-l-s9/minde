@@ -340,6 +340,25 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- Output management (`wlr-output-management-unstable-v1`) reports state
+  honestly and applies configurations in two phases. Heads carry their real
+  `enabled` state (position/mode/transform/scale only while enabled) and the
+  v4 `adaptive_sync` event; a disabled head stays advertised with its mode
+  list instead of disappearing, and a refresh re-sends changed
+  name/description/make/model/serial/physical-size/mode-list properties.
+  A configuration is validated with no side effects (unknown head or mode,
+  adaptive sync where the backend lacks it, and leaving zero enabled heads
+  are all refused; enabling a head without a mode picks its preferred one;
+  a no-op apply succeeds), then applied per head with snapshots that are
+  reverted in reverse order if the backend refuses. `test` is now gated by
+  `output-configuration-allowed?` like `apply`, `set_adaptive_sync` is
+  honoured (invalid values are a protocol error), and under winit
+  `--off`/`--on` unmap and remap the single output (black frame while
+  disabled). Enable/disable and mode changes on the udev backend still
+  fail until the DRM stages land. The test-only environment variable
+  `MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1` lets the single-output nested e2e
+  exercise disable/enable; the gate now also asserts Enabled/Adaptive Sync
+  reporting, refusals and the round trip.
 - The project license metadata is consistently GPL-3.0-or-later while
   retaining the MIT terms for Smithay example-derived files.
 - Mutable frame/group records now live in an explicitly internal compositor

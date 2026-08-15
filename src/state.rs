@@ -2126,7 +2126,15 @@ impl MindeState {
                 name: output.name(),
             });
         }
-        if heads.is_empty() || heads == self.reported_heads {
+        if heads == self.reported_heads {
+            return;
+        }
+        if heads.is_empty() {
+            // Every head disabled (test-only, see
+            // output_management::ALLOW_NO_HEADS_ENV) or none yet: Scheme
+            // keeps its last head list, but output-management clients
+            // still need to see the disabled state.
+            self.output_management_refresh();
             return;
         }
         self.reported_heads = heads.clone();
