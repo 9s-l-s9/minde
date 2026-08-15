@@ -45,6 +45,14 @@
    "wl-clipboard"
    ;; wlr-output-management client used by the output-management e2e gate
    "wlr-randr"
+   ;; wlr-output-management GUI configurator; arrange heads by hand, then
+   ;; capture the result with `shikanectl export` (see doc/configuration.md)
+   "wdisplays"
+   ;; wlr-output-power-management client used by the DPMS/output-power e2e gate
+   "wlopm"
+   ;; wlr-output-management profile daemon packaged by Guix; documented as
+   ;; the fallback to shikane (which lives in guix-channel/)
+   "kanshi"
    ;; wayland-info (global enumeration) used by the clipboard and
    ;; foreign-toplevel e2e gates to assert the manager globals are advertised
    "wayland-utils"

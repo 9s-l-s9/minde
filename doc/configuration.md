@@ -109,6 +109,130 @@ policy:
     (wm-configure-input! name #:accel-profile 'flat)))
 ```
 
+## Outputs and multiple monitors
+
+Minde does not have an `outputs` section. Output layout is protocol-driven: the
+compositor implements `wlr-output-management-unstable-v1` and any client of
+that protocol may arrange the heads. Layout is owned by one external daemon,
+started from `handle-startup!`; the compositor state is the single source of
+truth, and disabled heads stay advertised so a daemon can re-enable them.
+
+The recommended stack, all available from the development shell
+(`manifest.scm`) or the in-repo channel (`guix build -L guix-channel shikane`):
+
+| Tool | Role |
+|---|---|
+| `shikane` | profile daemon (packaged in `guix-channel/`); matches heads by model/serial, applies the first complete profile, reacts to hotplug |
+| `kanshi` | alternative profile daemon, in Guix proper; same compositor behavior |
+| `wdisplays` | GUI arranger, for authoring a layout interactively |
+| `wlr-randr` | one-shot changes and inspection (`wlr-randr` lists heads and modes) |
+| `wlopm` | `wlr-output-power-management` client (`wlopm --off '*'` turns screens off) |
+
+### shikane
+
+Spawn the daemon at startup:
+
+```scheme
+(define (handle-startup!)
+  (wm-spawn "shikane"))
+```
+
+Its configuration lives in `~/.config/shikane/config.toml`. A profile is
+selected when every connected head matches exactly one of its outputs, so
+match on stable identity (model `m=`, serial `s=`) rather than connector name:
+
+```toml
+[[profile]]
+name = "desk"
+
+[[profile.output]]
+search = "s=ABC123456"          # laptop panel, by serial
+enable = true
+mode = "1920x1080@60Hz"
+position = "0,0"
+scale = 1.0
+
+[[profile.output]]
+search = ["m=U2723QE", "v=DEL"] # external, model + vendor
+enable = true
+mode = "3840x2160@60Hz"
+position = "1920,0"
+scale = 1.5
+
+[[profile]]
+name = "laptop-only"
+
+[[profile.output]]
+search = "s=ABC123456"
+enable = true
+mode = "preferred"
+position = "0,0"
+```
+
+To author a profile, arrange the heads with `wdisplays` (or `wlr-randr`),
+then let shikane write it:
+
+```sh
+shikanectl export desk >> ~/.config/shikane/config.toml
+shikanectl reload
+```
+
+`shikanectl switch NAME` applies a named profile by hand.
+
+### kanshi (fallback)
+
+kanshi is in Guix and needs no channel. Same idea, scfg syntax, matched by the
+output description (`wlr-randr` prints it):
+
+```
+profile desk {
+    output "Some Vendor Panel 0x1234" enable mode 1920x1080@60Hz position 0,0 scale 1
+    output "DEL U2723QE ABC123" enable mode 3840x2160@60Hz position 1920,0 scale 1.5
+}
+```
+
+Start it with `(wm-spawn "kanshi")` instead of shikane; run only one daemon.
+
+### The Scheme side
+
+The compositor keeps its head model in Scheme (`(wm-outputs)`,
+`handle-heads-change!` in `(minde groups)`), so an accepted external change
+reconciles into groups and frames exactly as a hotplug or resize does. Three
+knobs are relevant:
+
+- `(set-head-mode! 'per-head)` (default) gives every group one frame tree per
+  head, StumpWM style; `(set-head-mode! 'span)` uses a single tree over the
+  union of all heads. See [Concepts](concepts.md).
+- `(output-configuration-allowed?)` is an optional predicate consulted before
+  a client's apply request is honored. Unbound (the default) means accept;
+  define it to return `#f` to refuse external changes, or gate them on your
+  own state.
+- `(handle-output-configured!)` is an optional hook that fires after an
+  external change was applied, for re-tiling, persisting or logging.
+
+```scheme
+(define (output-configuration-allowed?) #t)
+(define (handle-output-configured!)
+  (wm-log "output layout changed by an external client"))
+```
+
+Both are compositor entry points looked up by plain top-level name in the
+init file, like `handle-startup!`; neither is part of the versioned
+`(minde …)` module API.
+
+### Hardware status
+
+As of this version, position, scale and transform apply on hardware and under
+the nested winit backend. Real mode switching, disabling and re-enabling
+heads, EDID-based make/model/serial, DPMS via
+`wlr-output-power-management-v1` and adaptive sync are being added in
+stages; until they land, a profile that changes the mode or disables a head is
+refused (the daemon reports the apply as failed and tries the next variant),
+and heads report `Unknown` identity, so match kanshi/shikane profiles by
+connector name (`n=eDP-1`) on such builds. See
+[hardware validation](hardware-validation.md) and the
+[capability matrix](capability-matrix.md) for what a given build supports.
+
 ## Common environment variables
 
 | Variable | Purpose |

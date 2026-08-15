@@ -31,6 +31,15 @@ Target version: `1.0.0-rc1`.
   layout, and `crate::edid::output_description` yields the wlroots-style
   `"Make Model Serial"` string that kanshi/shikane match against (falling
   back to the connector name, never `Unknown Unknown Unknown`).
+- Multi-monitor tooling and documentation (no compositor change): `shikane`,
+  the wlr-output-management profile daemon, is packaged in the in-repo Guix
+  channel (`guix build -L guix-channel shikane`; crate graph pinned in
+  `guix-channel/minde/rust-crates.scm`), `wdisplays`, `wlopm` and `kanshi`
+  join the development shell (`manifest.scm`), and `doc/configuration.md`
+  gains "Outputs and multiple monitors": layout is owned by an external
+  daemon (shikane recommended, kanshi as the no-channel fallback), with
+  `set-head-mode!`, `output-configuration-allowed?` and
+  `handle-output-configured!` as the Scheme-side knobs.
 - Clipboard ecosystem: primary selection
   (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
   across Wayland clients and Xwayland (the X11 selection loop now mirrors the

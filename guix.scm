@@ -12,6 +12,15 @@
 ;;;     guix build -f guix.scm
 ;;;
 ;;; The build is fully offline against vendor/.
+;;;
+;;; This package contains the compositor only. A session usually also wants
+;;; runtime tools that minde spawns from `handle-startup!` rather than
+;;; depending on: a wallpaper setter (swaybg), a bar (eww), and for
+;;; multi-monitor layouts an output daemon -- shikane (packaged in
+;;; guix-channel/minde/packages.scm) or kanshi (in Guix), see
+;;; doc/configuration.md "Outputs and multiple monitors". Install those in
+;;; the user profile or system next to this package; there is no Guix Home
+;;; service bundling them yet.
 
 (use-modules (guix packages)
              (guix gexp)

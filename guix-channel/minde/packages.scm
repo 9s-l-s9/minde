@@ -37,8 +37,14 @@
 ;;;    an honestly absent one, and a bad hash would still let the module load
 ;;;    (only `guix build` would fail), silently misleading channel users.
 ;;;
+;;;  - `shikane`, the wlr-output-management profile daemon minde recommends
+;;;    for multi-monitor layouts (doc/configuration.md, "Outputs and multiple
+;;;    monitors"), is not in Guix proper, so it is packaged here from its
+;;;    crates.io release with the crate graph pinned in (minde rust-crates).
+;;;
 ;;; Trade-off, stated plainly: today, `guix pull`-ing this channel gets you
-;;; the two reusable Scheme libraries only, not the compositor itself. Until
+;;; the two reusable Scheme libraries plus shikane, not the compositor
+;;; itself. Until
 ;;; the first release archive is published, installing the compositor still
 ;;; requires cloning the repository and using `guix.scm` (or `guix system
 ;;; reconfigure`/`guix home` referencing a checkout), as documented in
@@ -48,10 +54,13 @@
   #:use-module (guix packages)
   #:use-module (guix gexp)
   #:use-module ((guix utils) #:select (current-source-directory))
+  #:use-module (guix build-system cargo)
   #:use-module (guix build-system copy)
+  #:use-module (guix download)
   #:use-module ((guix licenses) #:prefix license:)
   #:export (guile-minde-foundation
-            guile-minde-ui))
+            guile-minde-ui
+            shikane))
 
 ;; Two directories up from this file (guix-channel/minde/packages.scm) is
 ;; the repository root, i.e. the same root `directory` in .guix-channel is
@@ -127,3 +136,36 @@ notation.")
 operations are injected callbacks, allowing use without a compositor or
 display server.")
     (license license:gpl3+)))
+
+;; Output-configuration daemon for wlr-output-management compositors; the
+;; recommended way to arrange monitors under minde (see doc/configuration.md).
+;; Built from the crates.io release; every dependency crate is pinned by
+;; version and hash in (minde rust-crates), regenerated with
+;; `guix import crate -f Cargo.lock shikane`. Man pages need pandoc and are
+;; not built. wayland-client is used in its pure-Rust backend (no libwayland).
+(define-public shikane
+  (package
+    (name "shikane")
+    (version "1.1.1")
+    (source
+     (origin
+       (method url-fetch)
+       (uri (crate-uri "shikane" version))
+       (file-name (string-append name "-" version ".tar.gz"))
+       (sha256
+        (base32 "0hkfpdjbdf3qvi1j9kq3wy9wbk4g5krr94c91w5lq5k0fnqmjb71"))))
+    (build-system cargo-build-system)
+    (arguments
+     (list #:install-source? #f))
+    (inputs (cargo-inputs 'shikane #:module '(minde rust-crates)))
+    (home-page "https://github.com/hw0lff/shikane")
+    (synopsis "Dynamic output configuration daemon for wlroots compositors")
+    (description
+     "shikane is a dynamic output configuration tool for compositors that
+implement @code{wlr-output-management-unstable-v1}.  It matches connected
+outputs against profiles (by name, model, serial or regular expression),
+applies the first profile whose outputs are all present, and reacts to
+hotplug events.  It ships the @command{shikane} daemon and the
+@command{shikanectl} client, which can reload the daemon, switch profiles
+and export the current layout as a profile.")
+    (license license:expat)))

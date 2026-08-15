@@ -169,10 +169,14 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
     echo '```sh'
     echo "guix build -L guix-channel guile-minde-foundation"
     echo "guix build -L guix-channel guile-minde-ui"
+    echo "guix build -L guix-channel shikane"
     echo '```'
     echo
-    echo "**What the channel provides today:** only the two reusable, pure-Scheme"
-    echo "libraries, \`guile-minde-foundation\` and \`guile-minde-ui\`."
+    echo "**What the channel provides today:** the two reusable, pure-Scheme"
+    echo "libraries, \`guile-minde-foundation\` and \`guile-minde-ui\`, and"
+    echo "\`shikane\`, the wlr-output-management profile daemon recommended for"
+    echo "multi-monitor layouts (see \`doc/configuration.md\`), which is not in"
+    echo "Guix proper."
     echo "**What it does not yet provide:** the \`minde\` compositor itself. The"
     echo "compositor's Guix recipe (\`guix.scm\`) builds from a vendored Cargo"
     echo "dependency tree under \`vendor/\`, which is deliberately gitignored and"

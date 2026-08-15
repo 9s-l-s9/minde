@@ -13,7 +13,8 @@ The project is unreleased and breaking changes remain intentional before
 - [First session](tutorial.md) — a walkthrough from a cold checkout to a
   running nested compositor.
 - [Concepts](concepts.md) — the groups/frames/window model.
-- [Configuration](configuration.md) — the Guile init file and reload.
+- [Configuration](configuration.md) — the Guile init file and reload;
+  includes [outputs and multiple monitors](configuration.md#outputs-and-multiple-monitors).
 - [Architecture](architecture.md) — the Rust/Guile boundary.
 
 ## Reference

@@ -48,6 +48,9 @@ Entered with `guix shell -m manifest.scm`:
 - `xterm`
 - `wl-clipboard`
 - `wlr-randr`
+- `wdisplays`
+- `wlopm`
+- `kanshi`
 - `wayland-utils`
 - `swayidle`
 - `wtype`
@@ -136,10 +139,14 @@ build directly against a checkout without pulling:
 ```sh
 guix build -L guix-channel guile-minde-foundation
 guix build -L guix-channel guile-minde-ui
+guix build -L guix-channel shikane
 ```
 
-**What the channel provides today:** only the two reusable, pure-Scheme
-libraries, `guile-minde-foundation` and `guile-minde-ui`.
+**What the channel provides today:** the two reusable, pure-Scheme
+libraries, `guile-minde-foundation` and `guile-minde-ui`, and
+`shikane`, the wlr-output-management profile daemon recommended for
+multi-monitor layouts (see `doc/configuration.md`), which is not in
+Guix proper.
 **What it does not yet provide:** the `minde` compositor itself. The
 compositor's Guix recipe (`guix.scm`) builds from a vendored Cargo
 dependency tree under `vendor/`, which is deliberately gitignored and
