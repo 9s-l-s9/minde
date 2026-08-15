@@ -129,4 +129,20 @@ pub enum WmCommand {
         name: String,
         spec: OutputChangeSpec,
     },
+    /// `(wm-set-keyboard-layout! spec)`: switch the active XKB layout
+    /// group of the seat keyboard (see [`KeyboardLayoutSpec`]).
+    SetKeyboardLayout {
+        spec: KeyboardLayoutSpec,
+    },
+}
+
+/// Which XKB layout group `wm-set-keyboard-layout!` should activate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardLayoutSpec {
+    /// A zero-based index into the keymap's layout list.
+    Index(usize),
+    /// The group after the active one, wrapping around.
+    Next,
+    /// The group before the active one, wrapping around.
+    Prev,
 }

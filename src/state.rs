@@ -559,6 +559,8 @@ impl MindeState {
         };
         seat.add_keyboard(xkb_config, 200, 25).unwrap();
         seat.add_pointer();
+        // (Layout snapshot is published by refresh_keyboard_layouts once
+        // the state exists; see the end of MindeState::new.)
         // wl_touch capability: touchscreens on the udev backend and touch
         // events synthesized by the winit backend both route through here.
         seat.add_touch();
@@ -776,6 +778,7 @@ impl MindeState {
                 token,
             } => self.queue_screenshot(path, window_id, token),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
+            WmCommand::SetKeyboardLayout { spec } => self.set_keyboard_layout(spec),
             WmCommand::ConfigureOutput { name, spec } => {
                 self.configure_output_from_scheme(&name, &spec)
             }
@@ -1339,6 +1342,54 @@ impl MindeState {
     }
 
     /// Drops the active compositor-side key-repeat timer, if any.
+    /// Switches the seat keyboard's active XKB layout group
+    /// (`wm-set-keyboard-layout!`). Out-of-range indices are logged and
+    /// ignored; the modifiers event Smithay broadcasts on exit tells the
+    /// focused client about the new group.
+    pub(crate) fn set_keyboard_layout(&mut self, spec: guile::KeyboardLayoutSpec) {
+        use guile::KeyboardLayoutSpec;
+        use smithay::input::keyboard::Layout;
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        keyboard.with_xkb_state(self, |mut ctx| match spec {
+            KeyboardLayoutSpec::Next => ctx.cycle_next_layout(),
+            KeyboardLayoutSpec::Prev => ctx.cycle_prev_layout(),
+            KeyboardLayoutSpec::Index(idx) => {
+                let count = ctx.xkb().lock().unwrap().layouts().count();
+                if idx < count {
+                    ctx.set_layout(Layout(idx as u32));
+                } else {
+                    tracing::warn!(idx, count, "set-keyboard-layout!: no such layout group");
+                }
+            }
+        });
+        self.refresh_keyboard_layouts();
+    }
+
+    /// Republishes the `(wm-keyboard-layouts)` snapshot from the live xkb
+    /// state and fires `handle-keyboard-layout-changed!` when the active
+    /// group differs from the last snapshot. Cheap enough to run after
+    /// every key press, which is how XKB-side toggles (`grp:*` options)
+    /// are noticed.
+    pub(crate) fn refresh_keyboard_layouts(&mut self) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let (names, active) = keyboard.with_xkb_state(self, |ctx| {
+            let xkb = ctx.xkb().lock().unwrap();
+            let names: Vec<String> = xkb
+                .layouts()
+                .map(|l| xkb.layout_name(l).to_string())
+                .collect();
+            (names, xkb.active_layout().0 as usize)
+        });
+        let name = names.get(active).cloned().unwrap_or_default();
+        if guile::set_keyboard_layouts(names, active) {
+            guile::on_keyboard_layout_changed(&name);
+        }
+    }
+
     pub fn cancel_key_repeat(&mut self) {
         if let Some((_, token)) = self.key_repeat.take() {
             self.handle.remove(token);

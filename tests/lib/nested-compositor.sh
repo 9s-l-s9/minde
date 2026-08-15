@@ -62,8 +62,12 @@ nested_start() {
 
     export DISPLAY="$NESTED_DISPLAY"
     export XDG_RUNTIME_DIR="$NESTED_RT"
-    export XKB_DEFAULT_LAYOUT=us
+    # A deterministic keymap regardless of the host session; a gate that
+    # needs several layout groups sets NESTED_XKB_LAYOUT/NESTED_XKB_VARIANT
+    # (tests/keyboard-layout-e2e.sh).
+    export XKB_DEFAULT_LAYOUT="${NESTED_XKB_LAYOUT:-us}"
     unset XKB_DEFAULT_VARIANT XKB_DEFAULT_OPTIONS XKB_DEFAULT_MODEL XKB_DEFAULT_RULES
+    [ -z "${NESTED_XKB_VARIANT:-}" ] || export XKB_DEFAULT_VARIANT="$NESTED_XKB_VARIANT"
     unset MINDE_REPL_STARTED WAYLAND_DISPLAY MINDE_FULL_KEYMAP \
         MINDE_E2E_LEGACY_KEYMAP
     export LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-/nonexistent}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

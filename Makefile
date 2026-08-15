@@ -153,6 +153,7 @@ check-e2e:
 	sh tests/event-subscribe-e2e.sh
 	sh tests/output-management-e2e.sh
 	sh tests/output-scheme-e2e.sh
+	sh tests/keyboard-layout-e2e.sh
 	sh tests/output-power-e2e.sh
 	sh tests/pointer-constraints-e2e.sh
 	sh tests/fractional-scale-e2e.sh

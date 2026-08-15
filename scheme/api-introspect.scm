@@ -78,6 +78,10 @@
      "Return one alist per known head (disabled too): name, enabled, make, model, serial, description, mode, preferred-mode, position, scale, transform, adaptive-sync, modes.")
     (wm-configure-output! "(wm-configure-output! name alist)"
      "Queue an output change for head NAME from an alist of mode/position/scale/transform/enabled/adaptive-sync; wrapped by configure-output!.")
+    (wm-keyboard-layouts "(wm-keyboard-layouts)"
+     "Return one ((name . \"...\") (active . bool)) alist per XKB layout group of the seat keyboard; wrapped by keyboard-layouts.")
+    (wm-set-keyboard-layout! "(wm-set-keyboard-layout! spec)"
+     "Queue a switch of the active XKB layout group; SPEC is an index or the symbol next/prev; wrapped by set-keyboard-layout!.")
     (wm-runtime-info "(wm-runtime-info)"
      "Return (backend xwayland-status xdisplay uptime-ms).")
     (wm-set-clipboard "(wm-set-clipboard text)"

@@ -182,6 +182,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<MindeState> = Display::new()?;
 
     let mut state = MindeState::new(&mut event_loop, display);
+    // Publish the XKB layout groups for (wm-keyboard-layouts) before the
+    // config loads, so init.scm can already inspect them.
+    state.refresh_keyboard_layouts();
     // From here on `wm-*` primitives apply directly while Scheme runs on
     // this thread (see `guile::set_state`); cleared again after the loop.
     guile::set_state(&mut state);

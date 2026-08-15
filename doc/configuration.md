@@ -109,6 +109,38 @@ policy:
     (wm-configure-input! name #:accel-profile 'flat)))
 ```
 
+### Keyboard layouts
+
+minde builds one keymap from the standard `XKB_DEFAULT_*` variables. A comma
+list gives several *layout groups* that share the keymap:
+
+```sh
+XKB_DEFAULT_LAYOUT=de,us XKB_DEFAULT_VARIANT=bone, minde
+```
+
+xkbcommon's own toggle options work unchanged
+(`XKB_DEFAULT_OPTIONS=grp:win_space_toggle`, `grp:caps_toggle`, ...); the
+compositor also exposes the groups to Scheme so a switch can sit under the
+prefix key. `(keyboard-layouts)` lists the groups in keymap order as
+`((name . "German (Bone)") (active . #t))` alists;
+`(set-keyboard-layout! spec)` activates one by zero-based index, by the
+symbol `next`/`prev` (cycling) or by a case-insensitive name prefix
+(`"English"`). The focused client sees the change through the normal
+modifiers event. Whenever the active group changes -- through
+`set-keyboard-layout!` or an XKB toggle -- `(handle-keyboard-layout-changed!
+name)` runs; the default shows the name in the message overlay, redefine it
+for a bar or silence. A typical use is a keyboard whose firmware already
+implements the layout (a Corne with Bone on a US host) next to the built-in
+keyboard:
+
+```scheme
+(bind-prefix-key! "k" (lambda () (set-keyboard-layout! 'next)) "keyboard layout")
+```
+
+Both wrappers live in `(minde groups)` over the primitives
+`wm-keyboard-layouts` and `wm-set-keyboard-layout!`. Per-device layouts
+(one keymap per physical keyboard) are not implemented.
+
 ## Outputs and multiple monitors
 
 Minde does not have an `outputs` section. Output layout is protocol-driven: the

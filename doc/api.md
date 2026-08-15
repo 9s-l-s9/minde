@@ -23,7 +23,11 @@ the default definitions of the output-policy entry points
 `handle-output-configure-failed!` (documented so a user redefinition has a
 reference to shadow), next to the output surface `output-heads` and
 `configure-output!` that wrap the `wm-output-heads` / `wm-configure-output!`
-primitives. See [configuration.md](configuration.md#the-scheme-side).
+primitives, and the keyboard-layout surface `keyboard-layouts`,
+`set-keyboard-layout!` and the default `handle-keyboard-layout-changed!` over
+`wm-keyboard-layouts` / `wm-set-keyboard-layout!`. See
+[configuration.md](configuration.md#the-scheme-side) and
+[configuration.md](configuration.md#keyboard-layouts).
 
 The generated inventory in [`generated/api-reference.md`](generated/api-reference.md)
 enumerates the actual Guile interfaces rather than copying this table. The

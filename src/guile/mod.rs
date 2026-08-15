@@ -12,7 +12,7 @@ mod command;
 pub mod ffi;
 pub mod output_config;
 
-pub use command::WmCommand;
+pub use command::{KeyboardLayoutSpec, WmCommand};
 pub use output_config::OutputHeadInfo;
 use output_config::{SpecValue, parse_output_change_spec, transform_name};
 
@@ -133,6 +133,22 @@ static OUTPUT_HEADS: std::sync::Mutex<Vec<OutputHeadInfo>> = std::sync::Mutex::n
 /// after every output-management refresh (hotplug, resize, apply).
 pub fn set_output_heads(heads: Vec<OutputHeadInfo>) {
     *OUTPUT_HEADS.lock().unwrap() = heads;
+}
+
+/// The seat keyboard's XKB layout groups (human readable names) and the
+/// index of the active one, for `(wm-keyboard-layouts)`. Replaced by
+/// `MindeState::refresh_keyboard_layouts` (see `set_keyboard_layouts`).
+static KEYBOARD_LAYOUTS: std::sync::Mutex<(Vec<String>, usize)> =
+    std::sync::Mutex::new((Vec::new(), 0));
+
+/// Publishes the `(wm-keyboard-layouts)` snapshot. Returns whether the
+/// active layout differs from the previously published one, so the caller
+/// can fire `handle-keyboard-layout-changed!` only on real changes.
+pub fn set_keyboard_layouts(names: Vec<String>, active: usize) -> bool {
+    let mut snapshot = KEYBOARD_LAYOUTS.lock().unwrap();
+    let changed = !snapshot.0.is_empty() && (snapshot.1 != active || snapshot.0 != names);
+    *snapshot = (names, active);
+    changed
 }
 
 /// A stored libinput configuration rule (see `wm-configure-input!`).
@@ -467,6 +483,7 @@ static FOREIGN_MINIMIZE: Hook = Hook::new("handle-foreign-minimize!");
 static OUTPUT_CONFIG_ALLOWED: Hook = Hook::new("output-configuration-allowed?");
 static OUTPUT_CONFIGURED: Hook = Hook::new("handle-output-configured!");
 static OUTPUT_CONFIGURE_FAILED: Hook = Hook::new("handle-output-configure-failed!");
+static KEYBOARD_LAYOUT_CHANGED: Hook = Hook::new("handle-keyboard-layout-changed!");
 static INPUT_DEVICE_ADDED: Hook = Hook::new("handle-input-device-added!");
 static STARTUP: Hook = Hook::new("handle-startup!");
 static SESSION_LOCK: Hook = Hook::new("wm-on-session-lock");
@@ -890,6 +907,48 @@ unsafe extern "C" fn wm_warp_pointer_relative(dx: Scm, dy: Scm) -> Scm {
 unsafe extern "C" fn wm_set_key_repeat(on: Scm) -> Scm {
     let on = to_bool(on);
     from_bool(send_command(WmCommand::SetKeyRepeat { on }))
+}
+
+/// `(wm-keyboard-layouts)` -> list of `((name . "German (Bone)")
+/// (active . #t))` alists, one per XKB layout group of the seat keyboard
+/// in keymap order. `()` before the keyboard exists.
+unsafe extern "C" fn wm_keyboard_layouts() -> Scm {
+    let (names, active) = KEYBOARD_LAYOUTS.lock().unwrap().clone();
+    let entries: Vec<Scm> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            scm_list(&[
+                scm_field("name", from_str(name)),
+                scm_field("active", from_bool(i == active)),
+            ])
+        })
+        .collect();
+    scm_list(&entries)
+}
+
+/// `(wm-set-keyboard-layout! spec)` -- SPEC is a zero-based layout index
+/// or one of the symbols `next` / `prev`. Queued to the compositor;
+/// returns #t once queued, #f without one. Anything else raises.
+unsafe extern "C" fn wm_set_keyboard_layout(spec: Scm) -> Scm {
+    let spec = if to_bool(ffi::scm_symbol_p(spec)) {
+        match to_string_lossy(ffi::scm_symbol_to_string(spec)).as_deref() {
+            Some("next") => KeyboardLayoutSpec::Next,
+            Some("prev") | Some("previous") => KeyboardLayoutSpec::Prev,
+            _ => {
+                scheme_error("wm-set-keyboard-layout!", "expected an index, next or prev");
+            }
+        }
+    } else if to_bool(ffi::scm_exact_integer_p(spec)) {
+        let idx = to_i64(spec);
+        if idx < 0 {
+            scheme_error("wm-set-keyboard-layout!", "layout index must be >= 0");
+        }
+        KeyboardLayoutSpec::Index(idx as usize)
+    } else {
+        scheme_error("wm-set-keyboard-layout!", "expected an index, next or prev");
+    };
+    from_bool(send_command(WmCommand::SetKeyboardLayout { spec }))
 }
 
 /// `(wm-add-overlay x y text)` -- adds a positioned text overlay at a
@@ -1556,6 +1615,15 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr("wm-scroll", 2, 0, gsubr!(wm_scroll, 2));
         register_gsubr("wm-set-key-repeat", 1, 0, gsubr!(wm_set_key_repeat, 1));
         register_gsubr("wm-idle-ms", 0, 0, gsubr!(wm_idle_ms, 0));
+        // XKB layout groups (XKB_DEFAULT_LAYOUT="de,us"): query + switch.
+        // Wrapped by keyboard-layouts / set-keyboard-layout! in (minde groups).
+        register_gsubr("wm-keyboard-layouts", 0, 0, gsubr!(wm_keyboard_layouts, 0));
+        register_gsubr(
+            "wm-set-keyboard-layout!",
+            1,
+            0,
+            gsubr!(wm_set_keyboard_layout, 1),
+        );
         // libinput device query + low-level configuration primitive. The
         // friendly keyword-argument `wm-configure-input!` wraps the latter
         // in scheme/init.scm. Neither is part of a frozen public module.
@@ -1780,6 +1848,13 @@ pub fn output_config_allowed() -> bool {
 /// persist, log). A no-op otherwise.
 pub fn on_output_configured() {
     OUTPUT_CONFIGURED.call(&[]);
+}
+
+/// Calls `(handle-keyboard-layout-changed! name)` if bound, once the
+/// active XKB layout group changed -- through `set-keyboard-layout!` or an
+/// XKB toggle option such as `grp:win_space_toggle`. No-op when unbound.
+pub fn on_keyboard_layout_changed(name: &str) {
+    KEYBOARD_LAYOUT_CHANGED.call(&[from_str(name)]);
 }
 
 /// Reports a `configure-output!` request the compositor rejected, via

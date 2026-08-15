@@ -23,6 +23,15 @@ Target version: `1.0.0-rc1`.
   token status history via `wm-automation-status`, capturing an output or
   a single window to PNG without an external screenshot tool (see
   `doc/notes/issue-wm-screenshot-primitive.md`).
+- Keyboard layout groups: `XKB_DEFAULT_LAYOUT=de,us` (with matching
+  `XKB_DEFAULT_VARIANT=bone,`) builds one keymap with several XKB groups;
+  `(keyboard-layouts)` lists them and `(set-keyboard-layout! spec)` switches
+  by index, `next`/`prev` or a name prefix, so the toggle can live under the
+  prefix key instead of a `grp:*` chord (which keeps working too).
+  `(handle-keyboard-layout-changed! name)` runs on every change, defaulting
+  to the message overlay. Exported by `(minde groups)` over the primitives
+  `wm-keyboard-layouts` and `wm-set-keyboard-layout!`; nested e2e gate
+  `tests/keyboard-layout-e2e.sh`.
 - Output layout: heads whose position was never set explicitly (by an
   output-management client or `configure-output!`) are re-packed edge to
   edge whenever the layout changes, so `wlr-randr --output eDP-1 --scale 2`

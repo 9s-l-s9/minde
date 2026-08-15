@@ -209,6 +209,41 @@
             (begin (handle-output-configure-failed! "DP-1" "unknown mode") #t))
 
 ;; ---------------------------------------------------------------------
+;; Keyboard layout wrappers over stubbed `wm-keyboard-layouts' /
+;; `wm-set-keyboard-layout!' primitives.
+;; ---------------------------------------------------------------------
+
+(check "keyboard-layouts without the primitive is empty" (keyboard-layouts) '())
+(check "set-keyboard-layout! without the primitive is #f"
+       (set-keyboard-layout! 'next) #f)
+
+(define %layout-calls '())
+(define (wm-set-keyboard-layout! spec)
+  (set! %layout-calls (cons spec %layout-calls))
+  #t)
+(define (wm-keyboard-layouts)
+  '(((name . "German (Bone)") (active . #t))
+    ((name . "English (US)") (active . #f))))
+
+(check "keyboard-layouts returns the snapshot"
+       (map (lambda (l) (assq-ref l 'name)) (keyboard-layouts))
+       '("German (Bone)" "English (US)"))
+(check-true "set-keyboard-layout! next is queued" (set-keyboard-layout! 'next))
+(check "set-keyboard-layout! forwards next" (car %layout-calls) 'next)
+(set-keyboard-layout! 1)
+(check "set-keyboard-layout! forwards an index" (car %layout-calls) 1)
+(set-keyboard-layout! "english")
+(check "set-keyboard-layout! resolves a name prefix to its index"
+       (car %layout-calls) 1)
+(check "set-keyboard-layout! with an unknown name is #f"
+       (set-keyboard-layout! "French") #f)
+(check-true "set-keyboard-layout! rejects malformed specs"
+            (catch #t (lambda () (set-keyboard-layout! -1) #f)
+              (lambda _ #t)))
+(check-true "handle-keyboard-layout-changed! default never raises"
+            (begin (handle-keyboard-layout-changed! "English (US)") #t))
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

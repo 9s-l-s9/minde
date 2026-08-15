@@ -62,6 +62,9 @@
             output-configuration-allowed?
             handle-output-configured!
             handle-output-configure-failed!
+            keyboard-layouts
+            set-keyboard-layout!
+            handle-keyboard-layout-changed!
             handle-window-map!
             handle-window-title-change!
             handle-window-unmap!
@@ -1132,6 +1135,59 @@ this runs."
 for REASON (a string). The default logs it through `wm-log'."
   (rust-call 'wm-log
              (format #f "configure-output!: ~a: ~a" name reason)))
+
+;; ---------------------------------------------------------------------
+;; Keyboard layout groups. minde builds one keymap from the standard
+;; XKB_DEFAULT_* variables; a comma list (XKB_DEFAULT_LAYOUT="de,us",
+;; XKB_DEFAULT_VARIANT="bone,") yields several groups that these
+;; wrappers (over `wm-keyboard-layouts' / `wm-set-keyboard-layout!')
+;; switch between -- an in-compositor alternative to grp:* toggle
+;; options, so the switch can live under the prefix key.
+;; ---------------------------------------------------------------------
+
+(define (keyboard-layouts)
+  "The XKB layout groups of the seat keyboard, in keymap order, as a list
+of alists ((name . \"German (Bone)\") (active . #t)). Groups come from
+XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
+gives one entry. Returns '() without a compositor."
+  (let ((layouts (rust-call 'wm-keyboard-layouts)))
+    (if (list? layouts) layouts '())))
+
+(define (%set-keyboard-layout-primitive spec)
+  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+         (var (and mod (module-variable mod 'wm-set-keyboard-layout!))))
+    (and var ((variable-ref var) spec) #t)))
+
+(define (set-keyboard-layout! spec)
+  "Activate a keyboard layout group. SPEC is a zero-based index into
+`keyboard-layouts', the symbol `next' or `prev' (cycling with wrap-around),
+or a string matched case-insensitively as a prefix of a group's name
+(\"English\" selects \"English (US)\"). The switch is queued to the
+compositor, which tells the focused client through the normal modifiers
+event; `handle-keyboard-layout-changed!' then runs with the new name.
+Returns #t once queued, #f without a compositor or for an unknown name;
+a malformed SPEC raises."
+  (cond
+   ((string? spec)
+    (let* ((needle (string-downcase spec))
+           (index (list-index
+                   (lambda (layout)
+                     (string-prefix? needle
+                                     (string-downcase
+                                      (assq-ref layout 'name))))
+                   (keyboard-layouts))))
+      (and index (%set-keyboard-layout-primitive index))))
+   ((or (memq spec '(next prev)) (and (integer? spec) (>= spec 0)))
+    (%set-keyboard-layout-primitive spec))
+   (else (error "set-keyboard-layout!: expected index, next, prev or name"
+                spec))))
+
+(define (handle-keyboard-layout-changed! name)
+  "Rust: the active keyboard layout group is now NAME (a string such as
+\"English (US)\") -- after `set-keyboard-layout!' or an XKB toggle option
+like grp:win_space_toggle. The default shows NAME through the message
+overlay; redefine it to update a bar or stay silent."
+  (rust-call 'wm-message name))
 
 ;; ---------------------------------------------------------------------
 ;; Session lock/unlock (Rust-facing, interface contract with the
