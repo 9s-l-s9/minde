@@ -598,6 +598,9 @@ impl MindeState {
         let new_transform = change.transform.map(wl_to_transform);
         let new_scale = change.scale.map(to_scale);
         let new_location: Option<Point<i32, Logical>> = change.position.map(|(x, y)| (x, y).into());
+        if new_location.is_some() {
+            self.mark_position_explicit(output);
+        }
         output.change_current_state(change.mode, new_transform, new_scale, new_location);
         let mapped = self.output_enabled(output);
         if !mapped || change.position.is_some() {

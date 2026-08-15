@@ -79,6 +79,9 @@ pub fn window_for_surface(space: &Space<Window>, surface: &WlSurface) -> Option<
 /// Clamp a point to the nearest mapped output.  Treating outputs as a summed
 /// horizontal strip breaks for negative origins, vertical arrangements and
 /// gaps, so keep this calculation independent and table-testable.
+/// How far inside an output's far edge a clamped pointer lands.
+const EDGE_INSET: f64 = 1e-3;
+
 fn clamp_point_to_rectangles(
     pos: Point<f64, Logical>,
     rectangles: impl IntoIterator<Item = Rectangle<i32, Logical>>,
@@ -95,7 +98,12 @@ fn clamp_point_to_rectangles(
         let top = rectangle.loc.y;
         let right = left + rectangle.size.w;
         let bottom = top + rectangle.size.h;
-        let candidate: Point<f64, Logical> = (x.clamp(left, right), y.clamp(top, bottom)).into();
+        // Rectangle::contains is exclusive on the far edges, so clamp
+        // strictly inside: a pointer parked exactly on `right`/`bottom`
+        // would belong to no output and no head would draw the cursor.
+        let inside = |v: f64, lo: f64, hi: f64| v.clamp(lo, (hi - EDGE_INSET).max(lo));
+        let candidate: Point<f64, Logical> =
+            (inside(x, left, right), inside(y, top, bottom)).into();
         let dx = candidate.x - x;
         let dy = candidate.y - y;
         let distance = dx * dx + dy * dy;
@@ -2130,6 +2138,44 @@ impl MindeState {
         guile::on_output_configured();
     }
 
+    /// Records that `output`'s position was chosen explicitly, exempting it
+    /// from [`Self::repack_auto_outputs`].
+    pub(crate) fn mark_position_explicit(&self, output: &smithay::output::Output) {
+        output.user_data().insert_if_missing(|| ExplicitPosition);
+    }
+
+    /// Re-packs every mapped output whose position was never set
+    /// explicitly: auto heads keep their left-to-right order and are laid
+    /// out edge to edge at y = 0, starting right of the rightmost explicit
+    /// head. Idempotent; only touches outputs whose location changes.
+    pub(crate) fn repack_auto_outputs(&mut self) {
+        let mut explicit_right = 0;
+        let mut auto: Vec<(i32, smithay::output::Output)> = Vec::new();
+        for output in self.space.outputs() {
+            let Some(geo) = self.space.output_geometry(output) else {
+                continue;
+            };
+            if output.user_data().get::<ExplicitPosition>().is_some() {
+                explicit_right = explicit_right.max(geo.loc.x + geo.size.w);
+            } else {
+                auto.push((geo.loc.x, output.clone()));
+            }
+        }
+        auto.sort_by_key(|(x, _)| *x);
+        let mut x = explicit_right;
+        for (_, output) in auto {
+            let Some(geo) = self.space.output_geometry(&output) else {
+                continue;
+            };
+            let target: Point<i32, Logical> = (x, 0).into();
+            if geo.loc != target {
+                output.change_current_state(None, None, None, Some(target));
+                self.space.map_output(&output, target);
+            }
+            x += geo.size.w;
+        }
+    }
+
     /// `(wm-configure-output! name alist)` arriving on the compositor
     /// thread: resolves the head by name among every known head (disabled
     /// ones too), turns the parsed spec into a `HeadChange` and applies it
@@ -2275,6 +2321,7 @@ impl MindeState {
     /// after any layer surface maps, unmaps, or commits, and on output
     /// init/resize/hotplug.
     pub fn update_usable_area(&mut self) {
+        self.repack_auto_outputs();
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let mut heads = Vec::new();
         for output in outputs {
@@ -2443,6 +2490,12 @@ struct OutputId(u64);
 /// data at `register_window` time so `id_for_window` is O(1) instead of a
 /// linear scan over the registry (5.5).
 struct WindowId(u64);
+/// Marker in an output's user data: its position was set explicitly (by an
+/// output-management client or `configure-output!`). Heads without it are
+/// "auto" and get re-packed left to right whenever the layout changes, so
+/// a scale or mode change on one head never leaves a hole the pointer
+/// cannot cross -- the same rule wlroots' auto layout applies.
+struct ExplicitPosition;
 
 /// Data associated with a wayland client that connects to us.
 /// One instance of this type per client.
@@ -2474,7 +2527,7 @@ mod tests {
         );
         assert_eq!(
             clamp_point_to_rectangles((100.0, 300.0).into(), outputs),
-            (0.0, 300.0).into()
+            (0.0 - EDGE_INSET, 300.0).into()
         );
         assert_eq!(
             clamp_point_to_rectangles((500.0, 650.0).into(), outputs),
@@ -2482,7 +2535,19 @@ mod tests {
         );
         assert_eq!(
             clamp_point_to_rectangles((1800.0, 1800.0).into(), outputs),
-            (1400.0, 1600.0).into()
+            (1400.0 - EDGE_INSET, 1600.0 - EDGE_INSET).into()
+        );
+    }
+
+    #[test]
+    fn output_clamp_lands_strictly_inside_an_output() {
+        // A pointer pushed past the right edge must end up where some
+        // output still contains it, or no head would draw the cursor.
+        let outputs = [rectangle(0, 0, 960, 540), rectangle(1920, 0, 3840, 2160)];
+        let clamped = clamp_point_to_rectangles((1000.0, 300.0).into(), outputs);
+        assert!(
+            outputs.iter().any(|r| r.to_f64().contains(clamped)),
+            "{clamped:?}"
         );
     }
 

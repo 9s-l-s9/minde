@@ -23,6 +23,12 @@ Target version: `1.0.0-rc1`.
   token status history via `wm-automation-status`, capturing an output or
   a single window to PNG without an external screenshot tool (see
   `doc/notes/issue-wm-screenshot-primitive.md`).
+- Output layout: heads whose position was never set explicitly (by an
+  output-management client or `configure-output!`) are re-packed edge to
+  edge whenever the layout changes, so `wlr-randr --output eDP-1 --scale 2`
+  alone no longer opens a hole between heads that the pointer cannot cross;
+  a clamped pointer now lands strictly inside an output so the cursor stays
+  visible at the far edges.
 - `wlr-output-power-management-unstable-v1` (hand-written, both backends) so
   `wlopm` and `swayidle` (`timeout N 'wlopm --off *' resume 'wlopm --on *'`)
   can blank outputs and light them again. Power is orthogonal to the layout:
