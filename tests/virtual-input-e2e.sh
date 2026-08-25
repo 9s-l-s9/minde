@@ -118,7 +118,7 @@ echo "ok - virtual keyboard (wtype) typed text into the focused client"
 # Exercise minde's compositor-owned paced queue too. The complete marker must
 # survive (including its first characters), and the Enter alias must finish the
 # shell's read rather than getting lost as the old immediate burst did.
-MARKER="minde-paced-Samuel"
+MARKER="minde-paced-a@b:c/d!e?f"
 scripts/minde-cmd "(begin (wm-send-string \"$MARKER\" 12) (wm-send-key 0 \"Enter\"))" \
     >"$OUT/minde-type.log" 2>&1 || {
     echo "error: compositor-owned paced typing request failed" >&2

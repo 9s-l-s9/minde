@@ -1048,21 +1048,36 @@ impl MindeState {
             return;
         };
         self.active_automation_dnd = Some((token, operation));
-        let grab =
-            DnDGrab::new_pointer(&self.display_handle, start_data, source, self.seat.clone());
+        let grab = DnDGrab::new_pointer(
+            &self.display_handle,
+            start_data,
+            source.clone(),
+            self.seat.clone(),
+        );
         pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Keep);
+        self.continue_automation_dnd(source, 10);
+    }
+
+    /// Give the target several dispatch turns to accept its offer. Browser
+    /// drop zones commonly negotiate only after their dragover handler runs.
+    fn continue_automation_dnd(
+        &mut self,
+        source: crate::automation_dnd::AutomationDndSource,
+        motions_left: u8,
+    ) {
+        use smithay::backend::input::ButtonState;
+        use smithay::input::dnd::DndAction;
 
         let timer =
-            smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(8));
-        let _ = self.handle.insert_source(timer, |_, _, state| {
+            smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(25));
+        let _ = self.handle.insert_source(timer, move |_, _, state| {
             state.warp_pointer(state.pointer_location);
-            let release =
-                smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(8));
-            let _ = state.handle.insert_source(release, |_, _, state| {
+            if source.selected_action() == DndAction::Copy || motions_left <= 1 {
                 let time = state.start_time.elapsed().as_millis() as u32;
                 state.pointer_button_event(0x110, ButtonState::Released, time);
-                smithay::reexports::calloop::timer::TimeoutAction::Drop
-            });
+            } else {
+                state.continue_automation_dnd(source.clone(), motions_left - 1);
+            }
             smithay::reexports::calloop::timer::TimeoutAction::Drop
         });
     }
@@ -1352,9 +1367,8 @@ impl MindeState {
     }
 
     /// Types TEXT into the focused window (StumpWM window-send-string) by
-    /// synthesizing key press/release pairs. Characters are looked up in
-    /// the active layout's first two shift levels; anything deeper
-    /// (AltGr etc.) is skipped with a log.
+    /// synthesizing key press/release pairs. XKB supplies the modifier mask
+    /// for every level, so Shift and AltGr characters work across layouts.
     fn send_string(&mut self, text: &str, delay_ms: u64) {
         use smithay::input::keyboard::xkb;
 
@@ -1362,98 +1376,115 @@ impl MindeState {
             return;
         };
 
-        // One keymap scan builds char -> (keycode, needs-shift) plus the
-        // keycode of Shift_L itself.
-        let (table, shift_key) = keyboard.with_xkb_state(self, |ctx| {
+        // One keymap scan builds char -> (keycode, modifier keycodes). Prefer
+        // the candidate requiring the fewest modifiers when duplicated.
+        let table = keyboard.with_xkb_state(self, |ctx| {
             let guard = ctx.xkb().lock().unwrap();
             // Safety: the refs don't outlive the lock guard.
             let keymap = unsafe { guard.keymap() }.clone();
             let layout = guard.active_layout().0;
-            let mut table: std::collections::HashMap<char, (xkb::Keycode, bool)> =
+            let mut table: std::collections::HashMap<char, (xkb::Keycode, Vec<xkb::Keycode>)> =
                 std::collections::HashMap::new();
-            let mut shift_key = None;
+            let mut modifier_keys = std::collections::HashMap::new();
+
             for raw in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
                 let kc = xkb::Keycode::new(raw);
-                for level in 0..2u32 {
+                for sym in keymap.key_get_syms_by_level(kc, layout, 0) {
+                    let modifier = match sym.raw() {
+                        xkb::keysyms::KEY_Shift_L => Some(xkb::MOD_NAME_SHIFT),
+                        xkb::keysyms::KEY_Control_L => Some(xkb::MOD_NAME_CTRL),
+                        xkb::keysyms::KEY_Alt_L => Some(xkb::MOD_NAME_ALT),
+                        xkb::keysyms::KEY_Super_L => Some(xkb::MOD_NAME_LOGO),
+                        xkb::keysyms::KEY_ISO_Level3_Shift => Some(xkb::MOD_NAME_ISO_LEVEL3_SHIFT),
+                        _ => None,
+                    };
+                    if let Some(name) = modifier {
+                        modifier_keys
+                            .entry(keymap.mod_get_index(name))
+                            .or_insert(kc);
+                    }
+                }
+            }
+
+            for raw in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
+                let kc = xkb::Keycode::new(raw);
+                for level in 0..keymap.num_levels_for_key(kc, layout) {
+                    let mut masks = [xkb::ModMask::default(); 16];
+                    let count = keymap.key_get_mods_for_level(kc, layout, level, &mut masks);
+                    let modifiers = masks[..count]
+                        .iter()
+                        .filter_map(|mask| {
+                            let mut keys = Vec::new();
+                            for index in 0..keymap.num_mods() {
+                                if mask & (1 << index) != 0 {
+                                    keys.push(*modifier_keys.get(&index)?);
+                                }
+                            }
+                            Some(keys)
+                        })
+                        .min_by_key(Vec::len);
+                    let Some(modifiers) = modifiers else {
+                        continue;
+                    };
                     for sym in keymap.key_get_syms_by_level(kc, layout, level) {
-                        if level == 0 && sym.raw() == xkb::keysyms::KEY_Shift_L {
-                            shift_key = Some(kc);
-                        }
                         let cp = xkb::keysym_to_utf32(*sym);
                         if cp != 0
                             && let Some(ch) = char::from_u32(cp)
+                            && table
+                                .get(&ch)
+                                .is_none_or(|(_, old)| modifiers.len() < old.len())
                         {
-                            // Prefer the unshifted level when both exist.
-                            let entry = (kc, level == 1);
-                            table.entry(ch).or_insert(entry);
-                            if level == 0 {
-                                table.insert(ch, entry);
-                            }
+                            table.insert(ch, (kc, modifiers.clone()));
                         }
                     }
                 }
             }
-            (table, shift_key)
+            table
         });
 
         let mut actions = Vec::new();
         let chars: Vec<char> = text.chars().collect();
         for (index, ch) in chars.iter().copied().enumerate() {
-            let Some(&(kc, shifted)) = table.get(&ch) else {
+            let Some((kc, modifiers)) = table.get(&ch) else {
                 tracing::debug!(?ch, "wm-send-string: no key for char in the active layout");
                 continue;
             };
             let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };
-            match (shifted, shift_key) {
-                (true, Some(shift)) => {
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: shift.raw(),
-                            pressed: true,
-                        },
-                        0,
-                    ));
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: kc.raw(),
-                            pressed: true,
-                        },
-                        8,
-                    ));
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: kc.raw(),
-                            pressed: false,
-                        },
-                        0,
-                    ));
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: shift.raw(),
-                            pressed: false,
-                        },
-                        trailing,
-                    ));
-                }
-                (true, None) => {
-                    tracing::debug!(?ch, "wm-send-string: no Shift key found; skipping");
-                }
-                (false, _) => {
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: kc.raw(),
-                            pressed: true,
-                        },
-                        8,
-                    ));
-                    actions.push((
-                        SyntheticAction::Key {
-                            code: kc.raw(),
-                            pressed: false,
-                        },
-                        trailing,
-                    ));
-                }
+            for modifier in modifiers {
+                actions.push((
+                    SyntheticAction::Key {
+                        code: modifier.raw(),
+                        pressed: true,
+                    },
+                    0,
+                ));
+            }
+            actions.push((
+                SyntheticAction::Key {
+                    code: kc.raw(),
+                    pressed: true,
+                },
+                8,
+            ));
+            actions.push((
+                SyntheticAction::Key {
+                    code: kc.raw(),
+                    pressed: false,
+                },
+                if modifiers.is_empty() { trailing } else { 0 },
+            ));
+            for (modifier_index, modifier) in modifiers.iter().rev().enumerate() {
+                actions.push((
+                    SyntheticAction::Key {
+                        code: modifier.raw(),
+                        pressed: false,
+                    },
+                    if modifier_index + 1 == modifiers.len() {
+                        trailing
+                    } else {
+                        0
+                    },
+                ));
             }
         }
         self.enqueue_synthetic(actions, true);
