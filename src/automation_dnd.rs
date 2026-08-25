@@ -274,6 +274,10 @@ impl AutomationDndSource {
         self.operation
     }
 
+    pub fn selected_action(&self) -> DndAction {
+        lock(&self.state).selected_action
+    }
+
     fn complete(&self, status: AutomationStatus) {
         let mut state = lock(&self.state);
         if state.terminal {
