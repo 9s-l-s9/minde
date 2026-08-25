@@ -78,6 +78,30 @@ zuverlässiges, headless-artiges Automatisierungs-Target. Sortiert nach Reibung.
     `wm-raise-window` soll über Frames/Gruppen hinweg tatsächlich sichtbar raisen.
     Bei Child-/Dialog-Fenstern (File-Upload) war Fokussieren zusätzlich zickig.
 
+## 🔎 Neue Findings (2026-08-25, nach dem großen Update — HiPeople erfolgreich gefahren)
+
+Das Update hat fast die ganze Liste umgesetzt (danke!). Zwei Rest-Punkte tauchten beim
+echten Fahren auf:
+
+A. **`wm-type` droppt Zeichen, die einen Modifier brauchen.** „samuel@schmidt-contact.com"
+   kam als „samuelschmidt-contact.com" an (`@` fehlte), „https://…" als „https//…" (`:`
+   fehlte). Plain-Buchstaben + `/` gehen, aber Shift-/AltGr-Symbole (`@ : ! ? …`) fallen
+   raus — vermutlich wird der nötige Modifier nicht mitsynthetisiert, oder die Keysym→
+   Keycode-Abbildung ignoriert Level-2/3-Symbole. **Workaround:** für Sonderzeichen
+   `wm-set-clipboard` + `wm-paste` (layout-unabhängig, 100 % zuverlässig). **Fix-Idee:**
+   `wm-type` intern über die Clipboard+Paste-Route laufen lassen, ODER pro Zeichen den
+   passenden Modifier-Level aus der xkb-Keymap auflösen.
+
+B. **`wm-drop-files` wird von Browser-Dropzones abgelehnt** (`(drop-files rejected)`),
+   an mehreren Koordinaten getestet. Vermutlich der DnD-Handshake: der Browser akzeptiert
+   den Drop nur, wenn zuvor ein `dragover`-Event mit `preventDefault()` lief — der
+   synthetische Ablauf enter→motion→drop ist zu schnell/unvollständig, sodass der
+   JS-`dragover`-Handler nicht greift. **Fix-Idee:** zwischen enter und drop ein paar
+   `motion`-Frames mit kurzer Verzögerung einschieben (dem Client Zeit geben,
+   `accept`/`preventDefault` zu setzen), evtl. konfigurierbares Dwell. **Fallback heute:**
+   Datei-Dialog + gefixter `wm-click 'left` auf „Open" — funktionierte einwandfrei
+   (der Clamp-Fix war genau der fehlende Baustein).
+
 ## Kontext / was schon super funktioniert
 - IPC-Socket + `(ok RESULT)`-Envelope: sehr angenehm zum Scripten.
 - `all-window-ids` / `window-title` / `window-app-id`: perfekt zum Fenster-Finden.
