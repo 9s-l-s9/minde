@@ -115,6 +115,33 @@ done
 }
 echo "ok - virtual keyboard (wtype) typed text into the focused client"
 
+# Exercise minde's compositor-owned paced queue too. The complete marker must
+# survive (including its first characters), and the Enter alias must finish the
+# shell's read rather than getting lost as the old immediate burst did.
+MARKER="minde-paced-Samuel"
+scripts/minde-cmd "(begin (wm-send-string \"$MARKER\" 12) (wm-send-key 0 \"Enter\"))" \
+    >"$OUT/minde-type.log" 2>&1 || {
+    echo "error: compositor-owned paced typing request failed" >&2
+    cat "$OUT/minde-type.log" >&2 || true
+    exit 1
+}
+landed=0
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+    if [ -f "$TYPED" ] && grep -qx "$MARKER" "$TYPED"; then
+        landed=1
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+done
+[ "$landed" -eq 1 ] || {
+    echo "error: paced wm-send-string/Enter did not deliver the exact line" >&2
+    cat "$TYPED" 2>/dev/null >&2 || true
+    exit 1
+}
+echo "ok - compositor paced typing and Enter alias delivered the exact line"
+
 # Drive the hand-rolled virtual pointer. wlrctl is optional; when present, a
 # move plus a click must not crash the compositor or provoke a protocol error.
 if command -v wlrctl >/dev/null 2>&1; then
