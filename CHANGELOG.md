@@ -10,6 +10,15 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- Automation primitives now provide paced, focus-pinned `wm-send-string` /
+  `wm-type`, paced `wm-send-key` (including the `Enter` alias), symbolic and
+  evdev pointer buttons with click counts, `wm-paste`, `wm-scroll`, pointer and
+  window geometry inspection, and separate CLIPBOARD/PRIMARY setters. Native
+  Wayland targets additionally support compositor-owned `wm-drop-files` and
+  `wm-drop-text` copy operations with bounded token status history and
+  `automation-result` events; file URI lists are validated, percent-encoded,
+  multi-file capable, and CRLF terminated. XWayland drop targets explicitly
+  report `unsupported-target` pending a separate XDND implementation.
 - Clipboard ecosystem: primary selection
   (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
   across Wayland clients and Xwayland (the X11 selection loop now mirrors the

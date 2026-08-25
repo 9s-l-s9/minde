@@ -95,6 +95,32 @@ scripts/mindectl check-config scheme/default-config.scm
 
 The public contract and registry metadata are checked with `make check-api`.
 
+## Low-level automation primitives
+
+The `wm-*` gsubrs are available through the compositor IPC and are listed by
+`describe-api`. Pointer coordinates are zero-based global logical coordinates;
+they include bars and gaps, while `window-geometry` reports the visible window
+rectangle in that same coordinate system. Prefer the public
+`focus-window-by-id!` operation when an automation script must switch groups or
+frames: `wm-focus-window` and `wm-raise-window` only act on the currently shown
+compositor objects.
+
+`wm-send-string` and its alias `wm-type` pace characters at 20 ms by default
+and accept an optional delay in milliseconds. `wm-click` accepts
+`left`/`middle`/`right`, 1/2/3, or evdev BTN_LEFT/BTN_MIDDLE/BTN_RIGHT codes;
+its optional count is sequenced as one multi-click gesture. `wm-set-clipboard`
+sets CLIPBOARD for Ctrl+V/`wm-paste`; `wm-set-primary` sets the middle-click
+PRIMARY selection. The older `wm-request-paste` asynchronously reads CLIPBOARD
+into minde's active prompt.
+
+`wm-drop-files` accepts one or more absolute paths to existing regular files;
+`wm-drop-text` offers UTF-8 plain text. Both return a request token or `#f` for
+invalid arguments. Query `(wm-automation-status token)` for `(operation status)`
+or subscribe to `(automation-result token operation status)`. Terminal statuses
+are `accepted`, `rejected`, `no-target`, `cancelled`, and
+`unsupported-target`. Drops are native Wayland only; XWayland requires XDND and
+currently reports `unsupported-target`.
+
 ## Status
 
 `(minde status)` exports `status-schema-version`, `current-state`,
