@@ -67,6 +67,15 @@ unsafe extern "C" {
 
     pub fn scm_from_int64(x: i64) -> Scm;
     pub fn scm_to_int64(x: Scm) -> i64;
+    pub fn scm_integer_p(x: Scm) -> Scm;
+    pub fn scm_string_p(x: Scm) -> Scm;
+    pub fn scm_symbol_p(x: Scm) -> Scm;
+    pub fn scm_symbol_to_string(x: Scm) -> Scm;
+    pub fn scm_from_utf8_symbol(s: *const c_char) -> Scm;
+    pub fn scm_pair_p(x: Scm) -> Scm;
+    pub fn scm_null_p(x: Scm) -> Scm;
+    pub fn scm_car(x: Scm) -> Scm;
+    pub fn scm_cdr(x: Scm) -> Scm;
 
     pub fn scm_list_4(a: Scm, b: Scm, c: Scm, d: Scm) -> Scm;
     /// `(cons a b)` -- for building lists of arbitrary length from Rust.

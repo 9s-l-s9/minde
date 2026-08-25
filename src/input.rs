@@ -412,6 +412,7 @@ impl MindeState {
         }
 
         self.pointer_location = new_pos;
+        crate::automation_observe::set_pointer_position(new_pos.x, new_pos.y);
         let serial = SERIAL_COUNTER.next_serial();
         let under = self.surface_under(new_pos);
         pointer.motion(
@@ -468,6 +469,7 @@ impl MindeState {
         }
 
         self.pointer_location = new_pos;
+        crate::automation_observe::set_pointer_position(new_pos.x, new_pos.y);
         let serial = SERIAL_COUNTER.next_serial();
         let under = self.surface_under(new_pos);
         pointer.motion(
@@ -709,6 +711,7 @@ impl MindeState {
                 // Tablet-aware client owns the tool events; move only the
                 // visible cursor (no wl_pointer events, which would double up).
                 self.pointer_location = location;
+                crate::automation_observe::set_pointer_position(location.x, location.y);
             }
             ToolRoute::Pointer => {
                 // Emulate the pointer so the stylus points in unaware apps.

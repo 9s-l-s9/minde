@@ -65,27 +65,39 @@
     (wm-kill-window "(wm-kill-window id)"
      "Forcibly terminate the client owning window ID.")
     (wm-warp-pointer "(wm-warp-pointer x y)"
-     "Warp the pointer to absolute output coordinates X,Y.")
+     "Warp the pointer to global logical output coordinates X,Y.")
+    (wm-pointer-position "(wm-pointer-position)"
+     "Return the pointer position as (X Y) in global logical coordinates.")
+    (wm-window-geometry "(wm-window-geometry id)"
+     "Return visible window ID's global logical (X Y WIDTH HEIGHT), or #f.")
     (wm-request-paste "(wm-request-paste)"
-     "Request that the current selection be pasted into the focused surface.")
+     "Read CLIPBOARD asynchronously and deliver it to minde's active prompt.")
     (wm-outputs "(wm-outputs)"
      "Return ((id x y w h name) ...): every output's usable rectangle.")
     (wm-runtime-info "(wm-runtime-info)"
      "Return (backend xwayland-status xdisplay uptime-ms).")
     (wm-set-clipboard "(wm-set-clipboard text)"
-     "Set the primary clipboard contents to TEXT.")
+     "Set the Wayland CLIPBOARD selection contents to TEXT.")
+    (wm-set-primary "(wm-set-primary text)"
+     "Set the Wayland PRIMARY (middle-click) selection contents to TEXT.")
     (wm-place-float "(wm-place-float id x y w h)"
      "Move and size the floating window ID to the given rectangle.")
     (wm-raise-window "(wm-raise-window id)"
      "Raise window ID to the top of the stack.")
     (wm-set-floating "(wm-set-floating id floating?)"
      "Set whether window ID floats above the tiling layout.")
-    (wm-send-string "(wm-send-string text)"
-     "Type TEXT through the virtual keyboard.")
-    (wm-click "(wm-click button)"
-     "Synthesize a pointer BUTTON press and release.")
+    (wm-send-string "(wm-send-string text [delay-ms])"
+     "Type TEXT through paced synthetic key events (20 ms between characters by default).")
+    (wm-type "(wm-type text [delay-ms])"
+     "Reliably type TEXT through paced synthetic key events.")
+    (wm-click "(wm-click button [count])"
+     "Click BUTTON COUNT times; accepts left/middle/right symbols, 1/2/3, or evdev codes.")
     (wm-send-key "(wm-send-key mods keysym-name)"
-     "Synthesize one key press/release with modifier mask MODS.")
+     "Synthesize a paced key press/release with modifier mask MODS; Enter aliases Return.")
+    (wm-paste "(wm-paste)"
+     "Send Ctrl+V to the focused surface using the synthetic key queue.")
+    (wm-scroll "(wm-scroll dx dy)"
+     "Send a continuous pointer-axis frame at the current pointer position.")
     (wm-warp-pointer-relative "(wm-warp-pointer-relative dx dy)"
      "Warp the pointer by a relative delta DX,DY.")
     (wm-set-key-repeat "(wm-set-key-repeat spec)"
@@ -99,7 +111,13 @@
     (wm-session-locked? "(wm-session-locked?)"
      "Return whether the session is currently locked.")
     (wm-publish-event "(wm-publish-event line)"
-     "Mirror one serialized event LINE to every event-socket subscriber.")))
+     "Mirror one serialized event LINE to every event-socket subscriber.")
+    (wm-drop-files "(wm-drop-files x y paths)"
+     "Schedule a native Wayland copy drop of absolute regular-file PATHS and return its token or #f.")
+    (wm-drop-text "(wm-drop-text x y text)"
+     "Schedule a native Wayland plain-text copy drop and return its token or #f.")
+    (wm-automation-status "(wm-automation-status token)"
+     "Return (OPERATION STATUS) for a recent asynchronous automation token, or #f.")))
 
 ;; Event hooks fired by the bundled modules (see scheme/minde/hooks.scm).
 ;; name, payload argument names, one-line description.
@@ -111,7 +129,9 @@
     (focus-group (name) "The focused group switched.")
     (message (text) "Something was echoed to the user.")
     (session-lock () "The session-lock surface came up.")
-    (session-unlock () "The session-lock surface went away.")))
+    (session-unlock () "The session-lock surface went away.")
+    (automation-result (token operation status)
+     "An asynchronous automation request reached a terminal status.")))
 
 ;; The eight documented public modules, matching generate-api-reference.scm.
 (define %api-public-modules

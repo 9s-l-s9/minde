@@ -53,6 +53,9 @@ pub enum WmCommand {
     SetClipboard {
         text: String,
     },
+    SetPrimary {
+        text: String,
+    },
     /// Float placement does not apply tiled states and raises the surface.
     PlaceFloat {
         id: u64,
@@ -70,13 +73,25 @@ pub enum WmCommand {
     },
     SendString {
         text: String,
+        delay_ms: u64,
     },
     Click {
         button: u32,
+        count: u32,
     },
     SendKey {
         mods: u32,
         keysym: String,
+    },
+    PasteKey,
+    Scroll {
+        dx: f64,
+        dy: f64,
+    },
+    Drop {
+        x: i32,
+        y: i32,
+        source: crate::automation_dnd::AutomationDndSource,
     },
     WarpPointerRel {
         dx: i32,

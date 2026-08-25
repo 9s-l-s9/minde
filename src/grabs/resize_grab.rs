@@ -209,6 +209,10 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                     .space
                     .element_location(&self.window)
                     .unwrap_or(self.initial_rect.loc);
+                data.publish_window_geometry(
+                    id,
+                    smithay::utils::Rectangle::new(loc, self.last_window_size),
+                );
                 crate::guile::on_window_moved(
                     id,
                     loc.x,

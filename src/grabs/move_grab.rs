@@ -70,6 +70,7 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
                 data.id_for_window(&self.window),
                 data.space.element_geometry(&self.window),
             ) {
+                data.publish_window_geometry(id, geo);
                 crate::guile::on_window_moved(id, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
             }
         }

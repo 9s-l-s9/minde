@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use smithay::wayland::seat::WaylandFocus;
-use std::{ffi::OsString, sync::Arc};
+use std::{collections::VecDeque, ffi::OsString, sync::Arc, time::Duration};
 
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
@@ -34,6 +34,21 @@ use smithay::{
 };
 
 use crate::guile::{self, WmCommand};
+
+#[derive(Debug)]
+enum SyntheticAction {
+    Key { code: u32, pressed: bool },
+    Button { code: u32, pressed: bool },
+    Scroll { dx: f64, dy: f64 },
+}
+
+#[derive(Debug)]
+struct QueuedSyntheticAction {
+    sequence: u64,
+    action: SyntheticAction,
+    delay_after_ms: u64,
+    keyboard_focus: Option<WlSurface>,
+}
 
 /// Clamp a point to the nearest mapped output.  Treating outputs as a summed
 /// horizontal strip breaks for negative origins, vertical arrangements and
@@ -176,6 +191,16 @@ pub struct MindeState {
     /// the held raw keycode plus its calloop timer's token.
     pub key_repeat_enabled: bool,
     pub key_repeat: Option<(u32, smithay::reexports::calloop::RegistrationToken)>,
+
+    /// FIFO for compositor-generated input. A single timer advances it so
+    /// separate Scheme requests retain ordering and never interleave.
+    synthetic_actions: VecDeque<QueuedSyntheticAction>,
+    synthetic_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    next_synthetic_sequence: u64,
+    pub(crate) active_automation_dnd: Option<(
+        crate::automation_dnd::AutomationToken,
+        crate::automation_dnd::AutomationOperation,
+    )>,
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -531,6 +556,10 @@ impl MindeState {
             reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
             key_repeat: None,
+            synthetic_actions: VecDeque::new(),
+            synthetic_timer: None,
+            next_synthetic_sequence: 0,
+            active_automation_dnd: None,
 
             pointer_location: (0.0, 0.0).into(),
             cursor_state: crate::render::CursorState::default(),
@@ -619,6 +648,7 @@ impl MindeState {
                     let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
                 }
                 self.space.map_element(window, (x, y), false);
+                self.publish_window_geometry(id, Rectangle::new((x, y).into(), (w, h).into()));
                 self.refresh_foreign_toplevel_outputs();
             }
             WmCommand::PlaceFloat { id, x, y, w, h } => {
@@ -643,6 +673,7 @@ impl MindeState {
                     let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
                 }
                 self.space.map_element(window, (x, y), false);
+                self.publish_window_geometry(id, Rectangle::new((x, y).into(), (w, h).into()));
             }
             WmCommand::Raise { id } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -792,6 +823,7 @@ impl MindeState {
                         let _ = x11.configure(geo);
                         self.space.map_element(window.clone(), geo.loc, false);
                         self.space.raise_element(&window, true);
+                        self.publish_window_geometry(id, geo);
                     }
                     return;
                 }
@@ -824,6 +856,7 @@ impl MindeState {
                     toplevel.send_pending_configure();
                     self.space.map_element(window.clone(), geo.loc, false);
                     self.space.raise_element(&window, true);
+                    self.publish_window_geometry(id, geo);
                 } else {
                     // Scheme re-syncs the frame geometry right after.
                     toplevel.with_pending_state(|state| {
@@ -860,7 +893,7 @@ impl MindeState {
                 let pos = self.pointer_location + Point::from((dx as f64, dy as f64));
                 self.warp_pointer(pos);
             }
-            WmCommand::SendString { text } => self.send_string(&text),
+            WmCommand::SendString { text, delay_ms } => self.send_string(&text, delay_ms),
             WmCommand::SendKey { mods, keysym } => self.send_key(mods, &keysym),
             WmCommand::SetKeyRepeat { on } => {
                 self.key_repeat_enabled = on;
@@ -868,35 +901,51 @@ impl MindeState {
                     self.cancel_key_repeat();
                 }
             }
-            WmCommand::Click { button } => {
+            WmCommand::Click { button, count } => {
                 // 1=left 2=middle 3=right, as StumpWM ratclick counts them.
                 const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
-                let code = CODES[(button.clamp(1, 3) - 1) as usize];
-                if let Some(pointer) = self.seat.get_pointer() {
-                    let time = self.start_time.elapsed().as_millis() as u32;
-                    for state in [
-                        smithay::backend::input::ButtonState::Pressed,
-                        smithay::backend::input::ButtonState::Released,
-                    ] {
-                        let serial = SERIAL_COUNTER.next_serial();
-                        pointer.button(
-                            self,
-                            &smithay::input::pointer::ButtonEvent {
-                                button: code,
-                                state,
-                                serial,
-                                time,
-                            },
-                        );
-                    }
-                    pointer.frame(self);
+                let code = CODES[(button - 1) as usize];
+                let mut actions = Vec::with_capacity(count as usize * 2);
+                for click in 0..count {
+                    actions.push((
+                        SyntheticAction::Button {
+                            code,
+                            pressed: true,
+                        },
+                        8,
+                    ));
+                    actions.push((
+                        SyntheticAction::Button {
+                            code,
+                            pressed: false,
+                        },
+                        if click + 1 < count { 50 } else { 0 },
+                    ));
                 }
+                self.enqueue_synthetic(actions, false);
             }
+            WmCommand::PasteKey => self.send_key(4, "v"),
+            WmCommand::Scroll { dx, dy } => {
+                self.enqueue_synthetic(vec![(SyntheticAction::Scroll { dx, dy }, 0)], false);
+            }
+            WmCommand::Drop { x, y, source } => self.start_automation_dnd(x, y, source),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => {
                 smithay::wayland::selection::data_device::set_data_device_selection(
+                    &self.display_handle,
+                    &self.seat,
+                    vec![
+                        "text/plain;charset=utf-8".to_string(),
+                        "text/plain".to_string(),
+                        "UTF8_STRING".to_string(),
+                    ],
+                    crate::handlers::SelectionOwner::Text(text),
+                );
+            }
+            WmCommand::SetPrimary { text } => {
+                smithay::wayland::selection::primary_selection::set_primary_selection(
                     &self.display_handle,
                     &self.seat,
                     vec![
@@ -915,6 +964,7 @@ impl MindeState {
     pub(crate) fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
         let pos = self.clamp_to_outputs(pos);
         self.pointer_location = pos;
+        crate::automation_observe::set_pointer_position(pos.x, pos.y);
         let under = self.surface_under(pos);
         if let Some(pointer) = self.seat.get_pointer() {
             let serial = SERIAL_COUNTER.next_serial();
@@ -932,6 +982,135 @@ impl MindeState {
         }
     }
 
+    fn start_automation_dnd(
+        &mut self,
+        x: i32,
+        y: i32,
+        source: crate::automation_dnd::AutomationDndSource,
+    ) {
+        use smithay::backend::input::ButtonState;
+        use smithay::input::dnd::DnDGrab;
+        use smithay::input::pointer::Focus;
+
+        let token = source.token();
+        let operation = source.operation();
+        if self.locked || self.active_automation_dnd.is_some() {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::Cancelled,
+            );
+            return;
+        }
+        self.warp_pointer((x as f64, y as f64).into());
+        let Some((target, _)) = self.surface_under(self.pointer_location) else {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::NoTarget,
+            );
+            return;
+        };
+        use smithay::reexports::wayland_server::Resource;
+        let is_xwayland = self
+            .display_handle
+            .get_client(target.id())
+            .ok()
+            .is_some_and(|client| {
+                client
+                    .get_data::<smithay::xwayland::XWaylandClientData>()
+                    .is_some()
+            });
+        if is_xwayland {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::UnsupportedTarget,
+            );
+            return;
+        }
+        let Some(pointer) = self.seat.get_pointer() else {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::NoTarget,
+            );
+            return;
+        };
+        let time = self.start_time.elapsed().as_millis() as u32;
+        self.pointer_button_event(0x110, ButtonState::Pressed, time);
+        let Some(start_data) = pointer.grab_start_data() else {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::Cancelled,
+            );
+            return;
+        };
+        self.active_automation_dnd = Some((token, operation));
+        let grab =
+            DnDGrab::new_pointer(&self.display_handle, start_data, source, self.seat.clone());
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Keep);
+
+        let timer =
+            smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(8));
+        let _ = self.handle.insert_source(timer, |_, _, state| {
+            state.warp_pointer(state.pointer_location);
+            let release =
+                smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(8));
+            let _ = state.handle.insert_source(release, |_, _, state| {
+                let time = state.start_time.elapsed().as_millis() as u32;
+                state.pointer_button_event(0x110, ButtonState::Released, time);
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            });
+            smithay::reexports::calloop::timer::TimeoutAction::Drop
+        });
+    }
+
+    pub(crate) fn finish_automation_dnd(
+        &mut self,
+        token: crate::automation_dnd::AutomationToken,
+        operation: crate::automation_dnd::AutomationOperation,
+        status: crate::automation_dnd::AutomationStatus,
+    ) {
+        crate::automation_dnd::automation_results().record(
+            crate::automation_dnd::AutomationResult {
+                token,
+                operation,
+                status,
+            },
+        );
+        let operation = match operation {
+            crate::automation_dnd::AutomationOperation::DropFiles => "drop-files",
+            crate::automation_dnd::AutomationOperation::DropText => "drop-text",
+        };
+        let status = match status {
+            crate::automation_dnd::AutomationStatus::Pending => "pending",
+            crate::automation_dnd::AutomationStatus::Accepted => "accepted",
+            crate::automation_dnd::AutomationStatus::Rejected => "rejected",
+            crate::automation_dnd::AutomationStatus::NoTarget => "no-target",
+            crate::automation_dnd::AutomationStatus::Cancelled => "cancelled",
+            crate::automation_dnd::AutomationStatus::UnsupportedTarget => "unsupported-target",
+        };
+        crate::events::publish_line(&format!("(automation-result {token} {operation} {status})"));
+    }
+
+    /// Publish a window rectangle for thread-safe Scheme inspection. Windows
+    /// parked outside every output are intentionally reported as hidden.
+    pub(crate) fn publish_window_geometry(&self, id: u64, rect: Rectangle<i32, Logical>) {
+        let visible = rect.size.w > 0
+            && rect.size.h > 0
+            && self
+                .space
+                .outputs()
+                .filter_map(|output| self.space.output_geometry(output))
+                .any(|output| rect.overlaps(output));
+        crate::automation_observe::set_window_geometry(
+            id,
+            visible.then_some([rect.loc.x, rect.loc.y, rect.size.w, rect.size.h]),
+        );
+    }
+
     /// Drops the active compositor-side key-repeat timer, if any.
     pub fn cancel_key_repeat(&mut self) {
         if let Some((_, token)) = self.key_repeat.take() {
@@ -939,14 +1118,139 @@ impl MindeState {
         }
     }
 
+    fn enqueue_synthetic(
+        &mut self,
+        actions: Vec<(SyntheticAction, u64)>,
+        pin_keyboard_focus: bool,
+    ) {
+        if actions.is_empty() {
+            return;
+        }
+        self.next_synthetic_sequence = self.next_synthetic_sequence.wrapping_add(1);
+        let sequence = self.next_synthetic_sequence;
+        let keyboard_focus = pin_keyboard_focus
+            .then(|| {
+                self.seat
+                    .get_keyboard()
+                    .and_then(|keyboard| keyboard.current_focus())
+            })
+            .flatten();
+        self.synthetic_actions
+            .extend(
+                actions
+                    .into_iter()
+                    .map(|(action, delay_after_ms)| QueuedSyntheticAction {
+                        sequence,
+                        action,
+                        delay_after_ms,
+                        keyboard_focus: keyboard_focus.clone(),
+                    }),
+            );
+        if self.synthetic_timer.is_none() {
+            self.advance_synthetic_input();
+        }
+    }
+
+    fn advance_synthetic_input(&mut self) {
+        let Some(queued) = self.synthetic_actions.pop_front() else {
+            self.synthetic_timer = None;
+            return;
+        };
+
+        if let Some(expected) = queued.keyboard_focus.as_ref() {
+            let current = self
+                .seat
+                .get_keyboard()
+                .and_then(|keyboard| keyboard.current_focus());
+            if current.as_ref() != Some(expected) {
+                self.synthetic_actions
+                    .retain(|item| item.sequence != queued.sequence);
+                tracing::debug!(
+                    sequence = queued.sequence,
+                    "synthetic typing cancelled after focus change"
+                );
+                self.advance_synthetic_input();
+                return;
+            }
+        }
+
+        let time = self.start_time.elapsed().as_millis() as u32;
+        match queued.action {
+            SyntheticAction::Key { code, pressed } => {
+                use smithay::{backend::input::KeyState, input::keyboard::xkb};
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.input::<(), _>(
+                        self,
+                        xkb::Keycode::new(code),
+                        if pressed {
+                            KeyState::Pressed
+                        } else {
+                            KeyState::Released
+                        },
+                        SERIAL_COUNTER.next_serial(),
+                        time,
+                        |_, _, _| smithay::input::keyboard::FilterResult::Forward,
+                    );
+                }
+            }
+            SyntheticAction::Button { code, pressed } => self.pointer_button_event(
+                code,
+                if pressed {
+                    smithay::backend::input::ButtonState::Pressed
+                } else {
+                    smithay::backend::input::ButtonState::Released
+                },
+                time,
+            ),
+            SyntheticAction::Scroll { dx, dy } => {
+                use smithay::backend::input::{Axis, AxisSource};
+                let mut frame =
+                    smithay::input::pointer::AxisFrame::new(time).source(AxisSource::Wheel);
+                if dx != 0.0 {
+                    frame = frame.value(Axis::Horizontal, dx);
+                }
+                if dy != 0.0 {
+                    frame = frame.value(Axis::Vertical, dy);
+                }
+                self.pointer_axis_frame(frame);
+            }
+        }
+
+        if self.synthetic_actions.is_empty() {
+            self.synthetic_timer = None;
+        } else if queued.delay_after_ms == 0 {
+            self.advance_synthetic_input();
+        } else {
+            let timer = smithay::reexports::calloop::timer::Timer::from_duration(
+                Duration::from_millis(queued.delay_after_ms),
+            );
+            match self.handle.insert_source(timer, |_, _, state| {
+                state.synthetic_timer = None;
+                state.advance_synthetic_input();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            }) {
+                Ok(token) => self.synthetic_timer = Some(token),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to schedule synthetic input");
+                    self.synthetic_timer = None;
+                    self.advance_synthetic_input();
+                }
+            }
+        }
+    }
+
     /// Synthesizes one key press/release pair, wrapped in the requested
     /// modifiers (Scheme bitmask: shift=1 ctrl=4 alt=8 super=64), into the
     /// focused window (send-raw-key / meta / remapped keys).
     fn send_key(&mut self, mods: u32, keysym_name: &str) {
-        use smithay::backend::input::KeyState;
         use smithay::input::keyboard::xkb;
 
-        let target = xkb::keysym_from_name(keysym_name, xkb::KEYSYM_NO_FLAGS);
+        let normalized_name = if keysym_name == "Enter" {
+            "Return"
+        } else {
+            keysym_name
+        };
+        let target = xkb::keysym_from_name(normalized_name, xkb::KEYSYM_NO_FLAGS);
         if target.raw() == xkb::keysyms::KEY_NoSymbol {
             tracing::warn!(keysym_name, "wm-send-key: unknown keysym name");
             return;
@@ -1011,29 +1315,47 @@ impl MindeState {
             mod_keys.push(s);
         }
 
-        let press = |state_self: &mut Self, code: xkb::Keycode, state: KeyState| {
-            let serial = SERIAL_COUNTER.next_serial();
-            let time = state_self.start_time.elapsed().as_millis() as u32;
-            keyboard.input::<(), _>(state_self, code, state, serial, time, |_, _, _| {
-                smithay::input::keyboard::FilterResult::Forward
-            });
-        };
+        let mut actions = Vec::new();
         for &m in &mod_keys {
-            press(self, m, KeyState::Pressed);
+            actions.push((
+                SyntheticAction::Key {
+                    code: m.raw(),
+                    pressed: true,
+                },
+                8,
+            ));
         }
-        press(self, kc, KeyState::Pressed);
-        press(self, kc, KeyState::Released);
+        actions.push((
+            SyntheticAction::Key {
+                code: kc.raw(),
+                pressed: true,
+            },
+            8,
+        ));
+        actions.push((
+            SyntheticAction::Key {
+                code: kc.raw(),
+                pressed: false,
+            },
+            8,
+        ));
         for &m in mod_keys.iter().rev() {
-            press(self, m, KeyState::Released);
+            actions.push((
+                SyntheticAction::Key {
+                    code: m.raw(),
+                    pressed: false,
+                },
+                8,
+            ));
         }
+        self.enqueue_synthetic(actions, true);
     }
 
     /// Types TEXT into the focused window (StumpWM window-send-string) by
     /// synthesizing key press/release pairs. Characters are looked up in
     /// the active layout's first two shift levels; anything deeper
     /// (AltGr etc.) is skipped with a log.
-    fn send_string(&mut self, text: &str) {
-        use smithay::backend::input::KeyState;
+    fn send_string(&mut self, text: &str, delay_ms: u64) {
         use smithay::input::keyboard::xkb;
 
         let Some(keyboard) = self.seat.get_keyboard() else {
@@ -1074,34 +1396,67 @@ impl MindeState {
             (table, shift_key)
         });
 
-        for ch in text.chars() {
+        let mut actions = Vec::new();
+        let chars: Vec<char> = text.chars().collect();
+        for (index, ch) in chars.iter().copied().enumerate() {
             let Some(&(kc, shifted)) = table.get(&ch) else {
                 tracing::debug!(?ch, "wm-send-string: no key for char in the active layout");
                 continue;
             };
-            let press = |state_self: &mut Self, code: xkb::Keycode, state: KeyState| {
-                let serial = SERIAL_COUNTER.next_serial();
-                let time = state_self.start_time.elapsed().as_millis() as u32;
-                keyboard.input::<(), _>(state_self, code, state, serial, time, |_, _, _| {
-                    smithay::input::keyboard::FilterResult::Forward
-                });
-            };
+            let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };
             match (shifted, shift_key) {
                 (true, Some(shift)) => {
-                    press(self, shift, KeyState::Pressed);
-                    press(self, kc, KeyState::Pressed);
-                    press(self, kc, KeyState::Released);
-                    press(self, shift, KeyState::Released);
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: shift.raw(),
+                            pressed: true,
+                        },
+                        0,
+                    ));
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: kc.raw(),
+                            pressed: true,
+                        },
+                        8,
+                    ));
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: kc.raw(),
+                            pressed: false,
+                        },
+                        0,
+                    ));
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: shift.raw(),
+                            pressed: false,
+                        },
+                        trailing,
+                    ));
                 }
                 (true, None) => {
                     tracing::debug!(?ch, "wm-send-string: no Shift key found; skipping");
                 }
                 (false, _) => {
-                    press(self, kc, KeyState::Pressed);
-                    press(self, kc, KeyState::Released);
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: kc.raw(),
+                            pressed: true,
+                        },
+                        8,
+                    ));
+                    actions.push((
+                        SyntheticAction::Key {
+                            code: kc.raw(),
+                            pressed: false,
+                        },
+                        trailing,
+                    ));
                 }
             }
         }
+        self.enqueue_synthetic(actions, true);
     }
 
     /// Reads the current clipboard selection and delivers it to Scheme via
@@ -1266,6 +1621,7 @@ impl MindeState {
         let id = self.windows.remove(pos).0;
         self.floating_ids.remove(&id);
         self.reported_titles.remove(&id);
+        crate::automation_observe::set_window_geometry(id, None);
         self.foreign_toplevel_closed(id);
         Some(id)
     }

@@ -337,6 +337,11 @@ pub fn from_str(s: &str) -> Scm {
     unsafe { ffi::scm_from_utf8_string(c.as_ptr()) }
 }
 
+fn from_symbol(s: &str) -> Scm {
+    let c = to_cstring(s);
+    unsafe { ffi::scm_from_utf8_symbol(c.as_ptr()) }
+}
+
 /// Converts a Scheme string SCM to a Rust `String`. Returns `None` if `v`
 /// isn't a string (Guile will raise inside `scm_to_utf8_stringn`, which we
 /// don't want to crash on, so callers should only pass values known to be
@@ -474,16 +479,65 @@ unsafe extern "C" fn wm_publish_event(line: Scm) -> Scm {
     from_bool(true)
 }
 
-unsafe extern "C" fn wm_send_string(text: Scm) -> Scm {
+unsafe extern "C" fn wm_send_string(text: Scm, delay: Scm) -> Scm {
     let Some(text) = to_string_lossy(text) else {
         return from_bool(false);
     };
-    from_bool(send_command(WmCommand::SendString { text }))
+    let delay_ms = if delay == ffi::SCM_UNDEFINED {
+        20
+    } else {
+        to_i64(delay).max(0) as u64
+    };
+    from_bool(send_command(WmCommand::SendString { text, delay_ms }))
 }
 
-unsafe extern "C" fn wm_click(button: Scm) -> Scm {
-    let button = to_i64(button).clamp(1, 3) as u32;
-    from_bool(send_command(WmCommand::Click { button }))
+fn button_number(value: Scm) -> Option<u32> {
+    if to_bool(unsafe { ffi::scm_integer_p(value) }) {
+        return match to_i64(value) {
+            1 | 272 => Some(1),
+            2 | 274 => Some(2),
+            3 | 273 => Some(3),
+            _ => None,
+        };
+    }
+    if to_bool(unsafe { ffi::scm_symbol_p(value) }) {
+        return match to_string_lossy(unsafe { ffi::scm_symbol_to_string(value) })?.as_str() {
+            "left" => Some(1),
+            "middle" => Some(2),
+            "right" => Some(3),
+            _ => None,
+        };
+    }
+    None
+}
+
+unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
+    let Some(button) = button_number(button) else {
+        return from_bool(false);
+    };
+    let count = if count == ffi::SCM_UNDEFINED {
+        1
+    } else {
+        to_i64(count)
+    };
+    if !(1..=32).contains(&count) {
+        return from_bool(false);
+    }
+    from_bool(send_command(WmCommand::Click {
+        button,
+        count: count as u32,
+    }))
+}
+
+unsafe extern "C" fn wm_paste_key() -> Scm {
+    from_bool(send_command(WmCommand::PasteKey))
+}
+
+unsafe extern "C" fn wm_scroll(dx: Scm, dy: Scm) -> Scm {
+    from_bool(send_command(WmCommand::Scroll {
+        dx: to_i64(dx) as f64,
+        dy: to_i64(dy) as f64,
+    }))
 }
 
 /// `(wm-send-key mods keysym-name)` -- synthesizes one key press/release
@@ -630,6 +684,109 @@ unsafe extern "C" fn wm_warp_pointer(x: Scm, y: Scm) -> Scm {
     from_bool(send_command(WmCommand::WarpPointer { x, y }))
 }
 
+unsafe extern "C" fn wm_pointer_position() -> Scm {
+    let (x, y) = crate::automation_observe::pointer_position();
+    scm_list(&[from_i64(x as i64), from_i64(y as i64)])
+}
+
+unsafe extern "C" fn wm_window_geometry(id: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    match crate::automation_observe::window_geometry(id) {
+        Some([x, y, w, h]) => scm_list(&[
+            from_i64(x as i64),
+            from_i64(y as i64),
+            from_i64(w as i64),
+            from_i64(h as i64),
+        ]),
+        None => from_bool(false),
+    }
+}
+
+fn string_list(mut list: Scm) -> Option<Vec<String>> {
+    let mut strings = Vec::new();
+    while !to_bool(unsafe { ffi::scm_null_p(list) }) {
+        if strings.len() >= 256 || !to_bool(unsafe { ffi::scm_pair_p(list) }) {
+            return None;
+        }
+        let item = unsafe { ffi::scm_car(list) };
+        if !to_bool(unsafe { ffi::scm_string_p(item) }) {
+            return None;
+        }
+        strings.push(to_string_lossy(item)?);
+        list = unsafe { ffi::scm_cdr(list) };
+    }
+    Some(strings)
+}
+
+unsafe extern "C" fn wm_drop_files(x: Scm, y: Scm, paths: Scm) -> Scm {
+    let Some(paths) = string_list(paths) else {
+        return from_bool(false);
+    };
+    // Validate before allocating a public token: malformed requests return #f.
+    if crate::automation_dnd::build_uri_list(&paths).is_err() {
+        return from_bool(false);
+    }
+    let results = crate::automation_dnd::automation_results().clone();
+    let token = results.allocate(crate::automation_dnd::AutomationOperation::DropFiles);
+    let source = match crate::automation_dnd::AutomationDndSource::files(paths, token, results) {
+        Ok(source) => source,
+        Err(_) => return from_bool(false),
+    };
+    if send_command(WmCommand::Drop {
+        x: to_i64(x) as i32,
+        y: to_i64(y) as i32,
+        source,
+    }) {
+        from_i64(token as i64)
+    } else {
+        from_bool(false)
+    }
+}
+
+unsafe extern "C" fn wm_drop_text(x: Scm, y: Scm, text: Scm) -> Scm {
+    if !to_bool(unsafe { ffi::scm_string_p(text) }) {
+        return from_bool(false);
+    }
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    let results = crate::automation_dnd::automation_results().clone();
+    let token = results.allocate(crate::automation_dnd::AutomationOperation::DropText);
+    let source = crate::automation_dnd::AutomationDndSource::text(text, token, results);
+    if send_command(WmCommand::Drop {
+        x: to_i64(x) as i32,
+        y: to_i64(y) as i32,
+        source,
+    }) {
+        from_i64(token as i64)
+    } else {
+        from_bool(false)
+    }
+}
+
+unsafe extern "C" fn wm_automation_status(token: Scm) -> Scm {
+    let token = to_i64(token);
+    if token <= 0 {
+        return from_bool(false);
+    }
+    let Some(result) = crate::automation_dnd::automation_results().get(token as u64) else {
+        return from_bool(false);
+    };
+    let operation = match result.operation {
+        crate::automation_dnd::AutomationOperation::DropFiles => "drop-files",
+        crate::automation_dnd::AutomationOperation::DropText => "drop-text",
+    };
+    let status = match result.status {
+        crate::automation_dnd::AutomationStatus::Pending => "pending",
+        crate::automation_dnd::AutomationStatus::Accepted => "accepted",
+        crate::automation_dnd::AutomationStatus::Rejected => "rejected",
+        crate::automation_dnd::AutomationStatus::NoTarget => "no-target",
+        crate::automation_dnd::AutomationStatus::Cancelled => "cancelled",
+        crate::automation_dnd::AutomationStatus::UnsupportedTarget => "unsupported-target",
+    };
+    scm_list(&[from_symbol(operation), from_symbol(status)])
+}
+
 unsafe extern "C" fn wm_request_paste() -> Scm {
     from_bool(send_command(WmCommand::Paste))
 }
@@ -639,6 +796,13 @@ unsafe extern "C" fn wm_set_clipboard(text: Scm) -> Scm {
         return from_bool(false);
     };
     from_bool(send_command(WmCommand::SetClipboard { text }))
+}
+
+unsafe extern "C" fn wm_set_primary(text: Scm) -> Scm {
+    let Some(text) = to_string_lossy(text) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::SetPrimary { text }))
 }
 
 unsafe extern "C" fn wm_output_geometry() -> Scm {
@@ -885,6 +1049,41 @@ pub fn init(loop_signal: LoopSignal) {
                 wm_warp_pointer,
             ),
         );
+        register_gsubr("wm-pointer-position", 0, 0, 0, wm_pointer_position);
+        register_gsubr(
+            "wm-window-geometry",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_window_geometry),
+        );
+        register_gsubr(
+            "wm-drop-files",
+            3,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_drop_files,
+            ),
+        );
+        register_gsubr(
+            "wm-drop-text",
+            3,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_drop_text,
+            ),
+        );
+        register_gsubr(
+            "wm-automation-status",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(
+                wm_automation_status,
+            ),
+        );
         // Gsubr is exactly the zero-arg signature; no transmute needed.
         register_gsubr("wm-request-paste", 0, 0, 0, wm_request_paste);
         register_gsubr("wm-outputs", 0, 0, 0, wm_outputs);
@@ -895,6 +1094,13 @@ pub fn init(loop_signal: LoopSignal) {
             0,
             0,
             std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_clipboard),
+        );
+        register_gsubr(
+            "wm-set-primary",
+            1,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_set_primary),
         );
         register_gsubr(
             "wm-place-float",
@@ -924,16 +1130,27 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr(
             "wm-send-string",
             1,
+            1,
             0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_send_string,
+            ),
+        );
+        register_gsubr(
+            "wm-type",
+            1,
+            1,
             0,
-            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_send_string),
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
+                wm_send_string,
+            ),
         );
         register_gsubr(
             "wm-click",
             1,
+            1,
             0,
-            0,
-            std::mem::transmute::<unsafe extern "C" fn(Scm) -> Scm, ffi::Gsubr>(wm_click),
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(wm_click),
         );
         register_gsubr(
             "wm-send-key",
@@ -950,6 +1167,14 @@ pub fn init(loop_signal: LoopSignal) {
             std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(
                 wm_warp_pointer_relative,
             ),
+        );
+        register_gsubr("wm-paste", 0, 0, 0, wm_paste_key);
+        register_gsubr(
+            "wm-scroll",
+            2,
+            0,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(wm_scroll),
         );
         register_gsubr(
             "wm-set-key-repeat",

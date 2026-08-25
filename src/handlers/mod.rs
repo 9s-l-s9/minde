@@ -24,12 +24,12 @@ use crate::MindeState;
 // Wl Seat
 //
 
-use smithay::input::dnd::{DnDGrab, DndGrabHandler, GrabType, Source};
+use smithay::input::dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source};
 use smithay::input::pointer::Focus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::Serial;
+use smithay::utils::{Logical, Point, Serial};
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
@@ -186,7 +186,36 @@ impl DataDeviceHandler for MindeState {
     }
 }
 
-impl DndGrabHandler for MindeState {}
+impl DndGrabHandler for MindeState {
+    fn dropped(
+        &mut self,
+        target: Option<DndTarget<'_, Self>>,
+        validated: bool,
+        _seat: Seat<Self>,
+        _location: Point<f64, Logical>,
+    ) {
+        if let Some((token, operation)) = self.active_automation_dnd.take() {
+            let status = if target.is_none() {
+                crate::automation_dnd::AutomationStatus::NoTarget
+            } else if validated {
+                crate::automation_dnd::AutomationStatus::Accepted
+            } else {
+                crate::automation_dnd::AutomationStatus::Rejected
+            };
+            self.finish_automation_dnd(token, operation, status);
+        }
+    }
+
+    fn cancelled(&mut self, _seat: Seat<Self>, _location: Point<f64, Logical>) {
+        if let Some((token, operation)) = self.active_automation_dnd.take() {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::Cancelled,
+            );
+        }
+    }
+}
 impl WaylandDndGrabHandler for MindeState {
     fn dnd_requested<S: Source>(
         &mut self,
