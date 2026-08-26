@@ -38,6 +38,52 @@ pub fn set_loop_signal(signal: LoopSignal) {
 /// `MindeState`.
 static COMMAND_SENDER: OnceLock<Sender<WmCommand>> = OnceLock::new();
 
+/// Children launched by `wm-spawn` are owned by one polling waiter. Dropping a
+/// `std::process::Child` does not reap it on Unix, which previously left every
+/// closed application as a zombie owned by the compositor.
+static CHILD_REAPER: OnceLock<std::sync::mpsc::Sender<std::process::Child>> = OnceLock::new();
+
+fn child_reaper() -> &'static std::sync::mpsc::Sender<std::process::Child> {
+    CHILD_REAPER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<std::process::Child>();
+        std::thread::Builder::new()
+            .name("minde-child-reaper".into())
+            .spawn(move || {
+                use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+                use std::time::Duration;
+
+                let mut children = Vec::new();
+                loop {
+                    match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(child) => children.push(child),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                    loop {
+                        match receiver.try_recv() {
+                            Ok(child) => children.push(child),
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => return,
+                        }
+                    }
+                    children.retain_mut(|child| match child.try_wait() {
+                        Ok(None) => true,
+                        Ok(Some(status)) => {
+                            tracing::debug!(pid = child.id(), %status, "wm-spawn child exited");
+                            false
+                        }
+                        Err(error) => {
+                            tracing::warn!(pid = child.id(), %error, "failed to reap wm-spawn child");
+                            false
+                        }
+                    });
+                }
+            })
+            .expect("failed to start child reaper");
+        sender
+    })
+}
+
 /// Last known usable area (union of all outputs minus layer-shell
 /// exclusive zones). Stored outside `MindeState` so
 /// `(wm-output-geometry)` is callable from any thread, including the REPL.
@@ -407,8 +453,13 @@ pub fn spawn_on_main_thread(cmd: &str) {
         command.env("MOZ_ENABLE_WAYLAND", "1");
         command.env("GDK_BACKEND", "wayland,x11");
     }
-    if let Err(e) = command.spawn() {
-        tracing::warn!(%cmd, error = %e, "wm-spawn failed");
+    match command.spawn() {
+        Ok(child) => {
+            if let Err(error) = child_reaper().send(child) {
+                tracing::warn!(%cmd, %error, "failed to hand wm-spawn child to reaper");
+            }
+        }
+        Err(e) => tracing::warn!(%cmd, error = %e, "wm-spawn failed"),
     }
 }
 
