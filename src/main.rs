@@ -180,6 +180,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<MindeState> = Display::new()?;
 
     let mut state = MindeState::new(&mut event_loop, display);
+    // From here on `wm-*` primitives apply directly while Scheme runs on
+    // this thread (see `guile::set_state`); cleared again after the loop.
+    guile::set_state(&mut state);
 
     // Recorded for wm-spawn so children get WAYLAND_DISPLAY even when
     // spawned (via handle-startup!) before the env export further down.
@@ -225,11 +228,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // loop runs.
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };
 
-    event_loop.run(None, &mut state, move |_state| {
+    let run = event_loop.run(None, &mut state, move |_state| {
         // minde is running; nothing extra to do per-iteration here, the
         // event sources (wayland socket, winit/udev, calloop) drive
         // everything.
-    })?;
+    });
+    guile::clear_state();
+    run?;
 
     Ok(())
 }

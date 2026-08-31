@@ -219,7 +219,81 @@ pub fn set_session_locked(locked: bool) {
     SESSION_LOCKED.store(locked, Ordering::SeqCst);
 }
 
+thread_local! {
+    /// The compositor state, reachable from `wm-*` primitives while Scheme
+    /// runs on the main thread. Set once by `main` after construction and
+    /// cleared before the state is dropped; null on every other thread.
+    static STATE: std::cell::Cell<*mut crate::MindeState> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+    /// True while a command is being applied through `STATE`, so a command
+    /// issued by Scheme code that Rust calls back into from *inside* that
+    /// application is queued instead of re-entering the half-updated state.
+    static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Publishes `state` as the target for direct command application. Every
+/// Rust->Scheme hook runs beneath a calloop callback that already holds
+/// `&mut MindeState`; the pointer lets a `wm-*` primitive apply its command
+/// while that callback is suspended in Scheme, the same re-entrancy shape
+/// as any C callback. The hook call sites therefore must not keep references
+/// into the state alive across the call (they pass ids and clones, which is
+/// what the compiler enforces for the queued path as well).
+pub fn set_state(state: &mut crate::MindeState) {
+    STATE.with(|cell| cell.set(state as *mut _));
+}
+
+/// Forgets the pointer published by [`set_state`]; later commands queue.
+pub fn clear_state() {
+    STATE.with(|cell| cell.set(std::ptr::null_mut()));
+}
+
+/// Runs `f` against the compositor state when Scheme is executing on the
+/// main thread outside a command application, so a `wm-*` query reads the
+/// live state instead of a mirror. `None` from the REPL thread, before
+/// `set_state`, or re-entrantly from inside `apply_wm_command`.
+fn with_state<R>(f: impl FnOnce(&mut crate::MindeState) -> R) -> Option<R> {
+    if !on_guile_thread() || APPLYING.with(|cell| cell.get()) {
+        return None;
+    }
+    let state = STATE.with(|cell| cell.get());
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: see `send_command`.
+    Some(f(unsafe { &mut *state }))
+}
+
+struct ApplyingGuard;
+
+impl Drop for ApplyingGuard {
+    fn drop(&mut self) {
+        APPLYING.with(|cell| cell.set(false));
+    }
+}
+
+/// Applies `cmd` to the compositor state. On the Guile thread (every hook,
+/// timer, key and IPC evaluation) it runs immediately and reports whether
+/// the command found its target, so Scheme observes the result -- geometry,
+/// focus, status -- within the same call. From the REPL thread, or while a
+/// command is already being applied, it is queued on the calloop channel
+/// and `true` only means "queued".
 fn send_command(cmd: WmCommand) -> bool {
+    if on_guile_thread() && !APPLYING.with(|cell| cell.get()) {
+        let state = STATE.with(|cell| cell.get());
+        if !state.is_null() {
+            APPLYING.with(|cell| cell.set(true));
+            let _guard = ApplyingGuard;
+            // SAFETY: `state` was published by `set_state` from the main
+            // thread, is only read on that thread, and is cleared before the
+            // state is dropped. The calloop callback that owns the `&mut`
+            // is suspended in a Scheme call for the whole duration.
+            let state = unsafe { &mut *state };
+            let started = std::time::Instant::now();
+            let applied = state.apply_wm_command(cmd);
+            crate::timing::record(crate::timing::Probe::ApplyCommand, started);
+            return applied;
+        }
+    }
     match COMMAND_SENDER.get() {
         Some(sender) => sender.send(cmd).is_ok(),
         None => {
