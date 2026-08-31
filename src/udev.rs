@@ -1228,7 +1228,10 @@ impl MindeState {
         surface.dirty = false;
         let interval = refresh_interval(&surface.output);
 
-        let queued = match self.render_surface(node, crtc) {
+        let started = std::time::Instant::now();
+        let rendered = self.render_surface(node, crtc);
+        crate::timing::record(crate::timing::Probe::Render, started);
+        let queued = match rendered {
             Ok(queued) => queued,
             Err(err) => {
                 match err {

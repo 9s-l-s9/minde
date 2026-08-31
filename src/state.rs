@@ -649,7 +649,9 @@ impl MindeState {
             .handle()
             .insert_source(channel, |event, _, state| {
                 if let ChannelEvent::Msg(cmd) = event {
+                    let started = std::time::Instant::now();
                     state.apply_wm_command(cmd);
+                    crate::timing::record(crate::timing::Probe::ApplyCommand, started);
                 }
             })
             .expect("Failed to init the wm command channel source.");

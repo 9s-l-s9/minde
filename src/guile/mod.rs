@@ -1444,6 +1444,7 @@ pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool
     if HANDLE_KEY.value().is_none() {
         return false;
     }
+    let started = std::time::Instant::now();
     let result = HANDLE_KEY.call(&[
         from_i64(mods as i64),
         from_i64(keysym as i64),
@@ -1461,6 +1462,7 @@ pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool
         errored = result.is_none(),
         "handle_key"
     );
+    crate::timing::record(crate::timing::Probe::HandleKey, started);
     consumed
 }
 
