@@ -136,6 +136,7 @@
             track-window-unmap!
             update-output-geometry!
             rust-place-float!
+            mirror-drift
             remove-window-from-active-tree!
             remove-window-from-tree-in!
             current-frame-window
@@ -612,15 +613,71 @@ wm-message (or under the test stubs)."
 ;; frames/groups; dropped on unmap.
 (define %window-titles (make-hash-table))
 
+(define (client-title id)
+  "The (title . app-id) pair the client set on window ID, straight from
+the compositor (Rust owns that fact), or #f without a compositor."
+  (let ((pair (rust-call-if-bound 'wm-window-title id)))
+    (and (pair? pair) pair)))
+
 (define (window-title id)
-  "Returns the remembered display title for window ID."
+  "Returns the display title for window ID: a rename-window! override if
+one exists, else the client's title as the compositor holds it right now,
+falling back to the remembered map-time title (tests, REPL thread)."
   (let ((e (hash-ref %window-titles id)))
-    (if e (car e) (format #f "window ~a" id))))
+    (cond
+     ((and e (hash-ref %renamed-windows id)) (car e))
+     ((client-title id)
+      => (lambda (pair)
+           (if (string-null? (car pair))
+               (if (string-null? (cdr pair)) (format #f "window ~a" id) (cdr pair))
+               (car pair))))
+     (e (car e))
+     (else (format #f "window ~a" id)))))
 
 (define (window-app-id id)
   "The window's app-id (X11 class), or #f if unknown."
-  (let ((e (hash-ref %window-titles id)))
+  (let ((e (or (client-title id) (hash-ref %window-titles id))))
     (and e (not (string-null? (cdr e))) (cdr e))))
+
+(define (mirror-drift)
+  "Compares every fact the policy layer mirrors from the compositor with
+the compositor's own answer and returns the discrepancies as a list of
+(kind id expected actual) entries; () means the mirrors are in sync. Run
+from the diagnostics report and the e2e suite, so a dropped hook shows up
+as data instead of as a stale window list weeks later."
+  (define drift '())
+  (define (note! kind id expected actual)
+    (set! drift (cons (list kind id expected actual) drift)))
+  ;; Titles: the map-time cache versus the client's current title, except
+  ;; for windows renamed by the user, whose override is expected to differ.
+  (hash-for-each
+   (lambda (id cached)
+     (unless (hash-ref %renamed-windows id)
+       (let ((live (client-title id)))
+         (when (and live
+                    (not (string-null? (car live)))
+                    (not (equal? (car cached) (car live))))
+           (note! 'title id (car cached) (car live))))))
+   %window-titles)
+  ;; Floating: the policy's float table against the compositor's set.
+  (let ((rust-ids (rust-call-if-bound 'wm-floating-ids)))
+    (when (list? rust-ids)
+      (let ((ours (sort (hash-map->list (lambda (id _) id) %floating) <)))
+        (unless (equal? ours (sort rust-ids <))
+          (note! 'floating #f ours rust-ids)))))
+  ;; Heads: in per-head mode the frame layer's heads are the outputs; span
+  ;; mode legitimately collapses them, so only the output ids are compared.
+  (let ((outputs (rust-call-if-bound 'wm-outputs)))
+    (when (list? outputs)
+      (let ((theirs (map (lambda (o) (list-head o 5)) outputs))
+            (ours %heads))
+        (if (eq? %head-mode 'per-head)
+            (unless (equal? (sort ours (lambda (a b) (< (car a) (car b))))
+                            (sort theirs (lambda (a b) (< (car a) (car b)))))
+              (note! 'heads #f ours theirs))
+            (when (and (pair? theirs) (null? ours))
+              (note! 'heads #f ours theirs))))))
+  (reverse drift))
 
 (define (forget-window-title! id)
   "Removes window ID's remembered client and user-supplied titles."
