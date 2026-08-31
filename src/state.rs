@@ -1892,6 +1892,31 @@ impl MindeState {
         Some(id)
     }
 
+    /// The title and app-id (X11 class) window `id` currently carries, as
+    /// the client set them: the one source `(wm-window-title)` reads.
+    pub fn window_title(&self, id: u64) -> Option<(String, String)> {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+        let window = self.window_by_id(id)?;
+        if let Some(toplevel) = window.toplevel() {
+            return Some(with_states(toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().ok())
+                    .map(|data| {
+                        (
+                            data.title.clone().unwrap_or_default(),
+                            data.app_id.clone().unwrap_or_default(),
+                        )
+                    })
+                    .unwrap_or_default()
+            }));
+        }
+        let x11 = window.x11_surface()?;
+        Some((x11.title(), x11.class()))
+    }
+
     /// Reports a toplevel's title/app-id to Scheme when either changed
     /// since the last report (see `reported_titles`). Called from the
     /// commit handler; X11 windows are skipped (their class arrives with

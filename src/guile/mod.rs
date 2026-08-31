@@ -618,6 +618,101 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
     from_bool(send_command(WmCommand::Place { id, x, y, w, h }))
 }
 
+/// `(wm-window-title ID)` -> `(title . app-id)` as the client set them, or
+/// `#f` for an unknown window or off the main thread. Rust owns this
+/// fact; Scheme's `window-title` asks here first and keeps its own copy
+/// only for rename overrides and for tests without a compositor.
+unsafe extern "C" fn wm_window_title(id: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    match with_state(|state| state.window_title(id)).flatten() {
+        Some((title, app_id)) => unsafe { ffi::scm_cons(from_str(&title), from_str(&app_id)) },
+        None => from_bool(false),
+    }
+}
+
+/// `(wm-floating-ids)` -> the ids Rust currently treats as floating (set
+/// through `wm-set-floating`), for `mirror-drift`.
+unsafe extern "C" fn wm_floating_ids() -> Scm {
+    let ids = with_state(|state| {
+        let mut ids: Vec<u64> = state.floating_ids.iter().copied().collect();
+        ids.sort_unstable();
+        ids
+    })
+    .unwrap_or_default();
+    let items: Vec<Scm> = ids.into_iter().map(|id| from_i64(id as i64)).collect();
+    scm_list(&items)
+}
+
+/// `(wm-timing-stats)` -> one `(name count total-us max-us (b1 b2 b3 b4 b5))`
+/// entry per probe in `crate::timing`; the buckets are counts at or below
+/// 100 us, 1 ms, 4 ms, 16.6 ms and above.
+unsafe extern "C" fn wm_timing_stats() -> Scm {
+    let entries: Vec<Scm> = crate::timing::snapshot()
+        .into_iter()
+        .map(|probe| {
+            let buckets: Vec<Scm> = probe.buckets.iter().map(|b| from_i64(*b as i64)).collect();
+            scm_list(&[
+                from_symbol(probe.name),
+                from_i64(probe.count as i64),
+                from_i64(probe.total_us as i64),
+                from_i64(probe.max_us as i64),
+                scm_list(&buckets),
+            ])
+        })
+        .collect();
+    scm_list(&entries)
+}
+
+/// `(wm-place-windows PLACEMENTS)`: applies a whole layout in one call.
+/// PLACEMENTS is a list of `(id x y w h)` (tiled) or `(id x y w h #f)`
+/// (float placement) entries. Returns the list of ids whose placement
+/// failed (unknown window), so an empty list means every entry applied.
+/// A malformed list returns `#f` without applying anything.
+unsafe extern "C" fn wm_place_windows(placements: Scm) -> Scm {
+    let mut commands = Vec::new();
+    let mut list = placements;
+    while !to_bool(unsafe { ffi::scm_null_p(list) }) {
+        if commands.len() >= 4096 || !to_bool(unsafe { ffi::scm_pair_p(list) }) {
+            return from_bool(false);
+        }
+        let entry = unsafe { ffi::scm_car(list) };
+        let mut fields = [0i64; 5];
+        let mut tiled = true;
+        let mut rest = entry;
+        for (index, field) in fields.iter_mut().enumerate() {
+            if !to_bool(unsafe { ffi::scm_pair_p(rest) }) {
+                return from_bool(false);
+            }
+            let item = unsafe { ffi::scm_car(rest) };
+            if !to_bool(unsafe { ffi::scm_integer_p(item) }) {
+                return from_bool(false);
+            }
+            *field = to_i64(item);
+            rest = unsafe { ffi::scm_cdr(rest) };
+            if index == 4 && to_bool(unsafe { ffi::scm_pair_p(rest) }) {
+                tiled = to_bool(unsafe { ffi::scm_car(rest) });
+            }
+        }
+        let [id, x, y, w, h] = fields;
+        let (id, x, y, w, h) = (id as u64, x as i32, y as i32, w as i32, h as i32);
+        commands.push((
+            id,
+            if tiled {
+                WmCommand::Place { id, x, y, w, h }
+            } else {
+                WmCommand::PlaceFloat { id, x, y, w, h }
+            },
+        ));
+        list = unsafe { ffi::scm_cdr(list) };
+    }
+    let failed: Vec<Scm> = commands
+        .into_iter()
+        .filter(|(_, command)| !send_command(command.clone()))
+        .map(|(id, _)| from_i64(id as i64))
+        .collect();
+    scm_list(&failed)
+}
+
 /// Unix-epoch millis of the last user input event (key or pointer),
 /// updated from `process_input_event`; `(wm-idle-ms)` reads it so
 /// Scheme can implement idle timers (StumpWM *idle-hook* style).
@@ -1225,6 +1320,10 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr("wm-quit", 0, 0, gsubr!(wm_quit, 0));
         register_gsubr("wm-log", 1, 0, gsubr!(wm_log, 1));
         register_gsubr("wm-place-window", 5, 0, gsubr!(wm_place_window, 5));
+        register_gsubr("wm-place-windows", 1, 0, gsubr!(wm_place_windows, 1));
+        register_gsubr("wm-window-title", 1, 0, gsubr!(wm_window_title, 1));
+        register_gsubr("wm-floating-ids", 0, 0, gsubr!(wm_floating_ids, 0));
+        register_gsubr("wm-timing-stats", 0, 0, gsubr!(wm_timing_stats, 0));
         register_gsubr("wm-focus-window", 1, 0, gsubr!(wm_focus_window, 1));
         register_gsubr("wm-close-window", 1, 0, gsubr!(wm_close_window, 1));
         register_gsubr("wm-clear-focus", 0, 0, gsubr!(wm_clear_focus, 0));

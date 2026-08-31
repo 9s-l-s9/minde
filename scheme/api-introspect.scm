@@ -82,6 +82,14 @@
      "Set the Wayland PRIMARY (middle-click) selection contents to TEXT.")
     (wm-place-float "(wm-place-float id x y w h)"
      "Move and size the floating window ID to the given rectangle.")
+    (wm-window-title "(wm-window-title id)"
+     "The (title . app-id) pair the client set on window ID, or #f.")
+    (wm-floating-ids "(wm-floating-ids)"
+     "The window ids the compositor currently treats as floating.")
+    (wm-timing-stats "(wm-timing-stats)"
+     "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch and rendering.")
+    (wm-place-windows "(wm-place-windows placements)"
+     "Apply a whole layout at once: PLACEMENTS is a list of (id x y w h) tiled or (id x y w h #f) float entries; returns the ids of unknown windows.")
     (wm-raise-window "(wm-raise-window id)"
      "Raise window ID to the top of the stack.")
     (wm-set-floating "(wm-set-floating id floating?)"
