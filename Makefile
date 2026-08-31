@@ -57,6 +57,7 @@ check-cli: check-rust
 
 check-static:
 	sh tests/lint-borrows.sh
+	sh tests/lint-hook-borrows.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
 			scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
