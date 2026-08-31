@@ -106,6 +106,8 @@ scripts/mindectl report --output "$REPORT" >/dev/null || fail "diagnostic report
 grep -q '^report_schema_version=1$' "$REPORT/report.txt" || fail "report schema"
 grep -q '"schema_version":1' "$REPORT/state.json" || fail "report state"
 grep -q '"title"\|"app_id"' "$REPORT/state.json" && fail "report leaked window metadata"
+grep -q '^(' "$REPORT/timing.txt" || fail "report timing"
+[ "$(cat "$REPORT/drift.txt")" = "()" ] || fail "policy mirrors drifted from the compositor: $(cat "$REPORT/drift.txt")"
 grep -q "$HOME" "$REPORT"/* && fail "report leaked an absolute home path"
 ok "redacted diagnostic report"
 

@@ -122,3 +122,11 @@ It must fail without terminating minde, and `session.log` must contain a
 Guile backtrace. After one compositor logout/login, both `session.log` and
 `session.previous.log` must exist. Set `MINDE_LOG_FORMAT=json` for one
 nested run and confirm every emitted tracing line is valid JSON.
+
+## Timing and mirror consistency
+
+The report also contains `timing.txt`, the `(wm-timing-stats)` histograms
+of command application, key dispatch and rendering (counts at or below
+100 us, 1 ms, 4 ms, 16.6 ms, and above), and `drift.txt`, the
+`(mirror-drift)` list of facts whose policy-side mirror disagrees with the
+compositor. An empty list `()` is the healthy state.

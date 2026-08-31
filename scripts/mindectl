@@ -114,6 +114,9 @@ write_report() {
     chmod 700 "$output"
 
     ipc_request raw '(current-state-json #:redact? #t)' >"$output/state.json"
+    # Hot-path timing and mirror consistency: cheap, never personal.
+    ipc_request raw '(wm-timing-stats)' >"$output/timing.txt" 2>/dev/null || true
+    ipc_request raw '(mirror-drift)' >"$output/drift.txt" 2>/dev/null || true
     chmod 600 "$output/state.json"
 
     script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
@@ -137,6 +140,8 @@ write_report() {
         printf 'state=state.json\n'
         printf 'drm=drm.txt\n'
         printf 'recent_errors=recent-errors.log\n'
+        printf 'timing=timing.txt\n'
+        printf 'drift=drift.txt\n'
     } >"$output/report.txt"
 
     {
