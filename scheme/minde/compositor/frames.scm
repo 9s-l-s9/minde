@@ -1783,9 +1783,11 @@ is raised in it if it was hidden."
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) -1))
              (next-id (list-ref ids (modulo (+ idx 1) n))))
-        ;; focus-window-by-id! handles a window on another head.
-        (focus-window-by-id! next-id))))
-  (sync-frames!))
+        ;; focus-window-by-id! handles a window on another head and
+        ;; syncs itself; an empty group still gets the sync so the status
+        ;; line and hooks see the (unchanged) state.
+        (focus-window-by-id! next-id)))
+    (unless (> n 0) (sync-frames!))))
 
 ;; Windows not currently visible: everything that isn't its frame's
 ;; current window.
@@ -1856,8 +1858,8 @@ other frame holds any window."
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
              (prev-id (list-ref ids (modulo (- idx 1) n))))
-        (focus-window-by-id! prev-id))))
-  (sync-frames!))
+        (focus-window-by-id! prev-id)))
+    (unless (> n 0) (sync-frames!))))
 
 (define (pull-hidden-previous!)
   "StumpWM's pull-hidden-previous: like pull-hidden-next! but takes the
