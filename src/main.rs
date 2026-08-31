@@ -19,6 +19,7 @@ mod png;
 mod render;
 mod runtime_dir;
 mod state;
+mod timing;
 mod udev;
 mod winit;
 
