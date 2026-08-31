@@ -2062,51 +2062,96 @@ and re-syncs the active group."
   "Sets PROC to run after every completed frame synchronization."
   (set! %sync-hook proc))
 
+(define (frame-placements head-rect tree)
+  "Returns the placements TREE needs under HEAD-RECT as a list of
+(id x y w h tiled?) entries: each frame's current window at the frame's
+display rectangle (or its unmaximized float rectangle), every other window
+of the frame parked off-screen. Pure: nothing is sent to Rust."
+  (parameterize ((current-head-rect head-rect))
+    (append-map
+     (lambda (frame)
+       (let ((cur (frame-current-window frame))
+             (rect (frame-display-rect frame)))
+         (map
+          (lambda (id)
+            (cond
+             ((not (equal? id cur))
+              (list id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame) #t))
+             ;; Unmaximized: 2/3 rect by gravity, placed without the
+             ;; tiled states (wm-place-float) so CSD corners return.
+             ((hash-ref %unmaximized id)
+              (append (list id) (unmaximized-rect frame id) (list #f)))
+             (else
+              (let ((bw %border-width))
+                (list id
+                      (+ (car rect) bw) (+ (cadr rect) bw)
+                      (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))
+                      #t)))))
+          (frame-window-ids frame))))
+     (frame-leaves tree))))
+
+(define (apply-placements! placements)
+  "Sends PLACEMENTS (see frame-placements) to Rust: one wm-place-windows
+call when that primitive is bound, else one wm-place-window /
+wm-place-float call per entry. Tiled entries whose rectangle Rust already
+has (%placed-rects) are skipped; float entries are always sent and drop
+the cache entry so the next tiled placement is resent. Returns the ids
+Rust reported as unknown, which are also dropped from the cache."
+  (let* ((rect-of (lambda (p) (list (cadr p) (caddr p) (cadddr p) (car (cddddr p)))))
+         (tiled? (lambda (p) (list-ref p 5)))
+         (wanted (filter (lambda (p)
+                           (or (not (tiled? p))
+                               (not (equal? (hash-ref %placed-rects (car p))
+                                            (rect-of p)))))
+                         placements)))
+    (for-each (lambda (p)
+                (if (tiled? p)
+                    (hash-set! %placed-rects (car p) (rect-of p))
+                    (forget-placement! (car p))))
+              wanted)
+    (let ((failed
+           (or (rust-call-if-bound 'wm-place-windows wanted)
+               ;; No batch primitive (unit tests, older binaries): send
+               ;; each entry through the single-window primitives.
+               (filter-map
+                (lambda (p)
+                  (and (not (apply rust-call
+                                   (if (tiled? p) 'wm-place-window 'wm-place-float)
+                                   (car p) (rect-of p)))
+                       (car p)))
+                wanted))))
+      (for-each forget-placement! failed)
+      failed)))
+
 (define (sync-frames-now!)
   "Walks every head's frame tree of the active group, placing each
 frame's current window at its frame's pixel geometry, moving every other
 (hidden) window off-screen, and setting input focus to the current
-frame's current window."
-  (for-each
-   (lambda (rect+tree)
-     ;; Bind the gap/outer-edge bounds to this tree's head while its
-     ;; frames are placed (frame-display-rect reads current-head-rect).
-     (parameterize ((current-head-rect (car rect+tree)))
-       (for-each
-        (lambda (frame)
-          (let ((cur (frame-current-window frame))
-                (rect (frame-display-rect frame)))
-            (for-each
-             (lambda (id)
-               (cond
-                ((not (equal? id cur))
-                 (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
-                ;; Unmaximized: 2/3 rect by gravity, placed without the
-                ;; tiled states (wm-place-float) so CSD corners return.
-                ((hash-ref %unmaximized id)
-                 (apply rust-place-float! id (unmaximized-rect frame id)))
-                (else
-                 (let ((bw %border-width))
-                   (wm-place-window id
-                                    (+ (car rect) bw) (+ (cadr rect) bw)
-                                    (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw)))))))
-             (frame-window-ids frame))))
-        (frame-leaves (cdr rect+tree)))))
-   (active-head-trees))
-  ;; Tell Rust where the selected frame is, so the focus border marks the
-  ;; frame itself (visible even when the frame is empty).
-  (let ((rect (frame-display-rect %current-frame)))
-    (apply wm-focus-rect rect))
-  (let ((id (focused-window-id)))
-    (if id
-        (wm-focus-window id)
+frame's current window.
+
+Runs in three phases so a policy error cannot leave the desktop half
+applied: the whole placement plan is computed first (pure, so an error
+surfaces before anything reaches Rust), then it is applied as one batch,
+then the focus/shown bookkeeping and hooks run."
+  (let* ((plan (append-map
+                (lambda (rect+tree)
+                  (frame-placements (car rect+tree) (cdr rect+tree)))
+                (active-head-trees)))
+         ;; Tell Rust where the selected frame is, so the focus border
+         ;; marks the frame itself (visible even when the frame is empty).
+         (focus-rect (frame-display-rect %current-frame))
+         (focused (focused-window-id)))
+    (apply-placements! plan)
+    (apply wm-focus-rect focus-rect)
+    (if focused
+        (wm-focus-window focused)
         ;; Empty current frame: drop keyboard focus so a hidden/unmapped
         ;; window doesn't keep receiving keys.
-        (wm-clear-focus)))
-  ;; Floats go on top of everything the placement/focus steps raised;
-  ;; always-on-top windows above even those.
-  (place-floats!)
-  (raise-ontop!)
+        (wm-clear-focus))
+    ;; Floats go on top of everything the placement/focus steps raised;
+    ;; always-on-top windows above even those.
+    (place-floats!)
+    (raise-ontop!))
   ;; Remember the previous focus for the other-window!/other-frame!
   ;; toggles: whatever was shown at the end of the last sync becomes
   ;; "last" the moment something else is shown.
