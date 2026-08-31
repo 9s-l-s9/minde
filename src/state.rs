@@ -658,18 +658,21 @@ impl MindeState {
     /// Applies a single `WmCommand` enqueued from Scheme. Anything that
     /// changes the scene schedules a redraw (see `udev` repaint scheduling);
     /// the per-command work lives in the helpers below.
-    fn apply_wm_command(&mut self, cmd: WmCommand) {
+    ///
+    /// Returns `false` when the command named a window that does not exist,
+    /// so a direct caller (see `guile::send_command`) can report it.
+    pub(crate) fn apply_wm_command(&mut self, cmd: WmCommand) -> bool {
         match cmd {
             WmCommand::Place { id, x, y, w, h } => {
-                self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), true)
+                return self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), true);
             }
             WmCommand::PlaceFloat { id, x, y, w, h } => {
-                self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), false)
+                return self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), false);
             }
             WmCommand::Raise { id } => {
                 let Some(window) = self.window_by_id(id) else {
                     tracing::warn!(id, "wm-raise-window: unknown window id");
-                    return;
+                    return false;
                 };
                 self.space.raise_element(&window, false);
                 self.schedule_redraw();
@@ -696,7 +699,7 @@ impl MindeState {
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
                     tracing::warn!(id, "wm-close-window: unknown window id");
-                    return;
+                    return false;
                 };
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_close();
@@ -746,6 +749,7 @@ impl MindeState {
             | WmCommand::SetClipboard { .. }
             | WmCommand::SetPrimary { .. }) => self.apply_clipboard_command(other),
         }
+        true
     }
 
     /// The message/overlay/spawn arms of [`apply_wm_command`](Self::apply_wm_command):
@@ -815,10 +819,10 @@ impl MindeState {
     /// already elides an unchanged xdg configure, and when neither the
     /// configure nor the location changed the map, geometry event and
     /// foreign-toplevel refresh are skipped too.
-    fn place_window(&mut self, id: u64, rect: Rectangle<i32, Logical>, tiled: bool) {
+    fn place_window(&mut self, id: u64, rect: Rectangle<i32, Logical>, tiled: bool) -> bool {
         let Some(window) = self.window_by_id(id) else {
             tracing::warn!(id, "wm-place-window: unknown window id");
-            return;
+            return false;
         };
         let configured = if let Some(toplevel) = window.toplevel() {
             toplevel.with_pending_state(|state| {
@@ -855,7 +859,7 @@ impl MindeState {
         };
         let moved = self.space.element_location(&window) != Some(rect.loc);
         if !configured && !moved {
-            return;
+            return true;
         }
         self.space.map_element(window, rect.loc, false);
         self.publish_window_geometry(id, rect);
@@ -863,6 +867,7 @@ impl MindeState {
             self.refresh_foreign_toplevel_outputs();
         }
         self.schedule_redraw();
+        true
     }
 
     /// Marks `window` (if any) as the sole activated toplevel and lets every
