@@ -222,14 +222,20 @@
 ;; zones, e.g. a docked eww bar), applied to a group's tree whenever it
 ;; becomes active (so a group created/hidden before a resize doesn't show
 ;; up with stale geometry the first time it's synced).
-(define %last-output-x 0)
-(define %last-output-y 0)
-(define %last-output-w 1280)
-(define %last-output-h 720)
+;; The head whose usable rectangle (x y w h) frame geometry is currently
+;; computed against. A parameter rather than four globals: the outer-gap
+;; test in frame-display-rect and every resize-subtree! call read it, so a
+;; multi-head sync rebinds it per head with parameterize instead of
+;; saving and restoring mutable state by hand.
+(define current-head-rect (make-parameter (list 0 0 1280 720)))
+(define (head-rect-x) (car (current-head-rect)))
+(define (head-rect-y) (cadr (current-head-rect)))
+(define (head-rect-w) (caddr (current-head-rect)))
+(define (head-rect-h) (cadddr (current-head-rect)))
 
 (define (current-output-size)
   "Returns the current head's usable (width height)."
-  (list %last-output-w %last-output-h))
+  (list (head-rect-w) (head-rect-h)))
 
 ;; The group whose tree/current-frame are currently loaded into
 ;; %frame-tree/%current-frame above. (minde groups) bootstraps its
@@ -274,8 +280,8 @@
     (set! %frame-tree (group-tree g))
     (set! %current-frame (group-current-frame g))
     (set! %active-group g)
-    (resize-subtree! %frame-tree %last-output-x %last-output-y
-                     %last-output-w %last-output-h)))
+    (resize-subtree! %frame-tree (head-rect-x) (head-rect-y)
+                     (head-rect-w) (head-rect-h))))
 
 ;; ---------------------------------------------------------------------
 ;; Multi-head plumbing
@@ -292,8 +298,8 @@
 ;; math sees the right screen bounds per head.
 (define (active-head-trees)
   (cons (cons (cdr (or (head-rect %current-head-id)
-                       (list 0 %last-output-x %last-output-y
-                             %last-output-w %last-output-h)))
+                       (list 0 (head-rect-x) (head-rect-y)
+                             (head-rect-w) (head-rect-h))))
               %frame-tree)
         (hash-map->list (lambda (hid pair)
                           (cons (cdr (or (head-rect hid)
@@ -307,10 +313,8 @@
 (define (set-last-output-from-head!)
   (let ((r (head-rect %current-head-id)))
     (when r
-      (set! %last-output-x (cadr r))
-      (set! %last-output-y (caddr r))
-      (set! %last-output-w (cadddr r))
-      (set! %last-output-h (car (cddddr r))))))
+      (current-head-rect (list (cadr r) (caddr r) (cadddr r)
+                               (car (cddddr r)))))))
 
 ;; Makes G's tree/current-frame fields refer to head HID, stashing the
 ;; previously loaded head's pair in the heads hash. A head no group has
@@ -1330,8 +1334,8 @@ encloses the current frame. Ratio is clamped to [1/10, 9/10]."
         (set-split-ratio! node (/ la (+ la lb)))
         (balance! (split-child-a node))
         (balance! (split-child-b node)))))
-  (resize-subtree! %frame-tree %last-output-x %last-output-y
-                   %last-output-w %last-output-h)
+  (resize-subtree! %frame-tree (head-rect-x) (head-rect-y)
+                   (head-rect-w) (head-rect-h))
   (sync-frames!))
 
 ;; ---------------------------------------------------------------------
@@ -1362,8 +1366,8 @@ leaves. Windows never get lost -- every id ends up in some leaf."
          (ids (all-window-ids))
          (cur (current-frame-window))
          (ordered (if (and cur (member cur ids)) (cons cur (delete cur ids)) ids)))
-    (resize-subtree! tree %last-output-x %last-output-y
-                     %last-output-w %last-output-h)
+    (resize-subtree! tree (head-rect-x) (head-rect-y)
+                     (head-rect-w) (head-rect-h))
     (let loop ((ids ordered) (i 0))
       (unless (null? ids)
         (frame-add-window! (list-ref leaves (modulo i (length leaves))) (car ids))
@@ -1439,8 +1443,8 @@ current-frame-index)."
          (tree (spec->tree spec))
          (leaves (frame-leaves tree))
          (placed '()))
-    (resize-subtree! tree %last-output-x %last-output-y
-                     %last-output-w %last-output-h)
+    (resize-subtree! tree (head-rect-x) (head-rect-y)
+                     (head-rect-w) (head-rect-h))
     (for-each
      (lambda (leaf ids cur)
        (let ((keep (filter (lambda (id) (member id live)) ids)))
@@ -1564,8 +1568,8 @@ there is nothing to expose. Callers arm the pick keymap."
           (set! %expose-saved (dump-frames))
           (let* ((tree (spec->tree (grid-spec (length ids))))
                  (leaves (frame-leaves tree)))
-            (resize-subtree! tree %last-output-x %last-output-y
-                             %last-output-w %last-output-h)
+            (resize-subtree! tree (head-rect-x) (head-rect-y)
+                             (head-rect-w) (head-rect-h))
             (let loop ((ids ids) (ls leaves))
               (unless (null? ids)
                 (set-frame-window-ids! (car ls) (list (car ids)))
@@ -2044,10 +2048,10 @@ and re-syncs the active group."
   (let* ((x (frame-x frame)) (y (frame-y frame))
          (w (frame-w frame)) (h (frame-h frame))
          (half (quotient %inner-gap 2))
-         (l (if (= x %last-output-x) %outer-gap half))
-         (t (if (= y %last-output-y) %outer-gap half))
-         (r (if (= (+ x w) (+ %last-output-x %last-output-w)) %outer-gap half))
-         (b (if (= (+ y h) (+ %last-output-y %last-output-h)) %outer-gap half)))
+         (l (if (= x (head-rect-x)) %outer-gap half))
+         (t (if (= y (head-rect-y)) %outer-gap half))
+         (r (if (= (+ x w) (+ (head-rect-x) (head-rect-w))) %outer-gap half))
+         (b (if (= (+ y h) (+ (head-rect-y) (head-rect-h))) %outer-gap half)))
     (list (+ x l) (+ y t) (max 1 (- w l r)) (max 1 (- h t b)))))
 
 ;; Called (when set) at the end of every sync-frames! -- (minde
@@ -2066,12 +2070,8 @@ frame's current window."
   (for-each
    (lambda (rect+tree)
      ;; Bind the gap/outer-edge bounds to this tree's head while its
-     ;; frames are placed (frame-display-rect reads %last-output-*).
-     (let ((saved (list %last-output-x %last-output-y
-                        %last-output-w %last-output-h))
-           (r (car rect+tree)))
-       (set! %last-output-x (car r)) (set! %last-output-y (cadr r))
-       (set! %last-output-w (caddr r)) (set! %last-output-h (cadddr r))
+     ;; frames are placed (frame-display-rect reads current-head-rect).
+     (parameterize ((current-head-rect (car rect+tree)))
        (for-each
         (lambda (frame)
           (let ((cur (frame-current-window frame))
@@ -2091,9 +2091,7 @@ frame's current window."
                                     (+ (car rect) bw) (+ (cadr rect) bw)
                                     (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw)))))))
              (frame-window-ids frame))))
-        (frame-leaves (cdr rect+tree)))
-       (set! %last-output-x (car saved)) (set! %last-output-y (cadr saved))
-       (set! %last-output-w (caddr saved)) (set! %last-output-h (cadddr saved))))
+        (frame-leaves (cdr rect+tree)))))
    (active-head-trees))
   ;; Tell Rust where the selected frame is, so the focus border marks the
   ;; frame itself (visible even when the frame is empty).
@@ -2186,8 +2184,8 @@ kill-window) -- vs. close-current-window!'s polite xdg close."
 (define (move-pointer-to-corner!)
   "Warps the pointer to the bottom-right corner of the usable area
 (StumpWM banish)."
-  (ratwarp! (- (+ %last-output-x %last-output-w) 2)
-            (- (+ %last-output-y %last-output-h) 2)))
+  (ratwarp! (- (+ (head-rect-x) (head-rect-w)) 2)
+            (- (+ (head-rect-y) (head-rect-h)) 2)))
 
 (define (current-frame-rect)
   "The current frame's (x y w h), for the frame-flash indicator."
