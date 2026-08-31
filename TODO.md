@@ -704,3 +704,47 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 - The implementation agents hit an API rate limit mid-task on 2026-09-01;
   the tree was verified and committed afterwards, and further work proceeds
   one agent at a time.
+
+## 9. Architecture findings (second review, 2026-09-02)
+
+- [x] **9.1 Every Scheme mutation went through the calloop channel even on the
+      main thread** (`guile::send_command`, `state.rs` channel drain), so Scheme
+      could not observe its own commands and commands could not fail.
+      Done: `guile::set_state` publishes the state pointer from `main`;
+      `send_command` applies directly on the Guile thread outside a running
+      application (`APPLYING` guard) and returns `apply_wm_command`'s result,
+      `false` for an unknown window; the REPL thread and re-entrant calls still
+      queue. New `wm-place-windows` applies a whole layout in one call and
+      returns the ids that failed. `with_state` gives read primitives the live
+      state (`wm-window-title`, `wm-floating-ids`).
+- [x] **9.2 No transaction boundary around `sync-frames-now!`.**
+      Done: `frame-placements` computes the plan per head (pure, under
+      `parameterize`), `apply-placements!` sends it as one batch and maintains
+      the placed-rect cache, and only then focus, floats, on-top and the
+      shown/last bookkeeping run; a policy error now surfaces before any
+      command reaches Rust.
+- [x] **9.3 Titles, floats and heads mirrored on both sides with no drift
+      detection.** Done: Rust owns titles (`wm-window-title`; `window-title`
+      asks it first and keeps `%window-titles` for rename overrides and
+      compositor-less tests); ownership table in doc/architecture.md;
+      `(mirror-drift)` compares titles, floats and heads with the compositor and
+      is written to the diagnostic report (`drift.txt`) and asserted empty by
+      `tests/e2e.sh`.
+- [x] **9.4 `%last-output-x/y/w/h` as hidden parameters** (34 references).
+      Done: `current-head-rect` Guile parameter with `head-rect-x/y/w/h`
+      accessors; the multi-head sync uses `parameterize` instead of save/restore.
+- [x] **9.5 The callback contract lived only in Rust's `Hook` table.**
+      Done: `(minde compositor callbacks)` records each name's arity,
+      `define-compositor-callback!` checks a replacement, `compositor-callbacks`
+      lists status, `check-compositor-callbacks!` logs problems at startup and
+      on reload; `tests/callbacks-test.scm` keeps it identical to `Hook::new`.
+- [x] **9.6 No performance tests.** Done: `src/timing.rs` histograms around
+      command application, key dispatch and rendering, exposed as
+      `(wm-timing-stats)` and `timing.txt` in the report; `make bench-scheme`
+      times the frame-sync path (12 windows: ~200 us per focus change, two
+      placements per call after the cache).
+- [x] **9.7 `udev.rs` mixed libinput configuration with DRM lifecycle.** Done:
+      libinput capability names, rule application and the device registry moved
+      to `src/udev_input.rs`. The remaining per-click window walks and the
+      first-configure path stay as recorded in 3.7 and 3.9; the `unwrap` sites in
+      `events.rs` and `guile/mod.rs` are test code and lock acquisition only.
