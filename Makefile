@@ -33,7 +33,7 @@ SCHEME_TESTS := \
 	tests/event-stream-test.scm \
 	tests/api-introspect-test.scm
 
-.PHONY: compile-scheme check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
+.PHONY: compile-scheme bench-scheme check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
 	docs check-generated-docs check-demos check-foundation-package check-ui-package \
 	release-archives check-release-archives release clean-test-output
@@ -86,6 +86,11 @@ compile-scheme:
 			$(GUILE_ENV) guild compile $$warn -L scheme -o "$$go" "$$src" >/dev/null; \
 		fi; \
 	done
+
+# Timing of the frame-sync hot path against stubbed primitives; prints
+# numbers, asserts nothing. Arguments: windows, iterations.
+bench-scheme:
+	guile --no-auto-compile -L scheme tests/bench-sync-frames.scm $(BENCH_WINDOWS) $(BENCH_ITERATIONS)
 
 check-scheme: compile-scheme
 	@set -eu; for test in $(SCHEME_TESTS); do \
