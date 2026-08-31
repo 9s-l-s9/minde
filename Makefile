@@ -21,6 +21,7 @@ SCHEME_TESTS := \
 	tests/groups-test.scm \
 	tests/session-test.scm \
 	tests/layouts-test.scm \
+	tests/callbacks-test.scm \
 	tests/next-pull-test.scm \
 	tests/heads-test.scm \
 	tests/floats-test.scm \

@@ -17,7 +17,8 @@
   (when (string? f)
     (add-to-load-path (dirname f))))
 
-(use-modules (minde compositor frames)
+(use-modules (minde compositor callbacks)
+             (minde compositor frames)
              (minde groups)
              (minde ui prompt)
              (minde ui menu)
@@ -1692,12 +1693,19 @@ reload baseline. Call once after adding imperative user bindings."
     (set-prefix-key! (configuration-prefix-modifiers config)
                      (configuration-prefix-key config))))
 
+(define (report-callback-problems!)
+  (check-compositor-callbacks!
+   (lambda (problem)
+     (wm-log (format #f "compositor callback ~a (~a args): ~a"
+                     (car problem) (cadr problem) (caddr problem))))))
+
 (define (reload-configuration!)
   (let ((path (configuration-file-path)))
     (call-with-scheme-backtrace "configuration reload failure"
       (lambda ()
         (let ((candidate (validate-configuration-file path)))
           (apply-configuration! candidate)
+          (report-callback-problems!)
           (wm-log (string-append "reloaded configuration " path))
           ;; The boot-time reload runs before any output exists; an echo
           ;; then only costs a message nobody can see.
@@ -1825,5 +1833,11 @@ reload baseline. Call once after adding imperative user bindings."
     (lambda (key . args)
       (wm-log (format #f "could not start REPL server at ~a: ~a ~a"
                        %repl-socket-path key args)))))
+
+;; The compositor -> policy contract: every callback Rust will invoke is
+;; defined by now (built in above or by the user's configuration), so a
+;; missing or mis-arity definition is a startup fact worth logging rather
+;; than a silent no-op the first time Rust calls it.
+(report-callback-problems!)
 
 (wm-log "minde scheme layer loaded")
