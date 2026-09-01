@@ -1275,13 +1275,23 @@ impl MindeState {
             ),
             SyntheticAction::Scroll { dx, dy } => {
                 use smithay::backend::input::{Axis, AxisSource};
+                // dx/dy are wheel notches (1.0 = one physical wheel click).
+                // Browsers (Firefox/Zen) ignore purely continuous axis values
+                // from a Wheel source; they key off the discrete value120
+                // amount, so send both plus the conventional ~15 px/notch
+                // continuous value in the same frame.
+                const PX_PER_NOTCH: f64 = 15.0;
                 let mut frame =
                     smithay::input::pointer::AxisFrame::new(time).source(AxisSource::Wheel);
                 if dx != 0.0 {
-                    frame = frame.value(Axis::Horizontal, dx);
+                    frame = frame
+                        .value(Axis::Horizontal, dx * PX_PER_NOTCH)
+                        .v120(Axis::Horizontal, (dx * 120.0).round() as i32);
                 }
                 if dy != 0.0 {
-                    frame = frame.value(Axis::Vertical, dy);
+                    frame = frame
+                        .value(Axis::Vertical, dy * PX_PER_NOTCH)
+                        .v120(Axis::Vertical, (dy * 120.0).round() as i32);
                 }
                 self.pointer_axis_frame(frame);
             }
