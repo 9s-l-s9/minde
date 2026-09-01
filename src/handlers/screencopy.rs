@@ -69,6 +69,12 @@ pub enum CaptureFrame {
     Ext(Frame),
     /// `wlr-screencopy-unstable-v1` frame (hand-written protocol).
     Wlr(crate::handlers::wlr_screencopy::WlrPending),
+    /// `wm-screenshot`: render to an offscreen buffer and write a PNG.
+    /// Completion is reported through the automation-result registry.
+    File {
+        path: std::path::PathBuf,
+        token: crate::automation_dnd::AutomationToken,
+    },
 }
 
 /// A capture queued against an output, awaiting the next render.
@@ -316,6 +322,43 @@ pub enum FillOutcome {
 /// dmabuf). Rendered upright (`Transform::Normal`), so the captured image is
 /// the logical desktop regardless of any physical output transform. Shared by
 /// the ext and wlr protocols; the caller signals completion.
+/// Renders the scene into an offscreen buffer, reads it back as ARGB and
+/// writes an RGBA PNG to `path` (the `wm-screenshot` sink).
+fn render_to_png<R>(
+    renderer: &mut R,
+    elements: &[MindeRenderElements<R>],
+    size: Size<i32, Physical>,
+    scale: Scale<f64>,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer>,
+    R::TextureId: Send + Clone + 'static,
+    R::Error: Send + Sync + 'static,
+{
+    let buffer_size: Size<i32, BufferCoords> = (size.w, size.h).into();
+    let region = Rectangle::from_size(buffer_size);
+    let mut tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
+    let mut offscreen = renderer.create_buffer(Fourcc::Argb8888, buffer_size)?;
+    let mut framebuffer = renderer.bind(&mut offscreen)?;
+    tracker.render_output(
+        renderer,
+        &mut framebuffer,
+        0,
+        elements,
+        [0.1, 0.1, 0.1, 1.0],
+    )?;
+    let mapping = renderer.copy_framebuffer(&framebuffer, region, Fourcc::Argb8888)?;
+    drop(framebuffer);
+    let mut pixels = renderer.map_texture(&mapping)?.to_vec();
+    // Argb8888 is BGRA in little-endian memory; PNG wants RGBA.
+    for px in pixels.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    crate::png::write_rgba(path, size.w as u32, size.h as u32, &pixels)?;
+    Ok(())
+}
+
 fn fill_capture_buffer<R>(
     renderer: &mut R,
     elements: &[MindeRenderElements<R>],
@@ -512,6 +555,19 @@ pub fn satisfy_output_captures<R>(
                 let outcome =
                     fill_capture_buffer(renderer, &elements, &pending.buffer, capture.size, scale);
                 pending.complete(outcome, time);
+            }
+            CaptureFrame::File { path, token } => {
+                use crate::automation_dnd::{
+                    AutomationOperation, AutomationStatus, record_and_publish,
+                };
+                let status = match render_to_png(renderer, &elements, capture.size, scale, &path) {
+                    Ok(()) => AutomationStatus::Done,
+                    Err(err) => {
+                        tracing::warn!(%err, path = %path.display(), "wm-screenshot failed");
+                        AutomationStatus::Failed
+                    }
+                };
+                record_and_publish(token, AutomationOperation::Screenshot, status);
             }
         }
     }

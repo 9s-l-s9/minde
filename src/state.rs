@@ -929,6 +929,11 @@ impl MindeState {
                 self.enqueue_synthetic(vec![(SyntheticAction::Scroll { dx, dy }, 0)], false);
             }
             WmCommand::Drop { x, y, source } => self.start_automation_dnd(x, y, source),
+            WmCommand::Screenshot {
+                path,
+                window_id,
+                token,
+            } => self.queue_screenshot(path, window_id, token),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
@@ -957,6 +962,76 @@ impl MindeState {
                 );
             }
         }
+    }
+
+    /// Queues a `wm-screenshot` capture against the output under the pointer
+    /// (full output, or the region of `window_id`). Satisfied like any other
+    /// screen capture after the next composite; completion lands in the
+    /// automation-result registry under `token`.
+    fn queue_screenshot(&mut self, path: String, window_id: Option<u64>, token: u64) {
+        use crate::automation_dnd::{AutomationOperation, AutomationStatus, record_and_publish};
+        let fail = |token| {
+            record_and_publish(
+                token,
+                AutomationOperation::Screenshot,
+                AutomationStatus::Failed,
+            );
+        };
+        let pos = self.pointer_location;
+        let output = self
+            .space
+            .outputs()
+            .find(|o| {
+                self.space
+                    .output_geometry(o)
+                    .map(|g| g.to_f64().contains(pos))
+                    .unwrap_or(false)
+            })
+            .or_else(|| self.space.outputs().next())
+            .cloned();
+        let Some(output) = output else {
+            return fail(token);
+        };
+        let Some(output_geo) = self.space.output_geometry(&output) else {
+            return fail(token);
+        };
+        let (origin, logical_size) = match window_id {
+            None => (Point::from((0, 0)), output_geo.size),
+            Some(id) => {
+                let Some(window) = self
+                    .windows
+                    .iter()
+                    .find(|(wid, _)| *wid == id)
+                    .map(|(_, w)| w.clone())
+                else {
+                    return fail(token);
+                };
+                let Some(rect) = self.space.element_geometry(&window) else {
+                    return fail(token);
+                };
+                (rect.loc - output_geo.loc, rect.size)
+            }
+        };
+        let scale = output.current_scale().fractional_scale();
+        let size: smithay::utils::Size<i32, smithay::utils::Physical> = (
+            (logical_size.w as f64 * scale).round() as i32,
+            (logical_size.h as f64 * scale).round() as i32,
+        )
+            .into();
+        if size.w <= 0 || size.h <= 0 {
+            return fail(token);
+        }
+        self.pending_captures
+            .push(crate::handlers::screencopy::PendingCapture {
+                output,
+                frame: crate::handlers::screencopy::CaptureFrame::File {
+                    path: path.into(),
+                    token,
+                },
+                draw_cursor: false,
+                origin,
+                size,
+            });
     }
 
     /// Warps the pointer to a global logical position (clamped to the
@@ -1088,26 +1163,7 @@ impl MindeState {
         operation: crate::automation_dnd::AutomationOperation,
         status: crate::automation_dnd::AutomationStatus,
     ) {
-        crate::automation_dnd::automation_results().record(
-            crate::automation_dnd::AutomationResult {
-                token,
-                operation,
-                status,
-            },
-        );
-        let operation = match operation {
-            crate::automation_dnd::AutomationOperation::DropFiles => "drop-files",
-            crate::automation_dnd::AutomationOperation::DropText => "drop-text",
-        };
-        let status = match status {
-            crate::automation_dnd::AutomationStatus::Pending => "pending",
-            crate::automation_dnd::AutomationStatus::Accepted => "accepted",
-            crate::automation_dnd::AutomationStatus::Rejected => "rejected",
-            crate::automation_dnd::AutomationStatus::NoTarget => "no-target",
-            crate::automation_dnd::AutomationStatus::Cancelled => "cancelled",
-            crate::automation_dnd::AutomationStatus::UnsupportedTarget => "unsupported-target",
-        };
-        crate::events::publish_line(&format!("(automation-result {token} {operation} {status})"));
+        crate::automation_dnd::record_and_publish(token, operation, status);
     }
 
     /// Publish a window rectangle for thread-safe Scheme inspection. Windows

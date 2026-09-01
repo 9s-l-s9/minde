@@ -15,6 +15,7 @@ mod grabs;
 mod input;
 mod ipc;
 mod logging;
+mod png;
 mod render;
 mod runtime_dir;
 mod state;

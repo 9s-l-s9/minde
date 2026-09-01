@@ -28,6 +28,7 @@ pub type AutomationToken = u64;
 pub enum AutomationOperation {
     DropFiles,
     DropText,
+    Screenshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,51 @@ pub enum AutomationStatus {
     NoTarget,
     Cancelled,
     UnsupportedTarget,
+    Done,
+    Failed,
+}
+
+/// Wire names shared by `wm-automation-status` and the `automation-result`
+/// event line.
+pub fn operation_name(operation: AutomationOperation) -> &'static str {
+    match operation {
+        AutomationOperation::DropFiles => "drop-files",
+        AutomationOperation::DropText => "drop-text",
+        AutomationOperation::Screenshot => "screenshot",
+    }
+}
+
+pub fn status_name(status: AutomationStatus) -> &'static str {
+    match status {
+        AutomationStatus::Pending => "pending",
+        AutomationStatus::Accepted => "accepted",
+        AutomationStatus::Rejected => "rejected",
+        AutomationStatus::NoTarget => "no-target",
+        AutomationStatus::Cancelled => "cancelled",
+        AutomationStatus::UnsupportedTarget => "unsupported-target",
+        AutomationStatus::Done => "done",
+        AutomationStatus::Failed => "failed",
+    }
+}
+
+/// Records a terminal automation result and publishes the matching
+/// `automation-result` event line. Callable from render paths that don't
+/// have `MindeState`.
+pub fn record_and_publish(
+    token: AutomationToken,
+    operation: AutomationOperation,
+    status: AutomationStatus,
+) {
+    automation_results().record(AutomationResult {
+        token,
+        operation,
+        status,
+    });
+    crate::events::publish_line(&format!(
+        "(automation-result {token} {} {})",
+        operation_name(operation),
+        status_name(status)
+    ));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

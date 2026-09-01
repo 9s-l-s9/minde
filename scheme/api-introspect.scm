@@ -98,6 +98,8 @@
      "Send Ctrl+V to the focused surface using the synthetic key queue.")
     (wm-scroll "(wm-scroll dx dy)"
      "Send a continuous pointer-axis frame at the current pointer position.")
+    (wm-screenshot "(wm-screenshot path [window-id])"
+     "Write a deferred PNG of the output under the pointer (or WINDOW-ID's region) to absolute PATH; returns an automation token, completion via wm-automation-status.")
     (wm-warp-pointer-relative "(wm-warp-pointer-relative dx dy)"
      "Warp the pointer by a relative delta DX,DY.")
     (wm-set-key-repeat "(wm-set-key-repeat spec)"
