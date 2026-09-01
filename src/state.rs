@@ -43,6 +43,10 @@ enum SyntheticAction {
     // Clipboard writes must happen in queue order so a per-char paste
     // fallback (wm-type) doesn't clobber the clipboard early.
     SetClipboard { text: String },
+    // Re-sends a motion frame at the current pointer position. Queued ahead
+    // of clicks so hover-sensitive clients (custom React controls) see
+    // hover->settle->press instead of a press out of nowhere.
+    Hover,
 }
 
 #[derive(Debug)]
@@ -908,21 +912,26 @@ impl MindeState {
                 // 1=left 2=middle 3=right, as StumpWM ratclick counts them.
                 const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
                 let code = CODES[(button - 1) as usize];
-                let mut actions = Vec::with_capacity(count as usize * 2);
+                // hover->settle->press: give hover-sensitive clients (custom
+                // React radios/pills) event-loop turns to update their hit
+                // target before the press lands; hold/gap are sized so
+                // multi-clicks register as double-clicks (GTK ~400 ms).
+                let mut actions = Vec::with_capacity(count as usize * 2 + 1);
+                actions.push((SyntheticAction::Hover, 150));
                 for click in 0..count {
                     actions.push((
                         SyntheticAction::Button {
                             code,
                             pressed: true,
                         },
-                        8,
+                        40,
                     ));
                     actions.push((
                         SyntheticAction::Button {
                             code,
                             pressed: false,
                         },
-                        if click + 1 < count { 50 } else { 0 },
+                        if click + 1 < count { 80 } else { 0 },
                     ));
                 }
                 self.enqueue_synthetic(actions, false);
@@ -1309,6 +1318,10 @@ impl MindeState {
                     ],
                     crate::handlers::SelectionOwner::Text(text),
                 );
+            }
+            SyntheticAction::Hover => {
+                let pos = self.pointer_location;
+                self.warp_pointer(pos);
             }
         }
 
