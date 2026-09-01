@@ -88,6 +88,13 @@ pub enum WmCommand {
         dx: f64,
         dy: f64,
     },
+    /// Deferred screenshot (PNG); completion via the automation-result
+    /// registry under `token`, like drop-files.
+    Screenshot {
+        path: String,
+        window_id: Option<u64>,
+        token: u64,
+    },
     Drop {
         x: i32,
         y: i32,

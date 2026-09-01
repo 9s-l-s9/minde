@@ -580,6 +580,39 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
     }))
 }
 
+/// `(wm-screenshot path [window-id])` -- deferred PNG screenshot of the
+/// output under the pointer (or the region of `window-id`). Returns an
+/// automation token; completion via `(wm-automation-status token)` ->
+/// `(screenshot done|failed)` plus an `automation-result` event line.
+unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
+    let Some(path) = to_string_lossy(path) else {
+        return from_bool(false);
+    };
+    if !path.starts_with('/') {
+        return from_bool(false);
+    }
+    let window_id = if window_id == ffi::SCM_UNDEFINED {
+        None
+    } else {
+        let id = to_i64(window_id);
+        if id <= 0 {
+            return from_bool(false);
+        }
+        Some(id as u64)
+    };
+    let token = crate::automation_dnd::automation_results()
+        .allocate(crate::automation_dnd::AutomationOperation::Screenshot);
+    if send_command(WmCommand::Screenshot {
+        path,
+        window_id,
+        token,
+    }) {
+        from_i64(token as i64)
+    } else {
+        from_bool(false)
+    }
+}
+
 unsafe extern "C" fn wm_paste_key() -> Scm {
     from_bool(send_command(WmCommand::PasteKey))
 }
@@ -823,19 +856,10 @@ unsafe extern "C" fn wm_automation_status(token: Scm) -> Scm {
     let Some(result) = crate::automation_dnd::automation_results().get(token as u64) else {
         return from_bool(false);
     };
-    let operation = match result.operation {
-        crate::automation_dnd::AutomationOperation::DropFiles => "drop-files",
-        crate::automation_dnd::AutomationOperation::DropText => "drop-text",
-    };
-    let status = match result.status {
-        crate::automation_dnd::AutomationStatus::Pending => "pending",
-        crate::automation_dnd::AutomationStatus::Accepted => "accepted",
-        crate::automation_dnd::AutomationStatus::Rejected => "rejected",
-        crate::automation_dnd::AutomationStatus::NoTarget => "no-target",
-        crate::automation_dnd::AutomationStatus::Cancelled => "cancelled",
-        crate::automation_dnd::AutomationStatus::UnsupportedTarget => "unsupported-target",
-    };
-    scm_list(&[from_symbol(operation), from_symbol(status)])
+    scm_list(&[
+        from_symbol(crate::automation_dnd::operation_name(result.operation)),
+        from_symbol(crate::automation_dnd::status_name(result.status)),
+    ])
 }
 
 unsafe extern "C" fn wm_request_paste() -> Scm {
@@ -1220,6 +1244,13 @@ pub fn init(loop_signal: LoopSignal) {
             ),
         );
         register_gsubr("wm-paste", 0, 0, 0, wm_paste_key);
+        register_gsubr(
+            "wm-screenshot",
+            1,
+            1,
+            0,
+            std::mem::transmute::<unsafe extern "C" fn(Scm, Scm) -> Scm, ffi::Gsubr>(wm_screenshot),
+        );
         register_gsubr(
             "wm-scroll",
             2,
