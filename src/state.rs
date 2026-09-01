@@ -40,6 +40,9 @@ enum SyntheticAction {
     Key { code: u32, pressed: bool },
     Button { code: u32, pressed: bool },
     Scroll { dx: f64, dy: f64 },
+    // Clipboard writes must happen in queue order so a per-char paste
+    // fallback (wm-type) doesn't clobber the clipboard early.
+    SetClipboard { text: String },
 }
 
 #[derive(Debug)]
@@ -1295,6 +1298,18 @@ impl MindeState {
                 }
                 self.pointer_axis_frame(frame);
             }
+            SyntheticAction::SetClipboard { text } => {
+                smithay::wayland::selection::data_device::set_data_device_selection(
+                    &self.display_handle,
+                    &self.seat,
+                    vec![
+                        "text/plain;charset=utf-8".to_string(),
+                        "text/plain".to_string(),
+                        "UTF8_STRING".to_string(),
+                    ],
+                    crate::handlers::SelectionOwner::Text(text),
+                );
+            }
         }
 
         if self.synthetic_actions.is_empty() {
@@ -1505,14 +1520,47 @@ impl MindeState {
                     }
                 }
             }
-            table
+            let ctrl_key = modifier_keys
+                .get(&keymap.mod_get_index(xkb::MOD_NAME_CTRL))
+                .copied();
+            (table, ctrl_key)
         });
+        let (table, ctrl_key) = table;
+        // Fallback route for chars the keymap scan cannot resolve (e.g. AltGr
+        // symbols whose modifier mask has no real key): clipboard + Ctrl+V,
+        // queued in order so the clipboard write happens right before its paste.
+        let paste_combo = ctrl_key.zip(table.get(&'v').map(|(kc, _)| *kc));
 
         let mut actions = Vec::new();
         let chars: Vec<char> = text.chars().collect();
         for (index, ch) in chars.iter().copied().enumerate() {
             let Some((kc, modifiers)) = table.get(&ch) else {
-                tracing::debug!(?ch, "wm-send-string: no key for char in the active layout");
+                let Some((ctrl, v)) = paste_combo else {
+                    tracing::warn!(
+                        ?ch,
+                        "wm-send-string: no key and no Ctrl+V fallback; dropped"
+                    );
+                    continue;
+                };
+                tracing::debug!(
+                    ?ch,
+                    "wm-send-string: no key in layout; pasting via clipboard"
+                );
+                let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };
+                actions.push((
+                    SyntheticAction::SetClipboard {
+                        text: ch.to_string(),
+                    },
+                    0,
+                ));
+                for (code, pressed, delay) in [
+                    (ctrl.raw(), true, 0),
+                    (v.raw(), true, 8),
+                    (v.raw(), false, 0),
+                    (ctrl.raw(), false, trailing.max(30)),
+                ] {
+                    actions.push((SyntheticAction::Key { code, pressed }, delay));
+                }
                 continue;
             };
             let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };

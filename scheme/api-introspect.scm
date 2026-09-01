@@ -89,7 +89,7 @@
     (wm-send-string "(wm-send-string text [delay-ms])"
      "Type TEXT through paced synthetic key events (20 ms between characters by default).")
     (wm-type "(wm-type text [delay-ms])"
-     "Reliably type TEXT through paced synthetic key events.")
+     "Reliably type TEXT through paced synthetic key events; chars the layout cannot produce fall back to clipboard+Ctrl+V in order.")
     (wm-click "(wm-click button [count])"
      "Click BUTTON COUNT times; accepts left/middle/right symbols, 1/2/3, or evdev codes.")
     (wm-send-key "(wm-send-key mods keysym-name)"
