@@ -41,3 +41,17 @@ Dialog weiterhin nicht zuverlässig). Funktionierte einwandfrei.
 ## Verwandt
 - `issue-wm-type-drops-modifier-chars.md` (separates Finding derselben Session)
 - Ursprüngliches Feature-Issue: `issue-wm-drop-files.md`
+
+## Status: VERBESSERUNG IMPLEMENTIERT (2026-08-31)
+Dwell-Loop von 10 auf **40 Motion-Turns (~1 s)** erhöht und pro Turn ein
+**±1-px-Jitter** eingebaut, damit der Client echte Koordinatenänderungen sieht
+(Browser feuern `dragover` pro Motion-Event und koalescen Positionsduplikate).
+Release weiterhin sofort bei `DndAction::Copy`. Umsetzung in `src/state.rs`
+(`start_automation_dnd`/`continue_automation_dnd`). Gegen echte Ashby-Dropzone
+noch zu verifizieren; GTK-Dialog-Fallback bleibt dokumentiert.
+
+## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
+Echte Ashby-Dropzone (jobs.ashbyhq.com/sierra, Resume-Feld): `(wm-drop-files
+x y (list pdf))` → `(drop-files accepted)`, Datei erscheint als Attachment mit
+Replace-Button (vorher abgelehnt). Dwell-40+Jitter bestätigt. **VERIFIZIERT.**
