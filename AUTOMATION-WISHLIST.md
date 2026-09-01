@@ -106,7 +106,69 @@ B. **`wm-drop-files` wird von Browser-Dropzones abgelehnt** (`(drop-files reject
 - IPC-Socket + `(ok RESULT)`-Envelope: sehr angenehm zum Scripten.
 - `all-window-ids` / `window-title` / `window-app-id`: perfekt zum Fenster-Finden.
 - `wm-set-clipboard` + `wm-send-key 4 "v"`: der zuverlässige Text-Eingabe-Weg.
+
+## 🔎 Neue Findings (2026-08-29, atira-Ashby-Bewerbung end-to-end gefahren)
+
+C. **`wm-scroll` scrollt weiterhin nicht** (bestätigt, s. `issue-wm-scroll-no-effect.md`),
+   UND `Page_Down`/`Page_Up`/`End`/`Home` scrollen **nicht**, sobald ein Formularfeld
+   fokussiert ist (die Keys gehen ins Feld, nicht an den Viewport). Bei einem langen
+   Ashby-Formular war das der größte Zeitfresser. **Zuverlässiger Workaround gefunden:
+   Tab-Walk** — ein Feld fokussieren (`wm-click` hinein) und dann mehrfach
+   `(wm-send-key 0 "Tab")`; der Browser scrollt das jeweils fokussierte Element
+   automatisch in den Sichtbereich. So kommt man deterministisch bis zum Submit-Button.
+   (Mausrad-Buttons 4/5 via `wm-click` scrollten hier ebenfalls nicht.)
+   → In `issue-wm-scroll-no-effect.md` als Workaround nachgetragen.
+
+D. **`wm-type` liefert `+` und Leerzeichen korrekt** (2026-08-29: „+49 162 5697085"
+   kam vollständig an). Das verfeinert Finding A: es droppen offenbar nur bestimmte
+   Modifier-Symbole (`@`, `:` — s. `issue-wm-type-drops-modifier-chars.md`), aber
+   `+`/Space/Ziffern gehen. Für Sonderzeichen weiter Clipboard+Paste nutzen.
+
+E. **Klicks auf custom React-Controls (Ashby Radio/Segmented-Toggle) sind flaky und
+   brauchen das Label, nicht das Grafik-Element.** Ein `wm-click` auf den Radio-*Kreis*
+   bzw. die Pill-Mitte registrierte oft gar nicht; erst der Klick auf den **Label-Text**
+   (z. B. „Social media …", „Yes") selektierte. Zudem landete derselbe Klick mal, mal
+   nicht — Muster, das schließlich klappte: warpen, ~400 ms warten, klicken, ~300 ms
+   drauf bleiben, per Crop-Screenshot verifizieren (Selektion = schwarz gefüllter Pill
+   bzw. blauer Radio-Dot, sehr subtil). Verdacht: entweder Klick-Timing/Serial oder das
+   synthetische Pointer-Event trifft nicht dieselbe Surface-Koordinate wie ein echter
+   Klick. **Wunsch:** klären, ob `wm-click` bei schnellen Folgeklicks Events verschluckt,
+   und ob ein „hover→settle→click"-Timing (echte enter/motion/frame vor button) die
+   Trefferquote auf custom Controls erhöht.
+
+F. **Clipboard-Paste hat ~1 s Render-Lag im Feld.** Nach `wm-send-key 4 "v"` erscheint
+   der Text erst ~1 s später sichtbar. Wer zu früh screenshottet, hält das Feld für leer
+   und pastet erneut → **verdoppelter Inhalt**. **Regel fürs Scripten:** ein Paste, dann
+   ≥1,5–2 s warten, DANN verifizieren; nie auf Basis eines Sofort-Screenshots re-pasten.
+   (Kein Bug zwingend, aber dokumentierenswert; ggf. `wm-paste` erst nach Client-Commit
+   zurückkehren lassen.)
 - **Der entscheidende Win:** nativer Compositor-Input hat KEIN „remote control"-
   Flag → reCAPTCHA v3 / Ashby lassen durch, wo CDP/Marionette/Playwright blocken.
   minde ist damit ein besseres Browser-Automatisierungs-Target als jedes
   WebDriver-Framework. Die obigen Fixes machen es rund.
+
+## 🔧 Update 2026-08-31 — Fünferpaket implementiert (Details in den issue-*.md)
+
+1. **`wm-scroll` gefixt**: dx/dy = Wheel-Notches, sendet `value120` + kontinuierlich
+   (`issue-wm-scroll-no-effect.md`).
+2. **`wm-type` droppt nichts mehr**: unauflösbare Zeichen (AltGr/`@`/`:`) laufen
+   pro Zeichen über queued Clipboard+Ctrl+V (`issue-wm-type-drops-modifier-chars.md`).
+3. **`wm-click` mit hover→settle→press** (150 ms Settle, 40 ms Hold, 80 ms Gap)
+   (`issue-wm-click-paste-settle-timing.md`).
+4. **`(wm-screenshot path [window-id])` neu**: natives PNG über die Capture-Queue,
+   Token + `wm-automation-status`, kein grim mehr nötig
+   (`issue-wm-screenshot-primitive.md`).
+5. **DnD-Dwell**: 40 Turns (~1 s) mit ±1-px-Jitter für Browser-`dragover`
+   (`issue-wm-drop-files-rejected-by-dropzones.md`).
+
+Alle Änderungen: `make check` grün (fmt, build, test, clippy -D warnings,
+Scheme-/API-Tests); Headless-Smoke (Xvfb winit) für scroll/type/screenshot ok.
+Real-World-Verifikation (Zen-Langseite, Ashby-Radio, Ashby-Dropzone) steht aus.
+
+### Real-World-Verifikation 2026-09-01
+Alle fünf Fixes in einer nested Session (neues Binary) gegen echte Seiten
+bestätigt: Wikipedia-Scroll (value120), Zen-URL-Leiste `a@b:c_x?!` (Type-
+Fallback), Zen-Onboarding + Ashby-Radios erster Versuch (Click-Settle), Ashby-
+Dropzone akzeptiert Drop (DnD-Dwell), 20× wm-screenshot als Verify-Loop.
+Ashby hat den minde-Flow nicht als Bot geflaggt. Host-Session läuft noch mit
+altem Binary — Compositor-Neustart nötig, damit die Fixes dort ankommen.

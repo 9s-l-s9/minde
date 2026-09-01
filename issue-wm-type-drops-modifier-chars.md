@@ -30,3 +30,18 @@ Für Felder mit Sonderzeichen: `(wm-set-clipboard "…")` + Feld anklicken +
 ## Akzeptanz
 `(wm-type "a@b:c/d!e?f")` landet zeichengenau im fokussierten Feld — inklusive
 Shift-/AltGr-Symbolen, unabhängig vom aktiven Tastaturlayout.
+
+## Status: FIX IMPLEMENTIERT (2026-08-31)
+Hybrid aus Fix-Idee 1+2: Zeichen, die die Keymap auflösen kann, werden weiter
+echt getippt (inkl. Modifier); **nicht auflösbare Zeichen (z. B. AltGr-Symbole
+ohne realen Modifier-Key) fallen pro Zeichen auf Clipboard+Ctrl+V zurück** —
+der Clipboard-Write läuft als queued SyntheticAction in Reihenfolge, nichts
+wird mehr gedroppt. Umsetzung in `src/state.rs` (`send_string`,
+`SyntheticAction::SetClipboard`). Achtung: das Clipboard enthält danach das
+letzte Fallback-Zeichen.
+
+## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
+Zen-URL-Leiste: `(wm-type "a@b:c_x?!")` kommt vollständig und in richtiger
+Reihenfolge an (@ : ? ! vorher gedroppt). Clipboard-Fallback bestätigt.
+**VERIFIZIERT, kann zu.**
