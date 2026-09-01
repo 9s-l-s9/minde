@@ -91,7 +91,7 @@
     (wm-type "(wm-type text [delay-ms])"
      "Reliably type TEXT through paced synthetic key events; chars the layout cannot produce fall back to clipboard+Ctrl+V in order.")
     (wm-click "(wm-click button [count])"
-     "Click BUTTON COUNT times; accepts left/middle/right symbols, 1/2/3, or evdev codes.")
+     "Click BUTTON COUNT times after a hover/settle motion; accepts left/middle/right symbols, 1/2/3, or evdev codes.")
     (wm-send-key "(wm-send-key mods keysym-name)"
      "Synthesize a paced key press/release with modifier mask MODS; Enter aliases Return.")
     (wm-paste "(wm-paste)"
