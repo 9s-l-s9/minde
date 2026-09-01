@@ -1142,7 +1142,11 @@ impl MindeState {
             self.seat.clone(),
         );
         pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Keep);
-        self.continue_automation_dnd(source, 10);
+        // Up to ~1 s of dragover dwell: browser dropzones only accept once
+        // their JS dragover handler ran preventDefault, which needs real
+        // motion events and event-loop turns (issue-wm-drop-files-rejected-
+        // by-dropzones.md).
+        self.continue_automation_dnd(source, 40);
     }
 
     /// Give the target several dispatch turns to accept its offer. Browser
@@ -1158,7 +1162,16 @@ impl MindeState {
         let timer =
             smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(25));
         let _ = self.handle.insert_source(timer, move |_, _, state| {
-            state.warp_pointer(state.pointer_location);
+            // Wiggle by one device pixel so the client sees a real coordinate
+            // change each turn -- browsers fire dragover per motion event and
+            // may coalesce same-position motions.
+            let jitter = if motions_left.is_multiple_of(2) {
+                1.0
+            } else {
+                -1.0
+            };
+            let pos = state.pointer_location + Point::from((jitter, 0.0));
+            state.warp_pointer(pos);
             if source.selected_action() == DndAction::Copy || motions_left <= 1 {
                 let time = state.start_time.elapsed().as_millis() as u32;
                 state.pointer_button_event(0x110, ButtonState::Released, time);
