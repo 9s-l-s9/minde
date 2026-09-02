@@ -153,9 +153,11 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       every request costs connect+accept+source registration+close. A persistent
       newline- or length-framed connection would help agents and bars. unverified
       relative to 2.1, which dominates today.
+      Won't do: changes the documented IPC framing (doc/ipc-eww.md) during the 1.0 RC freeze; revisit together with a native mindectl after 1.0.
 - [ ] **2.6 The 250 ms deadline (`ipc.rs:621`) covers evaluation and write time**;
       a large `(describe-api)` reply to a slow reader is dropped mid-write. documented
       as intended, flagged only.
+      Won't do: documented behaviour; the deadline timer is now cancelled on completion (2.4), so only genuinely slow readers are affected.
 - [x] **2.7 Event fan-out serialises every event even with zero subscribers.**
       `run-event-hook!` (`hooks.scm:46-66`) resolves `(guile-user)` twice per firing
       and `minde-mirror-event` (`event-stream.scm:51-59`) `write`s the datum before
@@ -332,7 +334,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 
 ## 4. Scheme policy layer hot paths
 
-- [ ] **4.1 Status publication builds the full state twice and writes two files
+- [x] **4.1 Status publication builds the full state twice and writes two files
       synchronously per sync** (`status.scm:196-222`). `publish-status!` is the
       `%sync-hook` (`init.scm:36`), so it runs after every `sync-frames-now!` (57
       `sync-frames!` call sites), every `add-urgent-window!` (`frames.scm:2191`) and
@@ -345,6 +347,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       version-counter fingerprint; defer writes with `wm-run-after 0` or a calloop
       idle so bursts (group switch) coalesce; drop the legacy `/minde-status` file if
       nothing reads it (unverified). verified.
+      Done (21a6278): `state-body` is built once per publish and reused for the fingerprint and both outputs; JSON goes through a string port; the two file writes are deferred and coalesced through `wm-run-after` (`%pending-body`, `%write-scheduled?`), the sequence number still advances synchronously as `tests/status-test.scm` requires; the legacy `/minde-status` line is kept because doc/ipc-eww.md documents it.
 - [x] **4.2 `sync-frames-now!` re-places every window of every head on every focus
       change** (`compositor/frames.scm:2041-2110`). Every focus move, split, pull or
       rename issues `wm-place-window` for every window (hidden ones re-parked at
