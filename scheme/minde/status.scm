@@ -249,18 +249,22 @@ When REDACT? is true, window titles and application identifiers are omitted."
 Unchanged compositor state is not rewritten; the sequence number advances
 per change even when several changes coalesce into one write. Errors are
 logged and swallowed so a missing runtime directory cannot interrupt window
-management."
-  (let* ((runtime (call-runtime-info))
-         (body (state-body #f))
-         ;; Uptime is observational and changes continuously; it must not turn
-         ;; every policy sync into a false status change.
-         (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
-                                  (list-ref runtime 2))
-                            body)))
-    (unless (equal? fingerprint %last-fingerprint)
-      (set! %last-fingerprint fingerprint)
-      (set! %sequence (+ %sequence 1))
-      (set! %pending-body body)
-      (set! %pending-runtime runtime)
-      (schedule-status-write!)))
+management. Before any output is configured there is nothing meaningful to
+report (and no head geometry to describe), so the call returns immediately
+without building the state body or touching the sequence number; the sync
+hook's own state build only ever runs after the first output exists."
+  (unless (null? (or (rust-call-if-bound 'wm-outputs) '()))
+    (let* ((runtime (call-runtime-info))
+           (body (state-body #f))
+           ;; Uptime is observational and changes continuously; it must not
+           ;; turn every policy sync into a false status change.
+           (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
+                                    (list-ref runtime 2))
+                              body)))
+      (unless (equal? fingerprint %last-fingerprint)
+        (set! %last-fingerprint fingerprint)
+        (set! %sequence (+ %sequence 1))
+        (set! %pending-body body)
+        (set! %pending-runtime runtime)
+        (schedule-status-write!))))
   %sequence)

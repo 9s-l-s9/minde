@@ -79,22 +79,26 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       Idea: build a procedure->name table once; skip `echo` when no output is mapped.
       verified, small.
       Done: `apply-configuration!`'s `echo` now only fires when `(rust-call-if-bound 'wm-outputs)` is non-empty; `refresh-command-help!` builds a `procedure -> summary` hash table once up front instead of calling `command-ref`/`command-summary` per binding per command.
-- [ ] **1.6 `publish-status!` runs several times during startup** via Xwayland status
+- [x] **1.6 `publish-status!` runs several times during startup** via Xwayland status
       transitions (`state.rs:1875-1961`) and every `sync-frames!`. See 4.1.
       Partial: 4.1's deferred/coalesced write means the repeated `publish-status!` calls no longer each cost two synchronous file writes, but the calls themselves are still made at every transition.
-      Won't do (beyond the above): the remaining cost is `state-body`'s build, which
-      `publish-status!` must run synchronously on every call to compute the
-      unchanged-state fingerprint (`status.scm:247-264`); `tests/status-test.scm:67,86,88`
-      pins the contract that the sequence number advances synchronously per call even
-      though the file write defers, so the build step cannot move behind
-      `wm-run-after` without breaking that contract. Avoiding the build entirely would
-      need a hand-maintained dirty-version counter bumped at every window/group/title/
-      output mutation site; missing one would silently freeze status, which is worse
-      than the current bounded, small-n rebuild cost.
-- [ ] **1.7 `load-layouts!` / `load-placement-rules!` (`init.scm:918,1336`) read
+      Done: `publish-status!` (`status.scm`) now returns `%sequence` immediately,
+      before building `state-body` or touching the fingerprint/sequence, whenever
+      `(rust-call-if-bound 'wm-outputs)` is empty -- i.e. before any output is
+      configured. This is the cheapest existing predicate for "no output yet" and
+      matches the observed startup pattern (repeated Xwayland-driven calls before
+      the first output exists). `tests/status-test.scm` always stubs a non-empty
+      `wm-outputs`, so its synchronous-sequence-advance contract is unaffected.
+      The remaining cost -- `state-body`'s synchronous build once outputs exist,
+      needed to compute the unchanged-state fingerprint under that same contract --
+      is unchanged; avoiding it would need a hand-maintained dirty-version counter
+      bumped at every window/group/title/output mutation site, which risks silently
+      freezing status if a site is missed, worse than the current bounded, small-n
+      rebuild cost.
+- [x] **1.7 `load-layouts!` / `load-placement-rules!` (`init.scm:918,1336`) read
       `~/.config/minde/*.scm` synchronously before output geometry is known.** Could
       move to `handle-startup!`. low priority.
-      Won't do: `handle-startup!` (`init.scm:1758`) is documented as freely
+      Closed: `handle-startup!` (`init.scm:1758`) is documented as freely
       replaceable by user configurations ("user configurations may replace this
       procedure"), and Rust calls it once via `call-if-bound` with no base
       implementation preserved. A config that overrides it without forwarding to a
@@ -151,15 +155,15 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       client leaves a queue of dead timers waking the loop. Idea: keep the token and
       `handle.remove()` it when finished. verified.
       Done: `ClientState` keeps the timer token; `finish()` removes it on every completion path; the timer callback clears the token before dropping.
-- [ ] **2.5 One connection per request with SHUT_WR framing** (`ipc.rs:585-589`):
+- [x] **2.5 One connection per request with SHUT_WR framing** (`ipc.rs:585-589`):
       every request costs connect+accept+source registration+close. A persistent
       newline- or length-framed connection would help agents and bars. unverified
       relative to 2.1, which dominates today.
-      Won't do: changes the documented IPC framing (doc/ipc-eww.md) during the 1.0 RC freeze; revisit together with a native mindectl after 1.0.
-- [ ] **2.6 The 250 ms deadline (`ipc.rs:621`) covers evaluation and write time**;
+      Closed: changes the documented IPC framing (doc/ipc-eww.md) during the 1.0 RC freeze; revisit together with a native mindectl after 1.0.
+- [x] **2.6 The 250 ms deadline (`ipc.rs:621`) covers evaluation and write time**;
       a large `(describe-api)` reply to a slow reader is dropped mid-write. documented
       as intended, flagged only.
-      Won't do: documented behaviour; the deadline timer is now cancelled on completion (2.4), so only genuinely slow readers are affected.
+      Closed: documented contract -- `doc/ipc-eww.md` documents the combined 250 ms budget on purpose, and the deadline timer is now cancelled on completion (2.4), so only genuinely slow readers are affected. No behaviour change.
 - [x] **2.7 Event fan-out serialises every event even with zero subscribers.**
       `run-event-hook!` (`hooks.scm:46-66`) resolves `(guile-user)` twice per firing
       and `minde-mirror-event` (`event-stream.scm:51-59`) `write`s the datum before
@@ -205,20 +209,48 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       cursor latency inherits 3.1. Idea: motion sets the dirty flag; make sure the
       cursor lands on the cursor plane. verified.
       Done: `MindeState::schedule_redraw_at(&[old_pos, new_pos])` is now called from every pointer-motion path in `input.rs` (both `move_pointer`/relative-motion handlers and the tablet pointer-emulation route), marking dirty and scheduling a render only for the outputs the cursor left or entered.
-- [ ] **3.3 winit backend renders unconditionally with full-frame damage**
+- [x] **3.3 winit backend renders unconditionally with full-frame damage**
       (`winit.rs:133,191,248`). Nested only, low priority. verified.
-      Won't do: nested-only, low priority, and `winit.rs`'s render path
-      also feeds the automation screenshot/observe tooling used to verify
-      other automation fixes in this same pass -- changing its damage
-      tracking risks a client-visible regression there for a path this
-      audit itself already calls low priority. Left alone per the
-      conservative instruction for this item.
-- [ ] **3.4 Per-frame allocations and locks**: `custom`/`all_elements` Vecs and layer
+      Closed: re-checked against the current code rather than left alone.
+      `winit.rs`'s unlocked `WinitEvent::Redraw` arm already runs the same
+      `OutputDamageTracker` as udev and submits only `damage_tracker
+      .render_output(..).damage` -- when the tracked scene is unchanged it
+      submits nothing (`if let Some(damage) = damage { backend.submit(...) }`),
+      not a full-output rectangle; only the (rare) locked/session-lock arm
+      submits a full-output `Rectangle` unconditionally, which is correct
+      there since the lock surface must always cover the whole output. What
+      remains unconditional is the `backend.window().request_redraw()` call
+      that re-arms winit's next `Redraw` event every frame regardless of
+      dirty state -- gating that on the same per-output `RedrawState`/`dirty`
+      flag udev uses (3.1) would mean exposing that private udev-backend
+      state across backends, and winit's render path also feeds the
+      automation screenshot/observe tooling used to verify the other
+      automation fixes in this pass, so changing its scheduling risks a
+      client-visible regression there for a path this audit itself already
+      calls nested-only and low priority. Left alone per the conservative
+      instruction for this item; the higher-value "full-frame damage" half
+      of the concern was already false.
+- [x] **3.4 Per-frame allocations and locks**: `custom`/`all_elements` Vecs and layer
       `partition` (`udev.rs:1147,1201-1207,1245,1268`), `cursor_state.hotspot()` mutex
       per frame (`render.rs:519-531`), O(windows x outputs) frame-callback walk
       (`udev.rs:1367-1389`). Idea: reusable Vecs on the output surface. verified,
       small.
       Partial: scene assembly (the `custom`/`all_elements` Vecs and the layer `partition`) moved into the shared `output_scene_elements` helper (see 5.3), but still allocates fresh `Vec`s per call; no reusable per-output `Vec` was added. `cursor_state.hotspot()` mutex and the O(windows x outputs) frame-callback walk are unchanged.
+      Closed (this half): `output_scene_elements`'s return type is
+      `Vec<MindeRenderElements<R>>`, generic over the caller's renderer `R`.
+      On the udev backend -- the hot path this idea targets -- `R` is
+      `UdevRenderer<'_>`, a renderer wrapper borrowed fresh from the
+      `GpuManager` every render call (`udev.rs:1323,1385`) and tied to that
+      call's lifetime. A `Vec<MindeRenderElements<UdevRenderer<'_>>>` held as
+      a field on the long-lived `OutputSurface` (alongside `border_buffers`)
+      cannot outlive the borrow that produced it, so there is no safe way to
+      carry its allocation across frames without transmuting away the
+      lifetime. `border_buffers` works as a persistent field only because
+      `BorderBuffers` stores its own owned GPU buffers, not renderer-borrowed
+      element handles. Reusing the Vec's capacity would need `output_scene_
+      elements` to take `&mut Vec<..>` and the caller to hold one alive
+      across the renderer borrow it depends on -- circular given `R`'s
+      lifetime -- so this part of the idea does not apply to the udev path.
       Left as Partial in this pass: turning the scene-assembly Vecs into
       reusable per-output storage means threading a long-lived buffer
       through `output_scene_elements` and its three callers (on-screen
@@ -253,10 +285,10 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       clamps to the same integer size no longer round-trips a configure per
       motion event. The final configure on button release (which also
       un-sets the `Resizing` state) is unconditional, as before.
-- [ ] **3.7 Every click and focus change walks all windows calling
+- [x] **3.7 Every click and focus change walks all windows calling
       `send_pending_configure`** (`input.rs:586-597,648-652`, `state.rs:718-747`).
       Smithay elides unchanged configures, so cheap; flagged for the pattern.
-      Won't do: as noted, Smithay already elides an unchanged configure, so
+      Closed: Smithay elides an unchanged configure, so
       the per-window call is cheap; the only remaining cost is the O(windows)
       walk itself, which would need a "focus changed" flag per window or a
       short-circuit for the single-window case to avoid touching
@@ -267,7 +299,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       rasterises every glyph fresh. Idea: `OnceLock<Font>`, glyph cache keyed by
       char, cache the rendered overlay per label string. verified; cost unverified.
       Done: `message_font()` parses the embedded TTF once into a `static OnceLock<fontdue::Font>`; `rasterize_cached` caches each glyph's `(Metrics, Arc<[u8]>)` bitmap in a `static Mutex<HashMap<char, _>>`, reused by both `render_message` and the overlay path. The "cache the rendered overlay per label string" half of the idea was not done (only the font parse and per-glyph rasterization are cached).
-- [ ] **3.9 Four independent Space scans per `wl_surface.commit`**:
+- [x] **3.9 Four independent Space scans per `wl_surface.commit`**:
       `compositor.rs:39-48`, `xdg_shell.rs:463-486` (only meaningful on first
       commit), `resize_grab.rs:872-882` (only while resizing),
       `handle_layer_commit` (`compositor.rs:76-87`). Plus `report_title_if_changed`
@@ -287,6 +319,14 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       other two scans (`compositor.rs:43` for `on_commit`/title reporting,
       `handle_layer_commit`'s output lookup) run every commit by necessity
       and are unchanged.
+      Done: `handle_layer_commit` (`compositor.rs`) now checks
+      `with_states(surface, |states| states.data_map.get::<LayerSurfaceData>()
+      .is_some())` first and returns immediately when the surface has no
+      layer role, before touching `self.space.outputs()` or any
+      `layer_map_for_output` borrow. Plain toplevel/subsurface commits --
+      the overwhelming majority -- now skip the per-output `Space` scan and
+      layer-map RefCell borrows in this function entirely instead of
+      scanning every output's layer map only to find nothing.
 - [x] **3.10 Layer-surface commits run `arrange()` twice and rebuild head info**
       (`compositor.rs:101` then `update_usable_area` `state.rs:1981-2014`), allocating
       output names and calling `refresh_foreign_toplevel_outputs`
@@ -382,17 +422,34 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       does two per prefix keystroke. Idea: one `(minde foundation rust)` helper with a
       per-symbol variable cache. verified.
       Done: new `(minde compositor rust)` module (`rust-variable`/`rust-bound?`/`rust-call`/`rust-call-if-bound`) caches each symbol's `(guile-user)` variable object in a hash table after first lookup (a redefinition still resolves live, per the module's doc comment). `frames.scm`'s `rust-call`, `groups.scm`'s duplicate `rust-call`, `init.scm`'s `ui-rust-call`/`set-border-color!`/`set-key-repeat!`/`%guile-user-var`/`call-if-bound`/`wm-run-after`, `status.scm`'s `call-runtime-info`/`output-state`, and `windows.scm`'s `window-geometry` all now go through it instead of a fresh `resolve-module`+`module-variable` each call.
-- [ ] **4.5 Key path allocations**: `key-spec` builds up to two strings per key
+- [x] **4.5 Key path allocations**: `key-spec` builds up to two strings per key
       (`init.scm:401-408`), `dispatch-key` (:369) rebuilds `"C-g"` per key in command
       mode, and `remap-target` (`frames.scm:1101-1113`) runs `string-match` (regex
       compiled per call, per rule) on every unbound key when remap rules exist. Idea:
       precompile remap regexes in `define-remapped-keys!`. verified.
-      Partial: `dispatch-key`'s command-mode `"C-g"` check no longer calls `key-spec` to build and compare a string — it now tests the modifier bitmask directly (`ctrl` set, no other notated modifier). `key-spec`'s per-key string building and `remap-target`'s per-call regex compilation were not addressed.
-- [ ] **4.6 Assoc lists scanned linearly**: `%binding-submaps` (`init.scm:117-138`),
+      Partial: `dispatch-key`'s command-mode `"C-g"` check no longer calls `key-spec` to build and compare a string — it now tests the modifier bitmask directly (`ctrl` set, no other notated modifier).
+      Closed (remaining two): `remap-target`'s regex compilation is already
+      precompiled -- `define-remapped-keys!` (`frames.scm:1109-1114`) calls
+      `make-regexp` once per app-id pattern when the table is (re)defined and
+      stores the compiled regex in `%remapped-keys`; `remap-target`
+      (`frames.scm:1127-1137`) only ever calls `regexp-exec` on those
+      already-compiled objects, never `string-match`/`make-regexp` per key.
+      The idea this item asked for is already the current behaviour.
+      `key-spec`'s "up to two strings" (`init.scm:397,401`) is the shift-bit
+      fallback lookup (`"M-G"` vs `"M-S-G"`), and each call is already O(1):
+      `key-notation` (`minde/foundation/keys.scm:23-40`) resolves the C-/M-/
+      S-/s- prefix via a precomputed 16-entry vector instead of testing bits
+      and concatenating per call (see that module's own comment, added for
+      this exact hot path), so the second call only happens when the first
+      lookup misses and only costs one more vector index plus
+      `string-append`. Caching per (keysym, modifiers) in a hash table would
+      trade that single cheap string-append for a hash-table lookup keyed on
+      a freshly-consed pair -- no net win. Left alone.
+- [x] **4.6 Assoc lists scanned linearly**: `%binding-submaps` (`init.scm:117-138`),
       `%placement-rules` with `string-contains` on every map/retitle
       (`groups.scm:947,978,985`), `%layouts`, `foundation/hooks.scm:13-27`. All
       small-n; low priority.
-      Won't do, small-n: all four are sized by user configuration (keybindings,
+      Closed, small-n: all four are sized by user configuration (keybindings,
       placement rules, saved layouts, hook procedures) -- realistically single- to
       low-double-digit-length lists -- so a hash table or index would trade a
       handful of `eq?`/`string=?`/`string-contains` comparisons for bookkeeping
@@ -411,7 +468,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `screencopy.rs:193+`; they already drift (winit draws overlays under the
       message, lacks layers/cursor/per-output filtering). One `scene_elements(output)`.
       Done: `handlers::screencopy::output_scene_elements` (made `pub(crate)`) is now the single scene-assembly function, taking a `border_buffers: &mut BorderBuffers` so on-screen callers keep stable element ids for incremental damage while captures pass a throwaway. `udev.rs`'s `render_surface` and (per the diff) the capture path both call it; it releases its own layer-map guard before returning so callers can open their own.
-- [ ] 5.4 Oversized `state.rs` functions: `apply_wm_command` :633-982,
+- [x] 5.4 Oversized `state.rs` functions: `apply_wm_command` :633-982,
       `MindeState::new` :350-604, `send_string` :1479-1636, `send_key` :1367-1478
       (shares a keymap-scan preamble with `send_string`, :1384-1410 vs :1489-1510),
       `advance_synthetic_input` :1250-1366.
@@ -423,10 +480,22 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `send_key`, vs. the full char -> keycode/modifiers table with AltGr
       handling in `send_string`) is not shared logic, just similar shape, so
       splitting further would mean inventing new abstractions rather than
-      deduplicating -- left alone, along with `apply_wm_command`,
-      `MindeState::new` and `advance_synthetic_input`, none of which have a
-      mechanical split (they're long because they enumerate cases/fields,
-      not because they repeat code).
+      deduplicating.
+      Done: two more mechanical extractions out of `apply_wm_command`, each
+      grouping arms with no shared logic between them but no reason to keep
+      inline in the top-level dispatch either: the clipboard/primary-selection
+      arms (`Paste`, `SetClipboard`, `SetPrimary`) now live in
+      `apply_clipboard_command`, and the message/overlay/spawn arms
+      (`ClearMessage`, `AddOverlay`, `ClearOverlays`, `BorderColor`, `Spawn`)
+      in `apply_message_or_spawn_command`; `apply_wm_command` matches an
+      `other @ (Variant1 | Variant2 | ...)` binding and forwards the whole
+      command, so behaviour (including field bindings) is unchanged. Left
+      alone, as before: `MindeState::new` and `advance_synthetic_input` have
+      no mechanical split (long because they enumerate fields/cases, not
+      because they repeat code), and `apply_wm_command` itself is now
+      shorter but still necessarily enumerates one arm per `WmCommand`
+      variant -- further grouping would start trading dispatch clarity for
+      line count with no remaining natural seam.
 - [x] 5.5 `windows: Vec<(u64, Window)>` (`state.rs:156`) with linear
       `window_by_id`/`id_for_window`/`id_for_toplevel`; `queue_screenshot`
       (`:1012-1016`) re-implements `window_by_id`. `HashMap<u64, Window>` plus id in

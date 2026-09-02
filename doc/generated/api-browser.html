@@ -1743,29 +1743,36 @@ When REDACT? is true, window titles and application identifiers are omitted.&quo
   &quot;Returns the current compositor state as one compact schema-v1 JSON object.&quot;
   (json-value (current-state #:redact? redact?)))</code></pre></template></article><article id="b196" class="abr-binding" data-label="(minde status) current-status-text  ·  scheme/minde/status.scm lines 212-214"><h3><code>current-status-text</code><span class="kind">procedure</span></h3><p class="sig"><code>(current-status-text)</code></p><p class="desc">Returns a one-line summary suitable for an external bar such as eww.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/status.scm#L212">View on GitHub: scheme/minde/status.scm:212</a></p><button class="abr-show-source" data-id="b196">View source</button><template><pre><code>(define (current-status-text)
   &quot;Returns a one-line summary suitable for an external bar such as eww.&quot;
-  (status-line))</code></pre></template></article><article id="b197" class="abr-binding" data-label="(minde status) publish-status!  ·  scheme/minde/status.scm lines 247-266"><h3><code>publish-status!</code><span class="kind">procedure</span></h3><p class="sig"><code>(publish-status!)</code></p><p class="desc">Atomically publishes status.json and the compatibility text status file.
+  (status-line))</code></pre></template></article><article id="b197" class="abr-binding" data-label="(minde status) publish-status!  ·  scheme/minde/status.scm lines 247-270"><h3><code>publish-status!</code><span class="kind">procedure</span></h3><p class="sig"><code>(publish-status!)</code></p><p class="desc">Atomically publishes status.json and the compatibility text status file.
 Unchanged compositor state is not rewritten; the sequence number advances
 per change even when several changes coalesce into one write. Errors are
 logged and swallowed so a missing runtime directory cannot interrupt window
-management.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/status.scm#L247">View on GitHub: scheme/minde/status.scm:247</a></p><button class="abr-show-source" data-id="b197">View source</button><template><pre><code>(define (publish-status!)
+management. Before any output is configured there is nothing meaningful to
+report (and no head geometry to describe), so the call returns immediately
+without building the state body or touching the sequence number; the sync
+hook's own state build only ever runs after the first output exists.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/status.scm#L247">View on GitHub: scheme/minde/status.scm:247</a></p><button class="abr-show-source" data-id="b197">View source</button><template><pre><code>(define (publish-status!)
   &quot;Atomically publishes status.json and the compatibility text status file.
 Unchanged compositor state is not rewritten; the sequence number advances
 per change even when several changes coalesce into one write. Errors are
 logged and swallowed so a missing runtime directory cannot interrupt window
-management.&quot;
-  (let* ((runtime (call-runtime-info))
-         (body (state-body #f))
-         ;; Uptime is observational and changes continuously; it must not turn
-         ;; every policy sync into a false status change.
-         (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
-                                  (list-ref runtime 2))
-                            body)))
-    (unless (equal? fingerprint %last-fingerprint)
-      (set! %last-fingerprint fingerprint)
-      (set! %sequence (+ %sequence 1))
-      (set! %pending-body body)
-      (set! %pending-runtime runtime)
-      (schedule-status-write!)))
+management. Before any output is configured there is nothing meaningful to
+report (and no head geometry to describe), so the call returns immediately
+without building the state body or touching the sequence number; the sync
+hook's own state build only ever runs after the first output exists.&quot;
+  (unless (null? (or (rust-call-if-bound 'wm-outputs) '()))
+    (let* ((runtime (call-runtime-info))
+           (body (state-body #f))
+           ;; Uptime is observational and changes continuously; it must not
+           ;; turn every policy sync into a false status change.
+           (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
+                                    (list-ref runtime 2))
+                              body)))
+      (unless (equal? fingerprint %last-fingerprint)
+        (set! %last-fingerprint fingerprint)
+        (set! %sequence (+ %sequence 1))
+        (set! %pending-body body)
+        (set! %pending-runtime runtime)
+        (schedule-status-write!))))
   %sequence)</code></pre></template></article><article id="b198" class="abr-binding" data-label="(minde status) status-file-path  ·  scheme/minde/status.scm lines 34-37"><h3><code>status-file-path</code><span class="kind">procedure</span></h3><p class="sig"><code>(status-file-path)</code></p><p class="desc">Returns the path of the atomically published structured status file.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/status.scm#L34">View on GitHub: scheme/minde/status.scm:34</a></p><button class="abr-show-source" data-id="b198">View source</button><template><pre><code>(define (status-file-path)
   &quot;Returns the path of the atomically published structured status file.&quot;
   (or (getenv &quot;MINDE_STATUS_PATH&quot;)
