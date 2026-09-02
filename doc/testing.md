@@ -7,6 +7,18 @@ phony targets so it cannot drift from the real commands. For narrative
 guidance see [`../README.md`](../README.md#development)
 and [`debugging.md`](debugging.md).
 
+`./check` with no arguments and `make check` are not the same
+gate: the bare `./check` fast path runs `cargo check` (a type
+check, no build or tests) alongside the Scheme/API/configuration/
+keymap suites and static analysis, while `make check` runs
+`check-rust` (`cargo fmt --check`, a full `cargo build`,
+`cargo test`, and `cargo clippy`) ahead of the same Scheme/API/
+configuration/keymap suites. `make check` is strictly stronger and
+slower; `./check` is the fast inner-loop gate for Scheme-only
+changes. This divergence is intentional but easy to forget, so use
+`make check` (or `make check-rust` alone) before trusting a Rust
+change that only `./check` has seen.
+
 ## `./check`
 
 ```

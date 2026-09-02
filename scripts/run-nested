@@ -66,6 +66,14 @@ echo "run-nested:   XDG_RUNTIME_DIR=$nested_rt scripts/mindectl eval '(reload-co
 # explicit developer choice.
 export RUST_LOG="${RUST_LOG:-minde=info,scheme=info}"
 
+# Load compiled bytecode from `make compile-scheme` (build/ccache) when
+# present, so a nested dev session does not autocompile the module tree on
+# every start; never recompile on a store/source mtime mismatch either.
+if [ -d "$PWD/build/ccache" ]; then
+    export GUILE_LOAD_COMPILED_PATH="$PWD/build/ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
+fi
+export GUILE_AUTO_COMPILE=0
+
 # Build the binary; a clear message beats a stale or missing target.
 cargo build --locked || {
     echo "run-nested: cargo build failed; fix the errors above and retry" >&2

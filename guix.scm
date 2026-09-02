@@ -18,6 +18,7 @@
              (guix build-system gnu)
              (srfi srfi-1)
              (ice-9 popen)
+             (ice-9 ftw)
              (ice-9 textual-ports)
              ((guix licenses) #:prefix license:)
              (gnu packages base)
@@ -142,6 +143,54 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
               (copy-recursively "scheme/minde"
                                 (string-append guile-site "/minde"))
               (install-file "scheme/default-config.scm" share)
+              ;; Bytecode cache: mirrors `make compile-scheme` (Makefile) so
+              ;; a packaged login loads compiled .go files instead of
+              ;; autocompiling the module tree into ~/.cache/guile/ccache
+              ;; on the compositor main thread before the first output is
+              ;; usable (see TODO.md 1.1). default-config.scm is data read
+              ;; by the validator, not code, and is skipped like the
+              ;; Makefile target skips it.
+              (let* ((ccache (string-append out "/lib/guile/3.0/site-ccache"))
+                     (scheme-src (string-append share "/scheme")))
+                (define (directory-entries dir)
+                  (let ((port (opendir dir)))
+                    (let loop ((entry (readdir port)) (acc '()))
+                      (if (eof-object? entry)
+                          (begin (closedir port) (reverse acc))
+                          (loop (readdir port)
+                                (if (member entry '("." ".."))
+                                    acc
+                                    (cons entry acc)))))))
+                (define (scheme-files dir prefix)
+                  ;; Recursively list *.scm files under DIR, as paths
+                  ;; relative to PREFIX's starting point (mirrors the
+                  ;; Makefile's `find scheme -name '*.scm'`).
+                  (append-map
+                   (lambda (name)
+                     (let* ((path (string-append dir "/" name))
+                            (rel (if (string-null? prefix)
+                                     name
+                                     (string-append prefix "/" name))))
+                       (cond
+                        ((eq? 'directory (stat:type (stat path)))
+                         (scheme-files path rel))
+                        ((string-suffix? ".scm" name)
+                         (list rel))
+                        (else '()))))
+                   (directory-entries dir)))
+                (setenv "GUILE_AUTO_COMPILE" "0")
+                (for-each
+                 (lambda (relpath)
+                   (unless (string=? relpath "default-config.scm")
+                     (let* ((src (string-append scheme-src "/" relpath))
+                            (go (string-append ccache "/"
+                                                (string-drop-right relpath 4)
+                                                ".go"))
+                            (warn (if (string-index relpath #\/) '() '("-W0"))))
+                       (mkdir-p (dirname go))
+                       (apply invoke "guild" "compile" "-L" scheme-src
+                              "-o" go (append warn (list src))))))
+                 (scheme-files scheme-src "")))
               (mkdir-p doc-out)
               (for-each
                (lambda (file) (install-file file doc-out))
@@ -159,6 +208,12 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
 export XDG_CURRENT_DESKTOP=minde
 export MINDE_SCHEME_DIR=~a/scheme
 export GUILE_LOAD_PATH=~a:${GUILE_LOAD_PATH:-}
+# Compiled bytecode cache installed above (mirrors `make compile-scheme`):
+# load .go files instead of autocompiling the module tree into
+# ~/.cache/guile/ccache on the compositor main thread before the first
+# output is usable, and never recompile on a store mtime mismatch.
+export GUILE_LOAD_COMPILED_PATH=~a:${GUILE_LOAD_COMPILED_PATH:-}
+export GUILE_AUTO_COMPILE=0
 # EGL vendor discovery on Guix (glvnd needs pointing at mesa).
 export __EGL_VENDOR_LIBRARY_DIRS=~a/share/glvnd/egl_vendor.d
 if [ ! -f \"$HOME/.config/minde/init.scm\" ]; then
@@ -178,20 +233,25 @@ export RUST_BACKTRACE=1
 exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
 "
                           #$(this-package-input "bash-minimal")
-                          share guile-site mesa share bin)))
+                          share guile-site
+                          (string-append out "/lib/guile/3.0/site-ccache")
+                          mesa share bin)))
               (chmod (string-append bin "/minde-session") #o755)
               ;; REPL-socket helper scripts (used by prompt/message
               ;; workflows spawned from bindings). Pin their guile.
+              ;; mindectl is the only one that invokes guile directly (via
+              ;; the single GUILE=${MINDE_GUILE:-guile} line); minde-cmd
+              ;; and minde-msg delegate to it, so this substitute* is a
+              ;; no-op for those two (harmless: substitute* does not error
+              ;; on zero matches) but keeps all three scripts pinned the
+              ;; same way if that ever changes.
               (for-each
                (lambda (script)
                  (let ((dest (string-append bin "/" script)))
                    (copy-file (string-append "scripts/" script) dest)
                    (substitute* dest
-                     (("^    guile -q")
-                      (string-append "    " #$(this-package-input "guile")
-                                     "/bin/guile -q"))
-                     (("^exec guile")
-                      (string-append "exec " #$(this-package-input "guile")
+                     (("^GUILE=\\$\\{MINDE_GUILE:-guile\\}")
+                      (string-append "GUILE=" #$(this-package-input "guile")
                                      "/bin/guile")))
                    (chmod dest #o755)))
                '("minde-cmd" "minde-msg" "mindectl"))
