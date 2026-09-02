@@ -15,13 +15,29 @@
   "Returns the sum of the canonical bits for MODIFIERS."
   (apply + (map modifier->bit modifiers)))
 
+;; key-notation runs on every keystroke (init.scm's dispatch-key calls it
+;; up to twice per key), so the C-/M-/S-/s- prefix -- one of only 16
+;; combinations of the four modifier bits -- is precomputed once here
+;; instead of re-testing all four bits and re-concatenating four
+;; conditional fragments on every call.
+(define %key-notation-prefixes
+  (let ((table (make-vector 16 "")))
+    (do ((i 0 (+ i 1))) ((= i 16))
+      (vector-set! table i
+                   (string-append (if (logtest i 1) "C-" "")
+                                  (if (logtest i 2) "M-" "")
+                                  (if (logtest i 4) "S-" "")
+                                  (if (logtest i 8) "s-" ""))))
+    table))
+
 (define (key-notation modifiers key)
   "Returns canonical C-/M-/S-/s- notation for MODIFIERS and KEY."
-  (let ((mask (if (number? modifiers) modifiers (modifiers->bitmask modifiers))))
-    (string-append (if (logtest mask 4) "C-" "")
-                   (if (logtest mask 8) "M-" "")
-                   (if (logtest mask 1) "S-" "")
-                   (if (logtest mask 64) "s-" "") key)))
+  (let* ((mask (if (number? modifiers) modifiers (modifiers->bitmask modifiers)))
+         (index (logior (if (logtest mask 4) 1 0)
+                        (if (logtest mask 8) 2 0)
+                        (if (logtest mask 1) 4 0)
+                        (if (logtest mask 64) 8 0))))
+    (string-append (vector-ref %key-notation-prefixes index) key)))
 
 (define (make-key-registry)
   "Returns an empty collision-detecting key registry."
