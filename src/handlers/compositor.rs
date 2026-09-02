@@ -70,6 +70,17 @@ impl MindeState {
             KeyboardInteractivity, Layer, LayerSurfaceCachedState, LayerSurfaceData,
         };
 
+        // Plain toplevel/subsurface commits (the overwhelming majority) never
+        // carry `LayerSurfaceData`; check that first so they skip the
+        // per-output `layer_map_for_output` borrows below entirely instead of
+        // scanning every output's layer map only to find nothing.
+        let has_layer_role = with_states(surface, |states| {
+            states.data_map.get::<LayerSurfaceData>().is_some()
+        });
+        if !has_layer_role {
+            return;
+        }
+
         let Some(output) = self
             .space
             .outputs()

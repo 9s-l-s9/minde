@@ -688,27 +688,11 @@ impl MindeState {
                 self.schedule_redraw();
             }
             WmCommand::Message { text, timeout_ms } => self.show_message(&text, timeout_ms),
-            WmCommand::ClearMessage => {
-                self.message = None;
-                self.schedule_redraw();
-            }
-            WmCommand::AddOverlay { x, y, text } => {
-                // Labels are a couple of characters; a small budget keeps
-                // render_message's wrap math trivial.
-                self.overlays.push((
-                    Point::from((x, y)),
-                    crate::render::render_message(&text, 0, 400, 200),
-                ));
-                self.schedule_redraw();
-            }
-            WmCommand::ClearOverlays => {
-                self.overlays.clear();
-                self.schedule_redraw();
-            }
-            WmCommand::BorderColor { rgba } => {
-                self.border_color = rgba;
-                self.schedule_redraw();
-            }
+            other @ (WmCommand::ClearMessage
+            | WmCommand::AddOverlay { .. }
+            | WmCommand::ClearOverlays
+            | WmCommand::BorderColor { .. }
+            | WmCommand::Spawn { .. }) => self.apply_message_or_spawn_command(other),
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
                     tracing::warn!(id, "wm-close-window: unknown window id");
@@ -758,7 +742,49 @@ impl MindeState {
                 token,
             } => self.queue_screenshot(path, window_id, token),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
+            other @ (WmCommand::Paste
+            | WmCommand::SetClipboard { .. }
+            | WmCommand::SetPrimary { .. }) => self.apply_clipboard_command(other),
+        }
+    }
+
+    /// The message/overlay/spawn arms of [`apply_wm_command`](Self::apply_wm_command):
+    /// no shared logic between them, just grouped here to keep that match's
+    /// body shorter. `cmd` is always one of the variants named at the call
+    /// site; other variants are unreachable and panic.
+    fn apply_message_or_spawn_command(&mut self, cmd: WmCommand) {
+        match cmd {
+            WmCommand::ClearMessage => {
+                self.message = None;
+                self.schedule_redraw();
+            }
+            WmCommand::AddOverlay { x, y, text } => {
+                // Labels are a couple of characters; a small budget keeps
+                // render_message's wrap math trivial.
+                self.overlays.push((
+                    Point::from((x, y)),
+                    crate::render::render_message(&text, 0, 400, 200),
+                ));
+                self.schedule_redraw();
+            }
+            WmCommand::ClearOverlays => {
+                self.overlays.clear();
+                self.schedule_redraw();
+            }
+            WmCommand::BorderColor { rgba } => {
+                self.border_color = rgba;
+                self.schedule_redraw();
+            }
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
+            _ => unreachable!("apply_message_or_spawn_command called with an unrelated WmCommand"),
+        }
+    }
+
+    /// The clipboard/primary-selection arms of
+    /// [`apply_wm_command`](Self::apply_wm_command): grouped here for the
+    /// same reason as [`apply_message_or_spawn_command`](Self::apply_message_or_spawn_command).
+    fn apply_clipboard_command(&mut self, cmd: WmCommand) {
+        match cmd {
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => self.set_clipboard_text(text),
             WmCommand::SetPrimary { text } => {
@@ -769,6 +795,7 @@ impl MindeState {
                     crate::handlers::SelectionOwner::Text(text),
                 );
             }
+            _ => unreachable!("apply_clipboard_command called with an unrelated WmCommand"),
         }
     }
 
