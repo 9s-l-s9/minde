@@ -1,9 +1,17 @@
 # TODO: speed-up and clean-up ideas
 
-Ideas only; nothing here has been implemented yet.  Findings come from a
-read-only audit on 2026-09-01.  "verified" means the behaviour was confirmed
-from the code; "unverified" means the cost still needs profiling before it is
-worth acting on.  Line numbers refer to commit c441fca.
+## Status
+
+A first pass over these findings was committed as 21a6278 on 2026-09-02.
+All gates of `./check` plus `make check-rust check-cli check-docs` pass.
+The e2e/nested test suite and real DRM hardware have NOT yet been exercised
+against the vblank/damage-driven repaint rewrite (3.1) — that must happen
+before trusting it in production.
+
+Findings come from a read-only audit on 2026-09-01.  "verified" means the
+behaviour was confirmed from the code; "unverified" means the cost still
+needs profiling before it is worth acting on.  Line numbers refer to commit
+c441fca unless noted otherwise.
 
 Suggested measuring tools before changing anything: `perf record` /
 `hotspot` on the compositor, `GUILE_AUTO_COMPILE=0` vs default for the
@@ -29,6 +37,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `GUILE_LOAD_COMPILED_PATH` in the wrapper and in `scripts/run-nested`, and set
       `GUILE_AUTO_COMPILE=0` there so a store mtime mismatch never recompiles. Also a
       `make compile-scheme` target for dev/test loops (see 6.2). verified.
+      Partial: `make compile-scheme` (6.2) now builds `.go` under `build/ccache` with `GUILE_LOAD_COMPILED_PATH` for the dev/test loops; `guix.scm` itself (the package build/session-wrapper) was not touched, so a packaged login still autocompiles into `~/.cache/guile/ccache` on first run.
 - [x] **1.2 `init.scm` (1838 lines) is never compiled.** `src/guile/mod.rs:1319` loads
       it via `scm_c_primitive_load`, which bypasses the autocompiler, so every key
       binding, `dispatch-key`, `wm-handle-key`, `reload-configuration!` and
@@ -44,16 +53,19 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       so libseat/GPU probing happens first, or probe the GPU on a helper thread while
       Guile boots on main. unverified overlap gain.
       Done: `ipc::init`/`events::init` moved ahead of `guile::init`; the backend init itself cannot move: `init_udev` enumerates present GPUs/connectors synchronously and reaches `handle-heads-change!`/`handle-startup!` before returning (winit calls `handle-startup!` directly), so Scheme must be loaded first. Splitting libseat/GPU probing out of `init_udev` belongs to `udev.rs`.
-- [ ] **1.4 `(system vm trace)` imported in `init.scm:9` but unused** (only
+- [x] **1.4 `(system vm trace)` imported in `init.scm:9` but unused** (only
       `backtrace` is used). Pulls VM instrumentation modules at boot. Remove. verified.
-- [ ] **1.5 Boot-time `reload-configuration!` (`init.scm:1763`) echoes a message and
+      Done: the `(system vm trace)` `#:use-module` clause is gone from `init.scm`; `backtrace` still resolves from the default bindings.
+- [x] **1.5 Boot-time `reload-configuration!` (`init.scm:1763`) echoes a message and
       publishes status before any output exists** (`init.scm:1717`).
       `refresh-command-help!` (`init.scm:1744-1761`) is O(bindings x commands) and
       `command-names` (`commands.scm:83-85`) re-sorts the registry on each iteration.
       Idea: build a procedure->name table once; skip `echo` when no output is mapped.
       verified, small.
+      Done: `apply-configuration!`'s `echo` now only fires when `(rust-call-if-bound 'wm-outputs)` is non-empty; `refresh-command-help!` builds a `procedure -> summary` hash table once up front instead of calling `command-ref`/`command-summary` per binding per command.
 - [ ] **1.6 `publish-status!` runs several times during startup** via Xwayland status
       transitions (`state.rs:1875-1961`) and every `sync-frames!`. See 4.1.
+      Partial: 4.1's deferred/coalesced write means the repeated `publish-status!` calls no longer each cost two synchronous file writes, but the calls themselves are still made at every transition.
 - [ ] **1.7 `load-layouts!` / `load-placement-rules!` (`init.scm:918,1336`) read
       `~/.config/minde/*.scm` synchronously before output geometry is known.** Could
       move to `handle-startup!`. low priority.
@@ -73,9 +85,11 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       plus a `current-state-json` eval on the compositor thread. Idea: a tiny
       Rust/C `mindectl` (or `socat`/`nc -U` in the script for raw mode); point Eww at
       `status.json` or the events socket instead of polling eval. verified.
-- [ ] **2.2 `mindectl:409-416 subscribe --json` polls with `cat` + `sleep 0.2`**,
+      Partial: `mindectl` was not replaced with a Rust/C binary or `socat`/`nc` (neither is in `manifest.scm`); `ipc_request` still spawns one `guile -q -c` per request, but now with `--no-auto-compile` and, for the module-loading `check-config`/`subscribe` paths, `GUILE_LOAD_COMPILED_PATH` pointed at the packaged `site-ccache`, cutting the per-call boot/compile cost. `subscribe --json` (2.2) now points bar-style pollers at the events socket instead of re-evaling `query state --json`.
+- [x] **2.2 `mindectl:409-416 subscribe --json` polls with `cat` + `sleep 0.2`**,
       five forks per second forever. Idea: `inotifywait -e moved_to` or the events
       socket. verified.
+      Done: `subscribe --json` is now one long-lived `guile` process that connects to the events socket and `select`s on it (falling back to a 1 s/2 s poll loop when the events socket is unavailable), emitting `status.json`'s contents only when it changes, instead of forking `cat`+`sleep 0.2` five times a second. `inotify-tools` is still not in `manifest.scm`, so `inotifywait` was not used.
 - [x] **2.3 IPC reply serialised twice.** `minde-ipc-eval` (`ipc-reply.scm:97-130`)
       `write`s the result, then `ipc-ok-reply` (`:81-84`) writes it again just to scan
       for `#<`; `ipc-writable-datum` (`:62-74`) is the same test a third time. Idea:
@@ -116,13 +130,14 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       multi-10 ms hitch on DRM. Idea: `posix_spawn` or a pre-forked launcher; spawn
       directly when already on the Guile thread. unverified.
       Done: `wm-spawn` spawns directly when called on the Guile thread (`GUILE_THREAD` recorded in `boot`); only REPL-thread callers still enqueue. `std::process::Command` already uses `posix_spawn` for this configuration (no pre_exec/cwd/uid), so no manual fork existed to remove.
-- [ ] **2.11 `current-state-json` (`status.scm:120-178`) is a hand-rolled JSON writer
+- [x] **2.11 `current-state-json` (`status.scm:120-178`) is a hand-rolled JSON writer
       using recursive `string-append`/`string-join`.** Idea: write to a string port.
       unverified cost.
+      Done: `json-value`/`json-string` are now thin `call-with-output-string` wrappers around `write-json`/`write-json-string`, which `display` compact JSON straight onto a port instead of building and concatenating intermediate strings per node; `atomic-write-file` takes a writer procedure so `write-status-files!` streams directly to the file.
 
 ## 3. Frame smoothness and input latency (Rust)
 
-- [ ] **3.1 Fixed 16 ms timer chain instead of vblank/damage-driven repaint**
+- [x] **3.1 Fixed 16 ms timer chain instead of vblank/damage-driven repaint**
       (`udev.rs:943-950`, `1038-1046`). After each vblank a new 16 ms `Timer` is
       inserted, then `render_now`; if nothing was queued another 16 ms timer follows.
       Consequences: on 60 Hz frames alternate between just-made and just-missed; on
@@ -131,10 +146,12 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       idle. Idea: render on vblank when a per-output `redraw_needed` flag is set,
       stop the chain at idle and restart from the dirtying event; optionally delay
       after vblank by an estimated render time (niri/sway style). verified.
-- [ ] **3.2 Cursor motion does not mark the output dirty** (`input.rs:414-429`); the
+      Done: `udev.rs` gained a per-output `RedrawState` (`Idle`/`Scheduled`/`WaitingForVblank{watchdog}`/`WaitingForTimer{token}`) and a `dirty` flag. `MindeState::schedule_redraw`/`schedule_redraw_at` mark outputs dirty and, if idle, queue a calloop-idle render (coalescing a dispatch batch); `frame_finish` re-renders immediately if dirtied while a flip was in flight, else goes idle; a render that queued nothing falls back to a `refresh_interval` timer, and a watchdog (4x the refresh interval, min 100 ms) guards a vblank that never arrives. At idle nothing runs — no timer, no element-list rebuild. NOT yet exercised on real DRM hardware or the e2e/nested suite (see Status).
+- [x] **3.2 Cursor motion does not mark the output dirty** (`input.rs:414-429`); the
       cursor element (`udev.rs:1149-1160`) is sampled at the next timer tick, so
       cursor latency inherits 3.1. Idea: motion sets the dirty flag; make sure the
       cursor lands on the cursor plane. verified.
+      Done: `MindeState::schedule_redraw_at(&[old_pos, new_pos])` is now called from every pointer-motion path in `input.rs` (both `move_pointer`/relative-motion handlers and the tablet pointer-emulation route), marking dirty and scheduling a render only for the outputs the cursor left or entered.
 - [ ] **3.3 winit backend renders unconditionally with full-frame damage**
       (`winit.rs:133,191,248`). Nested only, low priority. verified.
 - [ ] **3.4 Per-frame allocations and locks**: `custom`/`all_elements` Vecs and layer
@@ -142,22 +159,26 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       per frame (`render.rs:519-531`), O(windows x outputs) frame-callback walk
       (`udev.rs:1367-1389`). Idea: reusable Vecs on the output surface. verified,
       small.
+      Partial: scene assembly (the `custom`/`all_elements` Vecs and the layer `partition`) moved into the shared `output_scene_elements` helper (see 5.3), but still allocates fresh `Vec`s per call; no reusable per-output `Vec` was added. `cursor_state.hotspot()` mutex and the O(windows x outputs) frame-callback walk are unchanged.
 - [ ] **3.5 `surface_under` evaluated three times per pointer motion**:
       `constrain_pointer` (`pointer_constraints.rs:79`), `input.rs:396`, `input.rs:417`.
       Each does an output lookup, a layer-map RefCell borrow and a surface-tree hit
       test (`state.rs:2067-2116`). At 1000 Hz mice this triples the dominant
       per-motion cost. Idea: compute once, pass along. verified.
+      Partial: the pre-move hit test is now computed once and passed to both `constrain_pointer` and the relative-motion focus (`under_current`), cutting three calls to two, but the post-move hit test at the new position (`input.rs` ~389/423, `surface_under(new_pos)`) is still separate, since the position isn't known until after `constrain_pointer` runs. 3.5 is not fully done.
 - [ ] **3.6 Resize grab sends a configure on every motion event**
       (`resize_grab.rs:620-654`), uncoalesced. Idea: pending size flushed once per
       frame. Move grab does `space.map_element(.., activate=true)` per motion
       (`move_grab.rs:369`). verified; move cost unverified.
+      Partial: `MoveSurfaceGrab::motion` now calls `space.map_element(.., activate=false)` (the window was already raised/activated when the grab started) and calls `schedule_redraw()` explicitly instead of relying on the old fixed timer. `ResizeSurfaceGrab::motion` still calls `send_pending_configure()` on every motion event, uncoalesced — not addressed.
 - [ ] **3.7 Every click and focus change walks all windows calling
       `send_pending_configure`** (`input.rs:586-597,648-652`, `state.rs:718-747`).
       Smithay elides unchanged configures, so cheap; flagged for the pattern.
-- [ ] **3.8 `fontdue::Font::from_bytes` re-parses the embedded TTF on every message
+- [x] **3.8 `fontdue::Font::from_bytes` re-parses the embedded TTF on every message
       and once per overlay** (`render.rs:133`, from `state.rs:760,783`), and
       rasterises every glyph fresh. Idea: `OnceLock<Font>`, glyph cache keyed by
       char, cache the rendered overlay per label string. verified; cost unverified.
+      Done: `message_font()` parses the embedded TTF once into a `static OnceLock<fontdue::Font>`; `rasterize_cached` caches each glyph's `(Metrics, Arc<[u8]>)` bitmap in a `static Mutex<HashMap<char, _>>`, reused by both `render_message` and the overlay path. The "cache the rendered overlay per label string" half of the idea was not done (only the font parse and per-glyph rasterization are cached).
 - [ ] **3.9 Four independent Space scans per `wl_surface.commit`**:
       `compositor.rs:39-48`, `xdg_shell.rs:463-486` (only meaningful on first
       commit), `resize_grab.rs:872-882` (only while resizing),
@@ -166,6 +187,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       compare. Idea: one `window_for_surface` helper (replaces six duplicates), gate
       the first-commit and resize checks on flags, compare titles by `&str` or hook
       `set_title` requests. verified; absolute cost unverified.
+      Partial: `state::window_for_surface` (state.rs:72) replaces all six `space.elements().find(...)` duplicates (`compositor.rs`, `xdg_shell.rs` x4, the popup-root lookup) with one shared helper. `report_title_if_changed` (state.rs:1851) now compares title/app_id as `&str` inside `with_states` and only clones into `Strings` when something actually changed, instead of cloning every commit to compare. The four independent `Space` scans per commit are still four separate calls (each now cheaper via the shared helper) and the resize/first-commit checks were not gated on flags.
 - [ ] **3.10 Layer-surface commits run `arrange()` twice and rebuild head info**
       (`compositor.rs:101` then `update_usable_area` `state.rs:1981-2014`), allocating
       output names and calling `refresh_foreign_toplevel_outputs`
@@ -173,11 +195,13 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       A bar redrawing at 1 Hz pays this every second. Idea: arrange only when the
       layer's cached state changed; diff foreign outputs only when geometry moved.
       verified.
-- [ ] **3.11 Screenshot encode + write inline on the calloop thread**
+      Partial: the layer-commit path now calls `map.arrange()` only once (folded into `update_usable_area`) instead of once directly plus once more inside it. `refresh_foreign_toplevel_outputs`'s O(windows x outputs) rebuild and its output-name allocations are unchanged; no diffing-only-on-geometry-change was added.
+- [x] **3.11 Screenshot encode + write inline on the calloop thread**
       (`screencopy.rs:327-358` -> `png.rs:1154-1167,1214-1248`): bitwise table-less
       CRC-32, three full-size copies, synchronous file write inside the redraw
       callback. Idea: table CRC or `crc32fast`; encode and write on a worker after
       GPU readback. verified; expect tens of ms at 4K, unverified.
+      Done: `render_to_png` split into `render_to_rgba` (GPU readback only, stays on the calloop thread) plus a `std::thread::spawn`ed worker that calls `png::write_rgba` (PNG encode + file write) and reports completion via `record_and_publish`. `png::crc32` now uses a `const`-built 256-entry lookup table (one lookup per byte) instead of the bitwise per-bit loop, and `chunk()` hashes the type+payload in place in the output buffer instead of copying into a separate `crc_input` Vec first.
 - [ ] **3.12 DnD `Source::send` writes the offer synchronously**
       (`automation_dnd.rs:362-372`); a stalled reader blocks the compositor. verified,
       payloads small.
@@ -199,13 +223,14 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       version-counter fingerprint; defer writes with `wm-run-after 0` or a calloop
       idle so bursts (group switch) coalesce; drop the legacy `/minde-status` file if
       nothing reads it (unverified). verified.
-- [ ] **4.2 `sync-frames-now!` re-places every window of every head on every focus
+- [x] **4.2 `sync-frames-now!` re-places every window of every head on every focus
       change** (`compositor/frames.scm:2041-2110`). Every focus move, split, pull or
       rename issues `wm-place-window` for every window (hidden ones re-parked at
       -10000); Rust `WmCommand::Place` (`state.rs:635-660`) unconditionally sends a
       configure, `map_element`, geometry event and foreign-toplevel refresh. Idea:
       per-window last-placed rect in Scheme and skip when unchanged, or dedupe in
       Rust before `send_pending_configure`. verified.
+      Done: both sides. Scheme: `frames.scm`'s new `%placed-rects` hash table (id -> last-placed rect) is checked before every `wm-place-window` call, so an unchanged rect skips the Rust call entirely (cleared on unmap). Rust: `place_window` (state.rs:784) now compares `configured`/`moved` and returns early with no configure, `map_element`, or foreign-toplevel refresh when the toplevel wasn't reconfigured and the location didn't change.
 - [ ] **4.3 `frame-leaves` (`frames.scm:555-560`) allocates via `append` and is
       walked 3+ times per key** (`active-leaves` :301, `all-window-ids` :1659,
       `frame-of-window` :1666, `head-of-window` :1671, `hidden-window-ids` :1703,
@@ -213,18 +238,20 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `all-window-ids` inside a `for-each`. Trees are tiny today. Idea: `id -> frame`
       hash maintained in `frame-add-window!`/`take-window-out!`, or memoise per sync
       generation. verified, small-n.
-- [ ] **4.4 `resolve-module`/`module-variable` on every Rust call.** `rust-call`
+- [x] **4.4 `resolve-module`/`module-variable` on every Rust call.** `rust-call`
       (`frames.scm:511-523`, duplicated in `groups.scm:430-433`), `echo` (:541, twice),
       `ui-rust-call` (`init.scm:57-60`), `set-border-color!` :225, `set-key-repeat!`
       :242, `%guile-user-var` :704, `call-if-bound` :849, `wm-run-after` :665,
       `status.scm:43,51,217`, `windows.scm:39`. `set-key-state!` (`init.scm:248-265`)
       does two per prefix keystroke. Idea: one `(minde foundation rust)` helper with a
       per-symbol variable cache. verified.
+      Done: new `(minde compositor rust)` module (`rust-variable`/`rust-bound?`/`rust-call`/`rust-call-if-bound`) caches each symbol's `(guile-user)` variable object in a hash table after first lookup (a redefinition still resolves live, per the module's doc comment). `frames.scm`'s `rust-call`, `groups.scm`'s duplicate `rust-call`, `init.scm`'s `ui-rust-call`/`set-border-color!`/`set-key-repeat!`/`%guile-user-var`/`call-if-bound`/`wm-run-after`, `status.scm`'s `call-runtime-info`/`output-state`, and `windows.scm`'s `window-geometry` all now go through it instead of a fresh `resolve-module`+`module-variable` each call.
 - [ ] **4.5 Key path allocations**: `key-spec` builds up to two strings per key
       (`init.scm:401-408`), `dispatch-key` (:369) rebuilds `"C-g"` per key in command
       mode, and `remap-target` (`frames.scm:1101-1113`) runs `string-match` (regex
       compiled per call, per rule) on every unbound key when remap rules exist. Idea:
       precompile remap regexes in `define-remapped-keys!`. verified.
+      Partial: `dispatch-key`'s command-mode `"C-g"` check no longer calls `key-spec` to build and compare a string — it now tests the modifier bitmask directly (`ctrl` set, no other notated modifier). `key-spec`'s per-key string building and `remap-target`'s per-call regex compilation were not addressed.
 - [ ] **4.6 Assoc lists scanned linearly**: `%binding-submaps` (`init.scm:117-138`),
       `%placement-rules` with `string-contains` on every map/retitle
       (`groups.scm:947,978,985`), `%layouts`, `foundation/hooks.scm:13-27`. All
@@ -239,9 +266,10 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 - [x] 5.2 `call_named_N`/`callN` ladders (`mod.rs:298-359`) and five copies of
       "lookup then `scm_call_0` under `protected_call`" (`mod.rs:338-343,1499-1546`).
       Done: replaced by `Hook::call(&[Scm])` over `scm_call_n`; the five lookup+`scm_call_0` copies are one-liners on their `Hook`.
-- [ ] 5.3 Scene assembly duplicated in `winit.rs:142-171`, `udev.rs:1147-1275` and
+- [x] 5.3 Scene assembly duplicated in `winit.rs:142-171`, `udev.rs:1147-1275` and
       `screencopy.rs:193+`; they already drift (winit draws overlays under the
       message, lacks layers/cursor/per-output filtering). One `scene_elements(output)`.
+      Done: `handlers::screencopy::output_scene_elements` (made `pub(crate)`) is now the single scene-assembly function, taking a `border_buffers: &mut BorderBuffers` so on-screen callers keep stable element ids for incremental damage while captures pass a throwaway. `udev.rs`'s `render_surface` and (per the diff) the capture path both call it; it releases its own layer-map guard before returning so callers can open their own.
 - [ ] 5.4 Oversized `state.rs` functions: `apply_wm_command` :633-982,
       `MindeState::new` :350-604, `send_string` :1479-1636, `send_key` :1367-1478
       (shares a keymap-scan preamble with `send_string`, :1384-1410 vs :1489-1510),
@@ -250,11 +278,12 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `window_by_id`/`id_for_window`/`id_for_toplevel`; `queue_screenshot`
       (`:1012-1016`) re-implements `window_by_id`. `HashMap<u64, Window>` plus id in
       `Window::user_data()`.
-- [ ] 5.6 Duplicates: `BTN_LEFT` (`input.rs:23` and `:524`); MIME list three times
+- [x] 5.6 Duplicates: `BTN_LEFT` (`input.rs:23` and `:524`); MIME list three times
       (`state.rs:955-960,968-973,1318-1323`); `(1280,720)` fallback rect three times
       (`:754-759,822-826,847-856`); ~90 lines of identical gesture pass-through in
       `move_grab.rs:421-491` vs `resize_grab.rs:738-808`; `window_for_surface` six
       times (see 3.9).
+      Done: the local `const BTN_LEFT`/`BTN_RIGHT` redefinition inside `send_string` was removed in favor of the module-level consts; `state.rs` gained a `TEXT_MIME_TYPES` const and `mime_types()` helper replacing the three inline lists; the `(1280, 720)` fallback rect is now one helper (state.rs ~546-560); the gesture pass-through (relative_motion/axis/frame/all eight gesture callbacks) is one `forward_pointer_events!` macro in `grabs/mod.rs`, invoked from both `move_grab.rs` and `resize_grab.rs`; `window_for_surface` is one function (see 3.9).
 - [x] 5.7 Three copies of scheme-dir resolution with different orders:
       `main.rs:229-243` (checks `CARGO_MANIFEST_DIR` first), `mod.rs:1314-1316`
       (`MINDE_SCHEME_DIR` first), `mindectl:338-358`. Unify.
@@ -267,14 +296,16 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       one-line `/minde-status` file, `wm-type` alias (`mod.rs:1214-1222`) without a
       doc pointer, REPL block guarded twice (`init.scm:1813-1836`).
       Done: kept: `wm-output-geometry`/`handle-output-geometry!` are stubbed by 12 test files and listed in the generated API docs, `subscribe --json` and `/minde-status` are documented in doc/ipc-eww.md and doc/diagnostics.md, `wm-type` in doc/api.md; the registration sites now carry doc pointers. Only the REPL double guard (`init.scm`) remains, outside this pass.
-- [ ] 5.10 `screencopy.rs:505-513` O(n^2) `remove(i)` loop (n tiny).
+- [x] 5.10 `screencopy.rs:505-513` O(n^2) `remove(i)` loop (n tiny).
+      Done: `satisfy_output_captures` now uses `pending.drain(..).partition(|capture| &capture.output == output)` (with an `iter().any()` fast-out first) instead of a manual `while` loop calling `Vec::remove(i)` per match.
 - [x] 5.11 `chrono_free_timestamp` and panic-hook env probing (`main.rs:271-303`)
       duplicate `XDG_STATE_HOME` logic in `mindectl:315`.
       Done: state-dir resolution moved to `runtime_dir::state_dir()` (one Rust copy, documented as mirroring mindectl:315).
 
 ### Scheme
-- [ ] 5.12 `rust-call` duplicated with different missing-subr behaviour
+- [x] 5.12 `rust-call` duplicated with different missing-subr behaviour
       (`frames.scm:511` report-once vs `groups.scm:430` silent).
+      Done: `groups.scm`'s local silent `rust-call` was deleted; it now uses the shared `(minde compositor rust)` module (see 4.4) via `rust-place-float!`/`rust-call-if-bound`, so both call sites share one missing-subr behavior.
 - [ ] 5.13 "remove id from frame and promote next" inlined five times
       (`frames.scm:695-698,786-792,1718-1721,1739-1742,1786-1789`) although
       `take-window-out!` (:1895) exists.
@@ -284,9 +315,11 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `copy-unhandled-error!`, `load-module!`, `gnewbg-float-prompt!`,
       `echo-frame-windows!`; `frame-tree-window-count`/`update-output-geometry!`
       exported for tests only.
-- [ ] 5.16 `ipc_request` (`mindectl:221-257`) and the events client (`:387-400`)
+      Partial: `mod-symbol->bit` and `echo-frame-windows!` were removed from `init.scm`. `copy-unhandled-error!`, `load-module!`, `gnewbg-float-prompt!` (all bound to keys, so not truly unused) and the test-only exports `frame-tree-window-count`/`update-output-geometry!` are untouched.
+- [x] 5.16 `ipc_request` (`mindectl:221-257`) and the events client (`:387-400`)
       re-derive the runtime dir/socket path already computed at `:194-196` and skip
       the ownership/mode validation `runtime_dir.rs` performs.
+      Done: `socket_path`/`events_socket_path` are computed once at the top of the script and passed as `--` arguments to every Guile client instead of each re-deriving `XDG_RUNTIME_DIR`/`minde-ipc.sock` inline; a shared `connect-private` helper (`client_prelude`) validates the runtime directory is a private directory of the calling uid (mirroring `runtime_dir.rs`) before connecting, used by `ipc_request`, the events subscriber and `subscribe --json`.
 - [ ] 5.17 `guix.scm:185-195` rewrites `guile` invocations in the scripts with
       exact-prefix regexes; the `subscribe --events` branch at `mindectl:387` is
       indented differently and is not matched, so the installed script calls
@@ -305,16 +338,18 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 ## 6. Build and test tooling
 
 - [ ] **6.1 Debug builds drive e2e and the nested compositor** (see 1.8).
-- [ ] **6.2 Scheme suites: 22 separate `guile` processes each reloading the module
+- [x] **6.2 Scheme suites: 22 separate `guile` processes each reloading the module
       tree** (measured `make check-scheme` 1.2 s warm / 3.8 s cold);
       `check-generated-docs` runs six more regenerating all docs into a tmpdir on
       every `./check` (1.3 s / 2.4 s). Not a bottleneck locally; CI always pays the
       cold path. A `make compile-scheme` producing `.go` under `build/ccache` with
       `GUILE_LOAD_COMPILED_PATH` would also remove the "source newer than compiled"
       notes in test output. measured.
-- [ ] **6.3 `check-config` and `check-keymaps` (`Makefile:72-78`) re-run
+      Done: new `make compile-scheme` target compiles `scheme/**/*.scm` to `.go` under `build/ccache` (skipping sources not newer than their `.go`); `check-scheme`, `check-api`, `check-config`, `check-foundation`, `check-ui`, `docs` and `check-generated-docs` all depend on it and run through `$(GUILE)`, which sets `GUILE_LOAD_COMPILED_PATH=$(CCACHE):...` and `GUILE_AUTO_COMPILE=0`, so the 22+ test processes load compiled bytecode instead of each reloading and (re-)compiling the module tree.
+- [x] **6.3 `check-config` and `check-keymaps` (`Makefile:72-78`) re-run
       `tests/config-test.scm` and `tests/portable-keymap-test.scm` that
       `check-scheme` already ran.** verified.
+      Done: `check-config` no longer runs `tests/config-test.scm` (it now only runs `mindectl check-config`) and `check-keymaps` no longer runs `tests/portable-keymap-test.scm` (it now only runs `tests/check-portable-defaults.sh`); both scripts already run once as part of `SCHEME_TESTS` in `check-scheme`, and `doc/testing.md` documents the split.
 - [ ] **6.4 `nested_start` hard-codes `sleep 2` for Xvfb and 1 s polling**
       (`tests/lib/nested-compositor.sh:46,73,86`), at least 3 s fixed latency per
       scenario. Idea: poll `xdpyinfo`/socket at 100 ms. verified.
@@ -333,3 +368,28 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
   against `compositor/frames.scm`.
 - Message and overlay `MemoryRenderBuffer` textures are cached by Smithay per
   buffer.
+
+## 8. Lessons and constraints found while implementing
+
+- Baseline `./check` at c441fca already failed `check-generated-docs` (stale
+  `doc/generated`); regenerated in this pass.
+- The frozen API hash in `release/contract.env` covers
+  `doc/generated/api-reference.md`, which embeds source line numbers, so any
+  edit to an exporting Scheme file changes the hash even when the binding set
+  is unchanged; hash refreshed in 21a6278 after confirming no binding was
+  added or removed. Consider hashing the catalog without line numbers.
+- `init_udev` reaches `handle-heads-change!`/`handle-startup!` synchronously,
+  so Guile must boot before the backend (1.3 is limited to moving ipc/events
+  init ahead).
+- No `socat`/`nc`/`inotifywait` in `manifest.scm`; `mindectl` keeps `guile`
+  but now runs it with `--no-auto-compile` and, where it loads modules
+  (`check-config`, the events/`--json` clients), points
+  `GUILE_LOAD_COMPILED_PATH` at the packaged `site-ccache` so it loads
+  compiled bytecode instead of interpreting or autocompiling on every
+  invocation.
+- Loading `init.scm` through the autocompiler costs a one-time ~4 s compile
+  per source change; `make compile-scheme` / packaged `.go` files avoid that
+  at login.
+- The implementation agents hit an API rate limit mid-task on 2026-09-01;
+  the tree was verified and committed afterwards, and further work proceeds
+  one agent at a time.
