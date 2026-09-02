@@ -54,6 +54,12 @@ pub struct ResizeSurfaceGrab {
 
     initial_rect: Rectangle<i32, Logical>,
     last_window_size: Size<i32, Logical>,
+    /// Size last sent to the client via `send_pending_configure`. Motion
+    /// events arrive far more often than the size actually changes (mouse
+    /// jitter, sub-pixel deltas clamped to the same integer size); skipping
+    /// the configure when the size is unchanged avoids a wasted round trip
+    /// per event (3.6).
+    last_configured_size: Size<i32, Logical>,
 }
 
 impl ResizeSurfaceGrab {
@@ -83,6 +89,7 @@ impl ResizeSurfaceGrab {
             edges,
             initial_rect,
             last_window_size: initial_rect.size,
+            last_configured_size: initial_rect.size,
         }
     }
 }
@@ -153,7 +160,13 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                 state.states.set(xdg_toplevel::State::Resizing);
                 state.size = Some(self.last_window_size);
             });
-            xdg.send_pending_configure();
+            // Coalesce: only configure the client when the clamped size
+            // actually changed since the last configure sent for this grab.
+            if self.last_window_size != self.last_configured_size {
+                xdg.send_pending_configure();
+                self.last_configured_size = self.last_window_size;
+                data.schedule_redraw();
+            }
         } else if let Some(x11) = self.window.x11_surface() {
             let loc = data
                 .space
@@ -279,31 +292,29 @@ impl ResizeSurfaceState {
 
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
+    // Cheap per-surface state check (no `Space` scan) first: almost every
+    // commit is not part of an active resize, so bail before paying for
+    // `window_for_surface`'s linear walk over `space.elements()` (3.9).
+    let (edges, initial_rect) = ResizeSurfaceState::with(surface, ResizeSurfaceState::commit)?;
+
     let window = crate::state::window_for_surface(space, surface)?;
 
     let mut window_loc = space.element_location(&window)?;
     let geometry = window.geometry();
 
-    let new_loc: Point<Option<i32>, Logical> = ResizeSurfaceState::with(surface, |state| {
-        state
-            .commit()
-            .and_then(|(edges, initial_rect)| {
-                // If the window is being resized by top or left, its location must be adjusted
-                // accordingly.
-                edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                    let new_x = edges
-                        .intersects(ResizeEdge::LEFT)
-                        .then_some(initial_rect.loc.x + (initial_rect.size.w - geometry.size.w));
+    let new_loc: Point<Option<i32>, Logical> = if edges.intersects(ResizeEdge::TOP_LEFT) {
+        let new_x = edges
+            .intersects(ResizeEdge::LEFT)
+            .then_some(initial_rect.loc.x + (initial_rect.size.w - geometry.size.w));
 
-                    let new_y = edges
-                        .intersects(ResizeEdge::TOP)
-                        .then_some(initial_rect.loc.y + (initial_rect.size.h - geometry.size.h));
+        let new_y = edges
+            .intersects(ResizeEdge::TOP)
+            .then_some(initial_rect.loc.y + (initial_rect.size.h - geometry.size.h));
 
-                    (new_x, new_y).into()
-                })
-            })
-            .unwrap_or_default()
-    });
+        (new_x, new_y).into()
+    } else {
+        Default::default()
+    };
 
     if let Some(new_x) = new_loc.x {
         window_loc.x = new_x;

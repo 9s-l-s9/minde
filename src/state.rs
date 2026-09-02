@@ -171,8 +171,15 @@ pub struct MindeState {
 
     /// Registry of mapped toplevels by their stable id, assigned in
     /// `handlers::xdg_shell::new_toplevel`. Scheme addresses windows only by
-    /// this id (see `wm-place-window` &c. in `guile::mod`).
-    pub windows: Vec<(u64, Window)>,
+    /// this id (see `wm-place-window` &c. in `guile::mod`). A `BTreeMap`
+    /// gives O(log n) id lookup (`window_by_id` was a linear scan over a
+    /// `Vec`) while keeping iteration in id order, which -- since ids are
+    /// assigned monotonically and never reused (`next_window_id`) -- is the
+    /// same order windows were mapped in; several callers (the
+    /// foreign-toplevel manager's initial announce, `activate_only`) rely on
+    /// a stable enumeration order. The reverse direction (window -> id) is
+    /// O(1) via `WindowId` stashed in `Window::user_data()` (5.5).
+    pub windows: std::collections::BTreeMap<u64, Window>,
     pub next_window_id: u64,
     /// Ids Scheme marked floating (`wm-set-floating`); gates the
     /// super+drag move/resize grabs in `input.rs`. Float geometry itself
@@ -568,7 +575,7 @@ impl MindeState {
             lock_surfaces: Vec::new(),
             seat,
 
-            windows: Vec::new(),
+            windows: std::collections::BTreeMap::new(),
             next_window_id: 0,
             floating_ids: std::collections::HashSet::new(),
             focused_window: None,
@@ -834,7 +841,7 @@ impl MindeState {
     /// Marks `window` (if any) as the sole activated toplevel and lets every
     /// client render its focused/unfocused state.
     fn activate_only(&self, window: Option<&Window>) {
-        for (_, w) in &self.windows {
+        for w in self.windows.values() {
             w.set_activated(Some(w) == window);
             if let Some(t) = w.toplevel() {
                 t.send_pending_configure();
@@ -1408,6 +1415,24 @@ impl MindeState {
         }
     }
 
+    /// Shared preamble of `send_key`'s and `send_string`'s keymap scans:
+    /// lock the xkb context and clone out the active keymap plus its layout
+    /// index. What each caller does with the keymap differs completely
+    /// (`send_key` searches for one keysym's keycode and its modifier
+    /// keycodes; `send_string` builds a full char -> (keycode, modifiers)
+    /// table across every level, including AltGr), so only this common
+    /// setup -- not the scans themselves -- is worth sharing (5.4).
+    fn keymap_and_layout(
+        ctx: &smithay::input::keyboard::XkbContext<'_>,
+    ) -> (smithay::input::keyboard::xkb::Keymap, u32) {
+        let guard = ctx.xkb().lock().unwrap();
+        // Safety: the keymap doesn't outlive the lock guard -- it's cloned
+        // (an Rc-like handle) before the guard is dropped.
+        let keymap = unsafe { guard.keymap() }.clone();
+        let layout = guard.active_layout().0;
+        (keymap, layout)
+    }
+
     /// Synthesizes one key press/release pair, wrapped in the requested
     /// modifiers (Scheme bitmask: shift=1 ctrl=4 alt=8 super=64), into the
     /// focused window (send-raw-key / meta / remapped keys).
@@ -1431,10 +1456,7 @@ impl MindeState {
         // One keymap scan: the target keysym's keycode (preferring the
         // unshifted level) plus the keycodes of the wrapping modifiers.
         let (found, shift, ctrl, alt, superk) = keyboard.with_xkb_state(self, |ctx| {
-            let guard = ctx.xkb().lock().unwrap();
-            // Safety: the refs don't outlive the lock guard.
-            let keymap = unsafe { guard.keymap() }.clone();
-            let layout = guard.active_layout().0;
+            let (keymap, layout) = Self::keymap_and_layout(&ctx);
             let mut found: Option<(xkb::Keycode, bool)> = None;
             let (mut shift, mut ctrl, mut alt, mut superk) = (None, None, None, None);
             for raw in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
@@ -1533,10 +1555,7 @@ impl MindeState {
         // One keymap scan builds char -> (keycode, modifier keycodes). Prefer
         // the candidate requiring the fewest modifiers when duplicated.
         let table = keyboard.with_xkb_state(self, |ctx| {
-            let guard = ctx.xkb().lock().unwrap();
-            // Safety: the refs don't outlive the lock guard.
-            let keymap = unsafe { guard.keymap() }.clone();
-            let layout = guard.active_layout().0;
+            let (keymap, layout) = Self::keymap_and_layout(&ctx);
             let mut table: std::collections::HashMap<char, (xkb::Keycode, Vec<xkb::Keycode>)> =
                 std::collections::HashMap::new();
             let mut modifier_keys = std::collections::HashMap::new();
@@ -1762,18 +1781,14 @@ impl MindeState {
     }
 
     fn window_by_id(&self, id: u64) -> Option<Window> {
-        self.windows
-            .iter()
-            .find(|(wid, _)| *wid == id)
-            .map(|(_, w)| w.clone())
+        self.windows.get(&id).cloned()
     }
 
-    /// The registered id of WINDOW, if any (reverse of `window_by_id`).
+    /// The registered id of WINDOW, if any (reverse of `window_by_id`). O(1):
+    /// reads the `WindowId` stashed on the window's user data at
+    /// registration instead of scanning the registry.
     pub fn id_for_window(&self, window: &Window) -> Option<u64> {
-        self.windows
-            .iter()
-            .find(|(_, w)| w == window)
-            .map(|(id, _)| *id)
+        window.user_data().get::<WindowId>().map(|id| id.0)
     }
 
     /// The registered id owning TOPLEVEL's wl_surface, if any.
@@ -1798,7 +1813,8 @@ impl MindeState {
         // Any title/app-id already known at map time (empty for a Wayland
         // toplevel that configures first, the class/title for an X11 window).
         let (title, app_id) = self.window_title_app_id(&window);
-        self.windows.push((id, window));
+        window.user_data().insert_if_missing(|| WindowId(id));
+        self.windows.insert(id, window);
         self.foreign_toplevel_created(id, title, app_id);
         id
     }
@@ -1835,8 +1851,8 @@ impl MindeState {
         if self.focused_window.as_ref() == Some(window) {
             self.focused_window = None;
         }
-        let pos = self.windows.iter().position(|(_, w)| w == window)?;
-        let id = self.windows.remove(pos).0;
+        let id = self.id_for_window(window)?;
+        self.windows.remove(&id);
         self.floating_ids.remove(&id);
         self.reported_titles.remove(&id);
         crate::automation_observe::set_window_geometry(id, None);
@@ -2184,6 +2200,11 @@ fn send_surface_preferred_scale(surface: &WlSurface, scale: f64) {
 /// data (survives as long as the output does; a re-plugged monitor gets
 /// a fresh id).
 struct OutputId(u64);
+
+/// Stable per-window id handed to Scheme, stashed in the `Window`'s user
+/// data at `register_window` time so `id_for_window` is O(1) instead of a
+/// linear scan over the registry (5.5).
+struct WindowId(u64);
 
 /// Data associated with a wayland client that connects to us.
 /// One instance of this type per client.

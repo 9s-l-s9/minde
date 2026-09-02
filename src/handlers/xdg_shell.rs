@@ -303,20 +303,25 @@ fn check_grab(
 
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
-    // Handle toplevel commits.
-    if let Some(window) = crate::state::window_for_surface(space, surface) {
-        let initial_configure_sent = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().ok())
-                .map(|data| data.initial_configure_sent)
-                .unwrap_or(false)
-        });
+    // Handle toplevel commits. The initial-configure flag lives in the
+    // surface's own data map, so check it (cheap) before paying for
+    // `window_for_surface`'s linear `Space` scan (3.9) -- after the first
+    // commit this is true for the life of the surface, so the scan is
+    // skipped for every commit that follows.
+    let initial_configure_sent = with_states(surface, |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().ok())
+            .map(|data| data.initial_configure_sent)
+            .unwrap_or(false)
+    });
 
-        if !initial_configure_sent && let Some(toplevel) = window.toplevel() {
-            toplevel.send_configure();
-        }
+    if !initial_configure_sent
+        && let Some(window) = crate::state::window_for_surface(space, surface)
+        && let Some(toplevel) = window.toplevel()
+    {
+        toplevel.send_configure();
     }
 
     // Handle popup commits.

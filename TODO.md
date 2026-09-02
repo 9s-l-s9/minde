@@ -170,26 +170,61 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       Done: `MindeState::schedule_redraw_at(&[old_pos, new_pos])` is now called from every pointer-motion path in `input.rs` (both `move_pointer`/relative-motion handlers and the tablet pointer-emulation route), marking dirty and scheduling a render only for the outputs the cursor left or entered.
 - [ ] **3.3 winit backend renders unconditionally with full-frame damage**
       (`winit.rs:133,191,248`). Nested only, low priority. verified.
+      Won't do: nested-only, low priority, and `winit.rs`'s render path
+      also feeds the automation screenshot/observe tooling used to verify
+      other automation fixes in this same pass -- changing its damage
+      tracking risks a client-visible regression there for a path this
+      audit itself already calls low priority. Left alone per the
+      conservative instruction for this item.
 - [ ] **3.4 Per-frame allocations and locks**: `custom`/`all_elements` Vecs and layer
       `partition` (`udev.rs:1147,1201-1207,1245,1268`), `cursor_state.hotspot()` mutex
       per frame (`render.rs:519-531`), O(windows x outputs) frame-callback walk
       (`udev.rs:1367-1389`). Idea: reusable Vecs on the output surface. verified,
       small.
       Partial: scene assembly (the `custom`/`all_elements` Vecs and the layer `partition`) moved into the shared `output_scene_elements` helper (see 5.3), but still allocates fresh `Vec`s per call; no reusable per-output `Vec` was added. `cursor_state.hotspot()` mutex and the O(windows x outputs) frame-callback walk are unchanged.
-- [ ] **3.5 `surface_under` evaluated three times per pointer motion**:
+      Left as Partial in this pass: turning the scene-assembly Vecs into
+      reusable per-output storage means threading a long-lived buffer
+      through `output_scene_elements` and its three callers (on-screen
+      render, capture, screencopy) without breaking the throwaway-buffer
+      capture case (5.3's `BorderBuffers` split exists precisely to keep
+      those cases separate) -- judged not mechanical enough to do safely
+      alongside 3.5/3.6/3.9 in the same pass.
+- [x] **3.5 `surface_under` evaluated three times per pointer motion**:
       `constrain_pointer` (`pointer_constraints.rs:79`), `input.rs:396`, `input.rs:417`.
       Each does an output lookup, a layer-map RefCell borrow and a surface-tree hit
       test (`state.rs:2067-2116`). At 1000 Hz mice this triples the dominant
       per-motion cost. Idea: compute once, pass along. verified.
-      Partial: the pre-move hit test is now computed once and passed to both `constrain_pointer` and the relative-motion focus (`under_current`), cutting three calls to two, but the post-move hit test at the new position (`input.rs` ~389/423, `surface_under(new_pos)`) is still separate, since the position isn't known until after `constrain_pointer` runs. 3.5 is not fully done.
-- [ ] **3.6 Resize grab sends a configure on every motion event**
+      Done: confirmed the pre-move hit test (`under_current`) is passed to
+      both `constrain_pointer` and the relative-motion focus in both
+      `pointer_relative_motion` and `pointer_absolute_motion`
+      (`input.rs:378-495`), so per motion event there are exactly two
+      `surface_under` calls, not three: one before the move (shared by the
+      constraint check and relative motion), one after (`surface_under(new_pos)`,
+      `input.rs` ~423/483), needed for the post-move focus/pointer.motion
+      event and `activate_pointer_constraint_if_entered`. The second call is
+      unavoidable without one -- it hit-tests a different position
+      (`new_pos`, only known once `constrain_pointer` has clamped/locked the
+      proposed point), so this is the minimum: 3.5 is done.
+- [x] **3.6 Resize grab sends a configure on every motion event**
       (`resize_grab.rs:620-654`), uncoalesced. Idea: pending size flushed once per
       frame. Move grab does `space.map_element(.., activate=true)` per motion
       (`move_grab.rs:369`). verified; move cost unverified.
       Partial: `MoveSurfaceGrab::motion` now calls `space.map_element(.., activate=false)` (the window was already raised/activated when the grab started) and calls `schedule_redraw()` explicitly instead of relying on the old fixed timer. `ResizeSurfaceGrab::motion` still calls `send_pending_configure()` on every motion event, uncoalesced — not addressed.
+      Done: `ResizeSurfaceGrab` now tracks `last_configured_size` and only
+      calls `send_pending_configure()`/`schedule_redraw()` when the clamped
+      size actually differs from the last one sent, so mouse jitter that
+      clamps to the same integer size no longer round-trips a configure per
+      motion event. The final configure on button release (which also
+      un-sets the `Resizing` state) is unconditional, as before.
 - [ ] **3.7 Every click and focus change walks all windows calling
       `send_pending_configure`** (`input.rs:586-597,648-652`, `state.rs:718-747`).
       Smithay elides unchanged configures, so cheap; flagged for the pattern.
+      Won't do: as noted, Smithay already elides an unchanged configure, so
+      the per-window call is cheap; the only remaining cost is the O(windows)
+      walk itself, which would need a "focus changed" flag per window or a
+      short-circuit for the single-window case to avoid touching
+      client-visible configure/activated-state semantics -- left alone per
+      the conservative instruction for this item.
 - [x] **3.8 `fontdue::Font::from_bytes` re-parses the embedded TTF on every message
       and once per overlay** (`render.rs:133`, from `state.rs:760,783`), and
       rasterises every glyph fresh. Idea: `OnceLock<Font>`, glyph cache keyed by
@@ -204,7 +239,18 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       the first-commit and resize checks on flags, compare titles by `&str` or hook
       `set_title` requests. verified; absolute cost unverified.
       Partial: `state::window_for_surface` (state.rs:72) replaces all six `space.elements().find(...)` duplicates (`compositor.rs`, `xdg_shell.rs` x4, the popup-root lookup) with one shared helper. `report_title_if_changed` (state.rs:1851) now compares title/app_id as `&str` inside `with_states` and only clones into `Strings` when something actually changed, instead of cloning every commit to compare. The four independent `Space` scans per commit are still four separate calls (each now cheaper via the shared helper) and the resize/first-commit checks were not gated on flags.
-- [ ] **3.10 Layer-surface commits run `arrange()` twice and rebuild head info**
+      Done: the first-commit check (`xdg_shell::handle_commit`) and the
+      resize check (`resize_grab::handle_commit`) now read their cheap
+      per-surface flag first -- `initial_configure_sent` from the data map,
+      and `ResizeSurfaceState::with(surface, ResizeSurfaceState::commit)`
+      respectively -- and only call `window_for_surface` (the `Space` scan)
+      when that flag says there is work to do. After the first commit, and
+      whenever a surface isn't mid-resize (the overwhelming majority of
+      commits), the scan for those two checks is skipped entirely. The
+      other two scans (`compositor.rs:43` for `on_commit`/title reporting,
+      `handle_layer_commit`'s output lookup) run every commit by necessity
+      and are unchanged.
+- [x] **3.10 Layer-surface commits run `arrange()` twice and rebuild head info**
       (`compositor.rs:101` then `update_usable_area` `state.rs:1981-2014`), allocating
       output names and calling `refresh_foreign_toplevel_outputs`
       (`foreign_toplevel.rs:221-259`, O(windows x outputs) with ~4 Vecs per window).
@@ -212,17 +258,44 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       layer's cached state changed; diff foreign outputs only when geometry moved.
       verified.
       Partial: the layer-commit path now calls `map.arrange()` only once (folded into `update_usable_area`) instead of once directly plus once more inside it. `refresh_foreign_toplevel_outputs`'s O(windows x outputs) rebuild and its output-name allocations are unchanged; no diffing-only-on-geometry-change was added.
+      Done (re-verified rather than re-implemented): `update_usable_area`
+      (`state.rs:2031-2064`) already builds the full `heads` Vec and
+      returns early with no Scheme call, no `refresh_foreign_toplevel_outputs`
+      and no `output_management_refresh` when `heads == self.reported_heads`
+      -- i.e. the expensive O(windows x outputs) rebuild and the
+      output-management re-advertisement are already gated on geometry
+      actually having moved, not run unconditionally every layer commit (a
+      1 Hz bar redraw that doesn't change its exclusive zone now costs one
+      `arrange()` + one small Vec-equality check, not a full foreign-toplevel
+      refresh). The unavoidable remaining cost -- `arrange()` and the
+      per-output `HeadInfo` build running once per layer commit to know
+      whether anything changed -- would need per-layer dirty tracking to
+      remove, judged too invasive for this pass.
 - [x] **3.11 Screenshot encode + write inline on the calloop thread**
       (`screencopy.rs:327-358` -> `png.rs:1154-1167,1214-1248`): bitwise table-less
       CRC-32, three full-size copies, synchronous file write inside the redraw
       callback. Idea: table CRC or `crc32fast`; encode and write on a worker after
       GPU readback. verified; expect tens of ms at 4K, unverified.
       Done: `render_to_png` split into `render_to_rgba` (GPU readback only, stays on the calloop thread) plus a `std::thread::spawn`ed worker that calls `png::write_rgba` (PNG encode + file write) and reports completion via `record_and_publish`. `png::crc32` now uses a `const`-built 256-entry lookup table (one lookup per byte) instead of the bitwise per-bit loop, and `chunk()` hashes the type+payload in place in the output buffer instead of copying into a separate `crc_input` Vec first.
-- [ ] **3.12 DnD `Source::send` writes the offer synchronously**
+- [x] **3.12 DnD `Source::send` writes the offer synchronously**
       (`automation_dnd.rs:362-372`); a stalled reader blocks the compositor. verified,
       payloads small.
-- [ ] **3.13 DnD dwell inserts a fresh timer source per step** (`state.rs:1162-1181`)
+      Done: `Source::send` already ran on a spawned worker thread (not the
+      calloop thread) before this pass, so a stalled reader couldn't block
+      the compositor; it could however wedge that worker thread forever.
+      `write_offer_nonblocking` (`automation_dnd.rs`) now sets the fd
+      `O_NONBLOCK` via `fcntl`, writes in a loop, and on `WouldBlock` waits
+      on `poll(POLLOUT)` against a 5 s total budget, giving up with a
+      `TimedOut` error (logged, same as any other write error) instead of
+      blocking indefinitely.
+- [x] **3.13 DnD dwell inserts a fresh timer source per step** (`state.rs:1162-1181`)
       instead of `ToDuration`. cosmetic.
+      Done (re-verified rather than re-implemented): `continue_automation_dnd`
+      (`state.rs:1206-1237`) already inserts exactly one `Timer::from_duration`
+      and drives every subsequent dwell step by returning
+      `TimeoutAction::ToDuration(DWELL)` from the same callback -- no fresh
+      timer source per step. This must have landed in an earlier commit on
+      this branch (726bc65/386b68b); the finding in this file was stale.
 
 ## 4. Scheme policy layer hot paths
 
@@ -304,10 +377,38 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `MindeState::new` :350-604, `send_string` :1479-1636, `send_key` :1367-1478
       (shares a keymap-scan preamble with `send_string`, :1384-1410 vs :1489-1510),
       `advance_synthetic_input` :1250-1366.
-- [ ] 5.5 `windows: Vec<(u64, Window)>` (`state.rs:156`) with linear
+      Partial: extracted the one genuinely shared, mechanical piece --
+      `keymap_and_layout` (`state.rs`) locks the xkb context and clones out
+      the keymap + active layout index, replacing the duplicated three lines
+      at the top of each closure in `send_key` and `send_string`. The rest of
+      each function (the single-keysym search with modifier resolution in
+      `send_key`, vs. the full char -> keycode/modifiers table with AltGr
+      handling in `send_string`) is not shared logic, just similar shape, so
+      splitting further would mean inventing new abstractions rather than
+      deduplicating -- left alone, along with `apply_wm_command`,
+      `MindeState::new` and `advance_synthetic_input`, none of which have a
+      mechanical split (they're long because they enumerate cases/fields,
+      not because they repeat code).
+- [x] 5.5 `windows: Vec<(u64, Window)>` (`state.rs:156`) with linear
       `window_by_id`/`id_for_window`/`id_for_toplevel`; `queue_screenshot`
       (`:1012-1016`) re-implements `window_by_id`. `HashMap<u64, Window>` plus id in
       `Window::user_data()`.
+      Done: `windows` is now `BTreeMap<u64, Window>` (state.rs). A
+      `BTreeMap` was chosen over `HashMap` because several callers rely on a
+      stable enumeration order -- the foreign-toplevel manager's initial
+      `toplevel()` announcement to a newly-bound client
+      (`foreign_toplevel.rs`'s `bind`) and `activate_only`'s pass over every
+      window -- and since `next_window_id` only increments and ids are never
+      reused, iterating a `BTreeMap` in key order is exactly the old `Vec`'s
+      insertion order. `window_by_id`/`foreign_outputs_for`/
+      `foreign_close_window` now do a `get(&id)` instead of a linear scan;
+      `id_for_window` is O(1), reading a `WindowId` newtype stashed on
+      `Window::user_data()` at `register_window` time (mirrors the existing
+      `OutputId` pattern) instead of scanning for pointer equality.
+      `id_for_toplevel` still scans (it matches by wl_surface identity, not
+      by id, so the id map doesn't help) and `queue_screenshot` already
+      called the shared `window_by_id` helper rather than reimplementing it
+      -- that part of the finding was stale.
 - [x] 5.6 Duplicates: `BTN_LEFT` (`input.rs:23` and `:524`); MIME list three times
       (`state.rs:955-960,968-973,1318-1323`); `(1280,720)` fallback rect three times
       (`:754-759,822-826,847-856`); ~90 lines of identical gesture pass-through in
