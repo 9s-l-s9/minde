@@ -18,9 +18,10 @@ use smithay::{
     wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
 };
 
-/// BTN_LEFT in the libinput/evdev button namespace. Emulated as the tool's
+/// BTN_LEFT/BTN_RIGHT in the libinput/evdev button namespace. Emulated as the tool's
 /// tip-down/up "click" for tablet-unaware clients.
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 /// Whether a tablet tool's input drives the real tablet protocol (the surface
 /// under the tool is tablet-aware) or falls back to emulating the pointer so a
@@ -383,8 +384,11 @@ impl MindeState {
     ) {
         let mut proposed = self.pointer_location + delta;
         proposed = self.clamp_to_outputs(proposed);
+        // One hit test for the pre-move position serves both the constraint
+        // check and the relative-motion focus.
+        let under_current = self.surface_under(self.pointer_location);
         // Apply any active pointer lock/confinement before moving.
-        let (new_pos, locked) = self.constrain_pointer(proposed);
+        let (new_pos, locked) = self.constrain_pointer(under_current.as_ref(), proposed);
 
         let Some(pointer) = self.seat.get_pointer() else {
             return;
@@ -393,7 +397,6 @@ impl MindeState {
         // Relative motion always flows -- this is the whole point of
         // the relative-pointer protocol for pointer-lock games, which
         // read deltas while the cursor itself stays parked.
-        let under_current = self.surface_under(self.pointer_location);
         pointer.relative_motion(
             self,
             under_current,
@@ -411,8 +414,11 @@ impl MindeState {
             return;
         }
 
+        let old_pos = self.pointer_location;
         self.pointer_location = new_pos;
         crate::automation_observe::set_pointer_position(new_pos.x, new_pos.y);
+        // The cursor moved: repaint the heads it left and entered.
+        self.schedule_redraw_at(&[old_pos, new_pos]);
         let serial = SERIAL_COUNTER.next_serial();
         let under = self.surface_under(new_pos);
         pointer.motion(
@@ -439,8 +445,9 @@ impl MindeState {
         time_msec: u32,
         utime: u64,
     ) {
+        let under_current = self.surface_under(self.pointer_location);
         // Apply any active pointer lock/confinement before moving.
-        let (new_pos, locked) = self.constrain_pointer(proposed);
+        let (new_pos, locked) = self.constrain_pointer(under_current.as_ref(), proposed);
 
         let Some(pointer) = self.seat.get_pointer() else {
             return;
@@ -452,7 +459,6 @@ impl MindeState {
         // the relative-pointer protocol is honestly usable nested; the
         // libinput backend supplies true unaccelerated deltas instead.
         let delta = proposed - self.pointer_location;
-        let under_current = self.surface_under(self.pointer_location);
         pointer.relative_motion(
             self,
             under_current,
@@ -468,8 +474,11 @@ impl MindeState {
             return;
         }
 
+        let old_pos = self.pointer_location;
         self.pointer_location = new_pos;
         crate::automation_observe::set_pointer_position(new_pos.x, new_pos.y);
+        // The cursor moved: repaint the heads it left and entered.
+        self.schedule_redraw_at(&[old_pos, new_pos]);
         let serial = SERIAL_COUNTER.next_serial();
         let under = self.surface_under(new_pos);
         pointer.motion(
@@ -521,8 +530,6 @@ impl MindeState {
                 // the press is still forwarded through
                 // pointer.button below so current_pressed()
                 // tracks the drag button.
-                const BTN_LEFT: u32 = 0x110;
-                const BTN_RIGHT: u32 = 0x111;
                 let floating = self
                     .id_for_window(&window)
                     .map(|id| self.floating_ids.contains(&id))
@@ -710,8 +717,10 @@ impl MindeState {
             ToolRoute::Tablet => {
                 // Tablet-aware client owns the tool events; move only the
                 // visible cursor (no wl_pointer events, which would double up).
+                let old_pos = self.pointer_location;
                 self.pointer_location = location;
                 crate::automation_observe::set_pointer_position(location.x, location.y);
+                self.schedule_redraw_at(&[old_pos, location]);
             }
             ToolRoute::Pointer => {
                 // Emulate the pointer so the stylus points in unaware apps.

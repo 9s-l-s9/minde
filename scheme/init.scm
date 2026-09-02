@@ -5,8 +5,7 @@
 ;;; restarting the compositor.
 
 (use-modules (ice-9 hash-table)
-             (srfi srfi-1)
-             (system vm trace))
+             (srfi srfi-1))
 
 ;; The minde modules live below this file; add the directory to the load
 ;; path so public facades and private compositor modules resolve regardless of
@@ -29,6 +28,7 @@
              (minde config)
              (minde status)
              (minde session)
+             (minde compositor rust)
              ((minde foundation keys) #:prefix key:))
 
 ;; Publish the versioned status document after every policy synchronization.
@@ -55,9 +55,7 @@
 ;; UI engines are packageable state machines. The compositor supplies their
 ;; rendering/input side effects here; standalone tests inject simple lambdas.
 (define (ui-rust-call name . arguments)
-  (let* ((module (resolve-module '(guile-user) #:ensure #f))
-         (variable (and module (module-variable module name))))
-    (and variable (apply (variable-ref variable) arguments))))
+  (apply rust-call-if-bound name arguments))
 (configure-prompt-ui!
  #:show (lambda (text duration) (ui-rust-call 'wm-message text duration))
  #:clear (lambda () (ui-rust-call 'wm-clear-message))
@@ -90,9 +88,6 @@
 
 ;; X11-style modifier bitmask, mirrored on the Rust side: shift=1 ctrl=4
 ;; alt=8 super=64.
-(define (mod-symbol->bit sym)
-  (key:modifier->bit sym))
-
 (define (mods->bitmask mods)
   "MODS is a list of symbols such as '(super) or '(ctrl shift)."
   (key:modifiers->bitmask mods))
@@ -224,9 +219,7 @@ MODS (possibly '())."
 
 (define (set-border-color! hex)
   ;; Tolerate a binary older than this config (subr not registered yet).
-  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
-    (let ((var (and mod (module-variable mod 'wm-border-color))))
-      (when var ((variable-ref var) hex)))))
+  (rust-call-if-bound 'wm-border-color hex))
 
 ;; which-key-mode (StumpWM): when on, an armed keymap that stays armed
 ;; for %which-key-delay-ms echoes its bindings automatically (the same
@@ -241,9 +234,7 @@ MODS (possibly '())."
 
 (define (set-key-repeat! on)
   ;; Tolerate a binary older than this config (subr not registered yet).
-  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
-    (let ((var (and mod (module-variable mod 'wm-set-key-repeat))))
-      (when var ((variable-ref var) on)))))
+  (rust-call-if-bound 'wm-set-key-repeat on))
 
 (define (set-key-state! s)
   (set! %key-state s)
@@ -366,7 +357,11 @@ focused client), #f otherwise."
        ((and %command-mode
              (or (string=? keysym-name "Return")
                  (string=? keysym-name "Escape")
-                 (equal? (key-spec mods-bitmask keysym-name) "C-g")))
+                 ;; C-g without allocating the spec: ctrl held, no other
+                 ;; notated modifier (key-spec ignores lock bits too).
+                 (and (string=? keysym-name "g")
+                      (logtest mods-bitmask 4)
+                      (not (logtest mods-bitmask (logior 1 8 64))))))
         (leave-command-mode!)
         #t)
        ;; Pressing the prefix key's keysym again while awaiting a key
@@ -662,11 +657,10 @@ focused client), #f otherwise."
     (set! %next-timer-token (+ token 1))
     (hash-set! %timers token thunk)
     ;; Tolerate a binary older than this config (subr not registered).
-    (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-           (var (and mod (module-variable mod 'wm-run-after-ms))))
+    (let ((var (rust-variable 'wm-run-after-ms)))
       (if var
           ((variable-ref var) ms token)
-          (hash-remove! %timers token)))))
+          (begin (hash-remove! %timers token) #f)))))
 
 (define (handle-timer! token)
   (let ((thunk (hash-ref %timers token)))
@@ -702,8 +696,7 @@ focused client), #f otherwise."
 ;; ---------------------------------------------------------------------
 
 (define (%guile-user-var name)
-  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
-    (and mod (module-variable mod name))))
+  (rust-variable name))
 
 (define (%input-tristate v)
   ;; #t -> 1 (enable), #f -> 0 (disable), 'unset (or anything else) -> -1.
@@ -847,9 +840,7 @@ unbound-variable path."
 ;; Guarded like set-border-color!: tolerate a binary/test without the
 ;; message subrs.
 (define (call-if-bound name . args)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod name))))
-    (when var (apply (variable-ref var) args))))
+  (apply rust-call-if-bound name args))
 
 (define %resize-help "Resize: arrows/hjkl move divider, b balance, RET/ESC done")
 
@@ -1077,12 +1068,6 @@ unbound-variable path."
     (if (null? items)
         (echo "no windows in this frame")
         (select-from-menu items focus-window-by-id! #:prompt "frame windows:"))))
-
-(define (echo-frame-windows!)
-  (let ((ids (current-frame-window-ids)))
-    (echo (if (null? ids)
-              "no windows in this frame"
-              (string-join (map window-label ids) "\n")))))
 
 (define (windowlist-by-class!)
   (let* ((ids (sort (all-window-ids)
@@ -1714,7 +1699,10 @@ reload baseline. Call once after adding imperative user bindings."
         (let ((candidate (validate-configuration-file path)))
           (apply-configuration! candidate)
           (wm-log (string-append "reloaded configuration " path))
-          (echo (string-append "reloaded configuration " path))
+          ;; The boot-time reload runs before any output exists; an echo
+          ;; then only costs a message nobody can see.
+          (when (pair? (rust-call-if-bound 'wm-outputs))
+            (echo (string-append "reloaded configuration " path)))
           #t))
       (lambda (key . arguments)
         (let ((message (format #f "configuration reload FAILED: ~a ~s"
@@ -1743,17 +1731,20 @@ reload baseline. Call once after adding imperative user bindings."
 
 (define (refresh-command-help!)
   ;; Fill key help from registry summaries wherever a binding is a command.
+  ;; One procedure -> summary table up front; command-names re-sorts the
+  ;; registry on every call, so it must not run once per binding.
+  (define summaries (make-hash-table))
+  (for-each (lambda (name)
+              (let ((command (command-ref name)))
+                (hashq-set! summaries (command-procedure command)
+                            (command-summary command))))
+            (command-names))
   (define (visit keymap)
     (hash-for-each
      (lambda (key value)
        (if (procedure? value)
-           (let ((command
-                  (find (lambda (name)
-                          (eq? value (command-procedure (command-ref name))))
-                        (command-names))))
-             (when command
-               (set-binding-doc! keymap key
-                                 (command-summary (command-ref command)))))
+           (let ((summary (hashq-ref summaries value)))
+             (when summary (set-binding-doc! keymap key summary)))
            (when (hash-table? value) (visit value))))
      keymap))
   (visit %prefix-bindings))

@@ -51,6 +51,7 @@ impl SeatHandler for MindeState {
         image: smithay::input::pointer::CursorImageStatus,
     ) {
         self.cursor_state.set_status(image);
+        self.schedule_redraw_at(&[self.pointer_location]);
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
@@ -84,6 +85,7 @@ impl smithay::wayland::tablet_manager::TabletSeatHandler for MindeState {
         image: smithay::input::pointer::CursorImageStatus,
     ) {
         self.cursor_state.set_status(image);
+        self.schedule_redraw_at(&[self.pointer_location]);
     }
 }
 
@@ -285,15 +287,8 @@ impl XdgActivationHandler for MindeState {
         surface: WlSurface,
     ) {
         self.xdg_activation_state.remove_token(&token);
-        let id = self
-            .windows
-            .iter()
-            .find(|(_, w)| {
-                w.toplevel()
-                    .map(|t| t.wl_surface() == &surface)
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id);
+        let id = crate::state::window_for_surface(&self.space, &surface)
+            .and_then(|w| self.id_for_window(&w));
         if let Some(id) = id {
             crate::guile::on_urgent(id);
         }

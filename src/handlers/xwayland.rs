@@ -97,6 +97,7 @@ impl XwmHandler for MindeState {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        self.schedule_redraw();
         if let Some((id, element)) = self.window_for_x11(&window) {
             self.space.unmap_elem(&element);
             self.unregister_window(&element);
@@ -170,6 +171,7 @@ impl XwmHandler for MindeState {
             .cloned();
         if let Some(element) = element {
             self.space.map_element(element, geometry.loc, false);
+            self.schedule_redraw();
         }
     }
 

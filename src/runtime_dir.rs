@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Secure paths for per-user runtime sockets.
+//! Secure paths for per-user runtime sockets and the state directory.
 
 use std::ffi::OsString;
 use std::fs::{self, Metadata, Permissions};
@@ -46,6 +46,18 @@ fn validate_private_directory(path: &Path, metadata: &Metadata, uid: u32) -> Res
         ));
     }
     Ok(())
+}
+
+/// The per-user state directory, `$XDG_STATE_HOME/minde` or
+/// `~/.local/state/minde`: crash log, session logs. Mirrors the resolution
+/// in `scripts/mindectl`; keep the two in step.
+pub fn state_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
+        })
+        .join("minde")
 }
 
 /// Returns a socket path beneath a private, current-user runtime directory.
@@ -99,6 +111,11 @@ pub fn remove_stale_socket(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_directory_ends_in_minde() {
+        assert_eq!(state_dir().file_name().unwrap(), "minde");
+    }
 
     #[test]
     fn fallback_directory_is_scoped_by_uid() {

@@ -19,6 +19,12 @@
 ;;; slipped into a payload is bounded to a string rather than emitted as an
 ;;; unparseable line, exactly as the eval reply path guarantees.
 ;;;
+;;; Cost with no listener: the Rust gsubr wm-events-active? reports whether
+;;; any subscriber is connected; minde-mirror-event asks it first and skips
+;;; the serialisation entirely when nobody would receive the line. The gsubrs
+;;; are resolved once at load time (they are registered before init.scm
+;;; loads); headless tests, which have none, get the permissive defaults.
+;;;
 ;;; Lock privacy: while the session is locked, title- and content-bearing
 ;;; events are filtered, mirroring (minde status)'s redact? policy (window
 ;;; id retained; human-readable title and app-id omitted). new-window keeps its
@@ -48,12 +54,18 @@ writable-data guarantee via ipc-writable-datum."
            (lambda (port)
              (write (cons name (map ipc-writable-datum payload)) port))))))
 
+(define %events-active?
+  (if (defined? 'wm-events-active?) wm-events-active? (lambda () #t)))
+(define %session-locked?
+  (if (defined? 'wm-session-locked?) wm-session-locked? (lambda () #f)))
+
 (define (minde-mirror-event name args)
   "Serializes event NAME with payload list ARGS and mirrors it to every
 event-socket subscriber via the wm-publish-event gsubr. Called by
-run-event-hook! for every firing. A missing gsubr (headless load) or a
-lock-suppressed event is a no-op."
-  (let* ((locked? (and (defined? 'wm-session-locked?) (wm-session-locked?)))
-         (line (event->line name args locked?)))
-    (when (and line (defined? 'wm-publish-event))
-      (wm-publish-event line))))
+run-event-hook! for every firing. No subscriber, a missing gsubr (headless
+load) or a lock-suppressed event is a no-op; only the first of those is
+free, the check runs before any serialisation."
+  (when (%events-active?)
+    (let ((line (event->line name args (%session-locked?))))
+      (when (and line (defined? 'wm-publish-event))
+        (wm-publish-event line)))))

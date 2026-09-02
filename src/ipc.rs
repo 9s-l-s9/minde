@@ -44,11 +44,25 @@ pub fn socket_path() -> std::io::Result<PathBuf> {
 }
 
 /// Shared between a client's I/O source and its deadline timer: whether the
-/// exchange completed, and the calloop token of whichever source (read, then
-/// write) currently owns the connection so the timer can evict it.
+/// exchange completed, the calloop token of whichever source (read, then
+/// write) currently owns the connection so the timer can evict it, and the
+/// timer's own token so a finished exchange can disarm it instead of leaving
+/// a dead timer to wake the loop later.
 struct ClientState {
     finished: bool,
     token: Option<RegistrationToken>,
+    timer: Option<RegistrationToken>,
+}
+
+impl ClientState {
+    /// Marks the exchange complete and cancels the deadline timer, if it is
+    /// still armed.
+    fn finish(&mut self, handle: &LoopHandle<'static, MindeState>) {
+        self.finished = true;
+        if let Some(timer) = self.timer.take() {
+            handle.remove(timer);
+        }
+    }
 }
 
 type SharedClient = Rc<RefCell<ClientState>>;
@@ -97,11 +111,12 @@ fn spawn_writer(
         Err(error) => {
             tracing::warn!(component = "ipc", action = "write", %error,
                 "failed to clone IPC stream for reply flush");
-            shared.borrow_mut().finished = true;
+            shared.borrow_mut().finish(handle);
             return;
         }
     };
     let writer_shared = shared.clone();
+    let writer_handle = handle.clone();
     let token = handle.insert_source(
         Generic::new(clone, Interest::WRITE, Mode::Level),
         move |_, stream, _state| {
@@ -110,13 +125,13 @@ fn spawn_writer(
             match try_flush(unsafe { stream.get_mut() }, &mut pending) {
                 Ok(false) => Ok(PostAction::Continue),
                 Ok(true) => {
-                    writer_shared.borrow_mut().finished = true;
+                    writer_shared.borrow_mut().finish(&writer_handle);
                     Ok(PostAction::Remove)
                 }
                 Err(error) => {
                     tracing::warn!(component = "ipc", action = "write", %error,
                         "failed to write IPC response");
-                    writer_shared.borrow_mut().finished = true;
+                    writer_shared.borrow_mut().finish(&writer_handle);
                     Ok(PostAction::Remove)
                 }
             }
@@ -127,18 +142,20 @@ fn spawn_writer(
         Err(error) => {
             tracing::warn!(component = "ipc", action = "write", %error,
                 "failed to register IPC reply source");
-            shared.borrow_mut().finished = true;
+            shared.borrow_mut().finish(handle);
         }
     }
 }
 
 /// Registers one accepted connection: a read source that accumulates the
 /// request until EOF then evaluates and replies, plus a one-shot deadline
-/// timer that evicts the client if the exchange has not finished in time.
+/// timer that evicts the client if the exchange has not finished in time
+/// (and is disarmed as soon as it does).
 fn register_client(handle: &LoopHandle<'static, MindeState>, stream: UnixStream) {
     let shared: SharedClient = Rc::new(RefCell::new(ClientState {
         finished: false,
         token: None,
+        timer: None,
     }));
     let reader_shared = shared.clone();
     let reader_handle = handle.clone();
@@ -163,7 +180,7 @@ fn register_client(handle: &LoopHandle<'static, MindeState>, stream: UnixStream)
                     Err(error) => {
                         tracing::warn!(component = "ipc", action = "read", %error,
                             "failed to read IPC request");
-                        reader_shared.borrow_mut().finished = true;
+                        reader_shared.borrow_mut().finish(&reader_handle);
                         return Ok(PostAction::Remove);
                     }
                 }
@@ -174,14 +191,14 @@ fn register_client(handle: &LoopHandle<'static, MindeState>, stream: UnixStream)
             let mut pending: VecDeque<u8> = evaluate(&request).into_bytes().into();
             pending.push_back(b'\n');
             match try_flush(stream, &mut pending) {
-                Ok(true) => reader_shared.borrow_mut().finished = true,
+                Ok(true) => reader_shared.borrow_mut().finish(&reader_handle),
                 Ok(false) => {
                     spawn_writer(&reader_handle, stream, pending, reader_shared.clone());
                 }
                 Err(error) => {
                     tracing::warn!(component = "ipc", action = "write", %error,
                         "failed to write IPC response");
-                    reader_shared.borrow_mut().finished = true;
+                    reader_shared.borrow_mut().finish(&reader_handle);
                 }
             }
             Ok(PostAction::Remove)
@@ -197,10 +214,14 @@ fn register_client(handle: &LoopHandle<'static, MindeState>, stream: UnixStream)
     }
 
     let timer_handle = handle.clone();
+    let timer_shared = shared.clone();
     let timer = handle.insert_source(
         Timer::from_duration(CLIENT_DEADLINE),
         move |_, _, _state| {
-            let mut client = shared.borrow_mut();
+            let mut client = timer_shared.borrow_mut();
+            // Firing consumes the registration; forget the token so a
+            // later `finish` does not try to remove it again.
+            client.timer = None;
             if !client.finished {
                 client.finished = true;
                 if let Some(token) = client.token.take() {
@@ -216,9 +237,12 @@ fn register_client(handle: &LoopHandle<'static, MindeState>, stream: UnixStream)
             TimeoutAction::Drop
         },
     );
-    if let Err(error) = timer {
-        tracing::warn!(component = "ipc", action = "deadline", %error,
-            "failed to arm IPC client deadline timer");
+    match timer {
+        Ok(token) => shared.borrow_mut().timer = Some(token),
+        Err(error) => {
+            tracing::warn!(component = "ipc", action = "deadline", %error,
+                "failed to arm IPC client deadline timer");
+        }
     }
 }
 

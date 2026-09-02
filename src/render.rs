@@ -109,6 +109,34 @@ const MESSAGE_BG: [u8; 4] = [0x28, 0x28, 0x28, 0xff]; // #282828
 const MESSAGE_FG: [u8; 4] = [0xeb, 0xdb, 0xb2, 0xff]; // #ebdbb2
 const MESSAGE_BORDER_COLOR: [u8; 4] = [0xd7, 0x99, 0x21, 0xff]; // #d79921
 
+/// The parsed message font, parsed once: `Font::from_bytes` re-reads the
+/// whole TTF, which is far too much for every echo message and overlay label.
+fn message_font() -> &'static fontdue::Font {
+    static FONT: std::sync::OnceLock<fontdue::Font> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| {
+        fontdue::Font::from_bytes(MESSAGE_FONT_BYTES, fontdue::FontSettings::default())
+            .expect("embedded font must parse")
+    })
+}
+
+/// Glyph coverage bitmaps at `MESSAGE_FONT_PX`, cached per character: the
+/// message text is mostly the same few dozen glyphs over and over.
+fn rasterize_cached(font: &fontdue::Font, ch: char) -> (fontdue::Metrics, std::sync::Arc<[u8]>) {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    type Glyph = (fontdue::Metrics, Arc<[u8]>);
+    static GLYPHS: Mutex<Option<HashMap<char, Glyph>>> = Mutex::new(None);
+    let mut guard = GLYPHS.lock().unwrap();
+    let cache = guard.get_or_insert_with(HashMap::new);
+    cache
+        .entry(ch)
+        .or_insert_with(|| {
+            let (metrics, bitmap) = font.rasterize(ch, MESSAGE_FONT_PX);
+            (metrics, Arc::from(bitmap))
+        })
+        .clone()
+}
+
 /// A rasterized message ready to render, plus the generation counter used
 /// so a stale hide-timer can't clear a newer message.
 pub struct MessageState {
@@ -130,8 +158,7 @@ fn put_px(data: &mut [u8], stride: usize, x: i32, y: i32, rgba: [u8; 4]) {
 /// like StumpWM's message window. Lines are hard-wrapped/clamped to fit
 /// within `max_w` x `max_h` (pass the output size).
 pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> MessageState {
-    let font = fontdue::Font::from_bytes(MESSAGE_FONT_BYTES, fontdue::FontSettings::default())
-        .expect("embedded font must parse");
+    let font = message_font();
 
     let advance = font.metrics('M', MESSAGE_FONT_PX).advance_width.ceil() as i32;
     let line_h = (MESSAGE_FONT_PX * 1.35).ceil() as i32;
@@ -193,7 +220,7 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
     for (row, line) in lines.iter().enumerate() {
         let y0 = inset + row as i32 * line_h;
         for (col, ch) in line.chars().enumerate() {
-            let (metrics, bitmap) = font.rasterize(ch, MESSAGE_FONT_PX);
+            let (metrics, bitmap) = rasterize_cached(font, ch);
             let gx = inset + col as i32 * advance + metrics.xmin;
             let gy = y0 + baseline - metrics.height as i32 - metrics.ymin;
             for by in 0..metrics.height as i32 {

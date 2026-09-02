@@ -564,6 +564,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                             // A scale change must reach fractional-scale
                             // clients so they repaint at the new density.
                             state.update_fractional_scales();
+                            state.schedule_redraw();
                             crate::guile::on_output_configured();
                         }
                     }

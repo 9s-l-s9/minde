@@ -57,6 +57,25 @@ struct QueuedSyntheticAction {
     keyboard_focus: Option<WlSurface>,
 }
 
+/// MIME types the compositor offers for the text it owns (clipboard,
+/// primary selection, synthetic paste).
+const TEXT_MIME_TYPES: [&str; 3] = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"];
+
+fn text_mime_types() -> Vec<String> {
+    TEXT_MIME_TYPES.iter().map(|m| m.to_string()).collect()
+}
+
+/// The mapped window whose root `wl_surface` is `surface`: an xdg toplevel's
+/// surface, or an X11 window's once the xwayland-shell association happened.
+/// The one lookup behind every "which window owns this surface" question
+/// (commit routing, popups, grabs, activation).
+pub fn window_for_surface(space: &Space<Window>, surface: &WlSurface) -> Option<Window> {
+    space
+        .elements()
+        .find(|w| w.wl_surface().is_some_and(|s| &*s == surface))
+        .cloned()
+}
+
 /// Clamp a point to the nearest mapped output.  Treating outputs as a summed
 /// horizontal strip breaks for negative origins, vertical arrangements and
 /// gaps, so keep this calculation independent and table-testable.
@@ -629,58 +648,16 @@ impl MindeState {
             .expect("Failed to init the wm command channel source.");
     }
 
-    /// Applies a single `WmCommand` enqueued from Scheme.
+    /// Applies a single `WmCommand` enqueued from Scheme. Anything that
+    /// changes the scene schedules a redraw (see `udev` repaint scheduling);
+    /// the per-command work lives in the helpers below.
     fn apply_wm_command(&mut self, cmd: WmCommand) {
         match cmd {
             WmCommand::Place { id, x, y, w, h } => {
-                let Some(window) = self.window_by_id(id) else {
-                    tracing::warn!(id, "wm-place-window: unknown window id");
-                    return;
-                };
-                if let Some(toplevel) = window.toplevel() {
-                    toplevel.with_pending_state(|state| {
-                        state.size = Some((w, h).into());
-                        // Mark the window tiled on all edges: Firefox-family
-                        // clients (zen) only obey exact configure sizes and
-                        // drop their CSD shadow margins when tiled.
-                        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
-                        state.states.set(XdgState::TiledLeft);
-                        state.states.set(XdgState::TiledRight);
-                        state.states.set(XdgState::TiledTop);
-                        state.states.set(XdgState::TiledBottom);
-                    });
-                    toplevel.send_pending_configure();
-                } else if let Some(x11) = window.x11_surface() {
-                    tracing::debug!(id, x, y, w, h, "x11 place");
-                    let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
-                }
-                self.space.map_element(window, (x, y), false);
-                self.publish_window_geometry(id, Rectangle::new((x, y).into(), (w, h).into()));
-                self.refresh_foreign_toplevel_outputs();
+                self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), true)
             }
             WmCommand::PlaceFloat { id, x, y, w, h } => {
-                let Some(window) = self.window_by_id(id) else {
-                    tracing::warn!(id, "wm-place-float: unknown window id");
-                    return;
-                };
-                // No Tiled* states: a floating window keeps its CSD
-                // shadows/rounding; exact-size obedience matters less
-                // since nothing tiles around it.
-                if let Some(toplevel) = window.toplevel() {
-                    toplevel.with_pending_state(|state| {
-                        state.size = Some((w, h).into());
-                        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
-                        state.states.unset(XdgState::TiledLeft);
-                        state.states.unset(XdgState::TiledRight);
-                        state.states.unset(XdgState::TiledTop);
-                        state.states.unset(XdgState::TiledBottom);
-                    });
-                    toplevel.send_pending_configure();
-                } else if let Some(x11) = window.x11_surface() {
-                    let _ = x11.configure(Rectangle::new((x, y).into(), (w, h).into()));
-                }
-                self.space.map_element(window, (x, y), false);
-                self.publish_window_geometry(id, Rectangle::new((x, y).into(), (w, h).into()));
+                self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), false)
             }
             WmCommand::Raise { id } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -688,6 +665,7 @@ impl MindeState {
                     return;
                 };
                 self.space.raise_element(&window, false);
+                self.schedule_redraw();
             }
             WmCommand::SetFloating { id, on } => {
                 if on {
@@ -696,84 +674,16 @@ impl MindeState {
                     self.floating_ids.remove(&id);
                 }
             }
-            WmCommand::Focus { id } => {
-                let Some(window) = self.window_by_id(id) else {
-                    tracing::warn!(id, "wm-focus-window: unknown window id");
-                    return;
-                };
-                // Both window kinds expose a wl_surface -- X11 ones only
-                // once the xwayland-shell association happened, which can
-                // lag the map. Still record/raise/activate in that case;
-                // the keyboard focus is applied retroactively in
-                // `surface_associated` (handlers/xwayland.rs), or emacs &
-                // co. think they're unfocused (hollow cursor) forever.
-                if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    if let Some(keyboard) = self.seat.get_keyboard() {
-                        keyboard.set_focus(self, Some(surface), serial);
-                    }
-                }
-                self.space.raise_element(&window, true);
-                // Let clients render their focused/unfocused state.
-                for (_, w) in &self.windows {
-                    w.set_activated(w == &window);
-                    if let Some(t) = w.toplevel() {
-                        t.send_pending_configure();
-                    }
-                }
-                self.focused_window = Some(window);
-                self.foreign_toplevel_focus(Some(id));
-            }
-            WmCommand::ClearFocus => {
-                let serial = SERIAL_COUNTER.next_serial();
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    keyboard.set_focus(self, Option::<WlSurface>::None, serial);
-                }
-                // Clearing keyboard focus doesn't invoke `focus_changed`, so
-                // drop text-input focus and deactivate any shortcuts inhibitor
-                // explicitly (IME leaves the surface; the inhibitor must not
-                // survive focus loss).
-                self.set_text_input_focus(None);
-                self.update_keyboard_shortcuts_inhibitors(None);
-                for (_, w) in &self.windows {
-                    w.set_activated(false);
-                    if let Some(t) = w.toplevel() {
-                        t.send_pending_configure();
-                    }
-                }
-                self.focused_window = None;
-                self.foreign_toplevel_focus(None);
-            }
+            WmCommand::Focus { id } => self.focus_window(id),
+            WmCommand::ClearFocus => self.clear_focus(),
             WmCommand::FocusRect { x, y, w, h } => {
                 self.focus_rect = Some(Rectangle::new((x, y).into(), (w, h).into()));
+                self.schedule_redraw();
             }
-            WmCommand::Message { text, timeout_ms } => {
-                self.message_generation += 1;
-                let generation = self.message_generation;
-                let (max_w, max_h) = self
-                    .space
-                    .outputs()
-                    .next()
-                    .and_then(|o| self.space.output_geometry(o))
-                    .map(|g| (g.size.w, g.size.h))
-                    .unwrap_or((1280, 720));
-                self.message = Some(crate::render::render_message(
-                    &text, generation, max_w, max_h,
-                ));
-                if timeout_ms > 0 {
-                    let timer = smithay::reexports::calloop::timer::Timer::from_duration(
-                        std::time::Duration::from_millis(timeout_ms),
-                    );
-                    let _ = self.handle.insert_source(timer, move |_, _, state| {
-                        if state.message.as_ref().map(|m| m.generation) == Some(generation) {
-                            state.message = None;
-                        }
-                        smithay::reexports::calloop::timer::TimeoutAction::Drop
-                    });
-                }
-            }
+            WmCommand::Message { text, timeout_ms } => self.show_message(&text, timeout_ms),
             WmCommand::ClearMessage => {
                 self.message = None;
+                self.schedule_redraw();
             }
             WmCommand::AddOverlay { x, y, text } => {
                 // Labels are a couple of characters; a small budget keeps
@@ -782,12 +692,15 @@ impl MindeState {
                     Point::from((x, y)),
                     crate::render::render_message(&text, 0, 400, 200),
                 ));
+                self.schedule_redraw();
             }
             WmCommand::ClearOverlays => {
                 self.overlays.clear();
+                self.schedule_redraw();
             }
             WmCommand::BorderColor { rgba } => {
                 self.border_color = rgba;
+                self.schedule_redraw();
             }
             WmCommand::Close { id } => {
                 let Some(window) = self.window_by_id(id) else {
@@ -809,90 +722,8 @@ impl MindeState {
                     smithay::reexports::calloop::timer::TimeoutAction::Drop
                 });
             }
-            WmCommand::Fullscreen { id, on } => {
-                let Some(window) = self.window_by_id(id) else {
-                    tracing::warn!(id, "wm-set-fullscreen: unknown window id");
-                    return;
-                };
-                self.foreign_toplevel_fullscreen(id, on);
-                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
-                // X11 windows: set the fullscreen hint and let the shared
-                // full-rect placement below apply through configure.
-                if let Some(x11) = window.x11_surface() {
-                    let _ = x11.set_fullscreen(on);
-                    if on {
-                        let geo = self
-                            .space
-                            .outputs()
-                            .next()
-                            .and_then(|o| self.space.output_geometry(o))
-                            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()));
-                        let _ = x11.configure(geo);
-                        self.space.map_element(window.clone(), geo.loc, false);
-                        self.space.raise_element(&window, true);
-                        self.publish_window_geometry(id, geo);
-                    }
-                    return;
-                }
-                let Some(toplevel) = window.toplevel() else {
-                    return;
-                };
-                if on {
-                    // Full geometry of the output showing the window (not
-                    // the usable area): fullscreen covers reserved bar
-                    // space (though Top-layer surfaces still render above;
-                    // documented limitation).
-                    let window_center = self
-                        .space
-                        .element_geometry(&window)
-                        .map(|g| Point::from((g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2)));
-                    let geo = self
-                        .space
-                        .outputs()
-                        .find(|o| match (window_center, self.space.output_geometry(o)) {
-                            (Some(c), Some(g)) => g.contains(c),
-                            _ => false,
-                        })
-                        .or_else(|| self.space.outputs().next())
-                        .and_then(|o| self.space.output_geometry(o))
-                        .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()));
-                    toplevel.with_pending_state(|state| {
-                        state.states.set(XdgState::Fullscreen);
-                        state.size = Some(geo.size);
-                    });
-                    toplevel.send_pending_configure();
-                    self.space.map_element(window.clone(), geo.loc, false);
-                    self.space.raise_element(&window, true);
-                    self.publish_window_geometry(id, geo);
-                } else {
-                    // Scheme re-syncs the frame geometry right after.
-                    toplevel.with_pending_state(|state| {
-                        state.states.unset(XdgState::Fullscreen);
-                    });
-                    toplevel.send_pending_configure();
-                }
-            }
-            WmCommand::Kill { id } => {
-                let Some(window) = self.window_by_id(id) else {
-                    tracing::warn!(id, "wm-kill-window: unknown window id");
-                    return;
-                };
-                if let Some(toplevel) = window.toplevel() {
-                    use smithay::reexports::wayland_server::Resource;
-                    if let Ok(client) = self.display_handle.get_client(toplevel.wl_surface().id()) {
-                        tracing::info!(id, "wm-kill-window: dropping client connection");
-                        self.display_handle
-                            .backend_handle()
-                            .kill_client(client.id(), DisconnectReason::ConnectionClosed);
-                    }
-                } else if let Some(x11) = window.x11_surface() {
-                    // Every X11 app shares the one Xwayland client;
-                    // dropping that connection would take down all of
-                    // them. Polite close is the best per-window kill.
-                    tracing::info!(id, "wm-kill-window: X11 window, closing politely");
-                    let _ = x11.close();
-                }
-            }
+            WmCommand::Fullscreen { id, on } => self.set_fullscreen(id, on),
+            WmCommand::Kill { id } => self.kill_window(id),
             WmCommand::WarpPointer { x, y } => {
                 self.warp_pointer((x as f64, y as f64).into());
             }
@@ -908,34 +739,7 @@ impl MindeState {
                     self.cancel_key_repeat();
                 }
             }
-            WmCommand::Click { button, count } => {
-                // 1=left 2=middle 3=right, as StumpWM ratclick counts them.
-                const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
-                let code = CODES[(button - 1) as usize];
-                // hover->settle->press: give hover-sensitive clients (custom
-                // React radios/pills) event-loop turns to update their hit
-                // target before the press lands; hold/gap are sized so
-                // multi-clicks register as double-clicks (GTK ~400 ms).
-                let mut actions = Vec::with_capacity(count as usize * 2 + 1);
-                actions.push((SyntheticAction::Hover, 150));
-                for click in 0..count {
-                    actions.push((
-                        SyntheticAction::Button {
-                            code,
-                            pressed: true,
-                        },
-                        40,
-                    ));
-                    actions.push((
-                        SyntheticAction::Button {
-                            code,
-                            pressed: false,
-                        },
-                        if click + 1 < count { 80 } else { 0 },
-                    ));
-                }
-                self.enqueue_synthetic(actions, false);
-            }
+            WmCommand::Click { button, count } => self.synthetic_click(button, count),
             WmCommand::PasteKey => self.send_key(4, "v"),
             WmCommand::Scroll { dx, dy } => {
                 self.enqueue_synthetic(vec![(SyntheticAction::Scroll { dx, dy }, 0)], false);
@@ -949,31 +753,281 @@ impl MindeState {
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
             WmCommand::Spawn { cmd } => guile::spawn_on_main_thread(&cmd),
             WmCommand::Paste => self.request_paste(),
-            WmCommand::SetClipboard { text } => {
-                smithay::wayland::selection::data_device::set_data_device_selection(
-                    &self.display_handle,
-                    &self.seat,
-                    vec![
-                        "text/plain;charset=utf-8".to_string(),
-                        "text/plain".to_string(),
-                        "UTF8_STRING".to_string(),
-                    ],
-                    crate::handlers::SelectionOwner::Text(text),
-                );
-            }
+            WmCommand::SetClipboard { text } => self.set_clipboard_text(text),
             WmCommand::SetPrimary { text } => {
                 smithay::wayland::selection::primary_selection::set_primary_selection(
                     &self.display_handle,
                     &self.seat,
-                    vec![
-                        "text/plain;charset=utf-8".to_string(),
-                        "text/plain".to_string(),
-                        "UTF8_STRING".to_string(),
-                    ],
+                    text_mime_types(),
                     crate::handlers::SelectionOwner::Text(text),
                 );
             }
         }
+    }
+
+    /// Makes the compositor the owner of the clipboard selection with `text`.
+    fn set_clipboard_text(&mut self, text: String) {
+        smithay::wayland::selection::data_device::set_data_device_selection(
+            &self.display_handle,
+            &self.seat,
+            text_mime_types(),
+            crate::handlers::SelectionOwner::Text(text),
+        );
+    }
+
+    /// `wm-place-window` (`tiled`) / `wm-place-float`: configure the window
+    /// to `rect` and map it there. Scheme re-places every window of every
+    /// head on each sync, so the common case is "nothing changed": Smithay
+    /// already elides an unchanged xdg configure, and when neither the
+    /// configure nor the location changed the map, geometry event and
+    /// foreign-toplevel refresh are skipped too.
+    fn place_window(&mut self, id: u64, rect: Rectangle<i32, Logical>, tiled: bool) {
+        let Some(window) = self.window_by_id(id) else {
+            tracing::warn!(id, "wm-place-window: unknown window id");
+            return;
+        };
+        let configured = if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.size = Some(rect.size);
+                // Tiled on all edges: Firefox-family clients (zen) only obey
+                // exact configure sizes and drop their CSD shadow margins
+                // when tiled. A floating window keeps its CSD shadows and
+                // rounding; exact-size obedience matters less since nothing
+                // tiles around it.
+                use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+                for edge in [
+                    XdgState::TiledLeft,
+                    XdgState::TiledRight,
+                    XdgState::TiledTop,
+                    XdgState::TiledBottom,
+                ] {
+                    if tiled {
+                        state.states.set(edge);
+                    } else {
+                        state.states.unset(edge);
+                    }
+                }
+            });
+            toplevel.send_pending_configure().is_some()
+        } else if let Some(x11) = window.x11_surface() {
+            let changed = x11.geometry() != rect;
+            if changed {
+                tracing::debug!(id, ?rect, "x11 place");
+                let _ = x11.configure(rect);
+            }
+            changed
+        } else {
+            false
+        };
+        let moved = self.space.element_location(&window) != Some(rect.loc);
+        if !configured && !moved {
+            return;
+        }
+        self.space.map_element(window, rect.loc, false);
+        self.publish_window_geometry(id, rect);
+        if tiled {
+            self.refresh_foreign_toplevel_outputs();
+        }
+        self.schedule_redraw();
+    }
+
+    /// Marks `window` (if any) as the sole activated toplevel and lets every
+    /// client render its focused/unfocused state.
+    fn activate_only(&self, window: Option<&Window>) {
+        for (_, w) in &self.windows {
+            w.set_activated(Some(w) == window);
+            if let Some(t) = w.toplevel() {
+                t.send_pending_configure();
+            }
+        }
+    }
+
+    /// `wm-focus-window`: keyboard focus, raise, activation and the
+    /// foreign-toplevel `activated` state.
+    fn focus_window(&mut self, id: u64) {
+        let Some(window) = self.window_by_id(id) else {
+            tracing::warn!(id, "wm-focus-window: unknown window id");
+            return;
+        };
+        // Both window kinds expose a wl_surface -- X11 ones only once the
+        // xwayland-shell association happened, which can lag the map. Still
+        // record/raise/activate in that case; the keyboard focus is applied
+        // retroactively in `surface_associated` (handlers/xwayland.rs), or
+        // emacs & co. think they're unfocused (hollow cursor) forever.
+        if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
+            let serial = SERIAL_COUNTER.next_serial();
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                keyboard.set_focus(self, Some(surface), serial);
+            }
+        }
+        self.space.raise_element(&window, true);
+        self.activate_only(Some(&window));
+        self.focused_window = Some(window);
+        self.foreign_toplevel_focus(Some(id));
+        self.schedule_redraw();
+    }
+
+    /// `wm-clear-focus`: no window holds the keyboard or is activated.
+    fn clear_focus(&mut self) {
+        let serial = SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+        }
+        // Clearing keyboard focus doesn't invoke `focus_changed`, so drop
+        // text-input focus and deactivate any shortcuts inhibitor explicitly
+        // (IME leaves the surface; the inhibitor must not survive focus loss).
+        self.set_text_input_focus(None);
+        self.update_keyboard_shortcuts_inhibitors(None);
+        self.activate_only(None);
+        self.focused_window = None;
+        self.foreign_toplevel_focus(None);
+        self.schedule_redraw();
+    }
+
+    /// `wm-message`: show the echo-window text, auto-hidden after
+    /// `timeout_ms` unless a newer message replaced it first.
+    fn show_message(&mut self, text: &str, timeout_ms: u64) {
+        self.message_generation += 1;
+        let generation = self.message_generation;
+        let bounds = self.output_rect_containing(None).size;
+        self.message = Some(crate::render::render_message(
+            text, generation, bounds.w, bounds.h,
+        ));
+        self.schedule_redraw();
+        if timeout_ms > 0 {
+            let timer = smithay::reexports::calloop::timer::Timer::from_duration(
+                std::time::Duration::from_millis(timeout_ms),
+            );
+            let _ = self.handle.insert_source(timer, move |_, _, state| {
+                if state.message.as_ref().map(|m| m.generation) == Some(generation) {
+                    state.message = None;
+                    state.schedule_redraw();
+                }
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            });
+        }
+    }
+
+    /// Full geometry of the output containing `point` (the first output when
+    /// `None` or when no output contains it), or a 1280x720 stand-in before
+    /// any output exists.
+    fn output_rect_containing(
+        &self,
+        point: Option<Point<i32, Logical>>,
+    ) -> Rectangle<i32, Logical> {
+        self.space
+            .outputs()
+            .find(|o| match (point, self.space.output_geometry(o)) {
+                (Some(p), Some(g)) => g.contains(p),
+                _ => false,
+            })
+            .or_else(|| self.space.outputs().next())
+            .and_then(|o| self.space.output_geometry(o))
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1280, 720).into()))
+    }
+
+    /// `wm-set-fullscreen`: cover the full geometry of the output showing the
+    /// window (not the usable area: fullscreen covers reserved bar space,
+    /// though Top-layer surfaces still render above; documented limitation).
+    /// Leaving fullscreen only clears the state; Scheme re-syncs the frame
+    /// geometry right after.
+    fn set_fullscreen(&mut self, id: u64, on: bool) {
+        let Some(window) = self.window_by_id(id) else {
+            tracing::warn!(id, "wm-set-fullscreen: unknown window id");
+            return;
+        };
+        self.foreign_toplevel_fullscreen(id, on);
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+        // X11 windows: set the fullscreen hint and apply the full rect
+        // through configure.
+        if let Some(x11) = window.x11_surface() {
+            let _ = x11.set_fullscreen(on);
+            if on {
+                let geo = self.output_rect_containing(None);
+                let _ = x11.configure(geo);
+                self.space.map_element(window.clone(), geo.loc, false);
+                self.space.raise_element(&window, true);
+                self.publish_window_geometry(id, geo);
+                self.schedule_redraw();
+            }
+            return;
+        }
+        let Some(toplevel) = window.toplevel() else {
+            return;
+        };
+        if on {
+            let window_center = self
+                .space
+                .element_geometry(&window)
+                .map(|g| Point::from((g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2)));
+            let geo = self.output_rect_containing(window_center);
+            toplevel.with_pending_state(|state| {
+                state.states.set(XdgState::Fullscreen);
+                state.size = Some(geo.size);
+            });
+            toplevel.send_pending_configure();
+            self.space.map_element(window.clone(), geo.loc, false);
+            self.space.raise_element(&window, true);
+            self.publish_window_geometry(id, geo);
+        } else {
+            toplevel.with_pending_state(|state| {
+                state.states.unset(XdgState::Fullscreen);
+            });
+            toplevel.send_pending_configure();
+        }
+        self.schedule_redraw();
+    }
+
+    /// `wm-kill-window`: drop a Wayland client's connection; close an X11
+    /// window politely (every X11 app shares the one Xwayland client, and
+    /// dropping that connection would take down all of them).
+    fn kill_window(&mut self, id: u64) {
+        let Some(window) = self.window_by_id(id) else {
+            tracing::warn!(id, "wm-kill-window: unknown window id");
+            return;
+        };
+        if let Some(toplevel) = window.toplevel() {
+            use smithay::reexports::wayland_server::Resource;
+            if let Ok(client) = self.display_handle.get_client(toplevel.wl_surface().id()) {
+                tracing::info!(id, "wm-kill-window: dropping client connection");
+                self.display_handle
+                    .backend_handle()
+                    .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+            }
+        } else if let Some(x11) = window.x11_surface() {
+            tracing::info!(id, "wm-kill-window: X11 window, closing politely");
+            let _ = x11.close();
+        }
+    }
+
+    /// `wm-click`: `count` clicks of `button` (1=left 2=middle 3=right, as
+    /// StumpWM ratclick counts them) at the current pointer position.
+    fn synthetic_click(&mut self, button: u32, count: u32) {
+        const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
+        let code = CODES[(button - 1) as usize];
+        // hover->settle->press: give hover-sensitive clients (custom React
+        // radios/pills) event-loop turns to update their hit target before
+        // the press lands; hold/gap are sized so multi-clicks register as
+        // double-clicks (GTK ~400 ms).
+        let mut actions = Vec::with_capacity(count as usize * 2 + 1);
+        actions.push((SyntheticAction::Hover, 150));
+        for click in 0..count {
+            actions.push((
+                SyntheticAction::Button {
+                    code,
+                    pressed: true,
+                },
+                40,
+            ));
+            actions.push((
+                SyntheticAction::Button {
+                    code,
+                    pressed: false,
+                },
+                if click + 1 < count { 80 } else { 0 },
+            ));
+        }
+        self.enqueue_synthetic(actions, false);
     }
 
     /// Queues a `wm-screenshot` capture against the output under the pointer
@@ -1010,12 +1064,7 @@ impl MindeState {
         let (origin, logical_size) = match window_id {
             None => (Point::from((0, 0)), output_geo.size),
             Some(id) => {
-                let Some(window) = self
-                    .windows
-                    .iter()
-                    .find(|(wid, _)| *wid == id)
-                    .map(|(_, w)| w.clone())
-                else {
+                let Some(window) = self.window_by_id(id) else {
                     return fail(token);
                 };
                 let Some(rect) = self.space.element_geometry(&window) else {
@@ -1044,14 +1093,18 @@ impl MindeState {
                 origin,
                 size,
             });
+        // Captures are satisfied by the next composite; make sure one runs.
+        self.schedule_redraw();
     }
 
     /// Warps the pointer to a global logical position (clamped to the
     /// outputs) and emits the matching motion event.
     pub(crate) fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
         let pos = self.clamp_to_outputs(pos);
+        let old_pos = self.pointer_location;
         self.pointer_location = pos;
         crate::automation_observe::set_pointer_position(pos.x, pos.y);
+        self.schedule_redraw_at(&[old_pos, pos]);
         let under = self.surface_under(pos);
         if let Some(pointer) = self.seat.get_pointer() {
             let serial = SERIAL_COUNTER.next_serial();
@@ -1151,6 +1204,7 @@ impl MindeState {
 
     /// Give the target several dispatch turns to accept its offer. Browser
     /// drop zones commonly negotiate only after their dragover handler runs.
+    /// One periodic timer drives all the dwell steps.
     fn continue_automation_dnd(
         &mut self,
         source: crate::automation_dnd::AutomationDndSource,
@@ -1158,28 +1212,32 @@ impl MindeState {
     ) {
         use smithay::backend::input::ButtonState;
         use smithay::input::dnd::DndAction;
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
-        let timer =
-            smithay::reexports::calloop::timer::Timer::from_duration(Duration::from_millis(25));
-        let _ = self.handle.insert_source(timer, move |_, _, state| {
-            // Wiggle by one device pixel so the client sees a real coordinate
-            // change each turn -- browsers fire dragover per motion event and
-            // may coalesce same-position motions.
-            let jitter = if motions_left.is_multiple_of(2) {
-                1.0
-            } else {
-                -1.0
-            };
-            let pos = state.pointer_location + Point::from((jitter, 0.0));
-            state.warp_pointer(pos);
-            if source.selected_action() == DndAction::Copy || motions_left <= 1 {
-                let time = state.start_time.elapsed().as_millis() as u32;
-                state.pointer_button_event(0x110, ButtonState::Released, time);
-            } else {
-                state.continue_automation_dnd(source.clone(), motions_left - 1);
-            }
-            smithay::reexports::calloop::timer::TimeoutAction::Drop
-        });
+        const DWELL: Duration = Duration::from_millis(25);
+        let mut motions_left = motions_left;
+        let _ = self
+            .handle
+            .insert_source(Timer::from_duration(DWELL), move |_, _, state| {
+                // Wiggle by one device pixel so the client sees a real
+                // coordinate change each turn -- browsers fire dragover per
+                // motion event and may coalesce same-position motions.
+                let jitter = if motions_left.is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let pos = state.pointer_location + Point::from((jitter, 0.0));
+                state.warp_pointer(pos);
+                if source.selected_action() == DndAction::Copy || motions_left <= 1 {
+                    let time = state.start_time.elapsed().as_millis() as u32;
+                    state.pointer_button_event(0x110, ButtonState::Released, time);
+                    TimeoutAction::Drop
+                } else {
+                    motions_left -= 1;
+                    TimeoutAction::ToDuration(DWELL)
+                }
+            });
     }
 
     pub(crate) fn finish_automation_dnd(
@@ -1320,18 +1378,7 @@ impl MindeState {
                 }
                 self.pointer_axis_frame(frame);
             }
-            SyntheticAction::SetClipboard { text } => {
-                smithay::wayland::selection::data_device::set_data_device_selection(
-                    &self.display_handle,
-                    &self.seat,
-                    vec![
-                        "text/plain;charset=utf-8".to_string(),
-                        "text/plain".to_string(),
-                        "UTF8_STRING".to_string(),
-                    ],
-                    crate::handlers::SelectionOwner::Text(text),
-                );
-            }
+            SyntheticAction::SetClipboard { text } => self.set_clipboard_text(text),
             SyntheticAction::Hover => {
                 let pos = self.pointer_location;
                 self.warp_pointer(pos);
@@ -1810,19 +1857,22 @@ impl MindeState {
         let Some(id) = self.id_for_window(window) else {
             return;
         };
-        let current = with_states(toplevel.wl_surface(), |states| {
-            states.data_map.get::<XdgToplevelSurfaceData>().map(|d| {
-                let d = d.lock().unwrap();
-                (
-                    d.title.clone().unwrap_or_default(),
-                    d.app_id.clone().unwrap_or_default(),
-                )
-            })
+        // Compare in place; clone only when something actually changed
+        // (this runs on every commit of every toplevel).
+        let reported = self.reported_titles.get(&id);
+        let changed = with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|d| {
+                    let d = d.lock().unwrap();
+                    let title = d.title.as_deref().unwrap_or_default();
+                    let app_id = d.app_id.as_deref().unwrap_or_default();
+                    let same = reported.is_some_and(|(t, a)| t == title && a == app_id);
+                    (!same).then(|| (title.to_string(), app_id.to_string()))
+                })
         });
-        let Some(current) = current else {
-            return;
-        };
-        if self.reported_titles.get(&id) != Some(&current) {
+        if let Some(current) = changed {
             guile::on_window_title(id, &current.0, &current.1);
             self.foreign_toplevel_title(id, &current.0, &current.1);
             self.reported_titles.insert(id, current);
@@ -2017,11 +2067,10 @@ impl MindeState {
     /// is mapped onto, falling back to the first output (or 1.0 with none).
     /// Used to seed a freshly-created `wp_fractional_scale` object.
     pub fn output_scale_for_surface(&self, surface: &WlSurface) -> f64 {
-        for window in self.space.elements() {
-            let matches = window.wl_surface().map(|s| &*s == surface).unwrap_or(false);
-            if matches && let Some(output) = self.space.outputs_for_element(window).first() {
-                return output.current_scale().fractional_scale();
-            }
+        if let Some(window) = window_for_surface(&self.space, surface)
+            && let Some(output) = self.space.outputs_for_element(&window).first()
+        {
+            return output.current_scale().fractional_scale();
         }
         self.space
             .outputs()

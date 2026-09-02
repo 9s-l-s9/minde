@@ -37,18 +37,10 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
+        // Already raised/activated when the grab started; a plain move.
         data.space
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
-    }
-
-    fn relative_motion(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        focus: Option<(WlSurface, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
+            .map_element(self.window.clone(), new_location.to_i32_round(), false);
+        data.schedule_redraw();
     }
 
     fn button(
@@ -76,90 +68,7 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
         }
     }
 
-    fn axis(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut MindeState, handle: &mut PointerInnerHandle<'_, MindeState>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event)
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event)
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event)
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event)
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event)
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event)
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event)
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event)
-    }
+    crate::grabs::forward_pointer_events!();
 
     fn start_data(&self) -> &PointerGrabStartData<MindeState> {
         &self.start_data

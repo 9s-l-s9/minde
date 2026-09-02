@@ -95,6 +95,7 @@ impl SessionLockHandler for MindeState {
         }
         self.locked = false;
         self.lock_surfaces.clear();
+        self.schedule_redraw();
         crate::guile::set_session_locked(false);
         tracing::info!("session unlocked (ext-session-lock)");
 
@@ -132,6 +133,7 @@ impl SessionLockHandler for MindeState {
         // Replace any prior surface for this output (client reconnect).
         self.lock_surfaces.retain(|(o, _)| o != &output);
         self.lock_surfaces.push((output, surface));
+        self.schedule_redraw();
     }
 
     fn ack_configure(&mut self, _surface: WlSurface, _configure: LockSurfaceConfigure) {}

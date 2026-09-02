@@ -129,78 +129,62 @@ pub fn init_winit(
                     backend.window().request_redraw();
                 }
                 WinitEvent::Redraw => {
-                    let size = backend.window_size();
-                    let damage = Rectangle::from_size(size);
                     // Honor the output's fractional scale (wlr-randr --scale,
                     // via wlr-output-management) so the nested scene renders
                     // at the same density fractional-scale clients paint at.
                     let fscale = output.current_scale().fractional_scale();
                     let scale = smithay::utils::Scale::from(fscale);
-
-                    // Border elements around the selected frame (falling back
-                    // to the focused window before the first sync).
-                    let mut custom: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
-                    if let Some(geo) = state.focus_rect.or_else(|| {
+                    let Some(output_geo) = state.space.output_geometry(&output) else {
+                        return;
+                    };
+                    let focus = state.focus_rect.or_else(|| {
                         state
                             .focused_window
                             .as_ref()
                             .and_then(|w| state.space.element_geometry(w))
-                    }) {
-                        custom.extend(border_buffers.elements(geo, scale, state.border_color));
-                    }
+                    });
 
-                    {
+                    // Same scene assembly as the udev backend and the capture
+                    // paths. No cursor: the host compositor draws the pointer
+                    // over the nested window.
+                    let damage = {
+                        let age = backend.buffer_age().unwrap_or(0);
                         let (renderer, mut framebuffer) = backend.bind().unwrap();
-                        // Message overlay, centered, above everything.
-                        if let Some(msg) = state.message.as_ref()
-                            && let Some(elem) = crate::render::message_element(
-                                &mut *renderer,
-                                msg,
-                                (size.w, size.h),
-                                scale,
-                            )
-                        {
-                            custom.insert(0, elem);
-                        }
-                        // Positioned overlays (fselect/expose frame labels).
-                        for (loc, msg) in &state.overlays {
-                            if let Some(elem) =
-                                crate::render::overlay_element(&mut *renderer, msg, *loc, scale)
-                            {
-                                custom.insert(0, elem);
-                            }
-                        }
-                        smithay::desktop::space::render_output::<
-                            _,
-                            MindeRenderElements<GlesRenderer>,
-                            _,
-                            _,
-                        >(
+                        let elements = crate::handlers::screencopy::output_scene_elements(
+                            &mut *renderer,
                             &output,
-                            renderer,
-                            &mut framebuffer,
-                            1.0,
-                            0,
-                            [&state.space],
-                            &custom,
-                            &mut damage_tracker,
-                            [0.1, 0.1, 0.1, 1.0],
-                        )
-                        .unwrap();
+                            output_geo,
+                            (0, 0).into(),
+                            scale,
+                            &state.space,
+                            None,
+                            state.message.as_ref(),
+                            &state.overlays,
+                            focus,
+                            state.border_color,
+                            &mut border_buffers,
+                        );
+                        damage_tracker
+                            .render_output(
+                                &mut *renderer,
+                                &mut framebuffer,
+                                age,
+                                &elements,
+                                [0.1, 0.1, 0.1, 1.0],
+                            )
+                            .unwrap()
+                            .damage
+                            .cloned()
+                    };
+                    // Submit only what changed (tracked against the buffer
+                    // age); an unchanged scene skips the swap entirely.
+                    if let Some(damage) = damage {
+                        backend.submit(Some(&damage)).unwrap();
                     }
-                    backend.submit(Some(&[damage])).unwrap();
 
                     // Satisfy any queued screen-capture frames for this output
                     // by re-compositing the scene into their buffers (shm).
-                    if !state.pending_captures.is_empty()
-                        && let Some(output_geo) = state.space.output_geometry(&output)
-                    {
-                        let focus = state.focus_rect.or_else(|| {
-                            state
-                                .focused_window
-                                .as_ref()
-                                .and_then(|w| state.space.element_geometry(w))
-                        });
+                    if !state.pending_captures.is_empty() {
                         let time = state.start_time.elapsed();
                         crate::handlers::screencopy::satisfy_output_captures(
                             backend.renderer(),

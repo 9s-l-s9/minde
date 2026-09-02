@@ -59,68 +59,83 @@ error formatting cannot itself throw."
           ""))
     (lambda _ "")))
 
+(define (ipc-print-datum value)
+  "Returns VALUE's `write` form as a string, or #f when writing it throws.
+This is the one serialisation every reply path shares; callers classify the
+printed text instead of writing the value again."
+  (catch #t
+    (lambda ()
+      (call-with-output-string (lambda (p) (write value p))))
+    (lambda _ #f)))
+
+(define (ipc-unreadable? printed)
+  "Whether PRINTED (a `write` form) contains an object token that cannot be
+`read' back."
+  (string-contains printed "#<"))
+
 (define (ipc-writable-datum value)
   "Returns VALUE when it is `write`-able re-readable data, otherwise its
 bounded printed form as a string, so error ARGS (which may carry live
 objects such as wrong-type-arg irritants) never make the error reply itself
 unreadable."
-  (let ((printed (catch #t
-                   (lambda ()
-                     (call-with-output-string (lambda (p) (write value p))))
-                   (lambda _ #f))))
+  (let ((printed (ipc-print-datum value)))
     (cond
      ((not printed) "<unwritable>")
-     ((string-contains printed "#<") (ipc-truncate printed 200))
+     ((ipc-unreadable? printed) (ipc-truncate printed 200))
      (else value))))
 
-(define (ipc-ok-reply result)
-  "Returns (ok RESULT) when RESULT is `write`-able and re-`read`-able data,
-otherwise a well-formed error datum. This is the writable-data guarantee: an
-unreadable object (printing as #<...>) never leaks into the reply as an
-unparseable datum."
-  (let ((printed (catch #t
-                   (lambda ()
-                     (call-with-output-string (lambda (p) (write result p))))
-                   (lambda _ #f))))
+(define (ipc-ok-reply-string result)
+  "Returns the complete reply for RESULT as a string: \"(ok PRINTED)\" when
+RESULT is `write`-able and re-`read`-able data, otherwise a well-formed error
+datum. This is the writable-data guarantee: an unreadable object (printing as
+#<...>) never leaks into the reply as an unparseable datum. RESULT is
+serialised exactly once."
+  (let ((printed (ipc-print-datum result)))
     (cond
      ((not printed)
-      (list 'error 'unwritable-result '()
-            "command result could not be serialized to a Scheme datum" ""))
-     ((string-contains printed "#<")
-      (list 'error 'unreadable-result '()
-            (string-append
-             "command result is not re-readable data (contains #<...>): "
-             (ipc-truncate printed 200))
-            ""))
-     (else (list 'ok result)))))
+      (ipc-print-datum
+       (list 'error 'unwritable-result '()
+             "command result could not be serialized to a Scheme datum" "")))
+     ((ipc-unreadable? printed)
+      (ipc-print-datum
+       (list 'error 'unreadable-result '()
+             (string-append
+              "command result is not re-readable data (contains #<...>): "
+              (ipc-truncate printed 200))
+             "")))
+     (else (string-append "(ok " printed ")")))))
+
+(define (ipc-ok-reply result)
+  "Returns (ok RESULT) or the error datum as data, for callers that want to
+inspect the classification rather than the wire string."
+  (call-with-input-string (ipc-ok-reply-string result) read))
 
 (define (minde-ipc-eval source)
   "Evaluates the single datum in SOURCE and returns a one-datum reply string
 following the shape documented above. Called by the Rust IPC source on the
 event-loop thread."
-  (call-with-output-string
-    (lambda (port)
-      (let ((stack #f))
-        (catch #t
+  (let ((stack #f))
+    (catch #t
+      (lambda ()
+        (with-throw-handler #t
           (lambda ()
-            (with-throw-handler #t
-              (lambda ()
-                (let ((datum
-                       (call-with-input-string source
-                         (lambda (input)
-                           (let ((value (read input)))
-                             (unless (eof-object? (read input))
-                               (error "IPC accepts exactly one datum"))
-                             value)))))
-                  (write (ipc-ok-reply (eval datum (interaction-environment)))
-                         port)))
-              (lambda _ (set! stack (make-stack #t)))))
-          (lambda (key . arguments)
-            (let ((details (ipc-format-message key arguments)))
-              (wm-log (string-append "IPC evaluation failure: " details))
-              ;; ARGS may carry live objects (wrong-type-arg irritants and the
-              ;; like); sanitize each element so the error datum itself honors
-              ;; the readable-reply guarantee.
+            (let ((datum
+                   (call-with-input-string source
+                     (lambda (input)
+                       (let ((value (read input)))
+                         (unless (eof-object? (read input))
+                           (error "IPC accepts exactly one datum"))
+                         value)))))
+              (ipc-ok-reply-string (eval datum (interaction-environment)))))
+          (lambda _ (set! stack (make-stack #t)))))
+      (lambda (key . arguments)
+        (let ((details (ipc-format-message key arguments)))
+          (wm-log (string-append "IPC evaluation failure: " details))
+          ;; ARGS may carry live objects (wrong-type-arg irritants and the
+          ;; like); sanitize each element so the error datum itself honors
+          ;; the readable-reply guarantee.
+          (call-with-output-string
+            (lambda (port)
               (write (list 'error key
                            (if (list? arguments)
                                (map ipc-writable-datum arguments)

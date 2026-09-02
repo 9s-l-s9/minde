@@ -53,6 +53,7 @@ impl WlrLayerShellHandler for MindeState {
             );
         }
         self.update_usable_area();
+        self.schedule_redraw();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
@@ -71,6 +72,7 @@ impl WlrLayerShellHandler for MindeState {
             map.unmap_layer(&layer);
         }
         self.update_usable_area();
+        self.schedule_redraw();
 
         // The layer (e.g. fuzzel) held the keyboard: hand focus back to
         // the frame tree's focused window.

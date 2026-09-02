@@ -2,15 +2,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 
-runtime_root=${XDG_RUNTIME_DIR:-/tmp/minde-$(id -u)}
-socket_path=$runtime_root/minde-ipc.sock
-events_socket_path=$runtime_root/minde-events.sock
+# The Guix package pins this to its guile store path (guix.scm rewrites the
+# line); developers can point it elsewhere with MINDE_GUILE.
+GUILE=${MINDE_GUILE:-guile}
+
+# Single derivation of every runtime path; the Scheme clients below receive
+# them as arguments instead of re-deriving them. Mirrors src/runtime_dir.rs
+# (sockets) and scheme/minde/status.scm (status.json).
+runtime_dir=${XDG_RUNTIME_DIR:-/tmp/minde-$(id -u)}
+socket_path=$runtime_dir/minde-ipc.sock
+events_socket_path=$runtime_dir/minde-events.sock
 if [ -n "${MINDE_STATUS_PATH:-}" ]; then
     status_path=$MINDE_STATUS_PATH
 elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then
     status_path=$XDG_RUNTIME_DIR/minde/status.json
 else
-    status_path=/tmp/minde-$(id -u)/status.json
+    status_path=$runtime_dir/status.json
 fi
 
 usage() {
@@ -24,21 +31,42 @@ usage: mindectl eval EXPR
 EOF
 }
 
-# MODE is `scheme` for the historical eval representation and `raw` for a
-# returned string such as current-state-json.
+# Shared by every socket client: refuse a runtime directory that is not a
+# private directory of the calling user, exactly like the compositor does
+# before it binds (src/runtime_dir.rs), then connect.
+client_prelude='
+(define (connect-private path)
+  (let* ((directory (dirname path))
+         (st (false-if-exception (stat directory))))
+    (unless (and st
+                 (eq? (stat:type st) (quote directory))
+                 (= (stat:uid st) (geteuid))
+                 (zero? (logand (stat:perms st) #o077)))
+      (format (current-error-port)
+              "mindectl: runtime directory is not a private directory of uid ~a: ~a~%"
+              (geteuid) directory)
+      (exit 1))
+    (let ((sock (socket PF_UNIX SOCK_STREAM 0)))
+      (connect sock AF_UNIX path)
+      sock)))
+(define (unix-socket? path)
+  (let ((st (false-if-exception (stat path))))
+    (and st (eq? (stat:type st) (quote socket)))))'
+
+# One request per connection, SHUT_WR framing, one datum reply. MODE is
+# `scheme` for the historical eval representation and `raw` for a returned
+# string such as current-state-json (displayed verbatim). A Guile boot costs
+# about 20 ms here (guile -q --no-auto-compile); nothing lighter is in the
+# manifest, so this stays the client.
 ipc_request() {
     mode=$1
     expression=$2
-    guile -q -c '
-      (let* ((mode (caddr (command-line)))
-             (expression (cadddr (command-line)))
-             (path (string-append
-                    (or (getenv "XDG_RUNTIME_DIR")
-                        (string-append "/tmp/minde-"
-                                       (number->string (getuid))))
-                    "/minde-ipc.sock"))
-             (sock (socket PF_UNIX SOCK_STREAM 0)))
-        (connect sock AF_UNIX path)
+    "$GUILE" -q --no-auto-compile -c "$client_prelude"'
+      (let* ((args (cdr (member "--" (command-line))))
+             (path (car args))
+             (mode (cadr args))
+             (expression (caddr args))
+             (sock (connect-private path)))
         (display expression sock)
         (shutdown sock 1)
         (let ((response (read sock)))
@@ -65,7 +93,7 @@ ipc_request() {
                                  (not (string-null? (cadr tail))))
                         (format (current-error-port) "~a~%" (cadr tail))))
                     (format (current-error-port) "mindectl: ~s~%" response))
-                (exit 1)))))' -- "$mode" "$expression"
+                (exit 1)))))' -- "$socket_path" "$mode" "$expression"
 }
 
 redacted_path() {
@@ -167,7 +195,12 @@ case "$command" in
             echo "mindectl: cannot locate Scheme modules" >&2
             exit 1
         fi
-        exec guile --no-auto-compile -L "$modules" -c \
+        ccache=$script_dir/../lib/guile/3.0/site-ccache
+        if [ -d "$ccache" ]; then
+            GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
+            export GUILE_LOAD_COMPILED_PATH
+        fi
+        exec "$GUILE" --no-auto-compile -L "$modules" -c \
             '(use-modules (minde command-catalog) (minde config))
              (register-builtin-command-schemas!)
              (validate-configuration-file (cadr (command-line)))
@@ -195,36 +228,66 @@ case "$command" in
                     echo "mindectl: compositor event socket is unavailable" >&2
                     exit 1
                 }
-                exec guile -q -c '
+                exec "$GUILE" -q --no-auto-compile -c "$client_prelude"'
                   (use-modules (ice-9 rdelim))
-                  (let* ((path (string-append
-                                (or (getenv "XDG_RUNTIME_DIR")
-                                    (string-append "/tmp/minde-"
-                                                   (number->string (getuid))))
-                                "/minde-events.sock"))
-                         (sock (socket PF_UNIX SOCK_STREAM 0)))
-                    (connect sock AF_UNIX path)
+                  (let ((sock (connect-private (cadr (member "--" (command-line))))))
                     (let loop ((line (read-line sock)))
                       (unless (eof-object? line)
                         (display line) (newline)
                         (force-output)
-                        (loop (read-line sock)))))'
+                        (loop (read-line sock)))))' -- "$events_socket_path"
                 ;;
             --json)
-                # Compatibility polling source: re-emit status.json on change.
+                # Compatibility change-only source: re-emit status.json whenever
+                # it changes, until the compositor's IPC socket disappears. The
+                # current document is emitted immediately. One long-lived Guile
+                # process wakes on every event-socket line (status.json is
+                # republished on the same sync path that fires focus/window
+                # events), plus a 2 s safety poll; without the event socket it
+                # falls back to plain polling once per second (the old loop
+                # forked cat+sleep five times a second). inotifywait would be
+                # the direct tool, but inotify-tools is not in manifest.scm.
                 [ -S "$socket_path" ] || {
                     echo "mindectl: compositor IPC socket is unavailable" >&2
                     exit 1
                 }
-                last=
-                while [ -S "$socket_path" ]; do
-                    current=$(cat "$status_path" 2>/dev/null || true)
-                    if [ -n "$current" ] && [ "$current" != "$last" ]; then
-                        printf '%s\n' "$current"
-                        last=$current
-                    fi
-                    sleep 0.2
-                done
+                exec "$GUILE" -q --no-auto-compile -c "$client_prelude"'
+                  (use-modules (ice-9 rdelim))
+                  (let* ((args (cdr (member "--" (command-line))))
+                         (ipc-path (car args))
+                         (events-path (cadr args))
+                         (status-path (caddr args))
+                         (events (and (unix-socket? events-path)
+                                      (false-if-exception
+                                       (connect-private events-path))))
+                         (interval (if events 2 1)))
+                    (define (current-status)
+                      (false-if-exception
+                       (call-with-input-file status-path
+                         (lambda (port)
+                           (let ((text (read-string port)))
+                             (and (string? text)
+                                  (not (string-null? text))
+                                  (string-trim-right text #\newline)))))))
+                    (define (emit-if-changed last)
+                      (let ((current (current-status)))
+                        (if (and current (not (equal? current last)))
+                            (begin (display current) (newline) (force-output)
+                                   current)
+                            last)))
+                    (let loop ((last (emit-if-changed #f)))
+                      (when (unix-socket? ipc-path)
+                        (if events
+                            (let ((ready (car (select (list events) (quote ())
+                                                      (quote ()) interval))))
+                              (when (and (pair? ready)
+                                         (eof-object? (read-line events)))
+                                (exit 0))
+                              (loop (emit-if-changed last)))
+                            (begin
+                              (sleep interval)
+                              (loop (emit-if-changed last))))))))' \
+                    -- "$socket_path" "$events_socket_path" "$status_path"
                 ;;
             *)
                 usage >&2

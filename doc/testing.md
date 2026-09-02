@@ -42,9 +42,10 @@ Every target below is declared `.PHONY` in `Makefile`. Run
 | `make check-rust` | - |
 | `make check-cli` | - |
 | `make check-static` | - |
+| `make compile-scheme` | Compile scheme/**/*.scm (modules, init.scm and the files it loads) to $(CCACHE); only sources newer than their .go are rebuilt. The Guix package does the same into lib/guile/3.0/site-ccache (guix.scm, compile-scheme phase). default-config.scm is data read by the validator, not code. |
 | `make check-scheme` | - |
 | `make check-api` | - |
-| `make check-config` | - |
+| `make check-config` | tests/config-test.scm and tests/portable-keymap-test.scm belong to check-scheme; these two targets only add the gates check-scheme lacks. |
 | `make check-keymaps` | - |
 | `make check-foundation` | - |
 | `make check-ui` | - |

@@ -174,6 +174,8 @@ impl ImageCopyCaptureHandler for MindeState {
             origin: (0, 0).into(),
             size,
         });
+        // Captures are satisfied by the next composite; make sure one runs.
+        self.schedule_redraw();
     }
 
     fn session_destroyed(&mut self, session: SessionRef) {
@@ -185,12 +187,18 @@ impl ImageCopyCaptureHandler for MindeState {
 // Scene assembly + buffer rendering
 // ---------------------------------------------------------------------------
 
-/// Builds the render-element list for one output's capture, mirroring the
-/// udev on-screen assembly: cursor, message overlay, positioned overlays,
-/// upper layer surfaces, focus border, windows (front-to-back), then lower
-/// layer surfaces. Kept renderer-generic so both backends can reuse it.
+/// Builds the render-element list for one output: cursor, message overlay,
+/// positioned overlays, upper layer surfaces, focus border, windows
+/// (front-to-back), then lower layer surfaces. The single scene assembly
+/// shared by the on-screen backends (`udev`, `winit`) and the capture
+/// paths, so they cannot drift apart. Renderer-generic.
+///
+/// `border_buffers` should be persistent per output for on-screen use (stable
+/// element ids keep damage tracking incremental); captures pass a throwaway.
+/// The returned list borrows nothing: the layer-map guard is released before
+/// returning, so callers may open their own afterwards.
 #[allow(clippy::too_many_arguments)]
-fn output_scene_elements<R>(
+pub(crate) fn output_scene_elements<R>(
     renderer: &mut R,
     output: &Output,
     output_geo: Rectangle<i32, Logical>,
@@ -202,6 +210,7 @@ fn output_scene_elements<R>(
     overlays: &[(Point<i32, Logical>, MessageState)],
     focus: Option<Rectangle<i32, Logical>>,
     border_color: [f32; 4],
+    border_buffers: &mut BorderBuffers,
 ) -> Vec<MindeRenderElements<R>>
 where
     R: Renderer + ImportAll + ImportMem,
@@ -279,8 +288,7 @@ where
     {
         let mut local = geo;
         local.loc -= base;
-        let mut border = BorderBuffers::default();
-        custom.extend(border.elements(local, scale, border_color));
+        custom.extend(border_buffers.elements(local, scale, border_color));
     }
 
     // Window surfaces, front-to-back (space yields back-to-front).
@@ -322,15 +330,17 @@ pub enum FillOutcome {
 /// dmabuf). Rendered upright (`Transform::Normal`), so the captured image is
 /// the logical desktop regardless of any physical output transform. Shared by
 /// the ext and wlr protocols; the caller signals completion.
-/// Renders the scene into an offscreen buffer, reads it back as ARGB and
-/// writes an RGBA PNG to `path` (the `wm-screenshot` sink).
-fn render_to_png<R>(
+/// Renders the scene into an offscreen buffer and reads it back as RGBA8
+/// (row-major, `size.w * size.h * 4` bytes), ready for the PNG encoder. Only
+/// the GPU readback happens here; the `wm-screenshot` caller encodes and
+/// writes the file on a worker thread so the event loop is not blocked for
+/// the tens of milliseconds a 4K encode takes.
+fn render_to_rgba<R>(
     renderer: &mut R,
     elements: &[MindeRenderElements<R>],
     size: Size<i32, Physical>,
     scale: Scale<f64>,
-    path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<Vec<u8>, Box<dyn std::error::Error>>
 where
     R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer>,
     R::TextureId: Send + Clone + 'static,
@@ -355,8 +365,7 @@ where
     for px in pixels.chunks_exact_mut(4) {
         px.swap(0, 2);
     }
-    crate::png::write_rgba(path, size.w as u32, size.h as u32, &pixels)?;
-    Ok(())
+    Ok(pixels)
 }
 
 fn fill_capture_buffer<R>(
@@ -508,18 +517,14 @@ pub fn satisfy_output_captures<R>(
     R::Error: Send + Sync + 'static,
 {
     // Pull out the frames for this output (Frame is not Clone; move them).
-    let mut mine: Vec<PendingCapture> = Vec::new();
-    let mut i = 0;
-    while i < pending.len() {
-        if &pending[i].output == output {
-            mine.push(pending.remove(i));
-        } else {
-            i += 1;
-        }
-    }
-    if mine.is_empty() {
+    if !pending.iter().any(|capture| &capture.output == output) {
         return;
     }
+    let (mine, rest): (Vec<PendingCapture>, Vec<PendingCapture>) = pending
+        .drain(..)
+        .partition(|capture| &capture.output == output);
+    *pending = rest;
+    let mut border_buffers = BorderBuffers::default();
 
     for capture in mine {
         let cursor = if capture.draw_cursor {
@@ -539,6 +544,7 @@ pub fn satisfy_output_captures<R>(
             overlays,
             focus,
             border_color,
+            &mut border_buffers,
         );
         match capture.frame {
             CaptureFrame::Ext(frame) => {
@@ -560,14 +566,37 @@ pub fn satisfy_output_captures<R>(
                 use crate::automation_dnd::{
                     AutomationOperation, AutomationStatus, record_and_publish,
                 };
-                let status = match render_to_png(renderer, &elements, capture.size, scale, &path) {
-                    Ok(()) => AutomationStatus::Done,
-                    Err(err) => {
-                        tracing::warn!(%err, path = %path.display(), "wm-screenshot failed");
-                        AutomationStatus::Failed
+                match render_to_rgba(renderer, &elements, capture.size, scale) {
+                    Ok(pixels) => {
+                        // Encode and write off the event loop; completion is
+                        // reported from the worker (the registry is
+                        // thread-safe, see `record_and_publish`).
+                        let size = capture.size;
+                        std::thread::spawn(move || {
+                            let status = match crate::png::write_rgba(
+                                &path,
+                                size.w as u32,
+                                size.h as u32,
+                                &pixels,
+                            ) {
+                                Ok(()) => AutomationStatus::Done,
+                                Err(err) => {
+                                    tracing::warn!(%err, path = %path.display(), "wm-screenshot failed");
+                                    AutomationStatus::Failed
+                                }
+                            };
+                            record_and_publish(token, AutomationOperation::Screenshot, status);
+                        });
                     }
-                };
-                record_and_publish(token, AutomationOperation::Screenshot, status);
+                    Err(err) => {
+                        tracing::warn!(%err, path = %path.display(), "wm-screenshot render failed");
+                        record_and_publish(
+                            token,
+                            AutomationOperation::Screenshot,
+                            AutomationStatus::Failed,
+                        );
+                    }
+                }
             }
         }
     }
