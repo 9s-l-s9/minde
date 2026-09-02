@@ -30,6 +30,16 @@
 //!
 //! `wp-tearing-control` is advertised on both backends from `state.rs` but is
 //! advisory only (the DRM compositor has no async page-flip path here).
+//!
+//! Repaint scheduling is vblank- and damage-driven (see [`RedrawState`]):
+//! every scene change marks the affected outputs dirty through
+//! [`MindeState::schedule_redraw`]; an output renders once from a calloop
+//! idle callback (coalescing a burst of events into one frame), then waits
+//! for the frame's vblank and renders again right away if it was dirtied in
+//! the meantime. At idle nothing runs at all -- no timer, no element-list
+//! rebuild. Frame callbacks are sent from every render pass, and every
+//! client commit dirties the outputs, so a client waiting on a callback is
+//! never starved. A short watchdog covers a vblank that never arrives.
 
 use std::{collections::HashMap, path::Path, time::Duration};
 
@@ -79,7 +89,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::{DisplayHandle, backend::GlobalId},
     },
-    utils::{DeviceFd, Monotonic, Transform},
+    utils::{DeviceFd, Logical, Monotonic, Point, Transform},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState, supports_syncobj_eventfd},
@@ -87,7 +97,7 @@ use smithay::{
     },
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::render::{BorderBuffers, MindeRenderElements};
 use crate::{MindeState, guile};
@@ -123,6 +133,24 @@ const SUPPORTED_FORMATS: &[Fourcc] = &[
     Fourcc::Argb8888,
 ];
 
+/// Where an output's repaint loop stands. Transitions live in
+/// `schedule_redraw` (dirtying), `render_now` (rendering), `frame_finish`
+/// (vblank) and the two timer callbacks; see the module docs.
+enum RedrawState {
+    /// Nothing in flight; the next dirtying event schedules a render.
+    Idle,
+    /// A render is queued as a calloop idle callback (coalesces the rest of
+    /// the current dispatch batch: a burst of commits or 1000 Hz motion).
+    Scheduled,
+    /// A frame was queued to KMS; rendering again waits for its vblank. The
+    /// watchdog timer fires if the vblank never comes (VT switch mid-flip,
+    /// driver hiccup) so the loop cannot get stuck here.
+    WaitingForVblank { watchdog: RegistrationToken },
+    /// The last render produced no damage or failed, so no vblank is
+    /// expected; rate-limit the next render to the refresh interval.
+    WaitingForTimer { token: RegistrationToken },
+}
+
 /// One output: a connected connector driving a CRTC. Lives in its
 /// device's `surfaces` map.
 struct OutputSurface {
@@ -136,6 +164,35 @@ struct OutputSurface {
         DrmDeviceFd,
     >,
     border_buffers: BorderBuffers,
+    /// Something on this output changed since the last render.
+    dirty: bool,
+    redraw: RedrawState,
+}
+
+/// The output's refresh interval (from its current mode), or 60 Hz when the
+/// mode is unknown. Drives the rate-limit and watchdog timers.
+fn refresh_interval(output: &Output) -> Duration {
+    output
+        .current_mode()
+        .map(|mode| mode.refresh)
+        .filter(|refresh| *refresh > 0)
+        .map(|refresh| Duration::from_secs_f64(1_000f64 / refresh as f64))
+        .unwrap_or(Duration::from_millis(16))
+}
+
+impl OutputSurface {
+    /// Cancels any pending repaint timer and returns the loop to `Idle`
+    /// (keeping `dirty` as is). Precedes every render and a session pause.
+    fn park_redraw(
+        &mut self,
+        handle: &smithay::reexports::calloop::LoopHandle<'static, MindeState>,
+    ) {
+        match std::mem::replace(&mut self.redraw, RedrawState::Idle) {
+            RedrawState::WaitingForVblank { watchdog: token }
+            | RedrawState::WaitingForTimer { token } => handle.remove(token),
+            RedrawState::Idle | RedrawState::Scheduled => {}
+        }
+    }
 }
 
 impl Drop for OutputSurface {
@@ -163,6 +220,10 @@ pub struct UdevBackendData {
     devices: HashMap<DrmNode, DeviceData>,
     /// Whether `handle-startup!` has fired (once, on the first output).
     started: bool,
+    /// Set while the libseat session is paused (VT switched away): the DRM
+    /// device is inactive, so renders are deferred (outputs only accumulate
+    /// `dirty`) until `ActivateSession` repaints everything.
+    paused: bool,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     /// `wp_presentation` global (udev-only): kept alive so the global stays
     /// advertised. Feedback is collected per frame and delivered on vblank;
@@ -290,6 +351,7 @@ pub fn init_udev(
         gpus,
         devices: HashMap::new(),
         started: false,
+        paused: false,
         dmabuf_state: None,
         presentation_state,
         // Filled in by `device_added` once the primary GPU is opened and its
@@ -331,9 +393,17 @@ pub fn init_udev(
             SessionEvent::PauseSession => {
                 libinput_context.suspend();
                 info!("pausing session");
+                let handle = state.handle.clone();
                 if let Some(udev) = state.udev_data.as_mut() {
+                    udev.paused = true;
                     for device in udev.devices.values_mut() {
                         device.drm_output_manager.pause();
+                        // Park every repaint loop: no timer may fire into an
+                        // inactive device, and a vblank for a flip that was
+                        // in flight may never arrive.
+                        for surface in device.surfaces.values_mut() {
+                            surface.park_redraw(&handle);
+                        }
                     }
                 }
             }
@@ -344,6 +414,7 @@ pub fn init_udev(
                 }
                 let mut to_repaint = Vec::new();
                 if let Some(udev) = state.udev_data.as_mut() {
+                    udev.paused = false;
                     for (node, device) in udev.devices.iter_mut() {
                         let _ = device.drm_output_manager.lock().activate(false);
                         for crtc in device.surfaces.keys() {
@@ -806,6 +877,8 @@ fn connector_connected(
             dh: state.display_handle.clone(),
             drm_output,
             border_buffers: BorderBuffers::default(),
+            dirty: true,
+            redraw: RedrawState::Idle,
         },
     );
 
@@ -939,16 +1012,125 @@ impl MindeState {
             Err(err) => warn!(%err, "drm frame_submitted failed"),
         }
 
-        // Schedule the next repaint roughly one frame out.
-        self.handle
-            .insert_source(
-                Timer::from_duration(Duration::from_millis(16)),
-                move |_, _, state| {
+        // The flip completed: repaint right away if anything changed while
+        // it was in flight, otherwise go idle until the next dirtying event.
+        let handle = self.handle.clone();
+        let Some(surface) = self.output_surface_mut(node, crtc) else {
+            return;
+        };
+        if let RedrawState::WaitingForVblank { watchdog } =
+            std::mem::replace(&mut surface.redraw, RedrawState::Idle)
+        {
+            handle.remove(watchdog);
+        } else {
+            // A vblank for a frame we did not account for (forced repaint
+            // while another flip was pending, or a flip from before a VT
+            // switch); leave whatever the loop is doing alone.
+            return;
+        }
+        if surface.dirty {
+            self.render_now(node, crtc);
+        }
+    }
+
+    fn output_surface_mut(
+        &mut self,
+        node: DrmNode,
+        crtc: crtc::Handle,
+    ) -> Option<&mut OutputSurface> {
+        self.udev_data
+            .as_mut()?
+            .devices
+            .get_mut(&node)?
+            .surfaces
+            .get_mut(&crtc)
+    }
+
+    /// Marks every udev output dirty and schedules a render for each one that
+    /// is idle. The entry point for every scene change: surface commits,
+    /// window map/unmap, layer changes, focus/placement, messages and
+    /// overlays, output configuration, queued captures. A no-op under winit
+    /// (its redraw loop is continuous).
+    pub fn schedule_redraw(&mut self) {
+        self.schedule_redraw_where(|_| true);
+    }
+
+    /// Like [`schedule_redraw`](Self::schedule_redraw), but only for the
+    /// outputs whose geometry contains one of `points` -- the pointer's old
+    /// and new location on motion, or its location on a cursor image change.
+    pub fn schedule_redraw_at(&mut self, points: &[Point<f64, Logical>]) {
+        self.schedule_redraw_where(|geo| points.iter().any(|p| geo.to_f64().contains(*p)));
+    }
+
+    fn schedule_redraw_where(
+        &mut self,
+        mut wanted: impl FnMut(smithay::utils::Rectangle<i32, Logical>) -> bool,
+    ) {
+        let Some(udev) = self.udev_data.as_mut() else {
+            return;
+        };
+        let paused = udev.paused;
+        let mut to_schedule = Vec::new();
+        for (node, device) in udev.devices.iter_mut() {
+            for (crtc, surface) in device.surfaces.iter_mut() {
+                let Some(geo) = self.space.output_geometry(&surface.output) else {
+                    continue;
+                };
+                if !wanted(geo) {
+                    continue;
+                }
+                surface.dirty = true;
+                if !paused && matches!(surface.redraw, RedrawState::Idle) {
+                    surface.redraw = RedrawState::Scheduled;
+                    to_schedule.push((*node, *crtc));
+                }
+            }
+        }
+        for (node, crtc) in to_schedule {
+            self.handle.insert_idle(move |state| {
+                let scheduled = state
+                    .output_surface_mut(node, crtc)
+                    .map(|surface| matches!(surface.redraw, RedrawState::Scheduled))
+                    .unwrap_or(false);
+                if scheduled {
                     state.render_now(node, crtc);
-                    TimeoutAction::Drop
-                },
-            )
-            .ok();
+                }
+            });
+        }
+    }
+
+    /// Watchdog: a queued frame's vblank never arrived. Treat it as done so
+    /// the loop cannot stall; the next render re-queues whatever is pending.
+    fn vblank_watchdog_fired(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        let Some(surface) = self.output_surface_mut(node, crtc) else {
+            return;
+        };
+        if !matches!(surface.redraw, RedrawState::WaitingForVblank { .. }) {
+            return;
+        }
+        debug!(
+            ?node,
+            ?crtc,
+            "no vblank within the watchdog interval; repainting"
+        );
+        surface.redraw = RedrawState::Idle;
+        surface.dirty = true;
+        self.render_now(node, crtc);
+    }
+
+    /// Rate-limit timer after a render that queued nothing: render again if
+    /// something changed in the meantime, else go idle.
+    fn redraw_timer_fired(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        let Some(surface) = self.output_surface_mut(node, crtc) else {
+            return;
+        };
+        if !matches!(surface.redraw, RedrawState::WaitingForTimer { .. }) {
+            return;
+        }
+        surface.redraw = RedrawState::Idle;
+        if surface.dirty {
+            self.render_now(node, crtc);
+        }
     }
 
     /// Dmabuf capture constraints for `ext-image-copy-capture-v1`: the
@@ -975,7 +1157,12 @@ impl MindeState {
         })
     }
 
+    /// Forced repaint (session resume): whatever the loop was doing is
+    /// stale, so restart it from a fresh render.
     fn handle_repaint_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        if let Some(surface) = self.output_surface_mut(node, crtc) {
+            surface.dirty = true;
+        }
         self.render_now(node, crtc);
     }
 
@@ -1009,10 +1196,15 @@ impl MindeState {
     /// session-lock handler so a blank frame reaches every screen before the
     /// lock is confirmed. No-op under winit (its redraw loop repaints
     /// continuously; the lock flag makes those frames blank on its own).
+    /// If a flip is still pending the frame is queued behind it by the DRM
+    /// compositor; its vblank is then absorbed by `frame_finish`.
     pub(crate) fn render_all_outputs_now(&mut self) {
         let Some(udev) = self.udev_data.as_ref() else {
             return;
         };
+        if udev.paused {
+            return;
+        }
         let targets: Vec<(DrmNode, crtc::Handle)> = udev
             .devices
             .iter()
@@ -1023,28 +1215,63 @@ impl MindeState {
         }
     }
 
+    /// Renders one output now and arms the follow-up: the vblank (plus a
+    /// watchdog) when a frame was queued, a refresh-interval timer when
+    /// nothing was (no damage, or an error -- the error case keeps `dirty`
+    /// so the timer retries, matching the old fixed-interval behaviour).
     fn render_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
-        // If no frame was queued (no damage, or a render error), no VBlank
-        // will arrive to drive `frame_finish`, so the repaint chain would
-        // die -- keep it alive with a timer instead.
+        let handle = self.handle.clone();
+        let Some(surface) = self.output_surface_mut(node, crtc) else {
+            return;
+        };
+        surface.park_redraw(&handle);
+        surface.dirty = false;
+        let interval = refresh_interval(&surface.output);
+
         let queued = match self.render_surface(node, crtc) {
             Ok(queued) => queued,
             Err(err) => {
-                warn!(%err, "error rendering udev output");
+                match err {
+                    // Expected while the session is paused or the device is
+                    // mid-hotplug; the resume path repaints.
+                    SwapBuffersError::TemporaryFailure(_) => {
+                        debug!(%err, "temporary failure rendering udev output")
+                    }
+                    _ => warn!(%err, "error rendering udev output"),
+                }
+                if let Some(surface) = self.output_surface_mut(node, crtc) {
+                    surface.dirty = true;
+                }
                 false
             }
         };
-        if !queued {
-            self.handle
-                .insert_source(
-                    Timer::from_duration(Duration::from_millis(16)),
-                    move |_, _, state| {
-                        state.render_now(node, crtc);
-                        TimeoutAction::Drop
-                    },
-                )
-                .ok();
-        }
+
+        let Some(surface) = self.output_surface_mut(node, crtc) else {
+            return;
+        };
+        let redraw = if queued {
+            // Vblanks normally arrive within one interval; give the driver
+            // generous slack before assuming the flip was lost.
+            let watchdog_after = (interval * 4).max(Duration::from_millis(100));
+            handle
+                .insert_source(Timer::from_duration(watchdog_after), move |_, _, state| {
+                    state.vblank_watchdog_fired(node, crtc);
+                    TimeoutAction::Drop
+                })
+                .ok()
+                .map(|watchdog| RedrawState::WaitingForVblank { watchdog })
+        } else {
+            handle
+                .insert_source(Timer::from_duration(interval), move |_, _, state| {
+                    state.redraw_timer_fired(node, crtc);
+                    TimeoutAction::Drop
+                })
+                .ok()
+                .map(|token| RedrawState::WaitingForTimer { token })
+        };
+        // A failed timer insert leaves the loop idle; the next dirtying
+        // event restarts it.
+        surface.redraw = redraw.unwrap_or(RedrawState::Idle);
     }
 
     /// Renders one frame; returns whether a frame was queued to the DRM
@@ -1144,135 +1371,31 @@ impl MindeState {
             return Ok(queued);
         }
 
-        let mut custom: Vec<MindeRenderElements<UdevRenderer<'_>>> = Vec::new();
-
-        // Cursor, at the current pointer location.
-        if output_geo.to_f64().contains(self.pointer_location) {
-            let hotspot = self.cursor_state.hotspot();
-            let cursor_pos = self.pointer_location - output_geo.loc.to_f64();
-            let cursor_phys = (cursor_pos - hotspot.to_f64())
-                .to_physical(scale)
-                .to_i32_round();
-            custom.extend(
-                self.cursor_state
-                    .render_elements(&mut renderer, cursor_phys, scale),
-            );
-        }
-
-        // Message overlay, centered (below the cursor, above windows) --
-        // on the output holding the current frame only (StumpWM shows
-        // messages on the current head).
+        // Messages are shown on the output holding the current frame only
+        // (StumpWM shows them on the current head).
         let message_here = self
             .focus_rect
             .map(|r| output_geo.contains(r.loc))
             .unwrap_or(true);
-        if let Some(msg) = self.message.as_ref().filter(|_| message_here)
-            && let Some(elem) = crate::render::message_element(
-                &mut renderer,
-                msg,
-                (output_geo.size.w, output_geo.size.h),
-                scale,
-            )
-        {
-            custom.push(elem);
-        }
-
-        // Positioned overlays (fselect/expose frame labels): global
-        // coords, shifted into this output's framebuffer like everything
-        // else; only drawn when they land on this output.
-        for (loc, msg) in self
-            .overlays
-            .iter()
-            .filter(|(l, _)| output_geo.contains(*l))
-        {
-            if let Some(elem) =
-                crate::render::overlay_element(&mut renderer, msg, *loc - output_geo.loc, scale)
-            {
-                custom.push(elem);
-            }
-        }
-
-        // Layer-shell surfaces: upper (top/overlay -- fuzzel, swaylock)
-        // draw above windows; lower (bottom/background -- swaybg) below.
-        use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-        let layer_map = smithay::desktop::layer_map_for_output(&output);
-        let (lower, upper): (Vec<&smithay::desktop::LayerSurface>, Vec<_>) = layer_map
-            .layers()
-            .partition(|s| matches!(s.layer(), WlrLayer::Background | WlrLayer::Bottom));
-        macro_rules! layer_elements {
-            ($surfaces:expr) => {
-                $surfaces.iter().flat_map(|surface| {
-                    let loc = layer_map
-                        .layer_geometry(surface)
-                        .map(|geo| geo.loc)
-                        .unwrap_or_default();
-                    smithay::backend::renderer::element::AsRenderElements::<
-                                        UdevRenderer<'_>,
-                                    >::render_elements::<MindeRenderElements<UdevRenderer<'_>>>(
-                                        *surface,
-                                        &mut renderer,
-                                        loc.to_physical_precise_round(scale),
-                                        scale,
-                                        1.0,
-                                    )
-                })
-            };
-        }
-        custom.extend(layer_elements!(upper));
-
-        // Border around the selected frame (falling back to the focused
-        // window before the first sync). Rects are global; this output's
-        // framebuffer is output-local, so shift by the output origin and
-        // only draw when the frame is (partly) on this output.
-        if let Some(geo) = self.focus_rect.or_else(|| {
+        let focus = self.focus_rect.or_else(|| {
             self.focused_window
                 .as_ref()
                 .and_then(|w| self.space.element_geometry(w))
-        }) && geo.overlaps(output_geo)
-        {
-            let mut local = geo;
-            local.loc -= output_geo.loc;
-            custom.extend(
-                output_surface
-                    .border_buffers
-                    .elements(local, scale, self.border_color),
-            );
-        }
-
-        // Window surfaces, front-to-back (custom elements above are drawn
-        // first, i.e. on top; `space.elements()` yields back-to-front, so
-        // walk it in reverse). Skip windows entirely off this output and
-        // shift the rest into output-local coordinates.
-        let mut all_elements: Vec<MindeRenderElements<UdevRenderer<'_>>> = custom;
-        for window in self.space.elements().rev() {
-            let Some(loc) = self.space.element_location(window) else {
-                continue;
-            };
-            if !self
-                .space
-                .element_geometry(window)
-                .map(|g| g.overlaps(output_geo))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            // The space stores the element location as the window
-            // GEOMETRY origin; the buffer's top-left is geometry.loc
-            // further up/left (CSD shadow margins live in that fringe).
-            // Rendering at `loc` directly shifts CSD clients (GTK: zen,
-            // inkscape, gimp) into the frame by their shadow width --
-            // smithay's own space renderer subtracts this too
-            // (render_location, desktop/space/mod.rs).
-            let phys_loc =
-                (loc - window.geometry().loc - output_geo.loc).to_physical_precise_round(scale);
-            all_elements.extend(smithay::backend::renderer::element::AsRenderElements::<
-                UdevRenderer<'_>,
-            >::render_elements(
-                window, &mut renderer, phys_loc, scale, 1.0
-            ));
-        }
-        // Background/bottom layers under everything.
-        all_elements.extend(layer_elements!(lower));
+        });
+        let all_elements = crate::handlers::screencopy::output_scene_elements(
+            &mut renderer,
+            &output,
+            output_geo,
+            (0, 0).into(),
+            scale,
+            &self.space,
+            Some((&mut self.cursor_state, self.pointer_location)),
+            self.message.as_ref().filter(|_| message_here),
+            &self.overlays,
+            focus,
+            self.border_color,
+            &mut output_surface.border_buffers,
+        );
 
         let render_result = output_surface
             .drm_output
@@ -1298,8 +1421,10 @@ impl MindeState {
         // `surface_primary_scanout_output`), and the render report flags
         // zero-copy scanout. The feedback rides along as the queued frame's
         // user-data and is delivered on the matching vblank in `frame_finish`.
-        // The `layer_map` guard from above is reused (a second guard on the
+        // `output_scene_elements` released its layer-map guard; open one here
+        // for the feedback and frame-callback walks (a second guard on the
         // same output panics -- see the frame-callback NOTE below).
+        let layer_map = smithay::desktop::layer_map_for_output(&output);
         let mut presentation_feedback = OutputPresentationFeedback::new(&output);
         for window in self.space.elements() {
             if self.space.outputs_for_element(window).contains(&output) {
@@ -1413,11 +1538,6 @@ impl MindeState {
         drop(layer_map);
         if !self.pending_captures.is_empty() {
             let time = self.start_time.elapsed();
-            let focus = self.focus_rect.or_else(|| {
-                self.focused_window
-                    .as_ref()
-                    .and_then(|w| self.space.element_geometry(w))
-            });
             crate::handlers::screencopy::satisfy_output_captures(
                 &mut renderer,
                 &output,

@@ -18,6 +18,7 @@
   #:use-module (minde hooks)
   #:use-module (minde compositor frames)
   #:use-module (minde compositor model)
+  #:use-module (minde compositor rust)
   #:use-module (minde foundation serialization)
   #:re-export (focus-next-head! focus-previous-head!)
   #:export (switch-to-group!
@@ -424,19 +425,11 @@ marked * (StumpWM groups/vgroups)."
         %groups)
    "\n"))
 
-;; Same dynamic (guile-user) lookup as frames.scm's rust-call (see the
-;; long comment there): a missing subr (old binary, test stubs) is a
-;; no-op.
-(define (rust-call name . args)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod name))))
-    (when var (apply (variable-ref var) args))))
-
 ;; Parks a float off-screen without disturbing its remembered geometry
 ;; (hide-window! would place it with tiled states).
 (define (rust-call-place-float-offscreen id r)
-  (rust-call 'wm-place-float id -10000 -10000
-             (if r (caddr r) 100) (if r (cadddr r) 100)))
+  (rust-place-float! id -10000 -10000
+                  (if r (caddr r) 100) (if r (cadddr r) 100)))
 
 ;; The workhorse behind every window-between-groups operation (gmove,
 ;; gmerge, sticky windows, gnext-with-window): moves ID from group FROM
@@ -921,9 +914,7 @@ geometries re-applied. Groups not in the dump are left alone."
                    (if id (window-title id) ""))))
 
 (define (refresh-external-status!)
-  (let* ((module (resolve-module '(guile-user) #:ensure #f))
-         (variable (and module (module-variable module 'publish-status!))))
-    (when variable ((variable-ref variable)))))
+  (rust-call-if-bound 'publish-status!))
 
 (define (move-current-window-to-next-group-and-follow!)
   "Moves the current window to the next group and switches there with it

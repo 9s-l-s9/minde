@@ -184,15 +184,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // spawned (via handle-startup!) before the env export further down.
     let _ = guile::SOCKET_NAME.set(state.socket_name.to_string_lossy().into_owned());
 
+    // Sockets first: neither needs Scheme, and binding them early means a
+    // stale-socket or runtime-dir error surfaces before the (comparatively
+    // slow) Guile boot and init.scm load.
+    ipc::init(&mut event_loop)?;
+    events::init(&mut event_loop)?;
+
     // Guile must be initialized on the main thread, and after this call
     // every libguile function must be called from this same thread (except
     // through Guile's own REPL server, which manages its own thread).
     //
-    // This must happen before backend init, which calls into Scheme (e.g.
-    // `handle-output-geometry!`) as soon as it knows the output size.
+    // This must happen before backend init: both backends call into Scheme
+    // from inside their init (udev enumerates the already-present GPU and
+    // connectors synchronously, reaching `handle-heads-change!` and
+    // `handle-startup!`; winit calls `handle-startup!` directly), so the
+    // policy layer has to be loaded by then.
     guile::init(state.loop_signal.clone());
-    ipc::init(&mut event_loop)?;
-    events::init(&mut event_loop)?;
 
     match backend {
         Backend::Winit => {
@@ -226,36 +233,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn scheme_module_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let repository_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scheme");
-    if repository_dir.is_dir() {
-        return Ok(repository_dir);
-    }
-    if let Some(path) = std::env::var_os("MINDE_SCHEME_DIR") {
-        return Ok(path.into());
-    }
-    let executable = std::env::current_exe()?;
-    let prefix = executable
-        .parent()
-        .and_then(std::path::Path::parent)
-        .ok_or_else(|| std::io::Error::other("cannot determine minde installation prefix"))?;
-    Ok(prefix.join("share/minde/scheme"))
-}
-
 fn validate_config(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let modules = scheme_module_dir()?;
-    let expression = "(use-modules (minde command-catalog) (minde config)) \
-                      (register-builtin-command-schemas!) \
-                      (validate-configuration-file (cadr (command-line)))";
-    let status = std::process::Command::new("guile")
-        .arg("--no-auto-compile")
-        .arg("-L")
-        .arg(&modules)
-        .arg("-c")
-        .arg(expression)
-        .arg(path)
-        .status()?;
-    if status.success() {
+    // In-process through the linked libguile (the bundled modules resolve
+    // via `guile::scheme_dir`), so `--check-config` needs no `guile` on PATH.
+    if guile::check_config(path) {
         Ok(())
     } else {
         Err(format!("configuration validation failed: {}", path.display()).into())
@@ -264,17 +245,12 @@ fn validate_config(path: &std::path::Path) -> Result<(), Box<dyn std::error::Err
 
 /// A panic on the TTY backend takes the whole session down with no
 /// visible output (frozen VT). Leave evidence: append panic message and
-/// backtrace to $XDG_STATE_HOME/minde/crash.log (or ~/.local/state).
+/// backtrace to `crash.log` in the per-user state directory (see
+/// `runtime_dir::state_dir`).
 fn install_crash_log() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let state_dir = std::env::var("XDG_STATE_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                    .join(".local/state")
-            })
-            .join("minde");
+        let state_dir = runtime_dir::state_dir();
         let _ = std::fs::create_dir_all(&state_dir);
         let backtrace = std::backtrace::Backtrace::force_capture();
         let entry = format!(

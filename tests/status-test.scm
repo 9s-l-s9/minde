@@ -71,6 +71,29 @@
 (handle-window-title-change! 42 "changed title" "secret.app")
 (check "title-only update republishes status" (= (publish-status!) 3))
 
+;; With the compositor's timer wrapper available, a burst of publications
+;; coalesces into one deferred write carrying the latest sequence.
+(define %deferred '())
+(define (wm-run-after ms thunk) (set! %deferred (cons thunk %deferred)) #t)
+(define (published-sequence)
+  (call-with-input-file test-path
+    (lambda (port)
+      (let ((contents (read-string port)))
+        (cond ((string-contains contents "\"sequence\":5") 5)
+              ((string-contains contents "\"sequence\":4") 4)
+              (else 3))))))
+(add-urgent-window! 43)
+(check "deferred publication advances the sequence" (= (publish-status!) 4))
+(add-urgent-window! 44)
+(check "second change in the burst advances again" (= (publish-status!) 5))
+(check "one timer is armed for the burst" (= (length %deferred) 1))
+(check "files are untouched until the timer fires" (= (published-sequence) 3))
+((car %deferred))
+(check "the deferred write carries the latest sequence" (= (published-sequence) 5))
+(check "the deferred write carries the latest state"
+       (call-with-input-file test-path
+         (lambda (port) (string-contains (read-string port) "44"))))
+
 (when (file-exists? test-path) (delete-file test-path))
 (let ((legacy-path (string-append test-directory "/minde-status")))
   (when (file-exists? legacy-path) (delete-file legacy-path)))

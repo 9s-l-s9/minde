@@ -14,9 +14,13 @@
 //! Delivery is fan-out with a bounded per-subscriber backlog. Writes are
 //! non-blocking so a stalled reader can never block the compositor event loop;
 //! a subscriber whose unsent backlog grows past [`MAX_BACKLOG_BYTES`] is
-//! evicted (its connection closed) and the eviction logged. Pending bytes are
-//! flushed opportunistically on each publish, which is sufficient because the
-//! event stream is what drives delivery in the first place.
+//! evicted (its connection closed) and the eviction logged. A line is written
+//! straight to each socket and only the unwritten remainder is buffered, so a
+//! healthy subscriber never costs a copy; pending bytes are flushed
+//! opportunistically on each publish, which is sufficient because the event
+//! stream is what drives delivery in the first place. Scheme asks
+//! [`has_subscribers`] (the `wm-events-active?` gsubr) before serialising at
+//! all, so an idle socket costs nothing per hook firing.
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -75,6 +79,35 @@ fn try_flush(subscriber: &mut Subscriber) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether at least one event subscriber is connected. Backs the
+/// `wm-events-active?` gsubr so the Scheme mirror can skip serialisation
+/// when nobody would receive the line.
+pub fn has_subscribers() -> bool {
+    !subscribers().lock().unwrap().is_empty()
+}
+
+/// Queues `bytes` for one subscriber: written directly when nothing is
+/// pending (the common case), otherwise appended behind the backlog so
+/// ordering holds. Returns `Ok(())` when the subscriber is still healthy.
+fn deliver(subscriber: &mut Subscriber, bytes: &[u8]) -> std::io::Result<()> {
+    if subscriber.pending.is_empty() {
+        let mut offset = 0;
+        while offset < bytes.len() {
+            match subscriber.stream.write(&bytes[offset..]) {
+                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(written) => offset += written,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        subscriber.pending.extend(&bytes[offset..]);
+        return Ok(());
+    }
+    subscriber.pending.extend(bytes);
+    try_flush(subscriber)
+}
+
 /// Mirrors one already-serialized event LINE to every subscriber, appending a
 /// terminating newline. Never blocks: a subscriber whose backlog exceeds
 /// [`MAX_BACKLOG_BYTES`] or whose socket errors (a clean disconnect included)
@@ -85,9 +118,16 @@ pub fn publish_line(line: &str) {
     if subscribers.is_empty() {
         return;
     }
+    // One newline-terminated buffer shared by every subscriber.
+    let mut bytes = Vec::with_capacity(line.len() + 1);
+    bytes.extend_from_slice(line.as_bytes());
+    bytes.push(b'\n');
     subscribers.retain_mut(|subscriber| {
-        subscriber.pending.extend(line.as_bytes());
-        subscriber.pending.push_back(b'\n');
+        if let Err(error) = deliver(subscriber, &bytes) {
+            tracing::info!(component = "events", %error,
+                "event subscriber disconnected");
+            return false;
+        }
         if subscriber.pending.len() > MAX_BACKLOG_BYTES {
             tracing::warn!(
                 component = "events",
@@ -96,14 +136,7 @@ pub fn publish_line(line: &str) {
             );
             return false;
         }
-        match try_flush(subscriber) {
-            Ok(()) => true,
-            Err(error) => {
-                tracing::info!(component = "events", %error,
-                    "event subscriber disconnected");
-                false
-            }
-        }
+        true
     });
 }
 
@@ -193,6 +226,27 @@ mod tests {
         try_flush(&mut subscriber).unwrap();
         assert!(subscriber.pending.is_empty());
         drop(b);
+    }
+
+    #[test]
+    fn deliver_writes_directly_and_keeps_order_behind_a_backlog() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        a.set_nonblocking(true).unwrap();
+        let mut subscriber = Subscriber {
+            stream: a,
+            pending: VecDeque::new(),
+        };
+        deliver(&mut subscriber, b"(first)\n").unwrap();
+        assert!(
+            subscriber.pending.is_empty(),
+            "ready socket takes the line at once"
+        );
+        subscriber.pending.extend(b"(queued)\n");
+        deliver(&mut subscriber, b"(second)\n").unwrap();
+        let mut received = Vec::new();
+        b.set_nonblocking(true).unwrap();
+        let _ = std::io::Read::read_to_end(&mut b, &mut received);
+        assert_eq!(received, b"(first)\n(queued)\n(second)\n");
     }
 
     #[test]

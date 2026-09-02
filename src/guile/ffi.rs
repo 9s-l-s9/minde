@@ -12,7 +12,11 @@ use std::os::raw::{c_char, c_int, c_void};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Scm(pub *mut c_void);
 
+// SCM values are only ever touched on the Guile thread (see the thread
+// affinity note in `mod.rs`); the marker impls exist so interned symbols can
+// live in `static` caches.
 unsafe impl Send for Scm {}
+unsafe impl Sync for Scm {}
 
 // `scm_from_bool`, `SCM_BOOL_T`/`SCM_BOOL_F` are inline/macro-only in the
 // Guile headers, so we hardcode the immediate flag encodings from scm.h:
@@ -41,7 +45,6 @@ pub type Gsubr = unsafe extern "C" fn() -> Scm;
 unsafe extern "C" {
     pub fn scm_init_guile();
 
-    pub fn scm_c_primitive_load(filename: *const c_char) -> Scm;
     pub fn scm_c_eval_string(expr: *const c_char) -> Scm;
 
     pub fn scm_c_define_gsubr(
@@ -52,12 +55,8 @@ unsafe extern "C" {
         fcn: Gsubr,
     ) -> Scm;
 
-    pub fn scm_call_0(proc: Scm) -> Scm;
-    pub fn scm_call_1(proc: Scm, arg1: Scm) -> Scm;
-    pub fn scm_call_2(proc: Scm, arg1: Scm, arg2: Scm) -> Scm;
-    pub fn scm_call_3(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm) -> Scm;
-    pub fn scm_call_4(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm) -> Scm;
-    pub fn scm_call_5(proc: Scm, arg1: Scm, arg2: Scm, arg3: Scm, arg4: Scm, arg5: Scm) -> Scm;
+    /// Applies `proc` to `nargs` arguments read from `argv`.
+    pub fn scm_call_n(proc: Scm, argv: *const Scm, nargs: usize) -> Scm;
 
     pub fn scm_from_utf8_string(s: *const c_char) -> Scm;
     /// Returns a malloc'd, NUL-terminated UTF-8 buffer; caller must free() it.
@@ -77,14 +76,22 @@ unsafe extern "C" {
     pub fn scm_car(x: Scm) -> Scm;
     pub fn scm_cdr(x: Scm) -> Scm;
 
-    pub fn scm_list_4(a: Scm, b: Scm, c: Scm, d: Scm) -> Scm;
     /// `(cons a b)` -- for building lists of arbitrary length from Rust.
     pub fn scm_cons(a: Scm, b: Scm) -> Scm;
 
-    /// Looks up a top-level variable object by name (throws if unbound).
-    pub fn scm_c_lookup(name: *const c_char) -> Scm;
-    /// Dereferences a variable object obtained from `scm_c_lookup`.
+    /// The module top-level code currently evaluates in (`(guile-user)` for
+    /// the embedded policy layer).
+    pub fn scm_current_module() -> Scm;
+    /// Resolves `sym` in `module` (local definitions first, then imports)
+    /// to its variable object, or `#f` when the name is unknown. Unlike
+    /// `scm_c_lookup` this never throws.
+    pub fn scm_module_variable(module: Scm, sym: Scm) -> Scm;
+    /// `#t` when a variable object currently holds a value.
+    pub fn scm_variable_bound_p(var: Scm) -> Scm;
+    /// Dereferences a variable object.
     pub fn scm_variable_ref(var: Scm) -> Scm;
+    /// Pins an object for the lifetime of the process (never unprotected).
+    pub fn scm_gc_protect_object(obj: Scm) -> Scm;
 
     pub fn scm_internal_catch(
         tag: Scm,

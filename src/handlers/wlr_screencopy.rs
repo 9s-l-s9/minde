@@ -296,6 +296,8 @@ impl Dispatch<ZwlrScreencopyFrameV1, WlrFrameData> for MindeState {
             origin: inner.region.loc,
             size: inner.size,
         });
+        // Captures are satisfied by the next composite; make sure one runs.
+        state.schedule_redraw();
     }
 }
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 use crate::{MindeState, grabs::resize_grab, state::ClientState};
-use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     reexports::wayland_server::{
@@ -41,12 +40,7 @@ impl CompositorHandler for MindeState {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            let window = self
-                .space
-                .elements()
-                .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
-                .cloned();
-            if let Some(window) = window {
+            if let Some(window) = crate::state::window_for_surface(&self.space, &root) {
                 window.on_commit();
                 // Title/app-id arrive (and change) via ordinary commits
                 // after the map-time report, which is usually empty.
@@ -57,6 +51,9 @@ impl CompositorHandler for MindeState {
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
         self.handle_layer_commit(surface);
+        // Every commit may carry new content or a frame-callback request;
+        // both need a render pass (see `udev` repaint scheduling).
+        self.schedule_redraw();
     }
 }
 
@@ -94,18 +91,16 @@ impl MindeState {
                 .unwrap_or(true)
         });
 
-        {
-            let mut map = layer_map_for_output(&output);
-            // Arrange before the initial configure so the configure
-            // carries the size the anchors/margins produce.
-            map.arrange();
-            if !initial_configure_sent
-                && let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
-            {
-                layer.layer_surface().send_configure();
-            }
-        }
+        // Arrange (once: `update_usable_area` does it for every output)
+        // before the initial configure so the configure carries the size the
+        // anchors/margins produce.
         self.update_usable_area();
+        if !initial_configure_sent
+            && let Some(layer) = layer_map_for_output(&output)
+                .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+        {
+            layer.layer_surface().send_configure();
+        }
 
         // Exclusive keyboard interactivity on a top/overlay layer takes
         // the keyboard (this is how fuzzel/swaylock type).

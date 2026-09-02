@@ -43,6 +43,21 @@
   "Removes PROC from compositor event hook NAME."
   (foundation:remove-hook! %hooks name proc))
 
+;; Variables looked up in guile-user, cached once found. A variable object
+;; stays valid across live redefinition (`define' of an existing top-level
+;; name sets the same variable), so the cache never goes stale; a name that
+;; is not yet bound (this module loads before event-stream.scm and before
+;; the Rust gsubrs in headless tests) is simply retried on the next firing.
+(define %guile-user-cache (make-hash-table))
+
+(define (guile-user-variable name)
+  "Returns the guile-user variable object for NAME, or #f when unbound."
+  (or (hashq-ref %guile-user-cache name)
+      (let* ((mod (resolve-module '(guile-user) #:ensure #f))
+             (var (and mod (module-variable mod name))))
+        (when var (hashq-set! %guile-user-cache name var))
+        var)))
+
 (define (run-event-hook! name . args)
   "Runs every procedure registered on NAME with ARGS; errors are logged
 via the wm-log subr (when present) and swallowed."
@@ -51,16 +66,14 @@ via the wm-log subr (when present) and swallowed."
   ;; plain-loaded event-stream.scm) is resolved from guile-user so this module
   ;; stays decoupled and testable in isolation; a missing mirror or a throwing
   ;; one must never break the event path.
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod 'minde-mirror-event))))
+  (let ((var (guile-user-variable 'minde-mirror-event)))
     (when var
       (catch #t
         (lambda () ((variable-ref var) name args))
         (lambda _ #f))))
   (apply foundation:run-hook! %hooks name
          (lambda (key . eargs)
-           (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-                  (var (and mod (module-variable mod 'wm-log))))
+           (let ((var (guile-user-variable 'wm-log)))
              (when var
                ((variable-ref var)
                 (format #f "error in ~a hook: ~a ~s" name key eargs)))))

@@ -9,18 +9,35 @@
 
 use std::io::Write;
 
-/// CRC-32 (ISO 3309), bitwise implementation; fast enough for a few MB.
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffffu32;
-    for &byte in data {
-        crc ^= byte as u32;
-        for _ in 0..8 {
+/// Byte-indexed lookup table for the reflected CRC-32 polynomial
+/// (0xEDB88320), built at compile time.
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut bit = 0;
+        while bit < 8 {
             crc = if crc & 1 != 0 {
                 (crc >> 1) ^ 0xedb8_8320
             } else {
                 crc >> 1
             };
+            bit += 1;
         }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+/// CRC-32 (ISO 3309), one table lookup per byte; the IDAT chunk of a 4K
+/// screenshot is ~32 MB, so the bitwise loop was a visible chunk of the
+/// encode time.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &byte in data {
+        crc = CRC32_TABLE[((crc ^ byte as u32) & 0xff) as usize] ^ (crc >> 8);
     }
     !crc
 }
@@ -42,10 +59,10 @@ fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], payload: &[u8]) {
     out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     out.extend_from_slice(kind);
     out.extend_from_slice(payload);
-    let mut crc_input = Vec::with_capacity(4 + payload.len());
-    crc_input.extend_from_slice(kind);
-    crc_input.extend_from_slice(payload);
-    out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+    // The CRC covers type + data; hash them in place instead of copying the
+    // payload just to concatenate.
+    let start = out.len() - payload.len() - 4;
+    out.extend_from_slice(&crc32(&out[start..]).to_be_bytes());
 }
 
 /// zlib stream with stored deflate blocks (max 65535 bytes each).

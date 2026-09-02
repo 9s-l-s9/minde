@@ -1,5 +1,13 @@
 SHELL := /bin/sh
 
+# Compiled Scheme bytecode for the development/test loops (see
+# compile-scheme). GUILE_LOAD_COMPILED_PATH makes every guile below load the
+# .go files instead of re-interpreting (or autocompiling into ~/.cache) the
+# module tree on each of the ~30 test processes.
+CCACHE := build/ccache
+GUILE_ENV := GUILE_LOAD_COMPILED_PATH=$(CURDIR)/$(CCACHE)$${GUILE_LOAD_COMPILED_PATH:+:$$GUILE_LOAD_COMPILED_PATH} GUILE_AUTO_COMPILE=0
+GUILE := $(GUILE_ENV) guile --no-auto-compile -L scheme
+
 SCHEME_TESTS := \
 	tests/foundation-test.scm \
 	tests/property-test.scm \
@@ -24,7 +32,7 @@ SCHEME_TESTS := \
 	tests/event-stream-test.scm \
 	tests/api-introspect-test.scm
 
-.PHONY: check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
+.PHONY: compile-scheme check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
 	docs check-generated-docs check-demos check-foundation-package check-ui-package \
 	release-archives check-release-archives release clean-test-output
@@ -60,32 +68,50 @@ check-static:
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \
 	fi
 
-check-scheme:
-	@set -eu; for test in $(SCHEME_TESTS); do \
-		echo "== $$test =="; \
-		guile --no-auto-compile -L scheme "$$test"; \
+# Compile scheme/**/*.scm (modules, init.scm and the files it loads) to
+# $(CCACHE); only sources newer than their .go are rebuilt. The Guix package
+# does the same into lib/guile/3.0/site-ccache (guix.scm, compile-scheme
+# phase). default-config.scm is data read by the validator, not code.
+compile-scheme:
+	@set -eu; \
+	for src in $$(find scheme -name '*.scm' ! -name default-config.scm | LC_ALL=C sort); do \
+		go="$(CCACHE)/$${src#scheme/}"; go="$${go%.scm}.go"; \
+		if [ ! -e "$$go" ] || [ "$$src" -nt "$$go" ]; then \
+			mkdir -p "$$(dirname "$$go")"; \
+			case $$src in \
+				scheme/*/*) warn= ;; \
+				*) warn=-W0 ;; \
+			esac; \
+			$(GUILE_ENV) guild compile $$warn -L scheme -o "$$go" "$$src" >/dev/null; \
+		fi; \
 	done
 
-check-api:
-	guile --no-auto-compile -L scheme tests/api-test.scm
+check-scheme: compile-scheme
+	@set -eu; for test in $(SCHEME_TESTS); do \
+		echo "== $$test =="; \
+		$(GUILE) "$$test"; \
+	done
 
-check-config:
-	guile --no-auto-compile -L scheme tests/config-test.scm
-	sh scripts/mindectl check-config scheme/default-config.scm
+check-api: compile-scheme
+	$(GUILE) tests/api-test.scm
+
+# tests/config-test.scm and tests/portable-keymap-test.scm belong to
+# check-scheme; these two targets only add the gates check-scheme lacks.
+check-config: compile-scheme
+	$(GUILE_ENV) sh scripts/mindectl check-config scheme/default-config.scm
 
 check-keymaps:
-	guile --no-auto-compile -L scheme tests/portable-keymap-test.scm
 	sh tests/check-portable-defaults.sh
 
-check-foundation:
+check-foundation: compile-scheme
 	env -u DISPLAY -u WAYLAND_DISPLAY \
-		guile --no-auto-compile -L scheme tests/foundation-test.scm
+		$(GUILE) tests/foundation-test.scm
 
-check-ui:
+check-ui: compile-scheme
 	env -u DISPLAY -u WAYLAND_DISPLAY \
-		guile --no-auto-compile -L scheme tests/ui-prompt-test.scm
+		$(GUILE) tests/ui-prompt-test.scm
 	env -u DISPLAY -u WAYLAND_DISPLAY \
-		guile --no-auto-compile -L scheme tests/menu-test.scm
+		$(GUILE) tests/menu-test.scm
 
 check-e2e:
 	@command -v Xvfb >/dev/null 2>&1 || { \
@@ -159,11 +185,11 @@ check-apps-strict:
 check-soak:
 	sh tests/soak.sh
 
-docs:
-	sh scripts/generate-docs
+docs: compile-scheme
+	$(GUILE_ENV) sh scripts/generate-docs
 
-check-generated-docs:
-	sh tests/check-generated-docs.sh
+check-generated-docs: compile-scheme
+	$(GUILE_ENV) sh tests/check-generated-docs.sh
 
 check-docs: check-generated-docs
 	@test -s README.md

@@ -17,7 +17,9 @@
   #:use-module (srfi srfi-11)
   #:use-module (ice-9 regex)
   #:use-module (minde foundation geometry)
+  #:use-module ((minde foundation keys) #:prefix key:)
   #:use-module (minde compositor model)
+  #:use-module (minde compositor rust)
   #:use-module (minde hooks)
   #:re-export (group-name group-floats group-float?
                frame-window-ids frame-current-window)
@@ -133,6 +135,7 @@
             track-float-map!
             track-window-unmap!
             update-output-geometry!
+            rust-place-float!
             remove-window-from-active-tree!
             remove-window-from-tree-in!
             current-frame-window
@@ -407,6 +410,7 @@ and 'span (one tree over the union of all monitors)."
 
 (define (apply-effective-heads! new groups)
   (flush-active-group!)
+  (forget-all-placements!)
   (let* ((old-ids (map car %heads))
          (new-ids (map car new))
          (removed (filter (lambda (i) (not (memv i new-ids))) old-ids))
@@ -472,8 +476,8 @@ and 'span (one tree over the union of all monitors)."
   (for-each
    (lambda (id)
      (let ((r (hash-ref %floating id)))
-       (rust-call 'wm-place-float id %offscreen-x %offscreen-y
-                  (if r (caddr r) 100) (if r (cadddr r) 100))))
+       (rust-place-float! id %offscreen-x %offscreen-y
+                       (if r (caddr r) 100) (if r (cadddr r) 100))))
    (group-floats g)))
 
 ;; Total window count tracked by G (active or not), across all heads.
@@ -496,33 +500,35 @@ and 'span (one tree over the union of all monitors)."
 ;; ---------------------------------------------------------------------
 ;;
 ;; wm-place-window / wm-focus-window / wm-close-window are Rust subrs
-;; defined at the top level of whichever module loads us -- (guile-user)
-;; in both the real compositor (scheme/init.scm, loaded via
-;; scm_c_primitive_load) and tests/frames-test.scm. A module created with
-;; define-module doesn't automatically see another module's top-level
-;; bindings, and #:use-module/#:select requires the binding to already
-;; exist at *compile time* of this file, which is too early (the caller
-;; hasn't defined its stubs/Rust hasn't registered its subrs yet when this
-;; module itself is compiled). So look them up dynamically by name at call
-;; time instead, exactly like the Rust side's own `guile::lookup` does for
-;; `wm-handle-key` -- a missing definition is simply a no-op.
-(define %reported-missing-rust-calls (make-hash-table))
+;; defined at the top level of whichever module loads us; (minde
+;; compositor rust)'s rust-call resolves them by name at call time (see
+;; the comment there for why) -- a missing definition is a no-op.
 
-(define (rust-call name . args)
-  (let* ((mod (resolve-module '(guile-user) #:ensure #f))
-         (var (and mod (module-variable mod name))))
-    (if var
-        (apply (variable-ref var) args)
-        (begin
-          ;; Unit tests intentionally omit capabilities irrelevant to the
-          ;; behavior under test. Report each missing name once so that signal
-          ;; remains visible without burying real failures in repeated noise.
-          (unless (hash-ref %reported-missing-rust-calls name)
-            (hash-set! %reported-missing-rust-calls name #t)
-            (format #t "minde: ~a unbound, ignoring call~%" name))
-          #f))))
+;; id -> (x y w h) most recently sent through wm-place-window. Every sync
+;; re-places every window of every head, but Rust treats each Place as a
+;; fresh configure/map/geometry event, so an unchanged rectangle is not
+;; resent. Entries are dropped whenever Rust's idea of the geometry may
+;; have moved on without us: unmap, float/fullscreen transitions, a drag
+;; reported by handle-window-move!, and every head change.
+(define %placed-rects (make-hash-table))
 
-(define (wm-place-window id x y w h) (rust-call 'wm-place-window id x y w h))
+(define (forget-placement! id)
+  (hash-remove! %placed-rects id))
+
+(define (forget-all-placements!)
+  (hash-clear! %placed-rects))
+
+(define (wm-place-window id x y w h)
+  (let ((rect (list x y w h)))
+    (unless (equal? (hash-ref %placed-rects id) rect)
+      (hash-set! %placed-rects id rect)
+      (rust-call 'wm-place-window id x y w h))))
+
+(define (rust-place-float! id x y w h)
+  "Places window ID without the tiled states (CSD corners return); the
+next tiled placement is always resent since Rust's state changed."
+  (forget-placement! id)
+  (rust-call 'wm-place-float id x y w h))
 
 ;; The most recent echoes, newest first (StumpWM lastmsg).
 (define %message-history '())
@@ -538,10 +544,9 @@ wm-message (or under the test stubs)."
   (set! %message-history (cons text (take %message-history
                                            (min 19 (length %message-history)))))
   (run-event-hook! 'message text)
-  (let ((mod (resolve-module '(guile-user) #:ensure #f)))
-    (if (and mod (module-variable mod 'wm-message))
-        (rust-call 'wm-message text)
-        (rust-call 'wm-log text))))
+  (if (rust-bound? 'wm-message)
+      (rust-call 'wm-message text)
+      (rust-call 'wm-log text)))
 (define (wm-focus-window id) (rust-call 'wm-focus-window id))
 (define (wm-close-window id) (rust-call 'wm-close-window id))
 (define (wm-clear-focus) (rust-call 'wm-clear-focus))
@@ -554,10 +559,11 @@ wm-message (or under the test stubs)."
 ;; Collects all leaf frames, left/top-to-right/bottom-most first.
 (define (frame-leaves node)
   "Returns NODE's leaf frames in top-to-bottom, left-to-right tree order."
-  (if (frame-node? node)
-      (list node)
-      (append (frame-leaves (split-child-a node))
-              (frame-leaves (split-child-b node)))))
+  (let walk ((node node) (tail '()))
+    (if (frame-node? node)
+        (cons node tail)
+        (walk (split-child-a node)
+              (walk (split-child-b node) tail)))))
 
 ;; Finds the parent <split> of LEAF within NODE, or #f if LEAF is NODE
 ;; itself or not found. Returns (values parent side) where side is 'a or
@@ -692,10 +698,7 @@ fresh one -- for windows moved between groups."
     (let ((f (frame-of-window id)))
       (when f
         (unless (eq? f %current-frame)
-          (set-frame-window-ids! f (delete id (frame-window-ids f)))
-          (when (equal? (frame-current-window f) id)
-            (set-frame-current-window!
-             f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f))))))
+          (take-window-out! f id))
         (frame-add-window! %current-frame id)
         (sync-frames!))))))
 
@@ -785,11 +788,8 @@ window just gets float focus (and comes to the top of the float stack)."
      (lambda (frame)
        (when (member id (frame-window-ids frame))
          (set! found #t)
-         (set-frame-window-ids! frame (delete id (frame-window-ids frame)))
-         (when (equal? (frame-current-window frame) id)
-           (set-frame-current-window!
-            frame
-            (if (null? (frame-window-ids frame)) #f (car (frame-window-ids frame)))))))
+         (take-window-out! frame id)
+         (forget-placement! id)))
      (frame-leaves tree))
     found))
 
@@ -882,6 +882,7 @@ frame and/or sync as appropriate."
        (begin
          (set-group-floats! g (delete id (group-floats g)))
          (hash-remove! %floating id)
+         (forget-placement! id)
          (rust-call 'wm-set-floating id #f)
          (when (equal? %focused-float id) (set! %focused-float #f))
          #t)))
@@ -925,13 +926,15 @@ otherwise put a tiled window above the floats)."
    (lambda (id)
      (let ((r (hash-ref %floating id)))
        (when r
-         (rust-call 'wm-place-float id (car r) (cadr r) (caddr r) (cadddr r))
+         (rust-place-float! id (car r) (cadr r) (caddr r) (cadddr r))
          (rust-call 'wm-raise-window id))))
    (reverse (group-floats %active-group))))
 
 (define (update-floating-window-geometry! id x y w h)
   "Rust reports where a super+drag move/resize ended; keep %floating
 authoritative and treat the dragged float as focused/topmost."
+  ;; A dragged tiled window must snap back on the next sync.
+  (forget-placement! id)
   (when (window-floating? id)
     (hash-set! %floating id (list x y w h))
     (when (member id (group-floats %active-group))
@@ -983,11 +986,13 @@ authoritative and treat the dragged float as focused/topmost."
   (set! %ontop-windows (delete id %ontop-windows)))
 
 (define (raise-ontop!)
-  (for-each
-   (lambda (id)
-     (when (member id (all-window-ids))
-       (rust-call 'wm-raise-window id)))
-   %ontop-windows))
+  (unless (null? %ontop-windows)
+    (let ((ids (all-window-ids)))
+      (for-each
+       (lambda (id)
+         (when (member id ids)
+           (rust-call 'wm-raise-window id)))
+       %ontop-windows))))
 
 ;; ---------------------------------------------------------------------
 ;; Always-show (StumpWM toggle-always-show): a sticky window follows
@@ -1052,14 +1057,16 @@ authoritative and treat the dragged float as focused/topmost."
 
 (define (parse-key-spec spec)
   "Splits a binding spec (\"C-M-x\", \"Down\") into (values mods-bitmask
-keysym-name), using the same prefixes and bit values as init.scm's
-key-spec (C-=ctrl 4, M-=alt 8, S-=shift 1, s-=super 64)."
+keysym-name), using the same prefixes as init.scm's key-spec and the
+modifier bits owned by (minde foundation keys)."
   (let loop ((s spec) (mods 0))
+    (define (modifier name)
+      (loop (substring s 2) (logior mods (key:modifier->bit name))))
     (cond
-     ((string-prefix? "C-" s) (loop (substring s 2) (logior mods 4)))
-     ((string-prefix? "M-" s) (loop (substring s 2) (logior mods 8)))
-     ((string-prefix? "S-" s) (loop (substring s 2) (logior mods 1)))
-     ((string-prefix? "s-" s) (loop (substring s 2) (logior mods 64)))
+     ((string-prefix? "C-" s) (modifier 'ctrl))
+     ((string-prefix? "M-" s) (modifier 'alt))
+     ((string-prefix? "S-" s) (modifier 'shift))
+     ((string-prefix? "s-" s) (modifier 'super))
      (else (values mods s)))))
 
 (define (send-key spec)
@@ -1078,14 +1085,18 @@ into the focused window (StumpWM meta / send-raw-key building block)."
 
 ;; Per-application key translation (StumpWM define-remapped-keys): a
 ;; list of (app-id-regex (from-spec . to-spec) ...). Consulted by
-;; init.scm's dispatch for keys that reach the focused client.
+;; init.scm's dispatch for keys that reach the focused client, so the
+;; app-id regexes are compiled once here rather than per keystroke:
+;; %remapped-keys holds (compiled-regexp (from . to) ...) entries.
 (define %remapped-keys '())
 (define %remapped-keys-on #t)
 
 (define (define-remapped-keys! specs)
   "Replaces the remap table. SPECS: ((app-id-regex (from . to) ...) ...),
 e.g. '((\"zen\" (\"C-n\" . \"Down\") (\"C-p\" . \"Up\")))."
-  (set! %remapped-keys specs)
+  (set! %remapped-keys
+        (map (lambda (entry) (cons (make-regexp (car entry)) (cdr entry)))
+             specs))
   (echo (format #f "remapped keys: ~a app pattern(s)" (length specs))))
 
 (define (unbind-remapped-keys!)
@@ -1108,7 +1119,7 @@ new state."
               (let ((app (window-app-id id)))
                 (and app
                      (any (lambda (entry)
-                            (and (string-match (car entry) app)
+                            (and (regexp-exec (car entry) app)
                                  (assoc-ref (cdr entry) spec)))
                           %remapped-keys)))))))
 
@@ -1715,10 +1726,7 @@ is visible in another frame; a no-op when nothing is hidden."
     (unless (null? hidden)
       (let* ((id (car hidden))
              (f (frame-of-window id)))
-        (set-frame-window-ids! f (delete id (frame-window-ids f)))
-        (when (equal? (frame-current-window f) id)
-          (set-frame-current-window!
-           f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f)))))
+        (take-window-out! f id)
         (frame-add-window! %current-frame id)
         (sync-frames!)))))
 
@@ -1736,10 +1744,7 @@ other frame holds any window."
           (let ((candidate (list-ref leaves (modulo (+ idx i) n))))
             (if (pair? (frame-window-ids candidate))
                 (let ((id (frame-current-window candidate)))
-                  (set-frame-window-ids! candidate (delete id (frame-window-ids candidate)))
-                  (set-frame-current-window!
-                   candidate
-                   (if (null? (frame-window-ids candidate)) #f (car (frame-window-ids candidate))))
+                  (take-window-out! candidate id)
                   (frame-add-window! %current-frame id))
                 (loop (+ i 1))))))))
   (sync-frames!))
@@ -1783,10 +1788,7 @@ last hidden window instead of the first."
     (unless (null? hidden)
       (let* ((id (last hidden))
              (f (frame-of-window id)))
-        (set-frame-window-ids! f (delete id (frame-window-ids f)))
-        (when (equal? (frame-current-window f) id)
-          (set-frame-current-window!
-           f (if (null? (frame-window-ids f)) #f (car (frame-window-ids f)))))
+        (take-window-out! f id)
         (frame-add-window! %current-frame id)
         (sync-frames!)))))
 
@@ -2064,7 +2066,7 @@ frame's current window."
                 ;; Unmaximized: 2/3 rect by gravity, placed without the
                 ;; tiled states (wm-place-float) so CSD corners return.
                 ((hash-ref %unmaximized id)
-                 (apply rust-call 'wm-place-float id (unmaximized-rect frame id)))
+                 (apply rust-place-float! id (unmaximized-rect frame id)))
                 (else
                  (let ((bw %border-width))
                    (wm-place-window id
@@ -2134,12 +2136,14 @@ active the frame layout is frozen; toggling off re-syncs it."
   (if %fullscreen-window
       (begin
         (rust-call 'wm-set-fullscreen %fullscreen-window #f)
+        (forget-placement! %fullscreen-window)
         (set! %fullscreen-window #f)
         (sync-frames!))
       (let ((id (focused-window-id)))
         (if id
             (begin
               (set! %fullscreen-window id)
+              (forget-placement! id)
               (rust-call 'wm-set-fullscreen id #t))
             (echo "No window to fullscreen")))))
 

@@ -3,6 +3,7 @@
 
 (define-module (minde windows)
   #:use-module (minde compositor frames)
+  #:use-module (minde compositor rust)
   #:export (window-geometry)
   #:re-export (focused-window-id
                current-frame-window
@@ -36,6 +37,4 @@
 coordinates, or #f when the window is unknown, hidden, or unmapped.  The
 coordinates are directly usable with wm-warp-pointer; output reservations and
 configured gaps are already reflected in the rectangle."
-  (let* ((module (resolve-module '(guile-user) #:ensure #f))
-         (variable (and module (module-variable module 'wm-window-geometry))))
-    (and variable ((variable-ref variable) id))))
+  (rust-call-if-bound 'wm-window-geometry id))

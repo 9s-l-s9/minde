@@ -163,16 +163,6 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         }
     }
 
-    fn relative_motion(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        focus: Option<(WlSurface, Point<f64, Logical>)>,
-        event: &RelativeMotionEvent,
-    ) {
-        handle.relative_motion(data, focus, event);
-    }
-
     fn button(
         &mut self,
         data: &mut MindeState,
@@ -224,90 +214,7 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         }
     }
 
-    fn axis(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        details: AxisFrame,
-    ) {
-        handle.axis(data, details)
-    }
-
-    fn frame(&mut self, data: &mut MindeState, handle: &mut PointerInnerHandle<'_, MindeState>) {
-        handle.frame(data);
-    }
-
-    fn gesture_swipe_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeBeginEvent,
-    ) {
-        handle.gesture_swipe_begin(data, event)
-    }
-
-    fn gesture_swipe_update(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeUpdateEvent,
-    ) {
-        handle.gesture_swipe_update(data, event)
-    }
-
-    fn gesture_swipe_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureSwipeEndEvent,
-    ) {
-        handle.gesture_swipe_end(data, event)
-    }
-
-    fn gesture_pinch_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchBeginEvent,
-    ) {
-        handle.gesture_pinch_begin(data, event)
-    }
-
-    fn gesture_pinch_update(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchUpdateEvent,
-    ) {
-        handle.gesture_pinch_update(data, event)
-    }
-
-    fn gesture_pinch_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GesturePinchEndEvent,
-    ) {
-        handle.gesture_pinch_end(data, event)
-    }
-
-    fn gesture_hold_begin(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureHoldBeginEvent,
-    ) {
-        handle.gesture_hold_begin(data, event)
-    }
-
-    fn gesture_hold_end(
-        &mut self,
-        data: &mut MindeState,
-        handle: &mut PointerInnerHandle<'_, MindeState>,
-        event: &GestureHoldEndEvent,
-    ) {
-        handle.gesture_hold_end(data, event)
-    }
+    crate::grabs::forward_pointer_events!();
 
     fn start_data(&self) -> &PointerGrabStartData<MindeState> {
         &self.start_data
@@ -372,16 +279,7 @@ impl ResizeSurfaceState {
 
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
-    let window = space
-        .elements()
-        // Pointer resize grabs only ever start on xdg toplevels; X11
-        // windows (toplevel() == None) can't match here.
-        .find(|w| {
-            w.toplevel()
-                .map(|t| t.wl_surface() == surface)
-                .unwrap_or(false)
-        })
-        .cloned()?;
+    let window = crate::state::window_for_surface(space, surface)?;
 
     let mut window_loc = space.element_location(&window)?;
     let geometry = window.geometry();

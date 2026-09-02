@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space,
@@ -48,6 +47,7 @@ impl XdgShellHandler for MindeState {
         self.space.map_element(window.clone(), (0, 0), false);
 
         let id = self.register_window(window);
+        self.schedule_redraw();
 
         let (title, app_id) = with_states(&wl_surface, |states| {
             states
@@ -73,15 +73,10 @@ impl XdgShellHandler for MindeState {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        let window = self
-            .space
-            .elements()
-            .find(|w| {
-                w.toplevel()
-                    .map(|t| t.wl_surface() == surface.wl_surface())
-                    .unwrap_or(false)
-            })
-            .cloned();
+        // A dying client sends no further commits, so the render pass must
+        // be asked for explicitly or its last frame lingers on screen.
+        self.schedule_redraw();
+        let window = crate::state::window_for_surface(&self.space, surface.wl_surface());
 
         if let Some(window) = window {
             self.space.unmap_elem(&window);
@@ -130,16 +125,9 @@ impl XdgShellHandler for MindeState {
                 return;
             };
 
-            let window = self
-                .space
-                .elements()
-                .find(|w| {
-                    w.toplevel()
-                        .map(|t| t.wl_surface() == wl_surface)
-                        .unwrap_or(false)
-                })
-                .cloned();
-            let Some(window) = window else { return };
+            let Some(window) = crate::state::window_for_surface(&self.space, wl_surface) else {
+                return;
+            };
             let Some(initial_window_location) = self.space.element_location(&window) else {
                 return;
             };
@@ -173,16 +161,9 @@ impl XdgShellHandler for MindeState {
                 return;
             };
 
-            let window = self
-                .space
-                .elements()
-                .find(|w| {
-                    w.toplevel()
-                        .map(|t| t.wl_surface() == wl_surface)
-                        .unwrap_or(false)
-                })
-                .cloned();
-            let Some(window) = window else { return };
+            let Some(window) = crate::state::window_for_surface(&self.space, wl_surface) else {
+                return;
+            };
             let Some(initial_window_location) = self.space.element_location(&window) else {
                 return;
             };
@@ -323,15 +304,7 @@ fn check_grab(
 /// Should be called on `WlSurface::commit`
 pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
     // Handle toplevel commits.
-    if let Some(window) = space
-        .elements()
-        .find(|w| {
-            w.toplevel()
-                .map(|t| t.wl_surface() == surface)
-                .unwrap_or(false)
-        })
-        .cloned()
-    {
+    if let Some(window) = crate::state::window_for_surface(space, surface) {
         let initial_configure_sent = with_states(surface, |states| {
             states
                 .data_map
@@ -369,11 +342,7 @@ impl MindeState {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
-        let Some(window) = self
-            .space
-            .elements()
-            .find(|w| w.wl_surface().map(|s| *s == root).unwrap_or(false))
-        else {
+        let Some(window) = crate::state::window_for_surface(&self.space, &root) else {
             return;
         };
 
@@ -383,7 +352,7 @@ impl MindeState {
         let Some(output_geo) = self.space.output_geometry(output) else {
             return;
         };
-        let Some(window_geo) = self.space.element_geometry(window) else {
+        let Some(window_geo) = self.space.element_geometry(&window) else {
             return;
         };
 

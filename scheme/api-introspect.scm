@@ -114,6 +114,8 @@
      "Return whether the session is currently locked.")
     (wm-publish-event "(wm-publish-event line)"
      "Mirror one serialized event LINE to every event-socket subscriber.")
+    (wm-events-active? "(wm-events-active?)"
+     "Return whether any event-socket subscriber is connected.")
     (wm-drop-files "(wm-drop-files x y paths)"
      "Schedule a native Wayland copy drop of absolute regular-file PATHS and return its token or #f.")
     (wm-drop-text "(wm-drop-text x y text)"

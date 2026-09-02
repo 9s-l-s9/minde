@@ -69,19 +69,24 @@ impl MindeState {
     /// pointer focus to a proposed new pointer location. Returns the
     /// (possibly clamped) location and whether the pointer is *locked* in
     /// place -- in which case the caller must suppress the absolute motion
-    /// but still forward relative motion.
-    pub fn constrain_pointer(&self, proposed: Point<f64, Logical>) -> (Point<f64, Logical>, bool) {
+    /// but still forward relative motion. `under` is the surface (and its
+    /// global origin) under the pointer *before* the move -- the constraint
+    /// follows pointer focus; the caller already has it for relative motion.
+    pub fn constrain_pointer(
+        &self,
+        under: Option<&(WlSurface, Point<f64, Logical>)>,
+        proposed: Point<f64, Logical>,
+    ) -> (Point<f64, Logical>, bool) {
         let Some(pointer) = self.seat.get_pointer() else {
             return (proposed, false);
         };
-        // The constraint follows pointer focus: it applies to the surface the
-        // pointer is currently over, evaluated before the move.
-        let Some((surface, origin)) = self.surface_under(self.pointer_location) else {
+        let Some((surface, origin)) = under else {
             return (proposed, false);
         };
+        let origin = *origin;
         let current = self.pointer_location;
         let mut out = (proposed, false);
-        with_pointer_constraint(&surface, &pointer, |constraint| {
+        with_pointer_constraint(surface, &pointer, |constraint| {
             let Some(constraint) = constraint else {
                 return;
             };
