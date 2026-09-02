@@ -261,12 +261,7 @@ impl MindeState {
     /// The compositor outputs a window currently overlaps, by intersecting its
     /// mapped geometry with each output's geometry.
     fn foreign_outputs_for(&self, id: u64) -> Vec<Output> {
-        let Some(window) = self
-            .windows
-            .iter()
-            .find(|(wid, _)| *wid == id)
-            .map(|(_, w)| w.clone())
-        else {
+        let Some(window) = self.windows.get(&id).cloned() else {
             return Vec::new();
         };
         let Some(geo) = self.space.element_geometry(&window) else {
@@ -331,7 +326,7 @@ impl GlobalDispatch<ZwlrForeignToplevelManagerV1, ()> for MindeState {
     ) {
         let manager = data_init.init(resource, ());
         // Announce every currently-mapped toplevel to the new manager.
-        let ids: Vec<u64> = state.windows.iter().map(|(id, _)| *id).collect();
+        let ids: Vec<u64> = state.windows.keys().copied().collect();
         let dh = state.display_handle.clone();
         for id in ids {
             if let Some(handle) = create_handle(&dh, &manager, id) {
@@ -425,12 +420,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ForeignToplevelHandleUserData> for Mi
 impl MindeState {
     /// Politely close the window behind a foreign-toplevel `close` request.
     fn foreign_close_window(&mut self, id: u64) {
-        let Some(window) = self
-            .windows
-            .iter()
-            .find(|(wid, _)| *wid == id)
-            .map(|(_, w)| w.clone())
-        else {
+        let Some(window) = self.windows.get(&id).cloned() else {
             return;
         };
         if let Some(toplevel) = window.toplevel() {
