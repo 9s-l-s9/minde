@@ -2,11 +2,13 @@
 
 ## Status
 
-A first pass over these findings was committed as 21a6278 on 2026-09-02.
-All gates of `./check` plus `make check-rust check-cli check-docs` pass.
-The e2e/nested test suite and real DRM hardware have NOT yet been exercised
-against the vblank/damage-driven repaint rewrite (3.1) — that must happen
-before trusting it in production.
+The findings were worked through in commits 21a6278..9c43b44 on 2026-09-02.
+All gates of `./check`, `make check-rust check-cli check-static check-docs`
+and the nested `tests/e2e.sh` suite pass (winit backend under Xvfb). Real DRM
+hardware has NOT yet been exercised against the vblank/damage-driven repaint
+rewrite (3.1); that must happen before trusting it in a real session (see
+doc/hardware-validation.md). Items left unticked below carry a "Won't do" or
+"Partial" note with the reason.
 
 Findings come from a read-only audit on 2026-09-01.  "verified" means the
 behaviour was confirmed from the code; "unverified" means the cost still
