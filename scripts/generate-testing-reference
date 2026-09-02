@@ -20,6 +20,18 @@ out=${1:-doc/testing.md}
     echo "guidance see [\`../README.md\`](../README.md#development)"
     echo "and [\`debugging.md\`](debugging.md)."
     echo
+    echo "\`./check\` with no arguments and \`make check\` are not the same"
+    echo "gate: the bare \`./check\` fast path runs \`cargo check\` (a type"
+    echo "check, no build or tests) alongside the Scheme/API/configuration/"
+    echo "keymap suites and static analysis, while \`make check\` runs"
+    echo "\`check-rust\` (\`cargo fmt --check\`, a full \`cargo build\`,"
+    echo "\`cargo test\`, and \`cargo clippy\`) ahead of the same Scheme/API/"
+    echo "configuration/keymap suites. \`make check\` is strictly stronger and"
+    echo "slower; \`./check\` is the fast inner-loop gate for Scheme-only"
+    echo "changes. This divergence is intentional but easy to forget, so use"
+    echo "\`make check\` (or \`make check-rust\` alone) before trusting a Rust"
+    echo "change that only \`./check\` has seen."
+    echo
     echo "## \`./check\`"
     echo
     echo '```'

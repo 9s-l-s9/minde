@@ -94,6 +94,7 @@ Entered with `guix shell -m manifest.scm`:
 | `share/guile/site/3.0` | installed minde Guile modules (GUILE_LOAD_PATH root) |
 | `share/doc/minde` | README, changelog, policies, provenance, licenses, doc/, release/ |
 | `share/wayland-sessions` | minde.desktop Wayland session entry |
+| `lib/guile/3.0/site-ccache` | compiled .go bytecode for scheme/, built at package time so a login loads compiled modules instead of autocompiling (GUILE_LOAD_COMPILED_PATH, set by minde-session) |
 
 ## Wayland session entry
 

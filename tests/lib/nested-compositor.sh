@@ -44,7 +44,21 @@ nested_start() {
 
     Xvfb "$NESTED_DISPLAY" -screen 0 1280x800x24 >"$NESTED_OUT/xvfb.log" 2>&1 &
     NESTED_XVFB_PID=$!
-    sleep 2
+    # Poll for Xvfb readiness instead of a fixed 2 s sleep; same 2 s overall
+    # budget, checked every 100 ms so a fast start doesn't pay the whole
+    # wait.
+    attempt=0
+    while :; do
+        if command -v xdpyinfo >/dev/null 2>&1; then
+            DISPLAY="$NESTED_DISPLAY" xdpyinfo >/dev/null 2>&1 && break
+        elif [ -S "/tmp/.X11-unix/X${NESTED_DISPLAY#:}" ]; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        [ "$attempt" -le 20 ] || return 1
+        kill -0 "$NESTED_XVFB_PID" 2>/dev/null || return 1
+        sleep 0.1
+    done
 
     export DISPLAY="$NESTED_DISPLAY"
     export XDG_RUNTIME_DIR="$NESTED_RT"
@@ -64,14 +78,17 @@ nested_start() {
         ./target/debug/minde --winit >"$NESTED_LOG" 2>&1 &
     NESTED_WM_PID=$!
 
+    # 100 ms polling ticks; same 60 s overall budget as the former 60
+    # attempts of `sleep 1`.
     attempt=0
     until nested_log_has "minde scheme layer loaded"; do
         attempt=$((attempt + 1))
-        [ "$attempt" -le 60 ] || return 1
+        [ "$attempt" -le 600 ] || return 1
         kill -0 "$NESTED_WM_PID" 2>/dev/null || return 1
-        sleep 1
+        sleep 0.1
     done
 
+    # Same 20 s overall budget as the former 20 attempts of `sleep 1`.
     attempt=0
     while :; do
         for socket in "$NESTED_RT"/wayland-*; do
@@ -82,8 +99,8 @@ nested_start() {
             fi
         done
         attempt=$((attempt + 1))
-        [ "$attempt" -le 20 ] || return 1
-        sleep 1
+        [ "$attempt" -le 200 ] || return 1
+        sleep 0.1
     done
 }
 

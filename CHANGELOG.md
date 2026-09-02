@@ -19,6 +19,10 @@ Target version: `1.0.0-rc1`.
   `automation-result` events; file URI lists are validated, percent-encoded,
   multi-file capable, and CRLF terminated. XWayland drop targets explicitly
   report `unsupported-target` pending a separate XDND implementation.
+- A native `wm-screenshot` primitive (`path [window-id]`) with bounded
+  token status history via `wm-automation-status`, capturing an output or
+  a single window to PNG without an external screenshot tool (see
+  `doc/notes/issue-wm-screenshot-primitive.md`).
 - Clipboard ecosystem: primary selection
   (`zwp_primary_selection_device_manager_v1`) for middle-click paste, wired
   across Wayland clients and Xwayland (the X11 selection loop now mirrors the
@@ -275,6 +279,19 @@ Target version: `1.0.0-rc1`.
   absent instead of printing a false "ok"; `manifest.scm` gained
   `ripgrep` and `diffutils` so `./check` is self-contained in the
   project shell.
+- `wm-click` now hovers and settles before a synthetic click, fixing
+  flaky clicks on custom controls and unrecognized double-clicks (see
+  `doc/notes/issue-wm-click-paste-settle-timing.md`).
+- `wm-scroll` sends discrete wheel steps with scroll frames instead of a
+  continuous delta, fixing scrolling that had no effect on Firefox/Zen
+  web content (see `doc/notes/issue-wm-scroll-no-effect.md`).
+- `wm-type`/`wm-send-string` no longer drop characters the active keymap
+  cannot type; unresolvable characters are now pasted instead (see
+  `doc/notes/issue-wm-type-drops-modifier-chars.md`).
+- `wm-drop-files`/`wm-drop-text` now dwell longer with per-step jitter
+  during a negotiated drag-and-drop, fixing browser dropzones that
+  rejected synthetic drops (see
+  `doc/notes/issue-wm-drop-files-rejected-by-dropzones.md`).
 
 - Session management: `ext-session-lock-v1` compositor support (swaylock
   and other lockers can lock the session; while locked no desktop pixel

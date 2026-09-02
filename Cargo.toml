@@ -58,3 +58,22 @@ default-features = false
 
 [build-dependencies]
 pkg-config = "0.3"
+
+# Debug builds drive e2e and the nested compositor (scripts/run-nested,
+# tests/e2e.sh, tests/lib/nested-compositor.sh); an unoptimized GL
+# compositor is noticeably slower to start and render. opt-level = 1 for
+# our own code keeps debug-info and fast incremental rebuilds; dependencies
+# (including Smithay's rendering/DRM/GL stack) build at full optimization
+# since they change far less often and dominate runtime cost. No
+# panic = "abort": tests and tooling rely on unwinding (Rust test harness,
+# std::panic::catch_unwind if ever needed), and the modest release binary
+# size/startup win is not worth losing that.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

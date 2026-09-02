@@ -116,6 +116,7 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
         share/guile/site/3.0) purpose="installed minde Guile modules (GUILE_LOAD_PATH root)" ;;
         share/doc/minde) purpose="README, changelog, policies, provenance, licenses, doc/, release/" ;;
         share/wayland-sessions) purpose="minde.desktop Wayland session entry" ;;
+        lib/guile/3.0/site-ccache) purpose="compiled .go bytecode for scheme/, built at package time so a login loads compiled modules instead of autocompiling (GUILE_LOAD_COMPILED_PATH, set by minde-session)" ;;
         *) purpose="-" ;;
         esac
         echo "| \`$path\` | $purpose |"

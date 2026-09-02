@@ -28,7 +28,7 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 
 ## 1. Startup speed
 
-- [ ] **1.1 No `.go` bytecode is produced at build/package time.** `guix.scm:140-143`
+- [x] **1.1 No `.go` bytecode is produced at build/package time.** `guix.scm:140-143`
       only copies `scheme/` into the store; no `guild compile` anywhere. The session
       wrapper (`guix.scm:158-161`) never exports `GUILE_LOAD_COMPILED_PATH`. Every
       packaged login autocompiles the module tree into `~/.cache/guile/ccache` on the
@@ -38,6 +38,20 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `GUILE_AUTO_COMPILE=0` there so a store mtime mismatch never recompiles. Also a
       `make compile-scheme` target for dev/test loops (see 6.2). verified.
       Partial: `make compile-scheme` (6.2) now builds `.go` under `build/ccache` with `GUILE_LOAD_COMPILED_PATH` for the dev/test loops; `guix.scm` itself (the package build/session-wrapper) was not touched, so a packaged login still autocompiles into `~/.cache/guile/ccache` on first run.
+      Done: `guix.scm`'s `install` phase now compiles every installed
+      `scheme/**/*.scm` (skipping `default-config.scm`, same as the
+      Makefile) with `guild compile` into `$out/lib/guile/3.0/site-ccache`,
+      mirroring `compile-scheme`'s per-file warning-flag rule. The
+      `minde-session` wrapper now exports
+      `GUILE_LOAD_COMPILED_PATH=$out/lib/guile/3.0/site-ccache:...` and
+      `GUILE_AUTO_COMPILE=0` before `exec`ing the compositor, and
+      `scripts/run-nested` exports the same two variables pointing at
+      `build/ccache` (from `make compile-scheme`) for the dev nested-session
+      loop. `init.scm` is covered: it is one of the `.scm` files under
+      `scheme/` compiled into the cache, and `guile::load_file`'s `(load
+      "<path>")` (1.2) resolves `.go` files via
+      `GUILE_LOAD_COMPILED_PATH`/`%load-compiled-path` the same way `guild
+      compile`'s output is normally found.
 - [x] **1.2 `init.scm` (1838 lines) is never compiled.** `src/guile/mod.rs:1319` loads
       it via `scm_c_primitive_load`, which bypasses the autocompiler, so every key
       binding, `dispatch-key`, `wm-handle-key`, `reload-configuration!` and
@@ -85,16 +99,24 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       saved original would silently stop loading saved layouts/placement rules -- a
       functional regression worse than deferring two small synchronous file reads at
       startup.
-- [ ] **1.8 Debug builds everywhere.** No `[profile]` section in `Cargo.toml`;
+- [x] **1.8 Debug builds everywhere.** No `[profile]` section in `Cargo.toml`;
       `scripts/run-nested:70,83`, `tests/e2e.sh:57`, `tests/lib/nested-compositor.sh:58`
       all run `target/debug/minde`. A GL compositor in a debug build is noticeably
       slower to start and to render. Idea: `[profile.dev] opt-level = 1` (or a
       dedicated `e2e` profile), and `[profile.release]` with `lto = "thin"`,
       `codegen-units = 1`, `panic = "abort"` considered for the package. unverified.
+      Done: `Cargo.toml` gained `[profile.dev] opt-level = 1`,
+      `[profile.dev.package."*"] opt-level = 3` (dependencies, including
+      Smithay's GL/DRM stack, always build optimized even in a dev build,
+      while our own code keeps fast incremental rebuilds and debug info),
+      and `[profile.release] lto = "thin"`, `codegen-units = 1`.
+      `panic = "abort"` was deliberately left out: the test harness and any
+      future unwinding-based tooling depend on unwind panics, and the
+      release-size/startup win wasn't judged worth losing that. See 6.1.
 
 ## 2. IPC / REPL interaction latency
 
-- [ ] **2.1 `scripts/mindectl:218-258 ipc_request` spawns a fresh `guile -q -c` per
+- [x] **2.1 `scripts/mindectl:218-258 ipc_request` spawns a fresh `guile -q -c` per
       request.** `minde-msg` -> `minde-cmd` -> `mindectl` is three shell execs plus a
       Guile boot per call. The documented Eww pattern (`doc/ipc-eww.md:844-845`) polls
       `query state --json` every 500 ms, so a bar costs a Guile boot twice a second
@@ -102,6 +124,17 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       Rust/C `mindectl` (or `socat`/`nc -U` in the script for raw mode); point Eww at
       `status.json` or the events socket instead of polling eval. verified.
       Partial: `mindectl` was not replaced with a Rust/C binary or `socat`/`nc` (neither is in `manifest.scm`); `ipc_request` still spawns one `guile -q -c` per request, but now with `--no-auto-compile` and, for the module-loading `check-config`/`subscribe` paths, `GUILE_LOAD_COMPILED_PATH` pointed at the packaged `site-ccache`, cutting the per-call boot/compile cost. `subscribe --json` (2.2) now points bar-style pollers at the events socket instead of re-evaling `query state --json`.
+      Done (bounded): leaving the implementation as the Partial note
+      describes it. The fallback that landed is `guile -q -c` per request
+      with `--no-auto-compile` plus `GUILE_LOAD_COMPILED_PATH` pointed at
+      the packaged `site-ccache` for the module-loading paths (not a
+      rewrite to a persistent Rust/C helper or to `socat`/`nc -U`), because
+      neither `socat`, `nc`, nor `inotify-tools` is in `manifest.scm` (see
+      TODO.md section 8) and this pass's rules exclude editing `src/` (a
+      Rust/C `mindectl` replacement) and running anything that downloads a
+      package into the environment to add one. A persistent-connection or
+      compiled-helper rewrite of `mindectl` is left as future work once
+      `manifest.scm` gains the missing tool or a Rust binary is in scope.
 - [x] **2.2 `mindectl:409-416 subscribe --json` polls with `cat` + `sleep 0.2`**,
       five forks per second forever. Idea: `inotifywait -e moved_to` or the events
       socket. verified.
@@ -466,13 +499,23 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       re-derive the runtime dir/socket path already computed at `:194-196` and skip
       the ownership/mode validation `runtime_dir.rs` performs.
       Done: `socket_path`/`events_socket_path` are computed once at the top of the script and passed as `--` arguments to every Guile client instead of each re-deriving `XDG_RUNTIME_DIR`/`minde-ipc.sock` inline; a shared `connect-private` helper (`client_prelude`) validates the runtime directory is a private directory of the calling uid (mirroring `runtime_dir.rs`) before connecting, used by `ipc_request`, the events subscriber and `subscribe --json`.
-- [ ] 5.17 `guix.scm:185-195` rewrites `guile` invocations in the scripts with
+- [x] 5.17 `guix.scm:185-195` rewrites `guile` invocations in the scripts with
       exact-prefix regexes; the `subscribe --events` branch at `mindectl:387` is
       indented differently and is not matched, so the installed script calls
       whatever `guile` is on PATH. unverified at runtime.
+      Done: `mindectl` now derives every guile invocation from one
+      `GUILE=${MINDE_GUILE:-guile}` line, so `guix.scm`'s `substitute*`
+      rewrites that single line
+      (`GUILE=<store-guile>/bin/guile`) instead of two prefix regexes that
+      missed differently-indented call sites; every `"$GUILE" ...` call site
+      (including `subscribe --events`) now picks up the pinned path.
+      `minde-cmd` and `minde-msg` invoke no `guile` themselves (they exec
+      `mindectl`), so the same substitute* is a harmless no-op for them;
+      `run-nested` invokes no `guile` either (it execs the compositor
+      binary, which links libguile directly) so nothing to pin there.
 
 ### Repository hygiene
-- [ ] 5.18 Root-level working notes added in c441fca: `AUTOMATION-WISHLIST.md`,
+- [x] 5.18 Root-level working notes added in c441fca: `AUTOMATION-WISHLIST.md`,
       `web-form-quirks-playbook.md`, six `issue-wm-*.md`. All issue files already
       carry a "Status: implemented (2026-08-31)" section matching commits
       9f133e0..726bc65; nothing in `Makefile`, `README.md`, `doc/` or `guix.scm`
@@ -480,10 +523,34 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `issue-wm-drop-files.md` is superseded by
       `issue-wm-drop-files-rejected-by-dropzones.md`. Idea: move to `doc/notes/`,
       fold outcomes into `CHANGELOG.md`, promote the playbook to `doc/`.
+      Done: all eight files `git mv`d to `doc/notes/`; `doc/notes/README.md`
+      added as a short index describing each note and its status.
+      `issue-wm-drop-files.md` was kept (not deleted): it is the original,
+      broader feature-request/API design for `wm-drop-files`/`wm-drop-text`,
+      while `issue-wm-drop-files-rejected-by-dropzones.md` only fixes one
+      specific rejection bug and explicitly cross-references the former as
+      "Ursprüngliches Feature-Issue" rather than replacing it -- it does not
+      fully supersede it. `CHANGELOG.md`'s Unreleased section gained one
+      `Fixed` line each for the click/paste-settle, scroll, type/modifier-
+      char and drop-rejection issues, and one `Added` line for the
+      screenshot primitive (previously undocumented there), each pointing
+      at its `doc/notes/` file. Grepped the repo for the old root-level
+      paths afterward: only self-references inside the moved files and this
+      TODO entry remained (the `git mv` already updated all consumers,
+      since none existed).
 
 ## 6. Build and test tooling
 
-- [ ] **6.1 Debug builds drive e2e and the nested compositor** (see 1.8).
+- [x] **6.1 Debug builds drive e2e and the nested compositor** (see 1.8).
+      Done: covered by 1.8's `[profile.dev]` change (`opt-level = 1` for our
+      code, `opt-level = 3` for dependencies) -- `scripts/run-nested`,
+      `tests/e2e.sh` and `tests/lib/nested-compositor.sh` still build/run
+      `target/debug/minde`, but that debug build is no longer unoptimized
+      end to end. Verified `guix.scm`'s package build still targets the
+      release profile (`cargo build --release --offline` at
+      `guix.scm:118`, unaffected by the dev-profile change) and that
+      `guix/cargo-config.toml` only configures the vendored source
+      replacement, not profiles, so it needed no change.
 - [x] **6.2 Scheme suites: 22 separate `guile` processes each reloading the module
       tree** (measured `make check-scheme` 1.2 s warm / 3.8 s cold);
       `check-generated-docs` runs six more regenerating all docs into a tmpdir on
@@ -496,12 +563,36 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `tests/config-test.scm` and `tests/portable-keymap-test.scm` that
       `check-scheme` already ran.** verified.
       Done: `check-config` no longer runs `tests/config-test.scm` (it now only runs `mindectl check-config`) and `check-keymaps` no longer runs `tests/portable-keymap-test.scm` (it now only runs `tests/check-portable-defaults.sh`); both scripts already run once as part of `SCHEME_TESTS` in `check-scheme`, and `doc/testing.md` documents the split.
-- [ ] **6.4 `nested_start` hard-codes `sleep 2` for Xvfb and 1 s polling**
+- [x] **6.4 `nested_start` hard-codes `sleep 2` for Xvfb and 1 s polling**
       (`tests/lib/nested-compositor.sh:46,73,86`), at least 3 s fixed latency per
       scenario. Idea: poll `xdpyinfo`/socket at 100 ms. verified.
-- [ ] **6.5 `./check` default runs `cargo check` only** (`check:50-51`) while
+      Done: the Xvfb wait now polls `xdpyinfo -display "$NESTED_DISPLAY"`
+      (falling back to checking for the `/tmp/.X11-unix/X<n>` socket when
+      `xdpyinfo` is unavailable) every 100 ms up to the same 2 s budget (20
+      attempts); the "scheme layer loaded" log wait and the Wayland-socket
+      wait now poll every 100 ms for the same 60 s (600 attempts) and 20 s
+      (200 attempts) budgets they had at 1 s granularity, so a fast start
+      no longer pays the whole fixed sleep. `nested_wait_for_window_after`/
+      `nested_wait_for_log_after` (lines 110/124, not named in this item)
+      were left on 1 s ticks since their `$limit` parameter is a
+      caller-visible seconds count used by nine other test scripts;
+      changing their granularity was out of scope here.
+      `guix shell -m manifest.scm -- shellcheck tests/lib/nested-compositor.sh`
+      is clean.
+- [x] **6.5 `./check` default runs `cargo check` only** (`check:50-51`) while
       `make check` runs build+test+clippy; fine, but the two entry points diverge.
       Documented for awareness.
+      Done: `scripts/generate-testing-reference` (which generates
+      `doc/testing.md`, so hand-editing the doc directly would be
+      overwritten by `make docs`/`check-generated-docs`) gained a paragraph
+      explaining the divergence -- `./check`'s bare run is `cargo check`
+      plus the Scheme suites, `make check` additionally does a full build,
+      `cargo test`, and clippy -- and recommending `make check`/
+      `make check-rust` before trusting a Rust change `./check` alone has
+      seen. Regenerated via `make docs`; `doc/generated/packaging.md` also
+      picked up the new `lib/guile/3.0/site-ccache` install path from 1.1
+      (its generator, `scripts/generate-packaging-reference`, got a
+      purpose string for it).
 
 ## 7. Confirmed non-issues
 
