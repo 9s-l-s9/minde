@@ -66,9 +66,25 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 - [ ] **1.6 `publish-status!` runs several times during startup** via Xwayland status
       transitions (`state.rs:1875-1961`) and every `sync-frames!`. See 4.1.
       Partial: 4.1's deferred/coalesced write means the repeated `publish-status!` calls no longer each cost two synchronous file writes, but the calls themselves are still made at every transition.
+      Won't do (beyond the above): the remaining cost is `state-body`'s build, which
+      `publish-status!` must run synchronously on every call to compute the
+      unchanged-state fingerprint (`status.scm:247-264`); `tests/status-test.scm:67,86,88`
+      pins the contract that the sequence number advances synchronously per call even
+      though the file write defers, so the build step cannot move behind
+      `wm-run-after` without breaking that contract. Avoiding the build entirely would
+      need a hand-maintained dirty-version counter bumped at every window/group/title/
+      output mutation site; missing one would silently freeze status, which is worse
+      than the current bounded, small-n rebuild cost.
 - [ ] **1.7 `load-layouts!` / `load-placement-rules!` (`init.scm:918,1336`) read
       `~/.config/minde/*.scm` synchronously before output geometry is known.** Could
       move to `handle-startup!`. low priority.
+      Won't do: `handle-startup!` (`init.scm:1758`) is documented as freely
+      replaceable by user configurations ("user configurations may replace this
+      procedure"), and Rust calls it once via `call-if-bound` with no base
+      implementation preserved. A config that overrides it without forwarding to a
+      saved original would silently stop loading saved layouts/placement rules -- a
+      functional regression worse than deferring two small synchronous file reads at
+      startup.
 - [ ] **1.8 Debug builds everywhere.** No `[profile]` section in `Cargo.toml`;
       `scripts/run-nested:70,83`, `tests/e2e.sh:57`, `tests/lib/nested-compositor.sh:58`
       all run `target/debug/minde`. A GL compositor in a debug build is noticeably
@@ -231,13 +247,22 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       per-window last-placed rect in Scheme and skip when unchanged, or dedupe in
       Rust before `send_pending_configure`. verified.
       Done: both sides. Scheme: `frames.scm`'s new `%placed-rects` hash table (id -> last-placed rect) is checked before every `wm-place-window` call, so an unchanged rect skips the Rust call entirely (cleared on unmap). Rust: `place_window` (state.rs:784) now compares `configured`/`moved` and returns early with no configure, `map_element`, or foreign-toplevel refresh when the toplevel wasn't reconfigured and the location didn't change.
-- [ ] **4.3 `frame-leaves` (`frames.scm:555-560`) allocates via `append` and is
+- [x] **4.3 `frame-leaves` (`frames.scm:555-560`) allocates via `append` and is
       walked 3+ times per key** (`active-leaves` :301, `all-window-ids` :1659,
       `frame-of-window` :1666, `head-of-window` :1671, `hidden-window-ids` :1703,
       `window-id-by-number` :675). `raise-ontop!` (:985-990) does `member` over
       `all-window-ids` inside a `for-each`. Trees are tiny today. Idea: `id -> frame`
       hash maintained in `frame-add-window!`/`take-window-out!`, or memoise per sync
       generation. verified, small-n.
+      Done: memoised rather than hashed by window id (a global id -> frame table
+      would need updating at every direct `set-frame-window-ids!` site across
+      `frames.scm`/`groups.scm`, including whole-tree rebuilds -- too invasive for
+      small-n trees). `frame-leaves` results are now cached in `%frame-leaves-cache`
+      keyed by node `eq?` identity, since the leaf list only depends on tree
+      topology, not window contents; the cache is cleared at the three
+      `set-split-child-a!`/`set-split-child-b!` sites (`split-current-frame!`,
+      `remove-split!`, `split-equally!`), the only places an existing node's
+      children change in place.
 - [x] **4.4 `resolve-module`/`module-variable` on every Rust call.** `rust-call`
       (`frames.scm:511-523`, duplicated in `groups.scm:430-433`), `echo` (:541, twice),
       `ui-rust-call` (`init.scm:57-60`), `set-border-color!` :225, `set-key-repeat!`
@@ -256,6 +281,11 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       `%placement-rules` with `string-contains` on every map/retitle
       (`groups.scm:947,978,985`), `%layouts`, `foundation/hooks.scm:13-27`. All
       small-n; low priority.
+      Won't do, small-n: all four are sized by user configuration (keybindings,
+      placement rules, saved layouts, hook procedures) -- realistically single- to
+      low-double-digit-length lists -- so a hash table or index would trade a
+      handful of `eq?`/`string=?`/`string-contains` comparisons for bookkeeping
+      overhead on every mutation with no measurable win.
 
 ## 5. Clean-up (no speed impact, or unknown)
 
@@ -306,16 +336,31 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
 - [x] 5.12 `rust-call` duplicated with different missing-subr behaviour
       (`frames.scm:511` report-once vs `groups.scm:430` silent).
       Done: `groups.scm`'s local silent `rust-call` was deleted; it now uses the shared `(minde compositor rust)` module (see 4.4) via `rust-place-float!`/`rust-call-if-bound`, so both call sites share one missing-subr behavior.
-- [ ] 5.13 "remove id from frame and promote next" inlined five times
+- [x] 5.13 "remove id from frame and promote next" inlined five times
       (`frames.scm:695-698,786-792,1718-1721,1739-1742,1786-1789`) although
       `take-window-out!` (:1895) exists.
-- [ ] 5.14 `parse-key-spec` (`frames.scm:1053`) hardcodes modifier bits owned by
+      Done: already resolved by an earlier pass not reflected here -- all five call
+      sites (`pull-window-by-id!`, `remove-window-from-tree-in!`, `pull-hidden-next!`,
+      `pull-hidden-previous!`, `move-window!`) call `take-window-out!`; no inlined
+      duplicate of the remove/promote logic remains in `frames.scm`.
+- [x] 5.14 `parse-key-spec` (`frames.scm:1053`) hardcodes modifier bits owned by
       `foundation/keys.scm`.
-- [ ] 5.15 Unused or colon-only definitions in `init.scm`: `mod-symbol->bit` :93,
+      Done: already resolved by an earlier pass not reflected here -- `parse-key-spec`
+      calls `key:modifier->bit` for each prefix instead of hardcoding bit values.
+- [x] 5.15 Unused or colon-only definitions in `init.scm`: `mod-symbol->bit` :93,
       `copy-unhandled-error!`, `load-module!`, `gnewbg-float-prompt!`,
       `echo-frame-windows!`; `frame-tree-window-count`/`update-output-geometry!`
       exported for tests only.
       Partial: `mod-symbol->bit` and `echo-frame-windows!` were removed from `init.scm`. `copy-unhandled-error!`, `load-module!`, `gnewbg-float-prompt!` (all bound to keys, so not truly unused) and the test-only exports `frame-tree-window-count`/`update-output-geometry!` are untouched.
+      Done (remaining part): grepped the whole repo (`scheme/`, `tests/`, `doc/`, no
+      `demos/` directory exists) for each name. `copy-unhandled-error!`,
+      `load-module!` and `gnewbg-float-prompt!` are all bound to prefix keys in
+      `init.scm`, so they are reachable, not unused. `frame-tree-window-count` and
+      `update-output-geometry!` are called from nine and eight test files
+      respectively (e.g. `tests/frames-test.scm`, `tests/status-test.scm`) and
+      `update-output-geometry!` is also exported and part of the frozen public API
+      (`doc/generated/api-catalog.scm`), so both stay exported. Nothing left to
+      remove.
 - [x] 5.16 `ipc_request` (`mindectl:221-257`) and the events client (`:387-400`)
       re-derive the runtime dir/socket path already computed at `:194-196` and skip
       the ownership/mode validation `runtime_dir.rs` performs.

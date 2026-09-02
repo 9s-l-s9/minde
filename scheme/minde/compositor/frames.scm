@@ -556,14 +556,29 @@ wm-message (or under the test stubs)."
 ;; Tree walking helpers
 ;; ---------------------------------------------------------------------
 
+;; frame-leaves is walked repeatedly per key (active-leaves, all-window-ids,
+;; frame-of-window, head-of-window, hidden-window-ids, window-id-by-number)
+;; on trees that rarely restructure. Cache each node's leaf list by eq?
+;; identity; the only mutators that change an existing node's leaves in
+;; place are the three set-split-child-a!/b! call sites (split-frame!,
+;; remove-split!, split-equally!), which clear the cache below.
+(define %frame-leaves-cache (make-weak-key-hash-table))
+
+(define (invalidate-frame-leaves-cache!)
+  (hash-clear! %frame-leaves-cache))
+
 ;; Collects all leaf frames, left/top-to-right/bottom-most first.
 (define (frame-leaves node)
   "Returns NODE's leaf frames in top-to-bottom, left-to-right tree order."
-  (let walk ((node node) (tail '()))
-    (if (frame-node? node)
-        (cons node tail)
-        (walk (split-child-a node)
-              (walk (split-child-b node) tail)))))
+  (or (hashq-ref %frame-leaves-cache node)
+      (let ((result
+             (let walk ((node node) (tail '()))
+               (if (frame-node? node)
+                   (cons node tail)
+                   (walk (split-child-a node)
+                         (walk (split-child-b node) tail))))))
+        (hashq-set! %frame-leaves-cache node result)
+        result)))
 
 ;; Finds the parent <split> of LEAF within NODE, or #f if LEAF is NODE
 ;; itself or not found. Returns (values parent side) where side is 'a or
@@ -1189,7 +1204,8 @@ source, and flags."
               (let-values (((parent side) (find-parent %frame-tree f)))
                 (if (eq? side 'a)
                     (set-split-child-a! parent new-split)
-                    (set-split-child-b! parent new-split))))
+                    (set-split-child-b! parent new-split))
+                (invalidate-frame-leaves-cache!)))
           (set! %current-frame frame-a))))))
 
 (define (split-frame-horizontal!)
@@ -1242,7 +1258,8 @@ frame is the whole tree (nothing to remove)."
             (let-values (((gp gs) (find-parent %frame-tree parent)))
               (if (eq? gs 'a)
                   (set-split-child-a! gp sibling)
-                  (set-split-child-b! gp sibling))))
+                  (set-split-child-b! gp sibling))
+              (invalidate-frame-leaves-cache!)))
         (set! %current-frame (car (frame-leaves sibling))))))
   (sync-frames!))
 
@@ -1971,7 +1988,8 @@ the frame shows empty -- StumpWM fclear)."
           (let-values (((parent side) (find-parent %frame-tree f)))
             (if (eq? side 'a)
                 (set-split-child-a! parent subtree)
-                (set-split-child-b! parent subtree))))
+                (set-split-child-b! parent subtree))
+            (invalidate-frame-leaves-cache!)))
       (apply resize-subtree! subtree rect)
       (set! %current-frame first-leaf)
       (sync-frames!))))
