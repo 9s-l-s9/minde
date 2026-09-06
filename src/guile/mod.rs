@@ -931,15 +931,15 @@ unsafe extern "C" fn wm_keyboard_layouts() -> Scm {
 /// or one of the symbols `next` / `prev`. Queued to the compositor;
 /// returns #t once queued, #f without one. Anything else raises.
 unsafe extern "C" fn wm_set_keyboard_layout(spec: Scm) -> Scm {
-    let spec = if to_bool(ffi::scm_symbol_p(spec)) {
-        match to_string_lossy(ffi::scm_symbol_to_string(spec)).as_deref() {
+    let spec = if to_bool(unsafe { ffi::scm_symbol_p(spec) }) {
+        match to_string_lossy(unsafe { ffi::scm_symbol_to_string(spec) }).as_deref() {
             Some("next") => KeyboardLayoutSpec::Next,
             Some("prev") | Some("previous") => KeyboardLayoutSpec::Prev,
             _ => {
                 scheme_error("wm-set-keyboard-layout!", "expected an index, next or prev");
             }
         }
-    } else if to_bool(ffi::scm_exact_integer_p(spec)) {
+    } else if to_bool(unsafe { ffi::scm_exact_integer_p(spec) }) {
         let idx = to_i64(spec);
         if idx < 0 {
             scheme_error("wm-set-keyboard-layout!", "layout index must be >= 0");

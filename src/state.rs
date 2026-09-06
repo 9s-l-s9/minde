@@ -2323,7 +2323,7 @@ impl MindeState {
         if !self.output_enabled(output) {
             return Err("output is disabled".into());
         }
-        if self.winit_powered_off == !on {
+        if self.winit_powered_off != on {
             return Ok(());
         }
         tracing::info!(output = %output.name(), on, "winit output power");

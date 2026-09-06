@@ -221,7 +221,7 @@ pub(crate) fn validate(
                 }
             }
             if let Some(s) = change.scale
-                && !(s > 0.0)
+                && s <= 0.0
             {
                 return Err(OutputConfigError::new("scale must be positive"));
             }
@@ -1129,8 +1129,8 @@ mod tests {
     fn last_enabled_head_cannot_be_disabled_without_override() {
         let heads = [head("a", true, None), head("b", false, None)];
         let off = HeadChange::new(heads[0].output.clone(), false);
-        assert!(validate(&heads, &[off.clone()], false).is_err());
-        assert!(validate(&heads, &[off.clone()], true).is_ok());
+        assert!(validate(&heads, std::slice::from_ref(&off), false).is_err());
+        assert!(validate(&heads, std::slice::from_ref(&off), true).is_ok());
         // Disabling one while enabling the other is fine.
         let on = HeadChange::new(heads[1].output.clone(), true);
         let r = validate(&heads, &[off, on], false).unwrap();
