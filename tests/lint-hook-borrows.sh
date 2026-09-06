@@ -44,4 +44,29 @@ for f in src/*.rs src/**/*.rs; do
     fail=1
   fi
 done
+
+# Separate guard for the GC-rooting hazard fixed in PLAN.md Epic I, issue I2:
+# bdw-gc scans the stack, registers and statics, but never the Rust heap, so
+# a `Vec<Scm>` collecting heap-allocated values (pairs, strings, symbols)
+# across a further allocating Guile call can be collected out from under a
+# later use. This is exactly the src/guile/* code the loop above skips, so
+# check it here instead: flag any `Vec<Scm>` in src/guile/mod.rs unless its
+# line is marked `gc-safe: fixnums only` (immediate values need no root).
+gcfile=src/guile/mod.rs
+if [ -f "$gcfile" ]; then
+  hits=$(awk '
+    /^[[:space:]]*(\/\/\/|\/\/!)/ { next }              # skip doc comments
+    /Vec<Scm>/ && !/gc-safe: fixnums only/ { print FILENAME ": " FNR ": " $0 }
+  ' "$gcfile")
+  if [ -n "$hits" ]; then
+    echo "lint-hook-borrows: Vec<Scm> without a gc-safe annotation:"
+    echo "$hits"
+    echo "  -> a Vec<Scm> lives on the Rust heap, invisible to bdw-gc; build the"
+    echo "     list incrementally into a stack-held Scm local instead (see"
+    echo "     scm_list_map), or mark the line 'gc-safe: fixnums only' if it"
+    echo "     can only ever hold immediate values."
+    fail=1
+  fi
+fi
+
 exit $fail

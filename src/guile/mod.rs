@@ -671,7 +671,7 @@ unsafe extern "C" fn wm_floating_ids() -> Scm {
         ids
     })
     .unwrap_or_default();
-    let items: Vec<Scm> = ids.into_iter().map(|id| from_i64(id as i64)).collect();
+    let items: Vec<Scm> = ids.into_iter().map(|id| from_i64(id as i64)).collect(); // gc-safe: fixnums only
     scm_list(&items)
 }
 
@@ -679,20 +679,17 @@ unsafe extern "C" fn wm_floating_ids() -> Scm {
 /// entry per probe in `crate::timing`; the buckets are counts at or below
 /// 100 us, 1 ms, 4 ms, 16.6 ms and above.
 unsafe extern "C" fn wm_timing_stats() -> Scm {
-    let entries: Vec<Scm> = crate::timing::snapshot()
-        .into_iter()
-        .map(|probe| {
-            let buckets: Vec<Scm> = probe.buckets.iter().map(|b| from_i64(*b as i64)).collect();
-            scm_list(&[
-                from_symbol(probe.name),
-                from_i64(probe.count as i64),
-                from_i64(probe.total_us as i64),
-                from_i64(probe.max_us as i64),
-                scm_list(&buckets),
-            ])
-        })
-        .collect();
-    scm_list(&entries)
+    let probes = crate::timing::snapshot();
+    scm_list_map(&probes, |probe| {
+        let buckets = scm_list_map(&probe.buckets, |b| from_i64(*b as i64));
+        scm_list(&[
+            from_symbol(probe.name),
+            from_i64(probe.count as i64),
+            from_i64(probe.total_us as i64),
+            from_i64(probe.max_us as i64),
+            buckets,
+        ])
+    })
 }
 
 /// `(wm-place-windows PLACEMENTS)`: applies a whole layout in one call.
@@ -737,12 +734,12 @@ unsafe extern "C" fn wm_place_windows(placements: Scm) -> Scm {
         ));
         list = unsafe { ffi::scm_cdr(list) };
     }
-    let failed: Vec<Scm> = commands
+    let failed: Vec<u64> = commands
         .into_iter()
         .filter(|(_, command)| !send_command(command.clone()))
-        .map(|(id, _)| from_i64(id as i64))
+        .map(|(id, _)| id)
         .collect();
-    scm_list(&failed)
+    scm_list_map(&failed, |&id| from_i64(id as i64))
 }
 
 /// Unix-epoch millis of the last user input event (key or pointer),
@@ -914,17 +911,13 @@ unsafe extern "C" fn wm_set_key_repeat(on: Scm) -> Scm {
 /// in keymap order. `()` before the keyboard exists.
 unsafe extern "C" fn wm_keyboard_layouts() -> Scm {
     let (names, active) = KEYBOARD_LAYOUTS.lock().unwrap().clone();
-    let entries: Vec<Scm> = names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            scm_list(&[
-                scm_field("name", from_str(name)),
-                scm_field("active", from_bool(i == active)),
-            ])
-        })
-        .collect();
-    scm_list(&entries)
+    let names: Vec<(usize, String)> = names.into_iter().enumerate().collect();
+    scm_list_map(&names, |(i, name)| {
+        scm_list(&[
+            scm_field("name", from_str(name)),
+            scm_field("active", from_bool(*i == active)),
+        ])
+    })
 }
 
 /// `(wm-set-keyboard-layout! spec)` -- SPEC is a zero-based layout index
@@ -1201,23 +1194,40 @@ fn scm_list(items: &[Scm]) -> Scm {
     })
 }
 
+/// Builds a proper Scheme list by mapping `f` over `items` and consing each
+/// result onto an accumulator held in a single stack-rooted `Scm` local, so
+/// every heap-allocated value `f` produces (pairs, strings, symbols, ...)
+/// stays reachable from the Rust stack for the whole loop.
+///
+/// This is the safe replacement for the `items.iter().map(f).collect::<Vec<Scm>>()`
+/// pattern: a `Vec<Scm>` lives on the Rust heap, which bdw-gc (scanning only
+/// the stack, registers and statics) does not see, so a GC triggered by a
+/// later allocating call while earlier elements sit only in that `Vec` can
+/// collect them out from under us (see PLAN.md Epic I, issue I2). Iterating
+/// `items` in reverse and consing keeps the result in the same order as
+/// `items` without a separate reverse pass.
+fn scm_list_map<T>(items: &[T], mut f: impl FnMut(&T) -> Scm) -> Scm {
+    let mut lst = ffi::SCM_EOL;
+    for item in items.iter().rev() {
+        let entry = f(item);
+        lst = unsafe { ffi::scm_cons(entry, lst) };
+    }
+    lst
+}
+
 /// `(wm-outputs)` -> `((id x y w h name) ...)`, usable rects.
 unsafe extern "C" fn wm_outputs() -> Scm {
     let heads = HEADS.lock().unwrap().clone();
-    let entries: Vec<Scm> = heads
-        .iter()
-        .map(|head| {
-            scm_list(&[
-                from_i64(head.id as i64),
-                from_i64(head.x as i64),
-                from_i64(head.y as i64),
-                from_i64(head.w as i64),
-                from_i64(head.h as i64),
-                from_str(&head.name),
-            ])
-        })
-        .collect();
-    scm_list(&entries)
+    scm_list_map(&heads, |head| {
+        scm_list(&[
+            from_i64(head.id as i64),
+            from_i64(head.x as i64),
+            from_i64(head.y as i64),
+            from_i64(head.w as i64),
+            from_i64(head.h as i64),
+            from_str(&head.name),
+        ])
+    })
 }
 
 /// `(symbol . value)` pair, for building alists.
@@ -1249,37 +1259,33 @@ fn scm_mode(m: (i32, i32, i32)) -> Scm {
 unsafe extern "C" fn wm_output_heads() -> Scm {
     let heads = OUTPUT_HEADS.lock().unwrap().clone();
     let opt_mode = |m: Option<(i32, i32, i32)>| m.map_or(ffi::SCM_BOOL_F, scm_mode);
-    let entries: Vec<Scm> = heads
-        .iter()
-        .map(|h| {
-            let modes: Vec<Scm> = h.modes.iter().map(|m| scm_mode(*m)).collect();
-            scm_list(&[
-                scm_field("name", from_str(&h.name)),
-                scm_field("enabled", from_bool(h.enabled)),
-                scm_field("make", from_str(&h.make)),
-                scm_field("model", from_str(&h.model)),
-                scm_field("serial", from_str(&h.serial)),
-                scm_field("description", from_str(&h.description)),
-                scm_field("mode", opt_mode(h.current_mode)),
-                scm_field("preferred-mode", opt_mode(h.preferred_mode)),
-                scm_field(
-                    "position",
-                    scm_list(&[from_i64(h.position.0 as i64), from_i64(h.position.1 as i64)]),
-                ),
-                scm_field("scale", from_f64(h.scale)),
-                scm_field("transform", from_symbol(transform_name(h.transform))),
-                scm_field(
-                    "adaptive-sync",
-                    match h.adaptive_sync {
-                        Some(on) => from_bool(on),
-                        None => from_symbol("unsupported"),
-                    },
-                ),
-                scm_field("modes", scm_list(&modes)),
-            ])
-        })
-        .collect();
-    scm_list(&entries)
+    scm_list_map(&heads, |h| {
+        let modes = scm_list_map(&h.modes, |m| scm_mode(*m));
+        scm_list(&[
+            scm_field("name", from_str(&h.name)),
+            scm_field("enabled", from_bool(h.enabled)),
+            scm_field("make", from_str(&h.make)),
+            scm_field("model", from_str(&h.model)),
+            scm_field("serial", from_str(&h.serial)),
+            scm_field("description", from_str(&h.description)),
+            scm_field("mode", opt_mode(h.current_mode)),
+            scm_field("preferred-mode", opt_mode(h.preferred_mode)),
+            scm_field(
+                "position",
+                scm_list(&[from_i64(h.position.0 as i64), from_i64(h.position.1 as i64)]),
+            ),
+            scm_field("scale", from_f64(h.scale)),
+            scm_field("transform", from_symbol(transform_name(h.transform))),
+            scm_field(
+                "adaptive-sync",
+                match h.adaptive_sync {
+                    Some(on) => from_bool(on),
+                    None => from_symbol("unsupported"),
+                },
+            ),
+            scm_field("modes", modes),
+        ])
+    })
 }
 
 /// Converts an SCM datum into a [`SpecValue`] (booleans, exact integers,
@@ -1387,15 +1393,11 @@ unsafe extern "C" fn wm_configure_output(name: Scm, alist: Scm) -> Scm {
 /// "pointer", "touch", ...). Empty under the winit backend (no libinput).
 unsafe extern "C" fn wm_input_devices() -> Scm {
     let devices = INPUT_DEVICES.lock().unwrap().clone();
-    let entries: Vec<Scm> = devices
-        .iter()
-        .map(|device| {
-            let mut items = vec![from_str(&device.name)];
-            items.extend(device.capabilities.iter().map(|c| from_str(c)));
-            scm_list(&items)
-        })
-        .collect();
-    scm_list(&entries)
+    scm_list_map(&devices, |device| {
+        let name = from_str(&device.name);
+        let caps = scm_list_map(&device.capabilities, |c| from_str(c));
+        unsafe { ffi::scm_cons(name, caps) }
+    })
 }
 
 /// Low-level primitive behind the Scheme `wm-configure-input!` wrapper
@@ -1755,19 +1757,16 @@ pub fn on_heads_changed(heads: Vec<HeadInfo>) {
     *HEADS.lock().unwrap() = heads.clone();
 
     if HEADS_CHANGE.value().is_some() {
-        let entries: Vec<Scm> = heads
-            .iter()
-            .map(|h| {
-                scm_list(&[
-                    from_i64(h.id as i64),
-                    from_i64(h.x as i64),
-                    from_i64(h.y as i64),
-                    from_i64(h.w as i64),
-                    from_i64(h.h as i64),
-                ])
-            })
-            .collect();
-        HEADS_CHANGE.call(&[scm_list(&entries)]);
+        let entries = scm_list_map(&heads, |h| {
+            scm_list(&[
+                from_i64(h.id as i64),
+                from_i64(h.x as i64),
+                from_i64(h.y as i64),
+                from_i64(h.w as i64),
+                from_i64(h.h as i64),
+            ])
+        });
+        HEADS_CHANGE.call(&[entries]);
     } else {
         OUTPUT_GEOMETRY.call(&[
             from_i64(first.x as i64),
@@ -1873,8 +1872,8 @@ pub fn on_input_device_added(name: &str, capabilities: &[String]) {
     if INPUT_DEVICE_ADDED.value().is_none() {
         return;
     }
-    let caps: Vec<Scm> = capabilities.iter().map(|c| from_str(c)).collect();
-    INPUT_DEVICE_ADDED.call(&[from_str(name), scm_list(&caps)]);
+    let caps = scm_list_map(capabilities, |c| from_str(c));
+    INPUT_DEVICE_ADDED.call(&[from_str(name), caps]);
 }
 
 /// Calls `(handle-startup!)` if bound, once the first output is up and

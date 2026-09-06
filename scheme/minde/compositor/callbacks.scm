@@ -37,6 +37,8 @@
     (handle-foreign-minimize! . 2)
     (output-configuration-allowed? . 0)
     (handle-output-configured! . 0)
+    (handle-output-configure-failed! . 2)
+    (handle-keyboard-layout-changed! . 1)
     (handle-input-device-added! . 2)
     (handle-startup! . 0)
     (wm-on-session-lock . 0)

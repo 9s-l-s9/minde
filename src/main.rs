@@ -233,10 +233,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // loop runs.
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };
 
-    let run = event_loop.run(None, &mut state, move |_state| {
-        // minde is running; nothing extra to do per-iteration here, the
-        // event sources (wayland socket, winit/udev, calloop) drive
-        // everything.
+    let run = event_loop.run(None, &mut state, move |state| {
+        // Push queued protocol events to the clients after every loop
+        // iteration. The render paths flush too, but since repaints became
+        // damage-driven a key release, pointer motion or any other event
+        // that dirties nothing would otherwise sit in the socket buffer
+        // until the next frame -- clients saw releases seconds late and
+        // auto-repeated the key in between.
+        let _ = state.display_handle.flush_clients();
     });
     guile::clear_state();
     run?;

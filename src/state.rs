@@ -212,6 +212,12 @@ pub struct MindeState {
     /// Last head list (usable rects) sent to Scheme, to avoid
     /// re-announcing unchanged geometry on every commit.
     pub reported_heads: Vec<guile::HeadInfo>,
+    /// Set while `apply_output_configuration` runs its per-head loop
+    /// (and revert), so `enable_head`/`disable_head` defer their
+    /// notifications: a half-applied layout must not reach Scheme or
+    /// wlr-output-management clients (the post-apply
+    /// `output_configuration_applied` reports the final state once).
+    pub(crate) applying_output_config: bool,
     /// Monotonic source of stable per-output ids (stored in each
     /// `Output`'s user data as `OutputId`).
     pub next_output_id: u64,
@@ -232,6 +238,14 @@ pub struct MindeState {
     /// the held raw keycode plus its calloop timer's token.
     pub key_repeat_enabled: bool,
     pub key_repeat: Option<(u32, smithay::reexports::calloop::RegistrationToken)>,
+
+    /// True while `handle-keyboard-layout-changed!` is running. A hook
+    /// that itself calls `set-keyboard-layout!` re-enters
+    /// [`Self::refresh_keyboard_layouts`] on the direct command path
+    /// (same shape as `guile`'s `APPLYING` flag); the nested hook fire
+    /// is suppressed so a non-idempotent hook cannot recurse without
+    /// bound. The snapshot update itself still happens.
+    in_layout_changed_hook: bool,
 
     /// FIFO for compositor-generated input. A single timer advances it so
     /// separate Scheme requests retain ordering and never interleave.
@@ -612,11 +626,13 @@ impl MindeState {
             message_generation: 0,
             overlays: Vec::new(),
             reported_heads: Vec::new(),
+            applying_output_config: false,
             next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
             reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
             key_repeat: None,
+            in_layout_changed_hook: false,
             synthetic_actions: VecDeque::new(),
             synthetic_timer: None,
             next_synthetic_sequence: 0,
@@ -1386,7 +1402,22 @@ impl MindeState {
         });
         let name = names.get(active).cloned().unwrap_or_default();
         if guile::set_keyboard_layouts(names, active) {
+            // Re-entrancy guard: a hook that itself switches layouts runs
+            // this function again on the direct command path. The snapshot
+            // above is still updated, but the nested hook fire is
+            // suppressed -- otherwise a hook that always switches to a
+            // *different* layout would recurse without bound.
+            if self.in_layout_changed_hook {
+                tracing::warn!(
+                    layout = %name,
+                    "handle-keyboard-layout-changed! switched layouts from \
+                     inside itself; suppressing the nested hook fire"
+                );
+                return;
+            }
+            self.in_layout_changed_hook = true;
             guile::on_keyboard_layout_changed(&name);
+            self.in_layout_changed_hook = false;
         }
     }
 
@@ -2173,12 +2204,12 @@ impl MindeState {
     /// Post-success sequence shared by every output configuration path
     /// (the wlr-output-management `apply` and `configure-output!`): reflow
     /// the Scheme head model and re-advertise to output-management clients
-    /// (`update_usable_area` does both, it calls `output_management_refresh`
-    /// itself; clearing `reported_heads` defeats its unchanged-geometry
-    /// short-circuit), push the new scale to fractional-scale clients, keep
-    /// lock surfaces covering each output, then tell Scheme.
+    /// (`update_usable_area` does both, each only when its state actually
+    /// changed -- a no-op re-apply of the same profile must not re-fire
+    /// the Scheme hooks or bump the manager serial), push the new scale to
+    /// fractional-scale clients, keep lock surfaces covering each output,
+    /// then tell Scheme.
     pub(crate) fn output_configuration_applied(&mut self) {
-        self.reported_heads.clear();
         self.update_usable_area();
         self.update_fractional_scales();
         self.reconfigure_lock_surfaces();
@@ -2192,21 +2223,59 @@ impl MindeState {
     /// Records that `output`'s position was chosen explicitly, exempting it
     /// from [`Self::repack_auto_outputs`].
     pub(crate) fn mark_position_explicit(&self, output: &smithay::output::Output) {
-        output.user_data().insert_if_missing(|| ExplicitPosition);
+        output
+            .user_data()
+            .insert_if_missing(|| ExplicitPosition(std::sync::atomic::AtomicBool::new(false)));
+        self.set_position_explicit(output, true);
+    }
+
+    /// Returns `output` to the auto layout. Used when a configuration that
+    /// positioned it is reverted, so a failed apply does not permanently
+    /// exempt the head from [`Self::repack_auto_outputs`].
+    pub(crate) fn mark_position_auto(&self, output: &smithay::output::Output) {
+        self.set_position_explicit(output, false);
+    }
+
+    fn set_position_explicit(&self, output: &smithay::output::Output, explicit: bool) {
+        if let Some(flag) = output.user_data().get::<ExplicitPosition>() {
+            flag.0.store(explicit, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Whether `output`'s position was chosen explicitly (and never
+    /// reverted back to auto).
+    pub(crate) fn position_is_explicit(&self, output: &smithay::output::Output) -> bool {
+        output
+            .user_data()
+            .get::<ExplicitPosition>()
+            .map(|flag| flag.0.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
     }
 
     /// Re-packs every mapped output whose position was never set
     /// explicitly: auto heads keep their left-to-right order and are laid
     /// out edge to edge at y = 0, starting right of the rightmost explicit
-    /// head. Idempotent; only touches outputs whose location changes.
+    /// head. Idempotent; only touches outputs whose location changes, and
+    /// only when the layout is unsound (see [`layout_needs_repack`]) -- a
+    /// sound layout is left alone, so a head whose profile omits its
+    /// position does not jump on every layer-surface commit.
     pub(crate) fn repack_auto_outputs(&mut self) {
+        let mut heads = Vec::new();
+        for output in self.space.outputs() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                heads.push((self.position_is_explicit(output), geo));
+            }
+        }
+        if !layout_needs_repack(&heads) {
+            return;
+        }
         let mut explicit_right = 0;
         let mut auto: Vec<(i32, smithay::output::Output)> = Vec::new();
         for output in self.space.outputs() {
             let Some(geo) = self.space.output_geometry(output) else {
                 continue;
             };
-            if output.user_data().get::<ExplicitPosition>().is_some() {
+            if self.position_is_explicit(output) {
                 explicit_right = explicit_right.max(geo.loc.x + geo.size.w);
             } else {
                 auto.push((geo.loc.x, output.clone()));
@@ -2395,24 +2464,25 @@ impl MindeState {
                 name: output.name(),
             });
         }
-        if heads == self.reported_heads {
-            return;
+        // With every head disabled (test-only, see
+        // output_management::ALLOW_NO_HEADS_ENV) or none yet, Scheme keeps
+        // its last head list.
+        if heads != self.reported_heads && !heads.is_empty() {
+            self.reported_heads = heads.clone();
+            guile::on_heads_changed(heads);
+            // Window/output association may have shifted with the geometry.
+            self.refresh_foreign_toplevel_outputs();
         }
-        if heads.is_empty() {
-            // Every head disabled (test-only, see
-            // output_management::ALLOW_NO_HEADS_ENV) or none yet: Scheme
-            // keeps its last head list, but output-management clients
-            // still need to see the disabled state.
-            self.output_management_refresh();
-            return;
-        }
-        self.reported_heads = heads.clone();
-        guile::on_heads_changed(heads);
-        // Window/output association may have shifted with the geometry.
-        self.refresh_foreign_toplevel_outputs();
         // Re-advertise the layout to wlr-output-management clients (kanshi,
-        // wlr-randr) so an external resize/hotplug reconciles back to them.
-        self.output_management_refresh();
+        // wlr-randr) so an external resize/hotplug reconciles back to them
+        // -- but only when Output-level protocol state actually changed. A
+        // usable-rect change alone (an eww bar mapping or unmapping) is
+        // invisible to the protocol, and resending `done` with a bumped
+        // serial for it makes daemons re-evaluate their profiles and
+        // cancels their in-flight configurations.
+        if self.output_management_needs_refresh() {
+            self.output_management_refresh();
+        }
     }
 
     /// Preferred fractional scale for a surface: the scale of the output it
@@ -2546,7 +2616,37 @@ struct WindowId(u64);
 /// "auto" and get re-packed left to right whenever the layout changes, so
 /// a scale or mode change on one head never leaves a hole the pointer
 /// cannot cross -- the same rule wlroots' auto layout applies.
-struct ExplicitPosition;
+/// The flag is mutable (an `AtomicBool`, since `UserDataMap` entries
+/// cannot be removed) so a reverted configuration can hand the head back
+/// to the auto layout via [`MindeState::mark_position_auto`].
+struct ExplicitPosition(std::sync::atomic::AtomicBool);
+
+/// Whether the output layout has a hole or an overlap that
+/// [`MindeState::repack_auto_outputs`] should close. Each head is
+/// `(explicit, geometry)`. Unsound means: two heads overlap, or an auto
+/// head is detached -- its left edge sits neither at x = 0 nor against
+/// the right edge of a head it vertically overlaps with (the pointer
+/// could then be clamped into a gap no head draws). Explicit heads are
+/// wherever the user put them and never count as detached.
+fn layout_needs_repack(heads: &[(bool, Rectangle<i32, Logical>)]) -> bool {
+    for (i, (_, a)) in heads.iter().enumerate() {
+        if heads[i + 1..].iter().any(|(_, b)| a.overlaps(*b)) {
+            return true;
+        }
+    }
+    heads.iter().enumerate().any(|(i, (explicit, geo))| {
+        if *explicit || geo.loc.x == 0 {
+            return false;
+        }
+        let anchored = heads.iter().enumerate().any(|(j, (_, other))| {
+            j != i
+                && other.loc.x + other.size.w == geo.loc.x
+                && other.loc.y < geo.loc.y + geo.size.h
+                && geo.loc.y < other.loc.y + other.size.h
+        });
+        !anchored
+    })
+}
 
 /// Data associated with a wayland client that connects to us.
 /// One instance of this type per client.
@@ -2600,6 +2700,55 @@ mod tests {
             outputs.iter().any(|r| r.to_f64().contains(clamped)),
             "{clamped:?}"
         );
+    }
+
+    #[test]
+    fn sound_layouts_are_not_repacked() {
+        // Edge-to-edge row: sound.
+        assert!(!layout_needs_repack(&[
+            (false, rectangle(0, 0, 1920, 1080)),
+            (false, rectangle(1920, 0, 3840, 2160)),
+        ]));
+        // Vertical stack with an explicit head below: the auto head at the
+        // origin must not jump right of the explicit one (it used to be
+        // packed to (1920, 0) although nothing was wrong).
+        assert!(!layout_needs_repack(&[
+            (false, rectangle(0, 0, 3840, 2160)),
+            (true, rectangle(0, 2160, 1920, 1080)),
+        ]));
+        // A lone head anywhere but the origin is fine when explicit...
+        assert!(!layout_needs_repack(&[(
+            true,
+            rectangle(500, 300, 800, 600)
+        )]));
+        // ...and empty layouts are trivially sound.
+        assert!(!layout_needs_repack(&[]));
+    }
+
+    #[test]
+    fn holes_and_overlaps_are_repacked() {
+        // The motivating bug of the auto layout: a scale-only change shrank
+        // the left head, detaching its neighbour.
+        assert!(layout_needs_repack(&[
+            (false, rectangle(0, 0, 1920, 1080)),
+            (false, rectangle(3840, 0, 3840, 2160)),
+        ]));
+        // Overlapping heads are always unsound, explicit or not.
+        assert!(layout_needs_repack(&[
+            (true, rectangle(0, 0, 1920, 1080)),
+            (false, rectangle(100, 100, 1920, 1080)),
+        ]));
+        // A lone auto head stranded off-origin (its anchor was disabled).
+        assert!(layout_needs_repack(&[(
+            false,
+            rectangle(3840, 0, 1920, 1080)
+        )]));
+        // Touching corners is not a vertical overlap: the left edge rests
+        // against nothing, so the head is detached.
+        assert!(layout_needs_repack(&[
+            (false, rectangle(0, 0, 1920, 1080)),
+            (false, rectangle(1920, 1080, 1920, 1080)),
+        ]));
     }
 
     #[test]

@@ -28,11 +28,14 @@
 //! [`MindeState::apply_output_configuration`] (shared with the Scheme
 //! primitive of a later stage): validation first with no side effects, then
 //! per-head application with snapshots that are reverted in reverse order
-//! if a backend refuses. On success the protocol call site clears
-//! `reported_heads` and runs [`MindeState::update_usable_area`], which
-//! re-derives the usable-rect head list, hands it to Scheme
-//! (`handle-heads-change!`) exactly as a hotplug or resize would, and
-//! re-advertises to bound managers. External changes we did not originate
+//! if a backend refuses. While the per-head loop (and its revert) runs,
+//! `applying_output_config` keeps the backends from advertising the
+//! half-applied layout. On success the protocol call site runs
+//! [`MindeState::update_usable_area`], which re-derives the usable-rect
+//! head list, hands it to Scheme (`handle-heads-change!`) exactly as a
+//! hotplug or resize would -- both only when the respective state
+//! actually changed, so a re-applied identical profile stays silent --
+//! and re-advertises to bound managers. External changes we did not originate
 //! (a winit resize, a DRM hotplug) reconcile the other way through
 //! [`MindeState::output_management_refresh`].
 //!
@@ -344,6 +347,10 @@ pub struct OutputManagementState {
     serial: u32,
     /// Every known head, enabled or not, in registration order.
     heads_all: Vec<Output>,
+    /// The protocol-visible state last advertised by
+    /// [`MindeState::output_management_refresh`], so callers can skip a
+    /// refresh (and its serial bump) when nothing a client sees changed.
+    advertised: Vec<HeadProtoState>,
     /// [`ALLOW_NO_HEADS_ENV`] was set at startup.
     allow_no_heads: bool,
 }
@@ -374,6 +381,7 @@ pub fn init_output_management(dh: &DisplayHandle) -> OutputManagementState {
         managers: Vec::new(),
         serial: 0,
         heads_all: Vec::new(),
+        advertised: Vec::new(),
         allow_no_heads,
     }
 }
@@ -420,6 +428,40 @@ struct HeadBackup {
     transform: Transform,
     enabled: bool,
     adaptive_sync: Option<bool>,
+    /// Whether the position was already explicit, so a revert can hand a
+    /// head this configuration positioned back to the auto layout.
+    position_explicit: bool,
+}
+
+/// Everything wlr-output-management advertises about one head:
+/// the identity properties plus the mutable state `send_head_state`
+/// sends. [`MindeState::update_usable_area`] compares snapshots of this
+/// to decide whether a refresh (with its serial bump and `done`) must be
+/// sent at all -- a usable-rect change alone is invisible to the
+/// protocol and must not make daemons re-evaluate.
+#[derive(Clone, PartialEq)]
+pub(crate) struct HeadProtoState {
+    identity: HeadSnapshot,
+    enabled: bool,
+    current_mode: Option<Mode>,
+    position: (i32, i32),
+    scale: f64,
+    transform: Transform,
+    adaptive_sync: Option<bool>,
+}
+
+/// The protocol-visible state of one head (pure; unit-testable).
+fn head_proto_state(output: &Output, enabled: bool, adaptive_sync: Option<bool>) -> HeadProtoState {
+    let loc = output.current_location();
+    HeadProtoState {
+        identity: HeadSnapshot::of(output),
+        enabled,
+        current_mode: output.current_mode(),
+        position: (loc.x, loc.y),
+        scale: output.current_scale().fractional_scale(),
+        transform: output.current_transform(),
+        adaptive_sync,
+    }
 }
 
 impl MindeState {
@@ -534,6 +576,11 @@ impl MindeState {
             return Ok(());
         }
 
+        // Backends must not advertise the half-applied layout from inside
+        // this loop (see `applying_output_config`); the caller's
+        // post-success `output_configuration_applied` reports it once, and
+        // a fully reverted failure changed nothing worth reporting.
+        self.applying_output_config = true;
         let mut backups: Vec<HeadBackup> = Vec::with_capacity(resolved.len());
         let mut failure: Option<OutputConfigError> = None;
         for r in &resolved {
@@ -546,6 +593,7 @@ impl MindeState {
                 transform: output.current_transform(),
                 enabled: r.was_enabled,
                 adaptive_sync: self.output_adaptive_sync(output),
+                position_explicit: self.position_is_explicit(output),
             });
             let mut change = r.change.clone();
             change.mode = r.mode;
@@ -579,9 +627,18 @@ impl MindeState {
                 } else {
                     self.space.unmap_output(&b.output);
                 }
+                // A position this configuration set marked the head
+                // explicit (`commit_head`); the revert takes that back so
+                // a failed apply does not permanently exempt the head
+                // from the auto layout.
+                if !b.position_explicit {
+                    self.mark_position_auto(&b.output);
+                }
             }
+            self.applying_output_config = false;
             return Err(err);
         }
+        self.applying_output_config = false;
         Ok(())
     }
 
@@ -751,11 +808,29 @@ impl MindeState {
         self.send_head_state(head);
     }
 
+    /// The protocol-visible state of every known head, in registration
+    /// order.
+    fn output_proto_snapshot(&self) -> Vec<HeadProtoState> {
+        self.output_management
+            .heads_all
+            .iter()
+            .map(|o| head_proto_state(o, self.output_enabled(o), self.output_adaptive_sync(o)))
+            .collect()
+    }
+
+    /// Whether the protocol-visible head state diverged from what
+    /// [`Self::output_management_refresh`] last advertised, i.e. whether
+    /// a refresh would tell clients anything new.
+    pub(crate) fn output_management_needs_refresh(&self) -> bool {
+        self.output_proto_snapshot() != self.output_management.advertised
+    }
+
     /// Re-advertises the current output layout to every bound manager,
     /// reconciling added/removed heads and changed head properties, then
     /// bumps the serial and sends `done`. Call after applying a
     /// configuration and after any external output change (resize, hotplug).
     pub fn output_management_refresh(&mut self) {
+        self.output_management.advertised = self.output_proto_snapshot();
         let outputs = self.output_management_outputs();
         let dh = self.display_handle.clone();
         crate::guile::set_output_heads(self.output_head_snapshot());
@@ -1178,6 +1253,30 @@ mod tests {
         assert!(validate(&heads, &[c], false).is_err());
         let d = HeadChange::new(heads[0].output.clone(), true);
         assert!(validate(&heads, &[d.clone(), d], false).is_err());
+    }
+
+    #[test]
+    fn proto_state_tracks_protocol_visible_changes_only() {
+        let h = head("a", true, Some(false));
+        let before = head_proto_state(&h.output, true, h.adaptive_sync);
+        // Nothing changed: equal, so no refresh (and no serial bump)
+        // would be sent. Layer-shell exclusive zones never appear here,
+        // which is the point -- they cannot trigger a refresh.
+        assert!(before == head_proto_state(&h.output, true, h.adaptive_sync));
+        // Each protocol-visible property makes the snapshot differ.
+        assert!(before != head_proto_state(&h.output, false, h.adaptive_sync));
+        assert!(before != head_proto_state(&h.output, true, Some(true)));
+        h.output
+            .change_current_state(None, None, None, Some((10, 20).into()));
+        assert!(before != head_proto_state(&h.output, true, h.adaptive_sync));
+        let moved = head_proto_state(&h.output, true, h.adaptive_sync);
+        h.output.change_current_state(
+            None,
+            Some(Transform::_90),
+            Some(Scale::Fractional(1.5)),
+            None,
+        );
+        assert!(moved != head_proto_state(&h.output, true, h.adaptive_sync));
     }
 
     #[test]

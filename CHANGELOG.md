@@ -37,7 +37,12 @@ Target version: `1.0.0-rc1`.
   edge whenever the layout changes, so `wlr-randr --output eDP-1 --scale 2`
   alone no longer opens a hole between heads that the pointer cannot cross;
   a clamped pointer now lands strictly inside an output so the cursor stays
-  visible at the far edges.
+  visible at the far edges.  Re-packing only runs when the layout is
+  actually unsound (an overlap, or an auto head detached from both the
+  origin and every neighbouring right edge): a sound layout -- including a
+  vertical stack under an explicit head, or a profile that omits
+  `position` -- is left alone instead of being shuffled to y = 0 on every
+  layer-surface commit.
 - `wlr-output-power-management-unstable-v1` (hand-written, both backends) so
   `wlopm` and `swayidle` (`timeout N 'wlopm --off *' resume 'wlopm --on *'`)
   can blank outputs and light them again. Power is orthogonal to the layout:
@@ -345,6 +350,48 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Flush Wayland clients after every event-loop iteration. Since repaints
+  became damage-driven, events that dirty nothing (key releases, pointer
+  motion over a static scene) stayed buffered until the next render, so
+  clients received key releases seconds late and auto-repeated the key
+  meanwhile (`ovvvvvvvver`, runs of spaces) and pointer input felt sluggish.
+
+- `focus-next-window!` / `focus-previous-window!` no longer do nothing when
+  the target id cannot be resolved in the active group (a stale mirror after
+  head churn or a drifted float list): `focus-window-by-id!` now reports
+  whether the jump happened, and the cycling commands fall back to a
+  `sync-frames!` so placements, hooks and the status line still self-heal.
+- A compositor-side key repeat armed via `wm-set-key-repeat` no longer keeps
+  firing its Scheme handler across a VT switch or suspend: pausing the
+  session cancels the repeat timer, since the held key's release can never
+  be delivered to a suspended libinput context.
+- `handle-keyboard-layout-changed!` can no longer recurse without bound: a
+  hook that itself calls `set-keyboard-layout!` still updates the
+  `(wm-keyboard-layouts)` snapshot, but the nested hook fire is suppressed
+  (and logged) instead of re-entering the hook on the same stack.
+- The compositor callback registry gained the missing
+  `handle-output-configure-failed!` and `handle-keyboard-layout-changed!`
+  entries, so `define-compositor-callback!` accepts them and the
+  registry/Rust-hook-table consistency test passes again.
+- Move and resize grabs deferred their `on_window_moved` Scheme hook call to
+  an idle callback instead of invoking it from inside `PointerHandle::button`;
+  the hook running there while the pointer's non-reentrant lock was held
+  meant any pointer-touching command it issued (`wm-warp-pointer!`,
+  `wm-click`, `wm-scroll`) re-locked the same mutex on the same thread and
+  froze the compositor.
+- Output configuration no longer fires duplicate events: applying a
+  configuration reports the final layout exactly once instead of also
+  advertising the half-applied state from inside the per-head loop, a
+  re-applied identical profile stays silent, and layer-shell changes (a bar
+  mapping or unmapping) no longer bump the wlr-output-management serial —
+  so daemons like shikane stop re-evaluating (and re-applying) profiles on
+  every bar respawn, which duplicated `handle-output-configured!` /
+  `handle-heads-change!` and with them eww bars. Also hardened: a reverted
+  configuration hands heads it positioned back to the auto layout, a failed
+  head enable restores the previous mode/position instead of keeping the
+  one that failed, a DPMS power-on whose recorded mode fails retries at the
+  preferred mode instead of staying dark, and a late vblank from a flip the
+  watchdog already abandoned is no longer attributed to the frame in flight.
 - Overrides of `(minde session)` configuration variables
   (`%lock-command`, `%suspend-command`, `%lock-on-suspend?`,
   `%lock-timeout-ms`) were silently ignored in compiled builds because
@@ -369,6 +416,17 @@ Target version: `1.0.0-rc1`.
   during a negotiated drag-and-drop, fixing browser dropzones that
   rejected synthetic drops (see
   `doc/notes/issue-wm-drop-files-rejected-by-dropzones.md`).
+- Fixed a GC-rooting hazard in `src/guile/mod.rs`: several functions
+  (`wm-outputs`, `wm-output-heads`, `wm-timing-stats`, `wm-keyboard-layouts`,
+  `wm-input-devices`, `wm-place-windows`, the `heads-change` and
+  `input-device-added` hooks) collected heap-allocated `Scm` values (pairs,
+  strings, symbols) into a plain `Vec<Scm>` while still making further
+  allocating Guile calls; bdw-gc never scans the Rust heap, so a GC
+  triggered mid-loop could free those values out from under the pending
+  list build. Lists are now built incrementally into a stack-rooted `Scm`
+  local (new `scm_list_map` helper) so every allocated value stays
+  GC-reachable; `tests/lint-hook-borrows.sh` now also flags a bare
+  `Vec<Scm>` in `src/guile/mod.rs`.
 
 - Session management: `ext-session-lock-v1` compositor support (swaylock
   and other lockers can lock the session; while locked no desktop pixel

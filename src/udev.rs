@@ -114,11 +114,14 @@ type UdevRenderer<'a> = MultiRenderer<
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
 
-/// Per-frame user-data attached to each queued DRM frame: the presentation
-/// feedback owed to clients once the frame is actually scanned out. Returned
-/// by `frame_submitted` on the matching vblank (see `frame_finish`). `None`
-/// for frames that owe no feedback (e.g. the locked blank frame).
-type FrameUserData = Option<OutputPresentationFeedback>;
+/// Per-frame user-data attached to each queued DRM frame: the surface's
+/// flip generation at queue time (so `frame_finish` can tell a late
+/// vblank from a flip the watchdog already abandoned apart from the
+/// current one) and the presentation feedback owed to clients once the
+/// frame is actually scanned out. Returned by `frame_submitted` on the
+/// matching vblank (see `frame_finish`). The feedback is `None` for
+/// frames that owe none (e.g. the locked blank frame).
+type FrameUserData = (u64, Option<OutputPresentationFeedback>);
 
 type GbmDrmOutputManager = DrmOutputManager<
     GbmAllocator<DrmDeviceFd>,
@@ -167,6 +170,11 @@ struct OutputSurface {
     /// Something on this output changed since the last render.
     dirty: bool,
     redraw: RedrawState,
+    /// Bumped for every queued frame and stamped into its
+    /// [`FrameUserData`], so `frame_finish` can ignore the late vblank of
+    /// a flip [`MindeState::vblank_watchdog_fired`] already gave up on
+    /// instead of attributing it to the frame in flight.
+    flip_generation: u64,
 }
 
 /// The output's refresh interval (from its current mode), or 60 Hz when the
@@ -459,6 +467,12 @@ pub fn init_udev(
             SessionEvent::PauseSession => {
                 libinput_context.suspend();
                 info!("pausing session");
+                // A key held through a VT switch or suspend never delivers
+                // its release here (libinput is suspended), so an armed
+                // compositor-side repeat would keep firing its Scheme
+                // handler every 40 ms into the paused session -- and keep
+                // going after resume. Drop it with the session.
+                state.cancel_key_repeat();
                 let handle = state.handle.clone();
                 if let Some(udev) = state.udev_data.as_mut() {
                     udev.paused = true;
@@ -895,12 +909,16 @@ pub(crate) fn enable_head(
         entry.global = Some(output.create_global::<MindeState>(&dh));
     }
     entry.power = PowerState::On;
+    let prev_mode = output.current_mode();
+    let prev_location = output.current_location();
     output.change_current_state(Some(wl_mode), None, None, Some(position));
     state.space.map_output(&output, position);
 
     if let Err(err) = init_surface(udev, node, crtc, mode) {
         // Back to fully disabled: no global (that is what `enabled()`
-        // means), not mapped.
+        // means), not mapped, and the just-failed mode/position off the
+        // Output again -- an "enable without a mode" falls back to the
+        // current mode and must not retry the one that failed.
         if let Some(global) = udev
             .devices
             .get_mut(&node)
@@ -910,6 +928,9 @@ pub(crate) fn enable_head(
             dh.remove_global::<MindeState>(global);
         }
         state.space.unmap_output(&output);
+        if prev_mode.is_some() || prev_location != position {
+            output.change_current_state(prev_mode, None, None, Some(prev_location));
+        }
         return Err(err);
     }
 
@@ -917,9 +938,11 @@ pub(crate) fn enable_head(
     udev.started = true;
 
     state.space.refresh();
-    state.update_usable_area();
-    state.update_fractional_scales();
-    state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+    if !state.applying_output_config {
+        state.update_usable_area();
+        state.update_fractional_scales();
+        state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+    }
     if first_output {
         guile::on_startup();
     }
@@ -985,6 +1008,7 @@ fn init_surface(
         border_buffers: BorderBuffers::default(),
         dirty: true,
         redraw: RedrawState::Idle,
+        flip_generation: 0,
     });
     Ok(())
 }
@@ -1058,8 +1082,10 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     }
 
     state.space.refresh();
-    state.update_usable_area();
-    state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+    if !state.applying_output_config {
+        state.update_usable_area();
+        state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+    }
 }
 
 /// Forgets a (disabled) head entirely and tells wlr-output-management
@@ -1138,7 +1164,7 @@ impl MindeState {
         // was attached when the frame was queued. Scoped so the udev/device/
         // surface borrows are released before we touch `self.start_time` and
         // deliver the feedback.
-        let (output, submitted) = {
+        let (output, submitted, current_generation) = {
             let Some(udev) = self.udev_data.as_mut() else {
                 return;
             };
@@ -1151,38 +1177,55 @@ impl MindeState {
             let Some(surface) = entry.surface.as_mut() else {
                 return; // head disabled meanwhile; nothing to account for
             };
-            (entry.output.clone(), surface.drm_output.frame_submitted())
+            (
+                entry.output.clone(),
+                surface.drm_output.frame_submitted(),
+                surface.flip_generation,
+            )
         };
 
         // wp-presentation-time: mark every surface scanned out on this output
         // as presented, with the real vblank timestamp/sequence when the kernel
         // provided monotonic timestamps (otherwise fall back to our own clock
         // and only claim Vsync).
+        let mut stale_flip = false;
         match submitted {
-            Ok(Some(Some(mut feedback))) => {
-                let (clock, flags) = match metadata.as_ref().map(|m| m.time) {
-                    Some(DrmEventTime::Monotonic(tp)) => (
-                        tp,
-                        wp_presentation_feedback::Kind::Vsync
-                            | wp_presentation_feedback::Kind::HwClock
-                            | wp_presentation_feedback::Kind::HwCompletion,
-                    ),
-                    _ => (
-                        self.start_time.elapsed(),
-                        wp_presentation_feedback::Kind::Vsync,
-                    ),
-                };
-                let seq = metadata.as_ref().map(|m| m.sequence as u64).unwrap_or(0);
-                let refresh = output
-                    .current_mode()
-                    .map(|mode| {
-                        Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                    })
-                    .unwrap_or(Refresh::Unknown);
-                feedback.presented::<_, Monotonic>(clock, refresh, seq, flags);
+            Ok(Some((generation, feedback))) => {
+                stale_flip = generation != current_generation;
+                if let Some(mut feedback) = feedback {
+                    let (clock, flags) = match metadata.as_ref().map(|m| m.time) {
+                        Some(DrmEventTime::Monotonic(tp)) => (
+                            tp,
+                            wp_presentation_feedback::Kind::Vsync
+                                | wp_presentation_feedback::Kind::HwClock
+                                | wp_presentation_feedback::Kind::HwCompletion,
+                        ),
+                        _ => (
+                            self.start_time.elapsed(),
+                            wp_presentation_feedback::Kind::Vsync,
+                        ),
+                    };
+                    let seq = metadata.as_ref().map(|m| m.sequence as u64).unwrap_or(0);
+                    let refresh = output
+                        .current_mode()
+                        .map(|mode| {
+                            Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
+                        })
+                        .unwrap_or(Refresh::Unknown);
+                    feedback.presented::<_, Monotonic>(clock, refresh, seq, flags);
+                }
             }
-            Ok(_) => {}
+            Ok(None) => {}
             Err(err) => warn!(%err, "drm frame_submitted failed"),
+        }
+
+        // The late vblank of a flip the watchdog already gave up on (it
+        // then re-rendered under a newer generation): the feedback above
+        // is delivered -- the frame did reach the screen -- but the
+        // repaint loop is waiting on the newer flip, so leave it alone.
+        if stale_flip {
+            debug!(?node, ?crtc, "ignoring the vblank of an abandoned flip");
+            return;
         }
 
         // The flip completed: repaint right away if anything changed while
@@ -1405,7 +1448,29 @@ impl MindeState {
             .map(|(_, drm)| *drm)
             .ok_or("current mode is not a connector mode")?;
         info!(?crtc, output = %output.name(), "powering head on");
-        init_surface(udev, node, crtc, mode)?;
+        if let Err(err) = init_surface(udev, node, crtc, mode) {
+            // The recorded mode may have been set while powered off
+            // (`udev_set_mode` cannot test it without a CRTC) and only
+            // fail here. Retry at the preferred mode rather than staying
+            // dark; on success the Output tracks the mode actually driven.
+            let preferred = output.preferred_mode().filter(|p| *p != wl_mode);
+            let Some((preferred_wl, preferred_drm)) = preferred.and_then(|p| {
+                let entry = udev.devices.get(&node)?.heads.get(&crtc)?;
+                entry
+                    .modes
+                    .iter()
+                    .find(|(wl, _)| *wl == p)
+                    .map(|(wl, drm)| (*wl, *drm))
+            }) else {
+                return Err(err);
+            };
+            warn!(
+                %err, output = %output.name(),
+                "power-on at the recorded mode failed; retrying at the preferred mode"
+            );
+            init_surface(udev, node, crtc, preferred_drm)?;
+            output.change_current_state(Some(preferred_wl), None, None, None);
+        }
         if let Some(entry) = udev
             .devices
             .get_mut(&node)
@@ -1494,7 +1559,9 @@ impl MindeState {
     /// rendered right away so the modeset commits. A head without a live
     /// surface (disabled, or powered off by output-power-management) only
     /// gets the mode recorded on the Output; the next `enable_head` /
-    /// power-on initialises the CRTC from that.
+    /// power-on initialises the CRTC from that (and falls back to the
+    /// preferred mode if the recorded one fails there -- it could not be
+    /// tested against the hardware without a CRTC).
     ///
     /// Known limitation: the mode is set with
     /// `DrmOutputRenderElements::default()`, so if the new mode exceeds the
@@ -1818,9 +1885,10 @@ impl MindeState {
                 })?;
             let queued = !render_result.is_empty;
             if queued {
+                output_surface.flip_generation = output_surface.flip_generation.wrapping_add(1);
                 output_surface
                     .drm_output
-                    .queue_frame(None)
+                    .queue_frame((output_surface.flip_generation, None))
                     .map_err(Into::<SwapBuffersError>::into)?;
             }
             // Frame callback so the lock client keeps drawing.
@@ -1944,9 +2012,10 @@ impl MindeState {
 
         let queued = !render_result.is_empty;
         if queued {
+            output_surface.flip_generation = output_surface.flip_generation.wrapping_add(1);
             output_surface
                 .drm_output
-                .queue_frame(Some(presentation_feedback))
+                .queue_frame((output_surface.flip_generation, Some(presentation_feedback)))
                 .map_err(Into::<SwapBuffersError>::into)?;
         } else {
             // No frame will be scanned out, so no vblank will arrive to deliver

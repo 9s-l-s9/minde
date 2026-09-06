@@ -830,24 +830,34 @@ current window, - the previous one (other-window!'s target)."
 (define (focus-window-by-id! id)
   "Jumps to window ID wherever it lives in the active group -- switching
 heads if needed: its frame becomes current and it is raised. A floating
-window just gets float focus (and comes to the top of the float stack)."
+window just gets float focus (and comes to the top of the float stack).
+Returns #t when the jump happened (which includes a sync); #f when ID
+could not be resolved in the active group (stale mirrors: a float
+missing from the group's float list, or a tiled id on no known head or
+frame), in which case nothing was synced and the caller decides whether
+to run its own sync-frames!."
   (if (window-floating? id)
-      (when (member id (group-floats %active-group))
-        (set-group-floats! %active-group
-                           (cons id (delete id (group-floats %active-group))))
-        (set! %focused-float id)
-        (sync-frames!))
+      (and (member id (group-floats %active-group))
+           (begin
+             (set-group-floats! %active-group
+                                (cons id (delete id (group-floats %active-group))))
+             (set! %focused-float id)
+             (sync-frames!)
+             #t))
       (let ((hid (head-of-window id)))
-        (when hid
-          (unless (eqv? hid %current-head-id)
-            (focus-head! hid))
-          (let ((f (find (lambda (fr) (member id (frame-window-ids fr)))
-                         (frame-leaves %frame-tree))))
-            (when f
-              (clear-float-focus!)
-              (set! %current-frame f)
-              (set-frame-current-window! f id)
-              (sync-frames!)))))))
+        (and hid
+             (begin
+               (unless (eqv? hid %current-head-id)
+                 (focus-head! hid))
+               (let ((f (find (lambda (fr) (member id (frame-window-ids fr)))
+                              (frame-leaves %frame-tree))))
+                 (and f
+                      (begin
+                        (clear-float-focus!)
+                        (set! %current-frame f)
+                        (set-frame-current-window! f id)
+                        (sync-frames!)
+                        #t))))))))
 
 (define (frame-add-window! frame id)
   "Appends window ID to FRAME and makes it FRAME's current window."
@@ -1784,9 +1794,12 @@ is raised in it if it was hidden."
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) -1))
              (next-id (list-ref ids (modulo (+ idx 1) n))))
         ;; focus-window-by-id! handles a window on another head and
-        ;; syncs itself; an empty group still gets the sync so the status
-        ;; line and hooks see the (unchanged) state.
-        (focus-window-by-id! next-id)))
+        ;; syncs itself; if it could not resolve the id (stale mirrors)
+        ;; run the sync anyway so placements, the status line and hooks
+        ;; still self-heal. An empty group gets the sync for the same
+        ;; reason.
+        (unless (focus-window-by-id! next-id)
+          (sync-frames!))))
     (unless (> n 0) (sync-frames!))))
 
 ;; Windows not currently visible: everything that isn't its frame's
@@ -1858,7 +1871,9 @@ other frame holds any window."
     (when (> n 0)
       (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
              (prev-id (list-ref ids (modulo (- idx 1) n))))
-        (focus-window-by-id! prev-id)))
+        ;; Same self-heal fallback as focus-next-window!.
+        (unless (focus-window-by-id! prev-id)
+          (sync-frames!))))
     (unless (> n 0) (sync-frames!))))
 
 (define (pull-hidden-previous!)

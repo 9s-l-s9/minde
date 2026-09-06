@@ -216,13 +216,12 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                     id,
                     smithay::utils::Rectangle::new(loc, self.last_window_size),
                 );
-                crate::guile::on_window_moved(
-                    id,
-                    loc.x,
-                    loc.y,
-                    self.last_window_size.w,
-                    self.last_window_size.h,
-                );
+                // Deferred to an idle callback: see move_grab.rs for why this
+                // can't run inline from PointerHandle::button's dispatch.
+                let size = self.last_window_size;
+                data.handle.insert_idle(move |_state| {
+                    crate::guile::on_window_moved(id, loc.x, loc.y, size.w, size.h);
+                });
             }
         }
     }

@@ -63,7 +63,14 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
                 data.space.element_geometry(&self.window),
             ) {
                 data.publish_window_geometry(id, geo);
-                crate::guile::on_window_moved(id, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+                // Deferred to an idle callback: `handle.button` above is still
+                // running inside PointerHandle's dispatch, which holds a
+                // non-reentrant lock. A Scheme hook that touches the pointer
+                // (e.g. wm-warp-pointer!) would re-lock it on this thread and
+                // deadlock if called from here.
+                data.handle.insert_idle(move |_state| {
+                    crate::guile::on_window_moved(id, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+                });
             }
         }
     }

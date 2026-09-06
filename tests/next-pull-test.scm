@@ -81,6 +81,37 @@
 (pull-hidden-next!)
 (check "pull with nothing hidden is a no-op" (current-frame-window) 3)
 
+;; focus-window-by-id! reports whether the jump (and its sync) happened,
+;; so callers know when to run the self-heal sync themselves.
+(check "focus-window-by-id! returns #t for a known window"
+       (and (focus-window-by-id! 3) #t) #t)
+(check "focus-window-by-id! returns #f for an unknown window"
+       (focus-window-by-id! 99) #f)
+(check "a failed jump leaves focus alone" %focused 3)
+
+;; Stale-mirror self-heal: a float id the group lists but %floating does
+;; not (dropped hook, drifted mirror) makes focus-window-by-id! fail;
+;; focus-next-window! must still run sync-frames! so the status line,
+;; hooks and placements recover instead of silently doing nothing.
+(use-modules (minde compositor model))
+(define %syncs 0)
+(set-sync-hook! (lambda () (set! %syncs (+ %syncs 1))))
+(set-group-floats! (current-group)
+                   (append (group-floats (current-group)) (list 99)))
+;; ids cycle frames-then-floats: from 3 the next id is the stale 99.
+(focus-next-window!)
+(check "next over a stale id still syncs (self-heal)" (> %syncs 0) #t)
+(check "next over a stale id leaves focus alone" %focused 3)
+(set! %syncs 0)
+;; previous from 2 wraps backwards to the stale 99 as well.
+(focus-window-by-id! 2)
+(set! %syncs 0)
+(focus-previous-window!)
+(check "previous over a stale id still syncs (self-heal)" (> %syncs 0) #t)
+(set-group-floats! (current-group)
+                   (delete 99 (group-floats (current-group))))
+(set-sync-hook! #f)
+
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))
     (begin (format #t "~a test(s) FAILED~%" %failures) (exit 1)))

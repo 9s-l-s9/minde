@@ -488,6 +488,110 @@ identity.
 
 ---
 
+## Epic I — Defect backlog (adversarial review, 2026-09-06)
+
+Findings from a two-lens review of the ~18 commits ending at 402e537
+(plus the uncommitted `layout_needs_repack` gate).  Verified against the
+vendored Smithay 0.7 checkout.  Severity ordered.
+
+### I1 — Deadlock: pointer-grab hooks re-enter the pointer mutex (S, high)
+
+Smithay dispatches grab callbacks while holding the pointer's
+non-reentrant mutex; `move_grab.rs:66` / `resize_grab.rs:219` call
+`guile::on_window_moved` from inside that dispatch.  A
+`handle-window-move!` hook that issues any pointer-touching command
+(`wm-warp-pointer!`, `wm-click`, `wm-scroll`) re-locks the same mutex
+on the same thread and freezes the compositor.
+Fix: defer the hook to a calloop idle callback (or queue commands while
+in grab context).  Acceptance: hook calling `wm-warp-pointer!` on drag
+release does not hang; e2e scenario added.
+
+### I2 — GC hazard: heap `Scm`s in Rust `Vec`s across allocations (S–M, high)
+
+`on_heads_changed`, `wm_timing_stats`, `on_input_device_added`,
+`wm_outputs` (src/guile/mod.rs) collect heap-allocated conses/strings
+into `Vec<Scm>` while continuing to allocate.  bdw-gc does not scan the
+Rust heap, so a GC mid-loop can collect earlier values
+(use-after-free).  The 600d853 lint skips `src/guile/*`.
+Fix: build lists incrementally in a stack-held `Scm` (cons as you go,
+reverse at the end) instead of `Vec<Scm>`; extend the lint to cover
+src/guile.  Acceptance: no `Vec<Scm>` of heap objects crossing an
+allocating call remains.
+
+### I3 — Mid-apply re-advertisement causes duplicate events (M, high)
+
+`enable_head`/`disable_head` call `update_usable_area()` inside
+`apply_output_configuration`'s per-head loop (udev.rs:920, :1061),
+advertising a half-applied layout with a bumped serial before
+`succeeded()`.  shikane files a corrective config, is cancelled by the
+serial bump, retries a no-op — which fires `handle-heads-change!` and
+`handle-output-configured!` again because `output_configuration_applied`
+clears `reported_heads` unconditionally (state.rs:2181).  This is the
+root of the eww duplicate-bar workaround in the user config.
+Fix: suppress the refresh/hook inside the apply path (post-apply
+notification already covers it); drop the unconditional
+`reported_heads.clear()`.  Acceptance: one profile application fires
+each hook exactly once; the `eww close` workaround becomes redundant.
+
+### I4 — Layer-shell changes bump the output-management serial (S, medium)
+
+`update_usable_area` (state.rs:2422) resends full head state + `done`
+whenever usable rects change — an eww bar mapping/unmapping is not
+protocol-visible output state, yet it makes shikane re-evaluate and
+cancels in-flight configurations (feeds I3's loop).
+Fix: only `output_management_refresh` when Output-level state
+(mode/position/scale/transform/enabled/identity) changed.
+
+### I5 — Key repeat survives session pause (S, medium)
+
+`SessionEvent::PauseSession` (udev.rs:459) never calls
+`cancel_key_repeat()`; a held key + `chvt`/suspend leaves the repeat
+timer firing the key hook until the next local key press.
+Fix: cancel in the pause arm.  Acceptance: repeat stops on VT switch.
+
+### I6 — Unbounded re-entrancy in `handle-keyboard-layout-changed!` (S, medium)
+
+`refresh_keyboard_layouts` fires the hook with no depth guard; a hook
+that switches layouts recurses (stack overflow) or ping-pongs through
+the command queue.  Fix: re-entrancy guard around the hook (skip the
+nested fire, log once).
+
+### I7 — `ExplicitPosition` is permanent (S, low)
+
+Set on any positioned apply — even one later reverted — and never
+removable; no head can return to auto layout (state.rs:2194).
+Fix: unmark on revert; consider a `#:position 'auto` escape hatch.
+Status: revert-correctness fixed (the flag is now a mutable
+`AtomicBool`; a reverted configuration unmarks heads it positioned).
+Follow-up: a user-facing explicit→auto escape hatch
+(`configure-output! #:position 'auto`) is deliberately deferred — it
+grows the Scheme API; the `mark_position_auto` primitive it would need
+already exists.
+
+### I8 — `next!`/`previous!` skip their sync (S, low)
+
+0d39ccb moved the trailing `(sync-frames!)` behind the fallback branch;
+`focus-window-by-id!`'s three silent no-op branches now skip placement
+entirely (frames.scm:~1783/~1858).  Fix: sync (or at least run
+`%sync-hook`) on the no-op branches too.
+
+### I9 — Failed enable leaves requested mode on the disabled output (S, low)
+
+`enable_head`'s failure path keeps the just-failed mode/position
+(udev.rs:898-914), so a later "enable without mode" can retry the exact
+mode that failed; `udev_set_mode` on a powered-off head records the
+mode unvalidated, and the later power-on can fail dark (udev.rs:1525).
+Fix: restore prior state on failure; validate modes on powered-off
+heads.
+
+### I10 — Watchdog/vblank mis-accounting after a driver hiccup (S, low)
+
+After `vblank_watchdog_fired` gives up on a flip, the old flip's late
+vblank is attributed to the new one (udev.rs:1194, :1282).
+Self-healing (one stutter); fix by tagging flips with a sequence.
+
+---
+
 ## Suggested order
 
 1. **A1, C5, B1, B2** — the agent can see a window's facts, get a
