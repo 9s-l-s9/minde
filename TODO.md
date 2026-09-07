@@ -589,15 +589,15 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       binary, which links libguile directly) so nothing to pin there.
 
 ### Repository hygiene
-- [x] 5.18 Root-level working notes added in c441fca: `AUTOMATION-WISHLIST.md`,
-      `web-form-quirks-playbook.md`, six `issue-wm-*.md`. All issue files already
+- [x] 5.18 Root-level working notes added in c441fca: `AUTOMATION-WISHLIST.md`
+      and six `issue-wm-*.md`. All issue files already
       carry a "Status: implemented (2026-08-31)" section matching commits
       9f133e0..726bc65; nothing in `Makefile`, `README.md`, `doc/` or `guix.scm`
       references them and `check-doc-links` does not cover them.
       `issue-wm-drop-files.md` is superseded by
       `issue-wm-drop-files-rejected-by-dropzones.md`. Idea: move to `doc/notes/`,
-      fold outcomes into `CHANGELOG.md`, promote the playbook to `doc/`.
-      Done: all eight files `git mv`d to `doc/notes/`; `doc/notes/README.md`
+      fold outcomes into `CHANGELOG.md`.
+      Done: the technical notes live in `doc/notes/`; `doc/notes/README.md`
       added as a short index describing each note and its status.
       `issue-wm-drop-files.md` was kept (not deleted): it is the original,
       broader feature-request/API design for `wm-drop-files`/`wm-drop-text`,

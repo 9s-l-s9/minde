@@ -10,8 +10,6 @@ under "Unreleased".
 - `AUTOMATION-WISHLIST.md` — running list of automation primitive gaps
   found while scripting real browser workflows (clicks, paste, drag-and-
   drop, screenshots).
-- `web-form-quirks-playbook.md` — notes on how real web forms (Firefox/Zen)
-  react to synthetic input, informing the fixes below.
 - `issue-wm-click-paste-settle-timing.md` — clicks on custom controls were
   flaky and double-clicks went unrecognized; fixed by hovering and settling
   before synthetic clicks. Implemented.
