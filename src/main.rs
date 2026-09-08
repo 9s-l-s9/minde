@@ -19,6 +19,8 @@ mod logging;
 mod png;
 mod render;
 mod runtime_dir;
+#[cfg(test)]
+mod space_bench;
 mod state;
 mod timing;
 mod udev;

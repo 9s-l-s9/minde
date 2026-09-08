@@ -1966,30 +1966,30 @@ impl MindeState {
         // same output panics -- see the frame-callback NOTE below).
         let layer_map = smithay::desktop::layer_map_for_output(&output);
         let mut presentation_feedback = OutputPresentationFeedback::new(&output);
-        for window in self.space.elements() {
-            if self.space.outputs_for_element(window).contains(&output) {
-                window.with_surfaces(|surface, states| {
-                    update_surface_primary_scanout_output(
+        // Use the cached membership directly: querying outputs_for_element
+        // for each window repeatedly scans Space and allocates a Vec.
+        for window in self.space.elements_for_output(&output) {
+            window.with_surfaces(|surface, states| {
+                update_surface_primary_scanout_output(
+                    surface,
+                    &output,
+                    states,
+                    None,
+                    &render_result.states,
+                    default_primary_scanout_output_compare,
+                );
+            });
+            window.take_presentation_feedback(
+                &mut presentation_feedback,
+                surface_primary_scanout_output,
+                |surface, _| {
+                    surface_presentation_feedback_flags_from_states(
                         surface,
-                        &output,
-                        states,
                         None,
                         &render_result.states,
-                        default_primary_scanout_output_compare,
-                    );
-                });
-                window.take_presentation_feedback(
-                    &mut presentation_feedback,
-                    surface_primary_scanout_output,
-                    |surface, _| {
-                        surface_presentation_feedback_flags_from_states(
-                            surface,
-                            None,
-                            &render_result.states,
-                        )
-                    },
-                );
-            }
+                    )
+                },
+            );
         }
         for layer_surface in layer_map.layers() {
             layer_surface.with_surfaces(|surface, states| {
@@ -2036,16 +2036,20 @@ impl MindeState {
         self.space.elements().for_each(|window| {
             let geo = self.space.element_geometry(window);
             let on_this = geo.map(|g| g.overlaps(output_geo)).unwrap_or(false);
-            let parked = geo
-                .map(|g| {
-                    !self
-                        .space
-                        .outputs()
-                        .filter_map(|o| self.space.output_geometry(o))
-                        .any(|og| g.overlaps(og))
-                })
-                .unwrap_or(true);
-            if on_this || (parked && is_first_output) {
+            // Only the first output services parked windows. Visible windows
+            // already qualify, so avoid output geometry queries for them too.
+            let needs_parked_callback = is_first_output
+                && !on_this
+                && geo
+                    .map(|g| {
+                        !self
+                            .space
+                            .outputs()
+                            .filter_map(|o| self.space.output_geometry(o))
+                            .any(|og| g.overlaps(og))
+                    })
+                    .unwrap_or(true);
+            if on_this || needs_parked_callback {
                 window.send_frame(
                     &output,
                     self.start_time.elapsed(),
