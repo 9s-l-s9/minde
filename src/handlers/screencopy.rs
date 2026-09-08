@@ -39,7 +39,7 @@ use smithay::{
             damage::OutputDamageTracker, element::AsRenderElements, gles::GlesRenderbuffer,
         },
     },
-    desktop::{LayerSurface, Space, Window, layer_map_for_output},
+    desktop::{Space, Window, layer_map_for_output},
     output::Output,
     reexports::wayland_server::protocol::wl_buffer::WlBuffer,
     utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
@@ -221,7 +221,7 @@ where
     // (wlr region capture) lands at the top-left of the destination buffer.
     // Full-output captures pass `(0, 0)` and are unaffected.
     let base = output_geo.loc + origin;
-    let mut custom: Vec<MindeRenderElements<R>> = Vec::new();
+    let mut all: Vec<MindeRenderElements<R>> = Vec::new();
 
     // Cursor at the current pointer location (only when this capture asked
     // for cursors and the pointer is over this output).
@@ -233,7 +233,7 @@ where
         let cursor_phys = (cursor_pos - hotspot.to_f64())
             .to_physical(scale)
             .to_i32_round();
-        custom.extend(cursor_state.render_elements(renderer, cursor_phys, scale));
+        all.extend(cursor_state.render_elements(renderer, cursor_phys, scale));
     }
 
     // Centered message overlay.
@@ -245,24 +245,24 @@ where
             scale,
         )
     {
-        custom.push(elem);
+        all.push(elem);
     }
 
     // Positioned overlays landing on this output.
     for (loc, msg) in overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
         if let Some(elem) = crate::render::overlay_element(renderer, msg, *loc - base, scale) {
-            custom.push(elem);
+            all.push(elem);
         }
     }
 
-    // Layer surfaces, split into upper (above windows) and lower (below).
+    // Append each layer directly to the scene, preserving layer-map order.
+    // Two borrowed passes avoid partition Vecs and temporary element lists
+    // on every frame (and on every capture).
     let layer_map = layer_map_for_output(output);
-    let (lower, upper): (Vec<&LayerSurface>, Vec<_>) = layer_map
-        .layers()
-        .partition(|s| matches!(s.layer(), WlrLayer::Background | WlrLayer::Bottom));
-    let layer_elements = |surfaces: &[&LayerSurface], renderer: &mut R| {
-        let mut out: Vec<MindeRenderElements<R>> = Vec::new();
-        for surface in surfaces {
+    let append_layers = |lower: bool, renderer: &mut R, out: &mut Vec<MindeRenderElements<R>>| {
+        for surface in layer_map.layers().filter(|surface| {
+            matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom) == lower
+        }) {
             let loc = layer_map
                 .layer_geometry(surface)
                 .map(|geo| geo.loc)
@@ -271,16 +271,15 @@ where
             out.extend(AsRenderElements::<R>::render_elements::<
                 MindeRenderElements<R>,
             >(
-                *surface,
+                surface,
                 renderer,
                 loc.to_physical_precise_round(scale),
                 scale,
                 1.0,
             ));
         }
-        out
     };
-    custom.extend(layer_elements(&upper, renderer));
+    append_layers(false, renderer, &mut all);
 
     // Focus border around the selected frame.
     if let Some(geo) = focus
@@ -288,11 +287,10 @@ where
     {
         let mut local = geo;
         local.loc -= base;
-        custom.extend(border_buffers.elements(local, scale, border_color));
+        all.extend(border_buffers.elements(local, scale, border_color));
     }
 
     // Window surfaces, front-to-back (space yields back-to-front).
-    let mut all: Vec<MindeRenderElements<R>> = custom;
     for window in space.elements().rev() {
         let Some(loc) = space.element_location(window) else {
             continue;
@@ -310,7 +308,7 @@ where
         ));
     }
     // Background/bottom layers under everything.
-    all.extend(layer_elements(&lower, renderer));
+    append_layers(true, renderer, &mut all);
     all
 }
 
