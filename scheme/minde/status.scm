@@ -5,6 +5,8 @@
   #:use-module (ice-9 ftw)
   #:use-module (ice-9 match)
   #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-13)
+  #:use-module (srfi srfi-14)
   #:use-module (minde compositor frames)
   #:use-module (minde compositor rust)
   #:use-module (minde groups)
@@ -48,19 +50,18 @@
   (or (rust-call-if-bound 'wm-runtime-info)
       '("unknown" "unknown" -1 0)))
 
-(define (output-state)
-  (let ((outputs (or (rust-call-if-bound 'wm-outputs) '())))
-    (list->vector
-     (map (lambda (output)
-            `((id . ,(list-ref output 0))
-              (x . ,(list-ref output 1))
-              (y . ,(list-ref output 2))
-              (width . ,(list-ref output 3))
-              (height . ,(list-ref output 4))
-              (name . ,(if (> (length output) 5)
-                           (list-ref output 5)
-                           "unknown"))))
-          outputs))))
+(define (output-state outputs)
+  (list->vector
+   (map (lambda (output)
+          `((id . ,(list-ref output 0))
+            (x . ,(list-ref output 1))
+            (y . ,(list-ref output 2))
+            (width . ,(list-ref output 3))
+            (height . ,(list-ref output 4))
+            (name . ,(if (> (length output) 5)
+                         (list-ref output 5)
+                         "unknown"))))
+        outputs)))
 
 (define (group-state)
   (list->vector
@@ -87,7 +88,7 @@
        (head_id . ,(current-head-id))
        (spec . ,(format #f "~s" spec))))))
 
-(define (state-body redact?)
+(define (state-body redact? outputs)
   ;; The window-management half of the state: everything after the
   ;; header, so a publication can compare it against the previous one and
   ;; reuse it verbatim when it must be written.
@@ -104,7 +105,7 @@
       (focused_group . ,(current-group-name))
       (focused_window . ,(or focused-state 'null))
       (urgent_windows . ,(list->vector (urgent-windows)))
-      (outputs . ,(output-state))
+      (outputs . ,(output-state outputs))
       (layout . ,(layout-state)))))
 
 (define (state-with-header body sequence generated-at-ms runtime)
@@ -123,10 +124,24 @@
                         (runtime-info (call-runtime-info)))
   "Returns the schema-versioned compositor state as an alist.
 When REDACT? is true, window titles and application identifiers are omitted."
-  (state-with-header (state-body redact?) sequence generated-at-ms
-                     runtime-info))
+  (state-with-header
+   (state-body redact? (or (rust-call-if-bound 'wm-outputs) '()))
+   sequence generated-at-ms runtime-info))
+
+(define %json-escape-characters
+  (list->char-set (append (map integer->char (iota 32)) (list #\" #\\))))
 
 (define (write-json-string value port)
+  ;; Most status keys and values need no escaping. Write those strings in
+  ;; bulk instead of crossing into the port machinery for every character.
+  (if (string-any %json-escape-characters value)
+      (write-escaped-json-string value port)
+      (begin
+        (display #\" port)
+        (display value port)
+        (display #\" port))))
+
+(define (write-escaped-json-string value port)
   (display #\" port)
   (string-for-each
    (lambda (character)
@@ -253,18 +268,19 @@ management. Before any output is configured there is nothing meaningful to
 report (and no head geometry to describe), so the call returns immediately
 without building the state body or touching the sequence number; the sync
 hook's own state build only ever runs after the first output exists."
-  (unless (null? (or (rust-call-if-bound 'wm-outputs) '()))
-    (let* ((runtime (call-runtime-info))
-           (body (state-body #f))
-           ;; Uptime is observational and changes continuously; it must not
-           ;; turn every policy sync into a false status change.
-           (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
-                                    (list-ref runtime 2))
-                              body)))
-      (unless (equal? fingerprint %last-fingerprint)
-        (set! %last-fingerprint fingerprint)
-        (set! %sequence (+ %sequence 1))
-        (set! %pending-body body)
-        (set! %pending-runtime runtime)
-        (schedule-status-write!))))
+  (let ((outputs (or (rust-call-if-bound 'wm-outputs) '())))
+    (unless (null? outputs)
+      (let* ((runtime (call-runtime-info))
+             (body (state-body #f outputs))
+             ;; Uptime is observational and changes continuously; it must not
+             ;; turn every policy sync into a false status change.
+             (fingerprint (cons (list (list-ref runtime 0) (list-ref runtime 1)
+                                      (list-ref runtime 2))
+                                body)))
+        (unless (equal? fingerprint %last-fingerprint)
+          (set! %last-fingerprint fingerprint)
+          (set! %sequence (+ %sequence 1))
+          (set! %pending-body body)
+          (set! %pending-runtime runtime)
+          (schedule-status-write!)))))
   %sequence)

@@ -1,0 +1,21 @@
+;;; SPDX-License-Identifier: GPL-3.0-or-later
+;;; Isolate JSON generation from status file I/O; run after compiling each candidate with make compile-scheme.
+(use-modules (minde compositor frames) (minde groups) (minde status))
+(define (wm-place-window . args) #t)
+(define (wm-focus-window . args) #t)
+(define (wm-clear-focus) #t)
+(define (wm-focus-rect . args) #t)
+(define (wm-output-geometry) '(0 0 1280 720))
+(define (wm-outputs) '((7 0 0 1280 720 "eDP-1")))
+(define (wm-runtime-info) '("winit" "ready" 2 1234))
+(define (wm-log . args) #t)
+(update-output-geometry! 0 0 1280 720)
+(handle-window-map! 42 "A typical terminal window" "foot")
+(define encode (@@ (minde status) json-value))
+(define state (current-state #:generated-at-ms 0))
+(do ((i 0 (+ i 1))) ((= i 100)) (encode state))
+(let ((start (get-internal-real-time)) (iterations 20000))
+  (do ((i 0 (+ i 1))) ((= i iterations)) (encode state))
+  (format #t "~,2f us/JSON object~%"
+          (* 1e6 (/ (- (get-internal-real-time) start)
+                     internal-time-units-per-second iterations))))

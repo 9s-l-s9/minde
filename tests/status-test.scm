@@ -1,7 +1,7 @@
 ;;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;; Structured status schema and atomic publication tests.
 
-(use-modules (ice-9 rdelim))
+(use-modules (ice-9 rdelim) (srfi srfi-1))
 
 (define %focused #f)
 (define (wm-place-window . arguments) #t)
@@ -9,7 +9,10 @@
 (define (wm-clear-focus) (set! %focused #f) #t)
 (define (wm-focus-rect . arguments) #t)
 (define (wm-output-geometry) '(0 0 1280 720))
-(define (wm-outputs) '((7 0 0 1280 720 "eDP-1")))
+(define %output-queries 0)
+(define (wm-outputs)
+  (set! %output-queries (+ %output-queries 1))
+  '((7 0 0 1280 720 "eDP-1")))
 (define (wm-runtime-info) '("winit" "ready" 2 1234))
 (define (wm-log . arguments) #t)
 
@@ -52,7 +55,20 @@
                   (string #\a (integer->char 8) #\b))
                  "\"a\\u0008b\""))
 
+(for-each
+ (lambda (value)
+   (check "bulk JSON strings match the escaping writer"
+          (string=? ((@@ (minde status) json-string) value)
+                    (call-with-output-string
+                     (lambda (port)
+                       ((@@ (minde status) write-escaped-json-string) value port))))))
+ (append (list "" "ordinary ASCII title" "Grüße 世界 🪟" "quote\"slash\\")
+         (map (lambda (code) (string #\a (integer->char code) #\b))
+              (iota 32))))
+
+(set! %output-queries 0)
 (let ((first-sequence (publish-status!)))
+  (check "publication queries its output snapshot once" (= %output-queries 1))
   (check "status file is created" (file-exists? test-path))
   (check "unchanged status is not republished" (= first-sequence (publish-status!)))
   (call-with-input-file test-path

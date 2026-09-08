@@ -11,6 +11,9 @@
 ;;; the mean and maximum per call plus how many placements reached the
 ;;; (stubbed) compositor. Timing is reported, never asserted: this file is
 ;;; for measuring a change, not for gating one.
+;;; Set MINDE_BENCH_STATUS=1 to include status generation and file writes.
+;;; Its private temporary runtime directory is removed after the measurement;
+;;; deferred writes are drained after each sync to model separate events.
 
 (use-modules (srfi srfi-1) (ice-9 format))
 
@@ -34,7 +37,23 @@
 (define (wm-log msg) #t)
 (define (wm-message text timeout) #t)
 
-(use-modules (minde compositor frames) (minde groups))
+(use-modules (minde compositor frames) (minde groups) (minde status))
+
+(define status? (equal? (getenv "MINDE_BENCH_STATUS") "1"))
+(define status-directory (and status? (mkdtemp "/tmp/minde-bench-status.XXXXXX")))
+(define %deferred '())
+(define (wm-run-after ms thunk)
+  (set! %deferred (cons thunk %deferred))
+  #t)
+(when status?
+  (setenv "XDG_RUNTIME_DIR" status-directory)
+  (setenv "MINDE_STATUS_PATH" (string-append status-directory "/status.json"))
+  (set-sync-hook!
+   (lambda ()
+     (publish-status!)
+     (let ((pending %deferred))
+       (set! %deferred '())
+       (for-each (lambda (thunk) (thunk)) pending)))))
 
 (define windows (or (and (> (length (command-line)) 1)
                          (string->number (cadr (command-line))))
@@ -73,3 +92,9 @@
 (format #t "  mean ~,1f us/call, max ~a us~%" (/ total-us iterations) max-us)
 (format #t "  placements sent ~a (~,2f per call), batch calls ~a~%"
         %placement-calls (/ %placement-calls iterations) %batch-calls)
+
+(when status?
+  (format #t "  includes status generation and per-event file writes~%")
+  (delete-file (string-append status-directory "/status.json"))
+  (delete-file (string-append status-directory "/minde-status"))
+  (rmdir status-directory))
