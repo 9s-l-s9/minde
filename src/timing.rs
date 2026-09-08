@@ -60,6 +60,27 @@ static STATS: [Stats; 3] = [
     },
 ];
 
+/// Records a scope even when its event handler returns early.
+pub struct Measurement {
+    probe: Probe,
+    start: Instant,
+}
+
+impl Measurement {
+    pub fn start(probe: Probe) -> Self {
+        Self {
+            probe,
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Drop for Measurement {
+    fn drop(&mut self) {
+        record(self.probe, self.start);
+    }
+}
+
 /// Records the time elapsed since `start` under `probe`.
 pub fn record(probe: Probe, start: Instant) {
     let elapsed = start.elapsed().as_micros().min(u64::MAX as u128) as u64;

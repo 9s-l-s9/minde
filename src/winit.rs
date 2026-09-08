@@ -137,6 +137,8 @@ pub fn init_winit(
     event_loop
         .handle()
         .insert_source(winit, move |event, _, state| {
+            let _render_measurement = matches!(&event, WinitEvent::Redraw)
+                .then(|| crate::timing::Measurement::start(crate::timing::Probe::Render));
             let mut backend = backend.borrow_mut();
             if matches!(&event, WinitEvent::Redraw) {
                 pending.set(false);

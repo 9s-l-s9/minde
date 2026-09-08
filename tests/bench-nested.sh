@@ -12,6 +12,7 @@ sleep 3
 cpu_ticks() { awk '{print $14 + $15}' "/proc/$NESTED_WM_PID/stat"; }
 measure_idle() {
     label=$1
+    render_before=$(scripts/mindectl eval '(or (assq (quote render) (wm-timing-stats)) (error "render probe missing"))')
     before=$(cpu_ticks)
     start=$(date +%s%N)
     sleep 5
@@ -20,6 +21,9 @@ measure_idle() {
     awk -v ticks="$((after - before))" -v hz="$(getconf CLK_TCK)" \
         -v ns="$((end - start))" -v label="$label" \
         'BEGIN {printf "%s CPU: %.2f%% of one core\n", label, 100*ticks/hz/(ns/1e9)}'
+    render_after=$(scripts/mindectl eval '(or (assq (quote render) (wm-timing-stats)) (error "render probe missing"))')
+    printf '%s render stats before: %s\n%s render stats after: %s\n' \
+        "$label" "$render_before" "$label" "$render_after"
 }
 {
     measure_idle idle
