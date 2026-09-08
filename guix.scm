@@ -126,7 +126,14 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                                 #$(this-package-input "libxkbcommon")
                                 #$(this-package-input "libseat")
                                 #$(this-package-input "libinput-minimal")
-                                #$(this-package-input "eudev")))
+                                #$(this-package-input "eudev")
+                                ;; Winit dlopens these for --winit; test and
+                                ;; run the packaged binary without a dev shell.
+                                #$(this-package-input "libx11")
+                                #$(this-package-input "libxcb")
+                                #$(this-package-input "libxi")
+                                #$(this-package-input "libxcursor")
+                                #$(this-package-input "libxrandr")))
                      " "))
             (mkdir-p ".cargo")
             (copy-file "guix/cargo-config.toml" ".cargo/config.toml")
@@ -291,7 +298,12 @@ Type=Application
          eudev
          libseat
          mesa
-         libglvnd))
+         libglvnd
+         libx11
+         libxcb
+         libxi
+         libxcursor
+         libxrandr))
   ;; smithay execs "Xwayland" from PATH at runtime; propagation puts it
   ;; into the same profile as minde (system profile via SDDM).
   (propagated-inputs

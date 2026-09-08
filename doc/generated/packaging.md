@@ -77,7 +77,12 @@ Entered with `guix shell -m manifest.scm`:
 - `libglvnd`
 - `libinput-minimal`
 - `libseat`
+- `libx11`
+- `libxcb`
+- `libxcursor`
+- `libxi`
 - `libxkbcommon`
+- `libxrandr`
 - `mesa`
 - `wayland`
 
