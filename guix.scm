@@ -91,6 +91,11 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
   (arguments
    (list
     #:tests? #t
+    ;; Host-side imports do not enter the isolated builder. The bytecode
+    ;; install phase uses SRFI-1's append-map to enumerate Scheme sources.
+    #:modules '((guix build gnu-build-system)
+                (guix build utils)
+                (srfi srfi-1))
     #:phases
     #~(modify-phases %standard-phases
         (delete 'configure)
