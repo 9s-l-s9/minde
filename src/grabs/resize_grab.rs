@@ -21,7 +21,10 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
 };
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex},
+};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,12 +57,45 @@ pub struct ResizeSurfaceGrab {
 
     initial_rect: Rectangle<i32, Logical>,
     last_window_size: Size<i32, Logical>,
-    /// Size last sent to the client via `send_pending_configure`. Motion
-    /// events arrive far more often than the size actually changes (mouse
-    /// jitter, sub-pixel deltas clamped to the same integer size); skipping
-    /// the configure when the size is unchanged avoids a wasted round trip
-    /// per event (3.6).
-    last_configured_size: Size<i32, Logical>,
+    configures: Arc<Mutex<ResizeConfigureQueue>>,
+}
+
+/// One latest size per event-loop dispatch. Clearing the pending size also
+/// cancels the idle callback when the grab ends or is replaced.
+struct ResizeConfigureQueue {
+    pending: Option<Size<i32, Logical>>,
+    sent: Size<i32, Logical>,
+}
+
+impl ResizeConfigureQueue {
+    fn new(size: Size<i32, Logical>) -> Self {
+        Self {
+            pending: None,
+            sent: size,
+        }
+    }
+
+    /// Returns true only when a new idle callback is needed.
+    fn request(&mut self, size: Size<i32, Logical>) -> bool {
+        if self.pending.is_none() && size == self.sent {
+            return false;
+        }
+        self.pending.replace(size).is_none()
+    }
+
+    fn take(&mut self) -> Option<Size<i32, Logical>> {
+        let size = self.pending.take()?;
+        if size == self.sent {
+            None
+        } else {
+            self.sent = size;
+            Some(size)
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.pending = None;
+    }
 }
 
 impl ResizeSurfaceGrab {
@@ -89,7 +125,7 @@ impl ResizeSurfaceGrab {
             edges,
             initial_rect,
             last_window_size: initial_rect.size,
-            last_configured_size: initial_rect.size,
+            configures: Arc::new(Mutex::new(ResizeConfigureQueue::new(initial_rect.size))),
         }
     }
 }
@@ -155,17 +191,27 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
             new_window_height.max(min_height).min(max_height),
         ));
 
-        if let Some(xdg) = self.window.toplevel() {
-            xdg.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Resizing);
-                state.size = Some(self.last_window_size);
-            });
-            // Coalesce: only configure the client when the clamped size
-            // actually changed since the last configure sent for this grab.
-            if self.last_window_size != self.last_configured_size {
-                xdg.send_pending_configure();
-                self.last_configured_size = self.last_window_size;
-                data.schedule_redraw();
+        if self.window.toplevel().is_some() {
+            if self
+                .configures
+                .lock()
+                .unwrap()
+                .request(self.last_window_size)
+            {
+                let configures = self.configures.clone();
+                let window = self.window.clone();
+                data.handle.insert_idle(move |data| {
+                    let Some(size) = configures.lock().unwrap().take() else {
+                        return;
+                    };
+                    let Some(xdg) = window.toplevel() else { return };
+                    xdg.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Resizing);
+                        state.size = Some(size);
+                    });
+                    xdg.send_pending_configure();
+                    data.schedule_redraw();
+                });
             }
         } else if let Some(x11) = self.window.x11_surface() {
             let loc = data
@@ -232,7 +278,9 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut MindeState) {}
+    fn unset(&mut self, _data: &mut MindeState) {
+        self.configures.lock().unwrap().cancel();
+    }
 }
 
 /// State of the resize operation.
@@ -328,4 +376,40 @@ pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<(
     }
 
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResizeConfigureQueue;
+
+    #[test]
+    fn resize_burst_sends_only_latest_size() {
+        let mut queue = ResizeConfigureQueue::new((640, 480).into());
+        let mut callbacks = 0;
+        for width in 641..=1640 {
+            callbacks += usize::from(queue.request((width, 480).into()));
+        }
+        assert_eq!(callbacks, 1);
+        assert_eq!(queue.take(), Some((1640, 480).into()));
+        assert_eq!(queue.take(), None);
+        assert!(!queue.request((1640, 480).into()));
+        assert!(queue.request((1641, 480).into()));
+        assert_eq!(queue.take(), Some((1641, 480).into()));
+    }
+
+    #[test]
+    fn resize_return_to_sent_size_needs_no_configure() {
+        let mut queue = ResizeConfigureQueue::new((640, 480).into());
+        assert!(queue.request((641, 480).into()));
+        assert!(!queue.request((640, 480).into()));
+        assert_eq!(queue.take(), None);
+    }
+
+    #[test]
+    fn resize_release_or_replacement_cancels_stale_callback() {
+        let mut queue = ResizeConfigureQueue::new((640, 480).into());
+        assert!(queue.request((800, 600).into()));
+        queue.cancel();
+        assert_eq!(queue.take(), None);
+    }
 }
