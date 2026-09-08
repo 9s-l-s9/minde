@@ -1267,8 +1267,8 @@ impl MindeState {
     /// Marks every udev output dirty and schedules a render for each one that
     /// is idle. The entry point for every scene change: surface commits,
     /// window map/unmap, layer changes, focus/placement, messages and
-    /// overlays, output configuration, queued captures. A no-op under winit
-    /// (its redraw loop is continuous).
+    /// overlays, output configuration, queued captures. Wakes winit through its
+    /// coalescing ping source.
     pub fn schedule_redraw(&mut self) {
         self.schedule_redraw_where(|_| true);
     }
@@ -1284,6 +1284,9 @@ impl MindeState {
         &mut self,
         mut wanted: impl FnMut(smithay::utils::Rectangle<i32, Logical>) -> bool,
     ) {
+        if let Some(ping) = &self.winit_redraw_ping {
+            ping.ping();
+        }
         let Some(udev) = self.udev_data.as_mut() else {
             return;
         };
@@ -1707,12 +1710,14 @@ impl MindeState {
     }
 
     /// Forces an immediate repaint of every udev output. Used by the
-    /// session-lock handler so a blank frame reaches every screen before the
-    /// lock is confirmed. No-op under winit (its redraw loop repaints
-    /// continuously; the lock flag makes those frames blank on its own).
+    /// session-lock handler so a blank frame reaches every DRM screen before
+    /// the lock is confirmed. Under winit, requests a redraw of the locked scene.
     /// If a flip is still pending the frame is queued behind it by the DRM
     /// compositor; its vblank is then absorbed by `frame_finish`.
     pub(crate) fn render_all_outputs_now(&mut self) {
+        if let Some(ping) = &self.winit_redraw_ping {
+            ping.ping();
+        }
         let Some(udev) = self.udev_data.as_ref() else {
             return;
         };

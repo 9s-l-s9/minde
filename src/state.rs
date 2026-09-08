@@ -319,6 +319,8 @@ pub struct MindeState {
     /// power comes back. Never set under udev (which drops the head's
     /// render surface instead).
     pub winit_powered_off: bool,
+    /// Coalesced wake-up for the nested backend; absent on DRM.
+    pub winit_redraw_ping: Option<smithay::reexports::calloop::ping::Ping>,
 
     /// `zwp_pointer_constraints_v1` global state (pointer lock/confinement)
     /// and `zwp_relative_pointer_manager_v1` global state (raw relative
@@ -653,6 +655,7 @@ impl MindeState {
             output_power,
             wake_on_input: true,
             winit_powered_off: false,
+            winit_redraw_ping: None,
             pointer_constraints_state,
             relative_pointer_manager_state,
             fractional_scale_manager_state,
@@ -2397,6 +2400,7 @@ impl MindeState {
         }
         tracing::info!(output = %output.name(), on, "winit output power");
         self.winit_powered_off = !on;
+        self.schedule_redraw();
         Ok(())
     }
 

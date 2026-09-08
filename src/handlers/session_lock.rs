@@ -72,9 +72,8 @@ impl SessionLockHandler for MindeState {
         // Force a blank frame onto every output before telling the client the
         // session is locked: the spec wants a cleared frame presented first,
         // so the last desktop frame is not still on screen when we confirm.
-        // (Both backends also keep repainting on their own; this just closes
-        // the gap synchronously. No-op under winit -- its redraw loop
-        // repaints continuously.)
+        // Under winit this requests a redraw of the locked scene; only the
+        // DRM path presents synchronously here.
         self.render_all_outputs_now();
 
         // Only fire the Scheme transition hook on a real unlocked->locked

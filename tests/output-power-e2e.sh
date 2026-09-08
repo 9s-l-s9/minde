@@ -27,6 +27,27 @@ nested_start "$OUT" "${MINDE_OUTPUT_POWER_E2E_DISPLAY:-:99}" || {
     exit 1
 }
 
+# Inspect the host window too: protocol replies alone cannot detect a
+# missing redraw wake-up that leaves the old desktop visible after DPMS off.
+assert_host_power_pixels() {
+    expected=$1
+    attempt=0
+    while [ "$attempt" -lt 20 ]; do
+        import -window root "$OUT/host-$expected.png"
+        mean=$(identify -format '%[mean]' "$OUT/host-$expected.png")
+        if awk -v mean="$mean" -v expected="$expected" \
+            'BEGIN {exit !((expected == "off") ? mean == 0 : mean > 0)}'; then
+            echo "ok - host pixels reflect power $expected"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.1
+    done
+    echo "error: host pixels never reflected power $expected" >&2
+    return 1
+}
+assert_host_power_pixels on
+
 # wlopm prints one "<name> <on|off>" line per output.
 power_query() {
     nested_wayland timeout 15 wlopm 2>"$OUT/wlopm.err"
@@ -64,6 +85,7 @@ printf '%s' "$q2" | grep -q '^winit off$' || {
     exit 1
 }
 echo "ok - wlopm --off winit: head reports off"
+assert_host_power_pixels off
 
 # Power is orthogonal to the layout: the head stays enabled for
 # wlr-output-management and the compositor keeps answering.
@@ -108,6 +130,7 @@ printf '%s' "$q3" | grep -q '^winit on$' || {
     exit 1
 }
 echo "ok - wlopm --on winit: head reports on again"
+assert_host_power_pixels on
 
 kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died during the power cycle" >&2

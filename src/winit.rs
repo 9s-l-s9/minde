@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-use std::time::Duration;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     backend::{
@@ -8,7 +12,11 @@ use smithay::{
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    reexports::calloop::EventLoop,
+    reexports::calloop::{
+        EventLoop,
+        ping::make_ping,
+        timer::{TimeoutAction, Timer},
+    },
     utils::{Rectangle, Transform},
 };
 
@@ -40,6 +48,7 @@ pub fn realize_head(
         // a re-enabled head always lights up.
         state.winit_powered_off = false;
     }
+    state.schedule_redraw();
     Ok(())
 }
 
@@ -47,7 +56,7 @@ pub fn init_winit(
     event_loop: &mut EventLoop<MindeState>,
     state: &mut MindeState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut backend, winit) = winit::init()?;
+    let (backend, winit) = winit::init()?;
 
     let mode = Mode {
         size: backend.window_size(),
@@ -82,6 +91,43 @@ pub fn init_winit(
     // Autostart hook: run once the first (and only, for winit) output is up.
     guile::on_startup();
 
+    // Scene changes wake the backend through calloop, without borrowing the
+    // renderer inside an input/commit callback. A pending redraw coalesces
+    // bursts; pacing also bounds clients that commit undamaged frames.
+    let backend = Rc::new(RefCell::new(backend));
+    let pending = Rc::new(Cell::new(false));
+    let last_redraw = Rc::new(Cell::new(Instant::now()));
+    let interval = Duration::from_nanos(1_000_000_000 / 60);
+    let (ping, source) = make_ping()?;
+    state.winit_redraw_ping = Some(ping);
+    let redraw_backend = backend.clone();
+    let redraw_pending = pending.clone();
+    let redraw_time = last_redraw.clone();
+    event_loop
+        .handle()
+        .insert_source(source, move |_, _, state| {
+            if redraw_pending.replace(true) {
+                return;
+            }
+            let deadline = redraw_time.get() + interval;
+            if deadline <= Instant::now() {
+                redraw_backend.borrow().window().request_redraw();
+            } else {
+                let backend = redraw_backend.clone();
+                if state
+                    .handle
+                    .insert_source(Timer::from_deadline(deadline), move |_, _, _| {
+                        backend.borrow().window().request_redraw();
+                        TimeoutAction::Drop
+                    })
+                    .is_err()
+                {
+                    // Keep a failed timer registration from stranding the scene.
+                    redraw_backend.borrow().window().request_redraw();
+                }
+            }
+        })?;
+
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
     // Persistent buffers for the 4 border edges (stable element ids keep
@@ -91,6 +137,11 @@ pub fn init_winit(
     event_loop
         .handle()
         .insert_source(winit, move |event, _, state| {
+            let mut backend = backend.borrow_mut();
+            if matches!(&event, WinitEvent::Redraw) {
+                pending.set(false);
+                last_redraw.set(Instant::now());
+            }
             match event {
                 WinitEvent::Resized { size, .. } => {
                     output.change_current_state(
@@ -111,6 +162,7 @@ pub fn init_winit(
                     state.update_fractional_scales();
                     // Keep any lock surface covering the whole (resized) output.
                     state.reconfigure_lock_surfaces();
+                    state.schedule_redraw();
                 }
                 WinitEvent::Input(event) => state.process_input_event(event),
                 WinitEvent::Redraw if state.locked => {
@@ -157,14 +209,13 @@ pub fn init_winit(
                     }
 
                     let _ = state.display_handle.flush_clients();
-                    backend.window().request_redraw();
                 }
                 WinitEvent::Redraw if !state.output_enabled(&output) || state.winit_powered_off => {
                     // Disabled via wlr-output-management, or DPMS off via
                     // wlr-output-power-management: the head stays
                     // advertised but shows nothing -- paint black, no
-                    // elements, no frame callbacks. (Redraws keep being
-                    // requested so power-on repaints on the next frame.)
+                    // elements, no frame callbacks. Power-on explicitly
+                    // schedules the next redraw.
                     let size = backend.window_size();
                     let damage = Rectangle::from_size(size);
                     {
@@ -182,7 +233,6 @@ pub fn init_winit(
                     }
                     backend.submit(Some(&[damage])).unwrap();
                     let _ = state.display_handle.flush_clients();
-                    backend.window().request_redraw();
                 }
                 WinitEvent::Redraw => {
                     // Honor the output's fractional scale (wlr-randr --scale,
@@ -284,8 +334,6 @@ pub fn init_winit(
                     state.popups.cleanup();
                     let _ = state.display_handle.flush_clients();
 
-                    // Ask for redraw to schedule new frame.
-                    backend.window().request_redraw();
                 }
                 WinitEvent::CloseRequested => {
                     state.loop_signal.stop();

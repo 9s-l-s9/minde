@@ -570,6 +570,7 @@ impl MindeState {
                         location: pointer.current_location(),
                     };
                     self.space.raise_element(&window, true);
+                    self.schedule_redraw();
                     if let Some(rect) = self.space.element_geometry(&window) {
                         if button == BTN_LEFT {
                             let grab = crate::grabs::MoveSurfaceGrab {
@@ -611,6 +612,7 @@ impl MindeState {
                     return;
                 }
                 self.space.raise_element(&window, true);
+                self.schedule_redraw();
                 // X11-backed windows expose a wl_surface too (once
                 // the xwayland-shell association happened).
                 if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
@@ -676,6 +678,7 @@ impl MindeState {
         };
         if let Some(window) = self.space.element_under(location).map(|(w, _)| w.clone()) {
             self.space.raise_element(&window, true);
+            self.schedule_redraw();
             if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
                 keyboard.set_focus(self, Some(surface), serial);
             }
