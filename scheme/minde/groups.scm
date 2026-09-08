@@ -145,13 +145,24 @@
                       (append-map frame-leaves (group-all-trees g)))
           (group-floats g)))
 
+(define (distinct-window-count ids)
+  ;; Mirrored heads can contain the same ID. Count without constructing a
+  ;; deduplicated list or repeatedly comparing each ID with the whole tail.
+  (let ((seen (make-hash-table)) (count 0))
+    (for-each (lambda (id)
+                (unless (hash-ref seen id)
+                  (hash-set! seen id #t)
+                  (set! count (+ count 1))))
+              ids)
+    count))
+
 (define (group-status-summaries)
   "Returns stable status tuples for every group.
 Each tuple is (NAME FOCUSED? WINDOW-COUNT FLOATING? DYNAMIC?)."
   (map (lambda (group)
          (list (group-name group)
                (eq? group (current-group))
-               (length (delete-duplicates (group-window-ids group)))
+               (distinct-window-count (group-window-ids group))
                (group-float? group)
                (dynamic-group? group)))
        %groups))

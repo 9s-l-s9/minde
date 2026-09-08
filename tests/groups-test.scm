@@ -388,6 +388,14 @@
 
 ;; ---------------------------------------------------------------------
 
+(check "empty window set has zero distinct IDs"
+       ((@@ (minde groups) distinct-window-count) '()) 0)
+(check "mirrored and repeated IDs are counted once"
+       ((@@ (minde groups) distinct-window-count) '(1 2 3 2 1 3 3)) 3)
+(check "large numeric window IDs retain equality semantics"
+       ((@@ (minde groups) distinct-window-count)
+        (list (expt 2 80) (+ (expt 2 80) 0) 7)) 2)
+
 (if (zero? %failures)
     (begin
       (format #t "all tests passed~%")
