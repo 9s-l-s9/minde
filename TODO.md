@@ -2,6 +2,11 @@
 
 ## Status
 
+Follow-up measurements and remaining limits are recorded in
+[doc/performance.md](doc/performance.md). The checked items below include
+historically deferred suggestions; a checked box does not mean every proposed
+optimization was implemented or measured.
+
 The findings were worked through in commits 21a6278..9c43b44 on 2026-09-02.
 All gates of `./check`, `make check-rust check-cli check-static check-docs`
 and the nested `tests/e2e.sh` suite pass (winit backend under Xvfb). Real DRM
@@ -54,6 +59,9 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       "<path>")` (1.2) resolves `.go` files via
       `GUILE_LOAD_COMPILED_PATH`/`%load-compiled-path` the same way `guild
       compile`'s output is normally found.
+      Follow-up: the isolated Guix builder now explicitly imports SRFI-1,
+      needed by the bytecode installation phase's `append-map`; a real package
+      build caught the missing import that source-only checks had missed.
 - [x] **1.2 `init.scm` (1838 lines) is never compiled.** `src/guile/mod.rs:1319` loads
       it via `scm_c_primitive_load`, which bypasses the autocompiler, so every key
       binding, `dispatch-key`, `wm-handle-key`, `reload-configuration!` and
@@ -63,6 +71,12 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       ~:455-1652, config/IPC ~:1654-1838) into a `(minde policy)` module and keep
       `init.scm` as a thin loader. verified; magnitude unverified.
       Done: `guile::load_file` now evaluates `(load "<path>")` instead of `scm_c_primitive_load`, so init.scm goes through the autocompiler (cached `.go`, VM execution; ~4 s once per source change at the default -O2, 0 s afterwards). Reload keeps working: `load` defines into the same module. Note: `use-modules` inside the REPL `when` block yields compile-time "possibly unbound" warnings for `spawn-server` (harmless).
+      Follow-up (2026-09-08): absolute `load` did not find the packaged
+      `init.go`; with auto-compilation disabled, the keyboard policy still
+      ran interpreted on a fresh cache. Bundled init now uses `load-from-path`
+      while custom init files retain explicit-path loading. The nested
+      bytecode test inspects the actual keyboard procedure's source metadata
+      and verifies a custom file named init.scm is not replaced by the bundle.
 - [x] **1.3 Guile boot runs before any backend init** (`main.rs:193-206`,
       `guile::init` at `mod.rs:1013-1322`). Nothing in `init_udev` before
       `connector_connected` (`udev.rs:256-280` vs `:817`) needs Scheme. Idea: reorder
@@ -211,25 +225,13 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       Done: `MindeState::schedule_redraw_at(&[old_pos, new_pos])` is now called from every pointer-motion path in `input.rs` (both `move_pointer`/relative-motion handlers and the tablet pointer-emulation route), marking dirty and scheduling a render only for the outputs the cursor left or entered.
 - [x] **3.3 winit backend renders unconditionally with full-frame damage**
       (`winit.rs:133,191,248`). Nested only, low priority. verified.
-      Closed: re-checked against the current code rather than left alone.
-      `winit.rs`'s unlocked `WinitEvent::Redraw` arm already runs the same
-      `OutputDamageTracker` as udev and submits only `damage_tracker
-      .render_output(..).damage` -- when the tracked scene is unchanged it
-      submits nothing (`if let Some(damage) = damage { backend.submit(...) }`),
-      not a full-output rectangle; only the (rare) locked/session-lock arm
-      submits a full-output `Rectangle` unconditionally, which is correct
-      there since the lock surface must always cover the whole output. What
-      remains unconditional is the `backend.window().request_redraw()` call
-      that re-arms winit's next `Redraw` event every frame regardless of
-      dirty state -- gating that on the same per-output `RedrawState`/`dirty`
-      flag udev uses (3.1) would mean exposing that private udev-backend
-      state across backends, and winit's render path also feeds the
-      automation screenshot/observe tooling used to verify the other
-      automation fixes in this pass, so changing its scheduling risks a
-      client-visible regression there for a path this audit itself already
-      calls nested-only and low priority. Left alone per the conservative
-      instruction for this item; the higher-value "full-frame damage" half
-      of the concern was already false.
+      Follow-up (2026-09-07): replaced the unconditional redraw chain with
+      a coalesced calloop ping triggered by scene changes. Requests within
+      one nominal 60 Hz frame coalesce behind a one-shot timer; idle outputs
+      have no recurring repaint timer. Power changes, output configuration,
+      resize, lock, surface commits and captures explicitly wake the backend.
+      `tests/bench-nested.sh` measures idle and DPMS-off process CPU in an
+      isolated Xvfb session; see [performance measurements](doc/performance.md) for results.
 - [x] **3.4 Per-frame allocations and locks**: `custom`/`all_elements` Vecs and layer
       `partition` (`udev.rs:1147,1201-1207,1245,1268`), `cursor_state.hotspot()` mutex
       per frame (`render.rs:519-531`), O(windows x outputs) frame-callback walk
@@ -258,6 +260,22 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       capture case (5.3's `BorderBuffers` split exists precisely to keep
       those cases separate) -- judged not mechanical enough to do safely
       alongside 3.5/3.6/3.9 in the same pass.
+      Follow-up (2026-09-07): scene assembly now appends upper/lower layer
+      elements directly into the final scene Vec using two borrowed passes.
+      This removes both partition Vecs and both intermediate layer-element
+      Vecs, preserving stacking order for on-screen rendering and captures.
+      Per-surface Smithay allocations and the final scene Vec remain; no
+      measured hardware latency improvement is claimed for this small step.
+      Follow-up: the DRM presentation-feedback pass now uses Smithay's
+      `elements_for_output` iterator instead of allocating an output list and
+      searching Space for each window. Selection and order are regression
+      tested across scene changes; synthetic timings are recorded in
+      [performance measurements](doc/performance.md). Frame-callback geometry
+      walks remain separate work.
+      Follow-up: the parked-window callback check now short-circuits for
+      non-first outputs and windows already overlapping the current output.
+      Geometry semantics are preserved; measured selection costs are recorded
+      in `doc/performance.md`. The linear per-window geometry lookup remains.
 - [x] **3.5 `surface_under` evaluated three times per pointer motion**:
       `constrain_pointer` (`pointer_constraints.rs:79`), `input.rs:396`, `input.rs:417`.
       Each does an output lookup, a layer-map RefCell borrow and a surface-tree hit
@@ -279,12 +297,12 @@ startup comparison, `mindectl` wrapped in `time` for IPC round trips.
       frame. Move grab does `space.map_element(.., activate=true)` per motion
       (`move_grab.rs:369`). verified; move cost unverified.
       Partial: `MoveSurfaceGrab::motion` now calls `space.map_element(.., activate=false)` (the window was already raised/activated when the grab started) and calls `schedule_redraw()` explicitly instead of relying on the old fixed timer. `ResizeSurfaceGrab::motion` still calls `send_pending_configure()` on every motion event, uncoalesced — not addressed.
-      Done: `ResizeSurfaceGrab` now tracks `last_configured_size` and only
-      calls `send_pending_configure()`/`schedule_redraw()` when the clamped
-      size actually differs from the last one sent, so mouse jitter that
-      clamps to the same integer size no longer round-trips a configure per
-      motion event. The final configure on button release (which also
-      un-sets the `Resizing` state) is unconditional, as before.
+      Done: xdg resize motions now keep the latest clamped size and flush
+      once per event-loop dispatch through an idle callback. Unchanged sizes
+      are skipped, including a burst returning to the previously sent size.
+      Release cancels the queued callback and immediately sends the final size
+      with Resizing unset; replacing the grab also cancels stale work.
+      This batches events without a fixed frame timer. X11 remains unchanged.
 - [x] **3.7 Every click and focus change walks all windows calling
       `send_pending_configure`** (`input.rs:586-597,648-652`, `state.rs:718-747`).
       Smithay elides unchanged configures, so cheap; flagged for the pattern.

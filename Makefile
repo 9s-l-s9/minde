@@ -90,6 +90,8 @@ compile-scheme:
 
 # Timing of the frame-sync hot path against stubbed primitives; prints
 # numbers, asserts nothing. Arguments: windows, iterations.
+# Set `MINDE_BENCH_STATUS=1` to include status generation and per-event
+# file writes in a temporary runtime directory.
 bench-scheme:
 	guile --no-auto-compile -L scheme tests/bench-sync-frames.scm $(BENCH_WINDOWS) $(BENCH_ITERATIONS)
 
@@ -145,6 +147,8 @@ check-e2e:
 		echo "error: wlopm is required by the output-power scenario" >&2; exit 127; }
 	@command -v swayidle >/dev/null 2>&1 || { \
 		echo "error: swayidle is required by the idle scenario" >&2; exit 127; }
+	sh tests/init-bytecode-e2e.sh
+	sh tests/resize-e2e.sh
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
 	sh tests/screencapture-e2e.sh
