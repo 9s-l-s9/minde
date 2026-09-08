@@ -29,10 +29,12 @@ nested_start() {
     chmod 700 "$NESTED_RT"
     : >"$NESTED_LOG"
 
-    command -v cargo >/dev/null 2>&1 || {
-        echo "error: cargo is required; enter the project Guix shell" >&2
-        return 127
-    }
+    if [ -z "${MINDE_NESTED_PACKAGE:-}" ]; then
+        command -v cargo >/dev/null 2>&1 || {
+            echo "error: cargo is required; enter the project Guix shell" >&2
+            return 127
+        }
+    fi
     command -v Xvfb >/dev/null 2>&1 || {
         echo "error: Xvfb is required; add xorg-server" >&2
         return 127
@@ -73,13 +75,32 @@ nested_start() {
     export LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-/nonexistent}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export RUST_LOG=minde=debug,scheme=info
 
-    cargo build >"$NESTED_OUT/build.log" 2>&1 || return 1
-    MINDE_INIT="$PWD/scheme/init.scm" \
-        MINDE_SCHEME_DIR="$PWD/scheme" \
-        MINDE_CONFIG="${MINDE_NESTED_CONFIG:-$PWD/tests/e2e-config.scm}" \
-        MINDE_RULES_FILE="$NESTED_OUT/rules.scm" \
-        MINDE_LAYOUTS_FILE="$NESTED_OUT/layouts.scm" \
-        ./target/debug/minde --winit >"$NESTED_LOG" 2>&1 &
+    if [ -n "${MINDE_NESTED_PACKAGE:-}" ]; then
+        NESTED_BINARY="$MINDE_NESTED_PACKAGE/bin/minde"
+        NESTED_SCHEME="$MINDE_NESTED_PACKAGE/share/minde/scheme"
+        [ -x "$NESTED_BINARY" ] || return 1
+    else
+        cargo build >"$NESTED_OUT/build.log" 2>&1 || return 1
+        NESTED_BINARY="$PWD/target/debug/minde"
+        NESTED_SCHEME="$PWD/scheme"
+    fi
+    (
+        if [ -n "${MINDE_NESTED_PACKAGE:-}" ]; then
+            # Test the packaged runtime and its own library search paths.
+            unset LD_LIBRARY_PATH
+            export GUILE_LOAD_PATH="$MINDE_NESTED_PACKAGE/share/guile/site/3.0"
+            export GUILE_LOAD_COMPILED_PATH="$MINDE_NESTED_PACKAGE/lib/guile/3.0/site-ccache"
+            export GUILE_AUTO_COMPILE=0
+        fi
+        # A host autocompile cache can hide a missing packaged init.go.
+        export XDG_CACHE_HOME="$NESTED_RT/cache"
+        export MINDE_INIT="${MINDE_NESTED_INIT:-$NESTED_SCHEME/init.scm}"
+        export MINDE_SCHEME_DIR="$NESTED_SCHEME"
+        export MINDE_CONFIG="${MINDE_NESTED_CONFIG:-$PWD/tests/e2e-config.scm}"
+        export MINDE_RULES_FILE="$NESTED_OUT/rules.scm"
+        export MINDE_LAYOUTS_FILE="$NESTED_OUT/layouts.scm"
+        exec "$NESTED_BINARY" --winit
+    ) >"$NESTED_LOG" 2>&1 &
     NESTED_WM_PID=$!
 
     # 100 ms polling ticks; same 60 s overall budget as the former 60

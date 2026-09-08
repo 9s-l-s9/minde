@@ -409,10 +409,20 @@ pub fn eval_string(code: &str) -> Option<Scm> {
 /// land in the current module, so re-loading the same file redefines in
 /// place.
 pub fn load_file(path: &std::path::Path) -> Option<Scm> {
-    eval_string(&format!(
-        "(load {})",
-        scheme_string(&path.to_string_lossy())
-    ))
+    eval_string(&init_load_expression(path, &scheme_dir()))
+}
+
+fn init_load_expression(path: &std::path::Path, bundled_dir: &std::path::Path) -> String {
+    if path == bundled_dir.join("init.scm") {
+        // boot() prepends bundled_dir to %load-path before any init runs.
+        // load-from-path finds site-ccache/init.go and checks freshness.
+        // An absolute (load ...) instead searches for PATH/init.scm.go,
+        // missing our installed bytecode when auto-compilation is disabled.
+        r#"(load-from-path "init")"#.to_owned()
+    } else {
+        // A user init with the same basename must never pick bundled bytecode.
+        format!("(load {})", scheme_string(&path.to_string_lossy()))
+    }
 }
 
 /// A Scheme top-level name Rust calls into, with its symbol interned once.
@@ -1656,9 +1666,7 @@ pub fn init(loop_signal: LoopSignal) {
                 .join("minde/init.scm");
             user_config.exists().then_some(user_config)
         })
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scheme/init.scm")
-        });
+        .unwrap_or_else(|| scheme_dir().join("init.scm"));
 
     tracing::info!(path = %init_path.display(), "loading scheme init file");
     if load_file(&init_path).is_none() {
