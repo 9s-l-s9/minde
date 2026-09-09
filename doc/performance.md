@@ -319,3 +319,26 @@ This is an active desktop observation, not a controlled idle benchmark or a
 before/after comparison. Render duration measures compositor work, not the
 complete input-to-display path. Raw aggregate results are in
 `/tmp/minde-live-drm-sample.json`; no window titles or input contents were saved.
+
+## Avoid allocating unchanged placement rectangles (2026-09-09)
+
+`apply-placements!` now compares cached rectangle coordinates directly, avoiding
+four temporary cons cells for each checked tiled placement. Changed placements
+still populate the same rectangle cache, and floating/failed placements retain
+their invalidation behavior. A primitive-boundary regression covers each
+coordinate, repeated floats, and retries after an unknown-window result.
+
+A separately compiled before/after focus benchmark with installed Guile 3.0.9,
+a fresh temporary bytecode cache, and 1,000 focus changes measured:
+
+| Windows | Before (µs/change) | After (µs/change) |
+| --- | ---: | ---: |
+| 12 | 24.2 | 22.9 |
+| 100 | 81.1 | 77.2 |
+| 1,000 | 653.1 | 532.3 |
+
+Both variants sent exactly two placements per focus change. This isolates policy
+synchronization with stubbed Rust primitives; status writes and client rendering
+are excluded. The small-window differences are modest, while the large-window
+case improves by about 18%. Maximum timing did not improve, so no reduction in
+tail latency is established. Results: `/tmp/minde-placement-ab.log`.

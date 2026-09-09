@@ -18,6 +18,7 @@ SCHEME_TESTS := \
 	tests/input-test.scm \
 	tests/input-config-test.scm \
 	tests/frames-test.scm \
+	tests/placement-cache-test.scm \
 	tests/groups-test.scm \
 	tests/session-test.scm \
 	tests/layouts-test.scm \
