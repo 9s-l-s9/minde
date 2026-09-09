@@ -59,6 +59,63 @@ Editing a Guix Home service does not update the running session. Apply Home,
 inspect `~/.config/minde/init.scm`, then log out and back in before judging
 startup behavior.
 
+## Window gaps
+
+Minde provides StumpWM-style gaps directly through `(minde frames)`. Put this
+in your personal `init.scm`, after loading Minde's bundled initialization:
+
+```scheme
+(configure-gaps! #:inner 5 #:outer 10 #:head 20)
+(gaps-on!)
+;; Optional personal binding; no shortcut is assigned by default.
+(bind-prefix-key! "C-M-g" toggle-gaps! "toggle gaps")
+```
+
+The behavior follows [StumpWM's swm-gaps module](https://github.com/stumpwm/stumpwm-contrib/blob/master/util/swm-gaps/swm-gaps.lisp):
+
+- `inner` is padding on **each** window edge. Two adjacent frames with inner
+  padding 5 have 10 logical pixels between their display rectangles.
+- `outer` adds padding at the outside edges of the tiled layout.
+- `head` insets the whole tiled layout on each monitor. In span mode it insets
+  the single synthetic head instead.
+
+With the example above, the display rectangle starts 35 logical pixels from
+the usable output edge: 20 head + 5 inner + 10 outer. The usual focus-border
+reservation sits inside that rectangle, so client content starts another
+3 pixels inward. Background surfaces remain visible in the gaps.
+
+Gaps remain with a single window and with empty splits; there is no automatic
+smart-gap rule. Fullscreen ignores gaps and restores the configured layout on
+exit. Transient windows skip inner and outer padding. Floating windows retain
+their geometry when gap settings change. Head padding applies to the usable
+area after a bar's exclusive reservation, and does not resize the physical
+output or move the bar. Sizes use logical pixels and follow output scaling.
+
+`(gaps-off!)` disables gaps without forgetting sizes; `(gaps-on!)` enables
+them; `(toggle-gaps!)` switches between the two. Repeated on/off calls are
+idempotent. `(gap-settings)` returns an alist with `mode`, `enabled?`, `inner`,
+`outer`, and `head`. The initial settings are 5, 10, 0, disabled.
+
+`configure-gaps!` retains omitted sizes and the current enabled state. Values
+must be exact nonnegative integers; an invalid update changes nothing. If a
+frame is too small, effective padding is reduced to leave positive client
+geometry. The requested sizes are retained for when more room is available.
+Settings apply across groups and monitors; no per-group override is needed.
+
+Live changes need no session restart once the updated Minde is installed:
+
+```sh
+scripts/mindectl eval '(begin (configure-gaps! #:inner 5 #:outer 10 #:head 20) (gaps-on!))'
+scripts/mindectl eval '(toggle-gaps!)'
+```
+
+The existing `(set-gaps! inner outer)` remains a compatibility API: its inner
+value is shared between frames (rounded down to an even total), and outer is
+the total edge padding. It enables legacy mode with no head inset. Calling
+`configure-gaps!` selects StumpWM semantics again, using the last StumpWM sizes
+for omitted keywords. Gap settings currently belong in the personal Scheme
+layer, not the declarative `minde-config` expression.
+
 ## Input device configuration
 
 On the DRM/libinput backend, per-device pointer and touchpad behavior is

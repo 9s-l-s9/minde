@@ -342,3 +342,31 @@ synchronization with stubbed Rust primitives; status writes and client rendering
 are excluded. The small-window differences are modest, while the large-window
 case improves by about 18%. Maximum timing did not improve, so no reduction in
 tail latency is established. Results: `/tmp/minde-placement-ab.log`.
+
+
+### StumpWM-style gaps (2026-09-09)
+
+Gap policy runs during layout synchronization, not rendering. With gaps
+disabled, transient metadata is not queried. With StumpWM gaps enabled, one
+batch supplies transient IDs per sync; placements retain the existing cache.
+
+A compiled Guile comparison against `0043976`, 3,000 focus changes per case,
+with status writes disabled:
+
+| Windows | Before | Gaps disabled | Gaps enabled (5 inner / 10 outer / 20 head) |
+| --- | ---: | ---: | ---: |
+| 12 | 22.1 µs | 20.7 µs | 24.8 µs |
+| 100 | 67.8 µs | 65.8 µs | 67.8 µs |
+
+Every case sent two placements per focus change. These short sequential
+samples are a regression check, not evidence of a speedup. The Scheme
+benchmark stubs the Rust metadata lookup; it does not measure its window scan
+or input-to-display latency. Set `MINDE_BENCH_GAPS=1` with
+`tests/bench-sync-frames.scm` to exercise the enabled policy.
+
+The isolated nested idle benchmark, both disabled and enabled, recorded no
+CPU ticks in each five-second idle and powered-off sample (below 0.2% of one
+core at this sampling resolution). Render counts were unchanged across each
+sample. Use `MINDE_BENCH_GAPS=1 sh tests/bench-nested.sh` for the enabled case.
+The gaps e2e test verifies actual background pixels, border alignment,
+client configure sizes, toggling, and fractional output scaling at 1.5.

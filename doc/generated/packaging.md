@@ -41,6 +41,7 @@ Entered with `guix shell -m manifest.scm`:
 - `xdotool`
 - `imagemagick`
 - `grim`
+- `swaybg`
 - `wf-recorder`
 - `jq`
 - `util-linux`

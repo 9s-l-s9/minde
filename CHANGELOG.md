@@ -10,6 +10,11 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- StumpWM-style window gaps with configurable inner, outer and head padding,
+  live enable/disable/toggle commands, transient and fullscreen exceptions,
+  and safe sizing on small frames. Existing `set-gaps!` calls retain their
+  shared-spacing semantics; `configure-gaps!` selects per-edge padding.
+
 - Automation primitives now provide paced, focus-pinned `wm-send-string` /
   `wm-type`, paced `wm-send-key` (including the `Enter` alias), symbolic and
   evdev pointer buttons with click counts, `wm-paste`, `wm-scroll`, pointer and
