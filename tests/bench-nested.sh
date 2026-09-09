@@ -8,6 +8,9 @@ cd "$(dirname "$0")/.."
 OUT=${MINDE_BENCH_OUT:-/tmp/minde-bench-nested}
 trap nested_stop EXIT HUP INT TERM
 nested_start "$OUT" "${MINDE_BENCH_DISPLAY:-:97}"
+if [ "${MINDE_BENCH_GAPS:-0}" = 1 ]; then
+    scripts/mindectl eval '(begin (configure-gaps! #:inner 5 #:outer 10 #:head 20) (gaps-on!))' >/dev/null
+fi
 sleep 3
 cpu_ticks() { awk '{print $14 + $15}' "/proc/$NESTED_WM_PID/stat"; }
 measure_idle() {

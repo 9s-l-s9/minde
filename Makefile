@@ -19,6 +19,7 @@ SCHEME_TESTS := \
 	tests/input-config-test.scm \
 	tests/frames-test.scm \
 	tests/placement-cache-test.scm \
+	tests/gaps-test.scm \
 	tests/groups-test.scm \
 	tests/session-test.scm \
 	tests/layouts-test.scm \
@@ -149,6 +150,7 @@ check-e2e:
 	@command -v swayidle >/dev/null 2>&1 || { \
 		echo "error: swayidle is required by the idle scenario" >&2; exit 127; }
 	sh tests/init-bytecode-e2e.sh
+	sh tests/gaps-e2e.sh
 	sh tests/resize-e2e.sh
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh

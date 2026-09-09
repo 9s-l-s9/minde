@@ -35,6 +35,7 @@
 (define (wm-output-geometry) (list 1920 1080))
 (define (wm-outputs) (list (list 0 0 0 1920 1080 "bench")))
 (define (wm-log msg) #t)
+(define (wm-transient-ids) '())
 (define (wm-message text timeout) #t)
 
 (use-modules (minde compositor frames) (minde groups) (minde status))
@@ -68,6 +69,10 @@
     (handle-window-map! i (format #f "window ~a" i) "bench")
     (when (and (< i 5) (< i windows)) (split-frame-vertical!))
     (loop (+ i 1))))
+
+(when (equal? (getenv "MINDE_BENCH_GAPS") "1")
+  (configure-gaps! #:inner 5 #:outer 10 #:head 20)
+  (gaps-on!))
 
 (define (now-us)
   (let ((t (gettimeofday)))

@@ -43,8 +43,8 @@
 (check "frame API groups classify every public operation exactly once"
        (equal? (sort grouped-frame-bindings symbol-name<?)
                (sort public-frame-operations symbol-name<?)))
-(check "curated frame facade has the frozen 65-operation surface"
-       (= 65 (length public-frame-operations)))
+(check "curated frame facade has the 70-operation surface"
+       (= 70 (length public-frame-operations)))
 (for-each
  (lambda (entry)
    (check (format #f "frame API tag ~a has no duplicate bindings" (car entry))

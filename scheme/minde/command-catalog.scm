@@ -39,6 +39,12 @@
      "Focus the next output head." "Focus the next output head, wrapping at the end." head-next)
     (focus-last-head! () output
      "Return to the last focused output head." "Toggle back to the previously focused output head." head-last)
+    (gaps-on! () frame
+     "Enable gaps." "Enable configured gaps without changing sizes." gaps-on)
+    (gaps-off! () frame
+     "Disable gaps." "Disable gaps while retaining configured sizes." gaps-off)
+    (toggle-gaps! () frame
+     "Toggle gaps." "Toggle configured gaps on or off." gaps-toggle)
     (reload-configuration! () configuration
      "Validate and atomically reload configuration."
      "Validate a declarative configuration in isolation and publish it only on success."

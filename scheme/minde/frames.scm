@@ -18,6 +18,7 @@
                balance-frames!
                apply-layout-spec!
                set-gaps!
+               configure-gaps! gap-settings gaps-on! gaps-off! toggle-gaps!
 
                ;; Focus and navigation.
                focus-next-frame!
@@ -93,7 +94,8 @@
   '((topology-and-layout
      split-frame-horizontal! split-frame-vertical! remove-split!
      collapse-to-one-frame! clear-current-frame! hsplit-equally!
-     vsplit-equally! resize-frame! balance-frames! apply-layout-spec! set-gaps!)
+     vsplit-equally! resize-frame! balance-frames! apply-layout-spec! set-gaps!
+     configure-gaps! gap-settings gaps-on! gaps-off! toggle-gaps!)
     (focus-and-navigation
      focus-next-frame! focus-previous-frame! focus-next-window!
      focus-previous-window! focus-next-window-in-frame!
@@ -126,7 +128,8 @@
   '((layout
      split-frame-horizontal! split-frame-vertical! remove-split!
      collapse-to-one-frame! hsplit-equally! vsplit-equally! resize-frame!
-     balance-frames! apply-layout-spec! set-gaps! dump-layout-spec)
+     balance-frames! apply-layout-spec! set-gaps! configure-gaps! gap-settings
+     gaps-on! gaps-off! toggle-gaps! dump-layout-spec)
     (focus
      focus-next-frame! focus-previous-frame! focus-next-window!
      focus-previous-window! focus-next-window-in-frame!

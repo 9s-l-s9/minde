@@ -1735,6 +1735,10 @@ reload baseline. Call once after adding imperative user bindings."
 (register-builtin-command! 'collapse-to-one-frame! collapse-to-one-frame!)
 (register-builtin-command! 'focus-next-head! focus-next-head!)
 (register-builtin-command! 'focus-last-head! focus-last-head!)
+
+(register-builtin-command! 'gaps-on! gaps-on!)
+(register-builtin-command! 'gaps-off! gaps-off!)
+(register-builtin-command! 'toggle-gaps! toggle-gaps!)
 (register-builtin-command! 'reload-configuration! reload-configuration!)
 
 (define (refresh-command-help!)
