@@ -110,6 +110,7 @@
                         (make-empty-group " III " 1280 720)))))
 
 (init-default-groups!)
+(set-gap-groups-provider! (lambda () %groups))
 
 (define (group-names)
   "Returns every group name in switching order."

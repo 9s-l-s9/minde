@@ -144,6 +144,8 @@
             frame-tree-window-count
             echo
             set-gaps!
+            configure-gaps! gap-settings gaps-on! gaps-off! toggle-gaps!
+            set-gap-groups-provider!
             resize-frame!
             balance-frames!
             apply-layout-spec!
@@ -388,7 +390,7 @@ becomes the live tree (StumpWM screen focus)."
 
 ;; The union bounding box of RAW heads, as a single head reusing the
 ;; first raw head's id (so that head's trees survive a mode switch).
-(define (effective-heads raw)
+(define (ungapped-effective-heads raw)
   (if (or (eq? %head-mode 'per-head) (null? raw) (null? (cdr raw)))
       raw
       (let ((x1 (apply min (map cadr raw)))
@@ -396,6 +398,13 @@ becomes the live tree (StumpWM screen focus)."
             (x2 (apply max (map (lambda (r) (+ (cadr r) (cadddr r))) raw)))
             (y2 (apply max (map (lambda (r) (+ (caddr r) (car (cddddr r)))) raw))))
         (list (list (caar raw) x1 y1 (- x2 x1) (- y2 y1))))))
+
+(define (effective-heads raw)
+  (map (lambda (head)
+         (cons (car head)
+               (inset-gap-rect (cdr head) (active-head-gap) (active-head-gap)
+                               (active-head-gap) (active-head-gap))))
+       (ungapped-effective-heads raw)))
 
 (define (heads-changed! raw groups)
   "The backend's head list changed (hotplug, resize, exclusive zones).
@@ -413,7 +422,7 @@ and 'span (one tree over the union of all monitors)."
   (set! %head-mode mode)
   (apply-effective-heads! (effective-heads %raw-heads) groups))
 
-(define (apply-effective-heads! new groups)
+(define* (apply-effective-heads! new groups #:key (clamp-floats? #t))
   (flush-active-group!)
   (forget-all-placements!)
   (let* ((old-ids (map car %heads))
@@ -423,7 +432,7 @@ and 'span (one tree over the union of all monitors)."
                          groups
                          (cons %active-group groups))))
     (set! %heads new)
-    (clamp-floats-to-heads! new)
+    (when clamp-floats? (clamp-floats-to-heads! new))
     (unless (memv %current-head-id new-ids)
       (set! %current-head-id (car new-ids)))
     (unless (memv %last-head-id new-ids)
@@ -2107,26 +2116,115 @@ closed."
 (define %inner-gap 0)
 (define %outer-gap 0)
 
+(define %gap-mode 'stumpwm)
+(define %gaps-enabled? #f)
+(define %swm-inner-gap 5)
+(define %swm-outer-gap 10)
+(define %head-gap 0)
+(define %gap-groups-provider (lambda () (list %active-group)))
+(define current-gap-transients (make-parameter #f))
+
+(define (set-gap-groups-provider! proc)
+  "Installs the private group registry accessor for gap relayouts."
+  (set! %gap-groups-provider proc))
+
+(define (validate-gap value)
+  (unless (and (exact-integer? value) (>= value 0))
+    (error "gap must be an exact nonnegative integer" value)))
+
+(define (active-head-gap)
+  (if (and %gaps-enabled? (eq? %gap-mode 'stumpwm)) %head-gap 0))
+
+;; Reserve room for the normal border plus at least one content pixel.
+;; Proportional reduction preserves asymmetric padding on tiny frames.
+(define (fit-gap-pair size before after)
+  (let* ((budget (max 0 (- size 7))) (total (+ before after)))
+    (if (<= total budget)
+        (values before after)
+        (let ((first (quotient (* before budget) total)))
+          (values first (- budget first))))))
+
+(define (inset-gap-rect rect left top right bottom)
+  (let-values (((l r) (fit-gap-pair (caddr rect) left right))
+               ((t b) (fit-gap-pair (cadddr rect) top bottom)))
+    (list (+ (car rect) l) (+ (cadr rect) t)
+          (- (caddr rect) l r) (- (cadddr rect) t b))))
+
+(define (refresh-gaps!)
+  ;; Always derive from backend rectangles, never from already inset heads.
+  (apply-effective-heads! (effective-heads %raw-heads)
+                          (%gap-groups-provider) #:clamp-floats? #f))
+
+(define (gap-settings)
+  "Returns an alist of mode, enabled?, inner, outer and head gap settings.
+Sizes are requested logical pixels, before small-frame safety reduction."
+  `((mode . ,%gap-mode) (enabled? . ,%gaps-enabled?)
+    (inner . ,(if (eq? %gap-mode 'legacy) %inner-gap %swm-inner-gap))
+    (outer . ,(if (eq? %gap-mode 'legacy) %outer-gap %swm-outer-gap))
+    (head . ,(if (eq? %gap-mode 'legacy) 0 %head-gap))))
+
+(define* (configure-gaps! #:key (inner %swm-inner-gap)
+                         (outer %swm-outer-gap) (head %head-gap))
+  "Configures StumpWM-style gaps in logical pixels, retaining enabled state.
+INNER pads every window edge; OUTER adds padding at head edges; HEAD
+insets the tiled layout. Omitted sizes retain their StumpWM settings."
+  (for-each validate-gap (list inner outer head))
+  (unless (and (eq? %gap-mode 'stumpwm) (= inner %swm-inner-gap)
+               (= outer %swm-outer-gap) (= head %head-gap))
+    (set! %gap-mode 'stumpwm)
+    (set! %swm-inner-gap inner)
+    (set! %swm-outer-gap outer)
+    (set! %head-gap head)
+    (refresh-gaps!)))
+
+(define (gaps-on!)
+  "Enables configured gaps without changing their sizes."
+  (unless %gaps-enabled?
+    (set! %gaps-enabled? #t)
+    (refresh-gaps!)))
+
+(define (gaps-off!)
+  "Disables gaps while retaining configured sizes."
+  (when %gaps-enabled?
+    (set! %gaps-enabled? #f)
+    (refresh-gaps!)))
+
+(define (toggle-gaps!)
+  "Toggles gaps while retaining configured sizes."
+  (if %gaps-enabled? (gaps-off!) (gaps-on!)))
+
 (define (set-gaps! inner outer)
-  "Sets the inner (between frames) and outer (screen edge) gap in pixels
-and re-syncs the active group."
+  "Enables legacy gaps: INNER is shared spacing, OUTER is edge spacing.
+Use configure-gaps! and gaps-on! for StumpWM-style per-edge padding."
+  (for-each validate-gap (list inner outer))
+  (set! %gap-mode 'legacy)
+  (set! %gaps-enabled? #t)
   (set! %inner-gap inner)
   (set! %outer-gap outer)
-  (sync-frames!))
+  (refresh-gaps!))
 
-;; The rectangle a frame actually displays as (focus border drawn on it,
-;; window inside it): the frame's tree rect shrunk by half the inner gap
-;; on every side, except sides on the usable-area boundary which get the
-;; outer gap instead.
 (define (frame-display-rect frame)
   (let* ((x (frame-x frame)) (y (frame-y frame))
          (w (frame-w frame)) (h (frame-h frame))
-         (half (quotient %inner-gap 2))
-         (l (if (= x (head-rect-x)) %outer-gap half))
-         (t (if (= y (head-rect-y)) %outer-gap half))
-         (r (if (= (+ x w) (+ (head-rect-x) (head-rect-w))) %outer-gap half))
-         (b (if (= (+ y h) (+ (head-rect-y) (head-rect-h))) %outer-gap half)))
-    (list (+ x l) (+ y t) (max 1 (- w l r)) (max 1 (- h t b)))))
+         (id (frame-current-window frame))
+         (transients (current-gap-transients))
+         (enabled (and %gaps-enabled?
+                       (not (and (eq? %gap-mode 'stumpwm) transients
+                                 (hash-ref transients id)))))
+         (inner (if (not enabled) 0
+                    (if (eq? %gap-mode 'legacy)
+                        (quotient %inner-gap 2) %swm-inner-gap)))
+         (edge (if (not enabled) 0
+                   (if (eq? %gap-mode 'legacy) %outer-gap
+                       (+ inner %swm-outer-gap)))))
+    (if (not enabled)
+        (list x y w h)
+        (inset-gap-rect
+         (list x y w h)
+         (if (= x (head-rect-x)) edge inner)
+         (if (= y (head-rect-y)) edge inner)
+         (if (= (+ x w) (+ (head-rect-x) (head-rect-w))) edge inner)
+         (if (= (+ y h) (+ (head-rect-y) (head-rect-h))) edge inner)))))
 
 ;; Called (when set) at the end of every sync-frames! -- (minde
 ;; groups) uses it to keep the status-line file for external bars (eww)
@@ -2156,7 +2254,9 @@ of the frame parked off-screen. Pure: nothing is sent to Rust."
              ((hash-ref %unmaximized id)
               (append (list id) (unmaximized-rect frame id) (list #f)))
              (else
-              (let ((bw %border-width))
+              (let ((bw (min %border-width
+                             (quotient (max 0 (- (caddr rect) 1)) 2)
+                             (quotient (max 0 (- (cadddr rect) 1)) 2))))
                 (list id
                       (+ (car rect) bw) (+ (cadr rect) bw)
                       (- (caddr rect) (* 2 bw)) (- (cadddr rect) (* 2 bw))
@@ -2202,6 +2302,16 @@ Rust reported as unknown, which are also dropped from the cache."
       failed)))
 
 (define (sync-frames-now!)
+  "Synchronizes frames with one batch of transient metadata when gaps need it."
+  (if (and %gaps-enabled? (eq? %gap-mode 'stumpwm))
+      (let ((transients (make-hash-table)))
+        (for-each (lambda (id) (hash-set! transients id #t))
+                  (or (rust-call-if-bound 'wm-transient-ids) '()))
+        (parameterize ((current-gap-transients transients))
+          (sync-frames-with-gap-state!)))
+      (sync-frames-with-gap-state!)))
+
+(define (sync-frames-with-gap-state!)
   "Walks every head's frame tree of the active group, placing each
 frame's current window at its frame's pixel geometry, moving every other
 (hidden) window off-screen, and setting input focus to the current

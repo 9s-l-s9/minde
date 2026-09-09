@@ -65,8 +65,11 @@ impl BorderBuffers {
     where
         R: Renderer + ImportAll + ImportMem,
     {
-        let t = BORDER_WIDTH;
         let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+        let t = BORDER_WIDTH.min((w - 1).max(0) / 2).min((h - 1).max(0) / 2);
+        if t == 0 {
+            return Vec::new();
+        }
         // Drawn *inside* the rectangle: a frame filling the whole output
         // would otherwise have its border entirely off-screen.
         let rects = [

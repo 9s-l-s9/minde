@@ -672,6 +672,26 @@ unsafe extern "C" fn wm_window_title(id: Scm) -> Scm {
     }
 }
 
+/// `(wm-transient-ids)` returns one snapshot of transient window ids.
+/// Used by Scheme gap policy, outside the render loop.
+unsafe extern "C" fn wm_transient_ids() -> Scm {
+    let ids = with_state(|state| {
+        state
+            .windows
+            .iter()
+            .filter_map(|(&id, window)| {
+                let transient = window.toplevel().is_some_and(|t| t.parent().is_some())
+                    || window
+                        .x11_surface()
+                        .is_some_and(|x| x.is_transient_for().is_some());
+                transient.then_some(id)
+            })
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    scm_list_map(&ids, |id| from_i64(*id as i64))
+}
+
 /// `(wm-floating-ids)` -> the ids Rust currently treats as floating (set
 /// through `wm-set-floating`), for `mirror-drift`.
 unsafe extern "C" fn wm_floating_ids() -> Scm {
@@ -1570,6 +1590,7 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr("wm-place-window", 5, 0, gsubr!(wm_place_window, 5));
         register_gsubr("wm-place-windows", 1, 0, gsubr!(wm_place_windows, 1));
         register_gsubr("wm-window-title", 1, 0, gsubr!(wm_window_title, 1));
+        register_gsubr("wm-transient-ids", 0, 0, gsubr!(wm_transient_ids, 0));
         register_gsubr("wm-floating-ids", 0, 0, gsubr!(wm_floating_ids, 0));
         register_gsubr("wm-timing-stats", 0, 0, gsubr!(wm_timing_stats, 0));
         register_gsubr("wm-focus-window", 1, 0, gsubr!(wm_focus_window, 1));

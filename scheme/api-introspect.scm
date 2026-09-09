@@ -92,6 +92,8 @@
      "Move and size the floating window ID to the given rectangle.")
     (wm-window-title "(wm-window-title id)"
      "The (title . app-id) pair the client set on window ID, or #f.")
+    (wm-transient-ids "(wm-transient-ids)"
+     "Return transient window IDs from Wayland parent and X11 transient hints.")
     (wm-floating-ids "(wm-floating-ids)"
      "The window ids the compositor currently treats as floating.")
     (wm-timing-stats "(wm-timing-stats)"
