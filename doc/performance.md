@@ -298,3 +298,24 @@ Status publication also reuses the output snapshot taken for its no-output
 check when constructing the JSON body. A counting regression verifies one
 `wm-outputs` query per publication instead of two. This avoids a redundant FFI
 conversion; no separate latency improvement is claimed for this small change.
+
+## Active DRM session after reconfiguration (2026-09-09)
+
+The running executable and both Home/system profile links now point to
+`/gnu/store/gbd7ys8rky9s1lnqwjqrnx5j3m7wj524-minde-1.0.0-rc1/bin/minde`.
+The runtime identifies the backend as udev. The package version labels itself
+`local-checkout`; the store path, rather than that label, identifies this build.
+
+A read-only 20.03-second sample subtracted timing counters at its boundaries
+and checked that the process identity and executable did not change:
+
+- CPU: 2.1% of one core during the observed desktop activity.
+- Render: 397 calls, mean 649.76 µs. Of those, 378 were at most 1 ms,
+  nine were 1–4 ms, ten were 4–16.6 ms, and none exceeded 16.6 ms.
+- Applied commands: 11 calls, mean 29.27 µs, none above 1 ms.
+- Key dispatches: zero; this interval cannot establish input latency.
+
+This is an active desktop observation, not a controlled idle benchmark or a
+before/after comparison. Render duration measures compositor work, not the
+complete input-to-display path. Raw aggregate results are in
+`/tmp/minde-live-drm-sample.json`; no window titles or input contents were saved.
