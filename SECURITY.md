@@ -10,9 +10,10 @@ After 1.0, this file will list supported release lines and response windows.
 
 Please do not open a public issue for a vulnerability that could compromise a
 Wayland session, expose clipboard or input data, bypass screen locking, or run
-commands unexpectedly. Send a private report to:
+commands unexpectedly. Report it privately through GitHub's vulnerability
+reporting form instead:
 
-`schmidt.l.samuel@gmail.com`
+<https://github.com/9s-l-s9/minde/security/advisories/new>
 
 Include the affected revision, backend, reproduction steps, expected impact,
 and whether the report may be acknowledged publicly. Do not include secrets,
