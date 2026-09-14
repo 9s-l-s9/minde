@@ -280,6 +280,17 @@ case "$command" in
                             (begin (display current) (newline) (force-output)
                                    current)
                             last)))
+                    ;; An event line arrives from the sync path, but the
+                    ;; compositor writes status.json from a deferred timer
+                    ;; a moment later; reading at once would re-emit the
+                    ;; previous document and leave the real change to the
+                    ;; safety poll.  Give the write up to 300 ms to land.
+                    (define (emit-after-event last)
+                      (let retry ((left 12))
+                        (let ((now (emit-if-changed last)))
+                          (if (or (not (eq? now last)) (zero? left))
+                              now
+                              (begin (usleep 25000) (retry (- left 1)))))))
                     (let loop ((last (emit-if-changed #f)))
                       (when (unix-socket? ipc-path)
                         (if events
@@ -288,7 +299,9 @@ case "$command" in
                               (when (and (pair? ready)
                                          (eof-object? (read-line events)))
                                 (exit 0))
-                              (loop (emit-if-changed last)))
+                              (loop (if (pair? ready)
+                                        (emit-after-event last)
+                                        (emit-if-changed last))))
                             (begin
                               (sleep interval)
                               (loop (emit-if-changed last))))))))' \

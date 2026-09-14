@@ -355,6 +355,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `mindectl subscribe --json` no longer trails the compositor by one
+  change. It woke on the event line and re-read status.json before the
+  deferred write had landed, so bars showed the previous state until the 2 s
+  safety poll; it now waits briefly for the new document after each event.
+
 - Disabling a head (hotplug, shikane, `configure-output!`) no longer kills
   clients that bind its `wl_output` late: the global is announced as gone
   first and only freed after a grace period, so eww bars and gammastep
