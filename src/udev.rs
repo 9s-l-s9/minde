@@ -895,6 +895,7 @@ pub(crate) fn enable_head(
     position: Point<i32, Logical>,
 ) -> Result<(), String> {
     let dh = state.display_handle.clone();
+    let handle = state.handle.clone();
     let udev = state.udev_data.as_mut().ok_or("no udev backend")?;
     let device = udev.devices.get_mut(&node).ok_or("unknown drm device")?;
     let entry = device.heads.get_mut(&crtc).ok_or("unknown head")?;
@@ -925,7 +926,7 @@ pub(crate) fn enable_head(
             .and_then(|d| d.heads.get_mut(&crtc))
             .and_then(|e| e.global.take())
         {
-            dh.remove_global::<MindeState>(global);
+            retire_output_global(&dh, &handle, global);
         }
         state.space.unmap_output(&output);
         if prev_mode.is_some() || prev_location != position {
@@ -1013,6 +1014,39 @@ fn init_surface(
     Ok(())
 }
 
+/// How long a disabled head's `wl_output` global stays bindable after
+/// clients were told it is gone. See [`retire_output_global`].
+const OUTPUT_GLOBAL_GRACE: Duration = Duration::from_secs(10);
+
+/// Retires an output's `wl_output` global without killing slow clients.
+///
+/// `remove_global` frees the global at once, and a client whose bind
+/// request is already in flight -- or that only processes the registry
+/// every few seconds, as gammastep does, or whose main loop is busy, as
+/// eww's is during its own monitor reload -- is then disconnected with
+/// `invalid global wl_output`. That is how the bar and gammastep died on
+/// every monitor hotplug. So announce the removal first (`disable_global`
+/// keeps late binds working) and free the global after a grace period.
+fn retire_output_global(
+    dh: &smithay::reexports::wayland_server::DisplayHandle,
+    handle: &smithay::reexports::calloop::LoopHandle<'static, MindeState>,
+    global: GlobalId,
+) {
+    dh.disable_global::<MindeState>(global.clone());
+    let removal_dh = dh.clone();
+    let removal_global = global.clone();
+    if handle
+        .insert_source(Timer::from_duration(OUTPUT_GLOBAL_GRACE), move |_, _, _| {
+            removal_dh.remove_global::<MindeState>(removal_global.clone());
+            TimeoutAction::Drop
+        })
+        .is_err()
+    {
+        warn!("no timer for the wl_output global; removing it immediately");
+        dh.remove_global::<MindeState>(global);
+    }
+}
+
 /// Disables an enabled head: the CRTC is switched off (by dropping the
 /// [`OutputSurface`]), the output leaves the space and every surface, and
 /// its `wl_output` global is removed like wlroots does. The [`HeadEntry`]
@@ -1055,7 +1089,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     // Releases the CRTC (Drop for DrmOutput).
     drop(surface);
     if let Some(global) = global {
-        dh.remove_global::<MindeState>(global);
+        retire_output_global(&dh, &handle, global);
     }
 
     // The remaining outputs may have fallen back to implicit modifiers to

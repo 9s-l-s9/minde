@@ -355,6 +355,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Disabling a head (hotplug, shikane, `configure-output!`) no longer kills
+  clients that bind its `wl_output` late: the global is announced as gone
+  first and only freed after a grace period, so eww bars and gammastep
+  survive a monitor reconnect instead of dying with `invalid global
+  wl_output`.
+
 - Flush Wayland clients after every event-loop iteration. Since repaints
   became damage-driven, events that dirty nothing (key releases, pointer
   motion over a static scene) stayed buffered until the next render, so
