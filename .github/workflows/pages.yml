@@ -1,16 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Publishes doc/ as a GitHub Pages site, built with Haunt (Guile Scheme)
-# via doc/haunt.scm -- the same language Minde's own policy layer and
-# doc generator scripts are written in, run through the same Guix
-# environment mechanism as scripts/ci, just a smaller manifest
-# (doc/manifest.scm) since this never needs the Rust/Smithay side.
+# Publishes the focused Minde landing page from site/, built with Haunt.
+# Detailed documentation remains in doc/ and is linked from the landing page.
 #
 # Requires the repository to be public, or a GitHub plan that supports
 # Pages on private repositories -- Pages sites are published to the public
 # internet regardless of source-repo visibility. Once that's true, enable
 # Settings -> Pages -> Build and deployment -> Source: GitHub Actions; this
-# workflow then deploys on every push to main that touches doc/.
+# workflow then deploys on every push to main that touches site/.
 
 name: pages
 
@@ -18,7 +15,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'doc/**'
+      - 'site/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -53,15 +50,13 @@ jobs:
           pullAfterInstall: false
 
       - name: Build with Haunt
-        working-directory: doc
-        run: >-
-          guix shell -m manifest.scm -- sh -c
-          'GUILE_LOAD_PATH="$PWD/../tools/guile-autodoc:$GUILE_LOAD_PATH" haunt build'
+        working-directory: site
+        run: guix shell -m manifest.scm -- haunt build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: doc/_site
+          path: site/_site
 
   deploy:
     needs: build
