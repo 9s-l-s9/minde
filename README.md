@@ -1,15 +1,49 @@
-# Minde
+# minde
 
-Minde is a Wayland compositor with an embedded Guile policy layer.  The
-name is the Lojban word for "to command": every window-management
-decision is a Scheme expression that can be inspected, rebound, or
-evaluated live.  The window model (groups, heads, frames) follows
-StumpWM; Smithay owns Wayland, Xwayland, rendering, input, and
-backends.  Panels and trays are external -- Eww can consume the JSON
-status interface.
+*Lojban · [/ˈminde/](https://www.lojban.org/publications/reference_grammar/chapter3.html) · [to command](https://vlasisku.lojban.org/minde)*
 
-This is a one-maintainer project.  Development version: `1.0.0-rc1`.
-Breaking changes remain possible before 1.0.
+A programmable Wayland compositor. Shape your desktop with Scheme, inspect its
+state, and change its behavior while it runs.
+
+![Rust + Guile](https://img.shields.io/badge/core-Rust_%2B_Guile-555555?style=flat-square)
+![Release candidate](https://img.shields.io/badge/status-release_candidate-8a7040?style=flat-square)
+[![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-555555?style=flat-square)](COPYING)
+
+Minde combines a Rust/Smithay compositor with an embedded Guile Scheme policy
+layer. What you learn about the running system becomes code you can use every day.
+
+## What you can do
+
+- **Shape your workspace.** Combine manual frame trees, dynamic master/stack
+  layouts, groups, multiple heads and floating windows. The window model follows
+  StumpWM, with native Wayland clients and experimental Xwayland support.
+- **Develop behavior live.** Compose Scheme procedures, hooks and keybindings;
+  inspect state and evaluate expressions through the command prompt or IPC.
+  Keep useful experiments in your configuration and reload it atomically.
+- **Connect your tools.** Query versioned JSON state and subscribe to events.
+  External panels such as Eww can use the same status interface; Scheme commands
+  can combine window operations with your own logic.
+
+## How it fits together
+
+```text
+Rust / Smithay                 Guile / Scheme
+protocols, rendering, input  <-> groups, frames, layouts
+backends and event loop         commands, hooks, configuration
+```
+
+Rust owns the display machinery and exposes small primitives. Scheme owns the
+window-management decisions. Supported live evaluations run on the compositor
+thread, so you can change policy through the same execution path used by keys
+and hooks. Configuration reload validates the candidate before replacing active
+tables. See the [architecture](doc/architecture.md) and [Scheme API](doc/api.md).
+
+Minde is for developers who enjoy programming their working environment and
+want that investment to carry into their daily desktop. It is a one-maintainer
+project. Development version: `1.0.0-rc1`. Breaking changes remain possible
+before 1.0.
+The [capability matrix](doc/capability-matrix.md) distinguishes supported features
+from experimental protocols and hardware paths.
 
 ## Trying it
 
