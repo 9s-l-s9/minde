@@ -126,14 +126,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                                 #$(this-package-input "libxkbcommon")
                                 #$(this-package-input "libseat")
                                 #$(this-package-input "libinput-minimal")
-                                #$(this-package-input "eudev")
-                                ;; Winit dlopens these for --winit; test and
-                                ;; run the packaged binary without a dev shell.
-                                #$(this-package-input "libx11")
-                                #$(this-package-input "libxcb")
-                                #$(this-package-input "libxi")
-                                #$(this-package-input "libxcursor")
-                                #$(this-package-input "libxrandr")))
+                                #$(this-package-input "eudev")))
                      " "))
             (mkdir-p ".cargo")
             (copy-file "guix/cargo-config.toml" ".cargo/config.toml")
@@ -226,7 +219,9 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                 (lambda (port)
                   (format port "#!~a/bin/sh
 # minde login session wrapper.
-export XDG_CURRENT_DESKTOP=minde
+# The ':wlroots' suffix lets xdg-desktop-portal match wlr.portal's UseIn=
+# list on versions that predate portals.conf (and is what sway does too).
+export XDG_CURRENT_DESKTOP=minde:wlroots
 export MINDE_SCHEME_DIR=~a/scheme
 export GUILE_LOAD_PATH=~a:${GUILE_LOAD_PATH:-}
 # Compiled bytecode cache installed above (mirrors `make compile-scheme`):
@@ -258,6 +253,17 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                           (string-append out "/lib/guile/3.0/site-ccache")
                           mesa share bin)))
               (chmod (string-append bin "/minde-session") #o755)
+              ;; xdg-desktop-portal picks its backend from
+              ;; <XDG_CURRENT_DESKTOP>-portals.conf; wlr.portal's UseIn list
+              ;; does not know "minde", so without this file the portal
+              ;; exposes no ScreenCast/Screenshot interface and browser
+              ;; screen sharing silently finds nothing.
+              (let ((portals (string-append out "/share/xdg-desktop-portal")))
+                (mkdir-p portals)
+                (call-with-output-file
+                    (string-append portals "/minde-portals.conf")
+                  (lambda (port)
+                    (display "[preferred]\ndefault=wlr\n" port))))
               ;; REPL-socket helper scripts (used by prompt/message
               ;; workflows spawned from bindings). Pin their guile.
               ;; mindectl is the only one that invokes guile directly (via
@@ -298,12 +304,7 @@ Type=Application
          eudev
          libseat
          mesa
-         libglvnd
-         libx11
-         libxcb
-         libxi
-         libxcursor
-         libxrandr))
+         libglvnd))
   ;; smithay execs "Xwayland" from PATH at runtime; propagation puts it
   ;; into the same profile as minde (system profile via SDDM).
   (propagated-inputs
