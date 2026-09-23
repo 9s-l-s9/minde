@@ -3,16 +3,22 @@
 use crate::{MindeState, grabs::resize_grab, state::ClientState};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    reexports::wayland_server::{
-        Client,
-        protocol::{wl_buffer, wl_surface::WlSurface},
+    reexports::{
+        calloop::Interest,
+        wayland_server::{
+            Client, Resource,
+            protocol::{wl_buffer, wl_surface::WlSurface},
+        },
     },
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            CompositorClientState, CompositorHandler, CompositorState, get_parent,
-            is_sync_subsurface,
+            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
+            SurfaceAttributes, add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface,
+            with_states,
         },
+        dmabuf::get_dmabuf,
+        drm_syncobj::DrmSyncobjCachedState,
         shm::{ShmHandler, ShmState},
     },
 };
@@ -31,6 +37,12 @@ impl CompositorHandler for MindeState {
             return &state.compositor_state;
         }
         &client.get_data::<ClientState>().unwrap().compositor_state
+    }
+
+    fn new_surface(&mut self, surface: &WlSurface) {
+        add_pre_commit_hook::<Self, _>(surface, |state, _dh, surface| {
+            state.block_until_buffer_ready(surface);
+        });
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -58,6 +70,80 @@ impl CompositorHandler for MindeState {
 }
 
 impl MindeState {
+    /// Holds a commit that attaches a dmabuf until the client's GPU work on
+    /// it has finished, so the buffer is never sampled or scanned out half
+    /// drawn.  With `linux-drm-syncobj-v1` the wait is on the explicit
+    /// acquire point: Smithay's renderer and DRM compositor assume it has
+    /// already signalled when the transaction applies (see
+    /// `smithay::wayland::drm_syncobj`), so without this blocker an
+    /// explicit-sync client (Vulkan WSI, Xwayland) can be shown before it
+    /// finished rendering.  Implicit-sync clients wait on the dmabuf's
+    /// read fence instead, which keeps a slow client from stalling the
+    /// compositor's own GPU work.
+    fn block_until_buffer_ready(&mut self, surface: &WlSurface) {
+        let mut acquire_point = None;
+        let dmabuf = with_states(surface, |states| {
+            acquire_point.clone_from(
+                &states
+                    .cached_state
+                    .get::<DrmSyncobjCachedState>()
+                    .pending()
+                    .acquire_point,
+            );
+            states
+                .cached_state
+                .get::<SurfaceAttributes>()
+                .pending()
+                .buffer
+                .as_ref()
+                .and_then(|assignment| match assignment {
+                    BufferAssignment::NewBuffer(buffer) => get_dmabuf(buffer).cloned().ok(),
+                    _ => None,
+                })
+        });
+        let Some(dmabuf) = dmabuf else {
+            return;
+        };
+        let Some(client) = surface.client() else {
+            return;
+        };
+
+        if let Some(acquire_point) = acquire_point
+            && let Ok((blocker, source)) = acquire_point.generate_blocker()
+        {
+            let client = client.clone();
+            if self
+                .handle
+                .insert_source(source, move |_, _, state| {
+                    let dh = state.display_handle.clone();
+                    state
+                        .client_compositor_state(&client)
+                        .blocker_cleared(state, &dh);
+                    Ok(())
+                })
+                .is_ok()
+            {
+                add_blocker(surface, blocker);
+                return;
+            }
+        }
+
+        if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ)
+            && self
+                .handle
+                .insert_source(source, move |_, _, state| {
+                    let dh = state.display_handle.clone();
+                    state
+                        .client_compositor_state(&client)
+                        .blocker_cleared(state, &dh);
+                    Ok(())
+                })
+                .is_ok()
+        {
+            add_blocker(surface, blocker);
+        }
+    }
+
     /// Layer-surface commit handling: arrange the output's layer map,
     /// send the initial configure if this was the first commit (required
     /// by the protocol before the client may attach a buffer), track
@@ -65,7 +151,6 @@ impl MindeState {
     /// (fuzzel, swaylock) the keyboard.
     fn handle_layer_commit(&mut self, surface: &WlSurface) {
         use smithay::desktop::{WindowSurfaceType, layer_map_for_output};
-        use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::wlr_layer::{
             KeyboardInteractivity, Layer, LayerSurfaceCachedState, LayerSurfaceData,
         };
