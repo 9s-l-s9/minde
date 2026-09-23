@@ -136,8 +136,9 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
     echo "\`__EGL_VENDOR_LIBRARY_DIRS\`, falls back to the packaged"
     echo "\`init.scm\` when \`~/.config/minde/init.scm\` is absent, and execs"
     echo "\`bin/minde --tty\`, redirecting output to"
-    echo "\`\$XDG_STATE_HOME/minde/session.log\` (previous-generation log kept"
-    echo "as \`session.previous.log\`)."
+    echo "\`\$XDG_STATE_HOME/minde/session.log\` (older generations kept as"
+    echo "\`session.previous.log\` and \`session.previous.2.log\` through"
+    echo "\`session.previous.5.log\`)."
     echo
 
     echo "## Obtaining and verifying release archives"

@@ -58,12 +58,14 @@ newline-delimited JSON containing `timestamp_ms`, `level`, `target`, and typed
 event fields. `RUST_LOG` continues to select targets and levels in either
 format.
 
-The packaged login wrapper retains exactly two session generations:
+The packaged login wrapper retains six session generations:
 
 - `$XDG_STATE_HOME/minde/session.log` (current);
-- `$XDG_STATE_HOME/minde/session.previous.log` (previous).
+- `$XDG_STATE_HOME/minde/session.previous.log` (previous);
+- `$XDG_STATE_HOME/minde/session.previous.2.log` through
+  `session.previous.5.log` (older, oldest last).
 
-It replaces the previous generation at the next login. Rust panics continue
+Each login shifts the generations by one and drops the oldest. Rust panics continue
 to append to `crash.log`. Keybinding, configuration-reload, and IPC Scheme
 errors now log a Guile backtrace before returning control to the compositor.
 
@@ -120,7 +122,7 @@ scripts/mindectl eval '(error "backtrace-check")'
 
 It must fail without terminating minde, and `session.log` must contain a
 Guile backtrace. After one compositor logout/login, both `session.log` and
-`session.previous.log` must exist. Set `MINDE_LOG_FORMAT=json` for one
+`session.previous.log` must exist; after two, `session.previous.2.log` too. Set `MINDE_LOG_FORMAT=json` for one
 nested run and confirm every emitted tracing line is valid JSON.
 
 ## Timing and mirror consistency

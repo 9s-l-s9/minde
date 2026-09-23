@@ -33,7 +33,8 @@ mindectl report --output /tmp/minde-report
 ```
 
 Session logs are retained under `~/.local/state/minde/` as `session.log`,
-`session.previous.log`, and `crash.log`. Set `MINDE_LOG_FORMAT=json` before
+`session.previous.log`, `session.previous.2.log` through
+`session.previous.5.log`, and `crash.log`. Set `MINDE_LOG_FORMAT=json` before
 startup for structured tracing. Scheme binding, reload, hook and IPC failures
 include Guile backtraces.
 

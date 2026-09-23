@@ -109,8 +109,9 @@ which is installed at `bin/minde-session`. The wrapper sets
 `__EGL_VENDOR_LIBRARY_DIRS`, falls back to the packaged
 `init.scm` when `~/.config/minde/init.scm` is absent, and execs
 `bin/minde --tty`, redirecting output to
-`$XDG_STATE_HOME/minde/session.log` (previous-generation log kept
-as `session.previous.log`).
+`$XDG_STATE_HOME/minde/session.log` (older generations kept as
+`session.previous.log` and `session.previous.2.log` through
+`session.previous.5.log`).
 
 ## Obtaining and verifying release archives
 

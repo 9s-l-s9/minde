@@ -240,9 +240,19 @@ fi
 # binary's own panic hook.
 LOGDIR=\"${XDG_STATE_HOME:-$HOME/.local/state}/minde\"
 mkdir -p \"$LOGDIR\"
-# Keep exactly the current and previous session; overwrite the previous
-# generation at login so stale logs do not accumulate.
+# Keep the current session plus five older generations: a problem is
+# often noticed only after a logout or reboot or two, and one previous
+# log is then already gone.  session.previous.log stays the newest older
+# one; session.previous.2.log .. session.previous.5.log age out.
 if [ -f \"$LOGDIR/session.log\" ]; then
+  for i in 4 3 2; do
+    if [ -f \"$LOGDIR/session.previous.$i.log\" ]; then
+      mv -f \"$LOGDIR/session.previous.$i.log\" \"$LOGDIR/session.previous.$((i + 1)).log\"
+    fi
+  done
+  if [ -f \"$LOGDIR/session.previous.log\" ]; then
+    mv -f \"$LOGDIR/session.previous.log\" \"$LOGDIR/session.previous.2.log\"
+  fi
   mv -f \"$LOGDIR/session.log\" \"$LOGDIR/session.previous.log\"
 fi
 export RUST_BACKTRACE=1
