@@ -1,62 +1,128 @@
 // SPDX-License-Identifier: MIT
 
-//! `ext-session-lock-v1` handler.
-//!
-//! Security contract: while the session is locked, the render pass shows
-//! ONLY each output's lock surface (or solid black before it commits, or if
-//! the lock client dies), and no input reaches a regular client or the
-//! Scheme keybinding layer. The rendering half lives in the two backends
-//! (`src/winit.rs`, `src/udev.rs`); the input half in `src/input.rs`. This
-//! module owns the protocol handler and the lock-surface bookkeeping.
+//! Session lock ownership, exclusive input and presentation acknowledgements.
+//! `locked` guards rendering/input immediately. The protocol acknowledgement
+//! and Scheme suspend hook wait until all active outputs have shown a locked
+//! frame. An abandoned lock remains closed until another locker takes over.
 
-use smithay::output::Output;
-use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::SERIAL_COUNTER;
-use smithay::wayland::seat::WaylandFocus;
-use smithay::wayland::session_lock::{
-    LockSurface, LockSurfaceConfigure, SessionLockHandler, SessionLockManagerState, SessionLocker,
+use smithay::{
+    output::Output,
+    reexports::wayland_server::{
+        Client, DataInit, DisplayHandle, Resource,
+        backend::ClientId,
+        protocol::{wl_output::WlOutput, wl_surface::WlSurface},
+    },
+    utils::SERIAL_COUNTER,
+    wayland::{
+        Dispatch2,
+        seat::WaylandFocus,
+        session_lock::{
+            LockSurface, LockSurfaceConfigure, SessionLockHandler,
+            SessionLockManagerState, SessionLocker, SessionLockState,
+        },
+    },
+};
+pub(super) use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::
+    ext_session_lock_v1::{ExtSessionLockV1, Request as LockRequest};
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::server::{
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ext_session_lock_v1::Error,
 };
 
 use crate::MindeState;
+
+#[derive(Default)]
+pub(crate) struct LockState {
+    owner: Option<ExtSessionLockV1>,
+    owner_client: Option<ClientId>,
+    pending: Option<SessionLocker>,
+    confirmed: bool,
+    presentation: LockPresentation,
+}
+
+/// A generation tags the scene that was actually queued, rather than the
+/// compositor's state when a delayed vblank happens to arrive.
+#[derive(Default)]
+struct LockPresentation {
+    generation: u64,
+    presented: Vec<Output>,
+}
+
+impl LockPresentation {
+    fn reset(&mut self) {
+        self.generation += 1;
+        self.presented.clear();
+    }
+
+    fn presented(&mut self, output: &Output, generation: u64) {
+        if generation == self.generation && !self.presented.contains(output) {
+            self.presented.push(output.clone());
+        }
+    }
+
+    fn ready(&self, outputs: &[Output]) -> bool {
+        outputs.iter().all(|output| self.presented.contains(output))
+    }
+}
+
+// Clients may pipeline get_lock_surface before receiving finished. Initialize
+// those objects but give them no surface role, focus, or rendering authority.
+struct RejectedLockSurface;
+impl Dispatch2<ExtSessionLockSurfaceV1, MindeState> for RejectedLockSurface {
+    fn request(
+        &self,
+        _state: &mut MindeState,
+        _client: &Client,
+        _resource: &ExtSessionLockSurfaceV1,
+        _request: <ExtSessionLockSurfaceV1 as Resource>::Request,
+        _handle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, MindeState>,
+    ) {
+    }
+}
 
 impl SessionLockHandler for MindeState {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
         &mut self.session_lock_state
     }
 
-    /// A client asked to lock the session. Enter the locked state, take
-    /// input away from everything else, force a blank frame onto every
-    /// output, then confirm the lock.
     fn lock(&mut self, confirmation: SessionLocker) {
-        // Taking over an abandoned lock: a previous lock client disconnected
-        // without unlocking, so the session stayed blank (see `unlock` and
-        // the render paths). Drop the stale (now-dead) lock surfaces so the
-        // new client can register fresh ones. Smithay's manager does not
-        // block the retake: the new client binds its own wl_output objects,
-        // which are distinct protocol objects from the dead client's, so the
-        // manager's per-output "already locked" guard does not trip.
+        // Dropping the confirmation sends finished. Ownership belongs to the
+        // lock object, not merely its client (one client can create two locks).
+        if self
+            .session_lock
+            .owner
+            .as_ref()
+            .is_some_and(Resource::is_alive)
+        {
+            return;
+        }
+        let client = confirmation
+            .ext_session_lock()
+            .client()
+            .map(|client| client.id());
+        // Smithay retains output bindings after an unconfirmed lock is
+        // destroyed. Require a new connection to recover from abandonment;
+        // accepting another object here would later fail on stale bindings.
+        if client.is_some() && client == self.session_lock.owner_client {
+            return;
+        }
+        self.session_lock.owner_client = client;
+        self.session_lock.owner = Some(confirmation.ext_session_lock().clone());
+        self.session_lock.pending = Some(confirmation);
+        self.session_lock.presentation.reset();
         self.lock_surfaces.clear();
-
-        // Enter the locked state *before* confirming (and before rendering)
-        // so that no desktop frame can ever be produced once we are locked.
-        let was_locked = self.locked;
         self.locked = true;
         crate::guile::set_session_locked(true);
 
-        // Input hygiene: cancel any armed compositor-side key-repeat and take
-        // keyboard + pointer focus away from regular clients. The lock
-        // surface gets keyboard focus in `new_surface` once it arrives.
         self.cancel_key_repeat();
-        let serial = SERIAL_COUNTER.next_serial();
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, Option::<WlSurface>::None, serial);
-        }
-        // Drop text-input focus too: no IME activity while the session is locked.
+        self.enforce_lock_focus();
         self.set_text_input_focus(None);
+        self.update_keyboard_shortcuts_inhibitors(None);
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = self.start_time.elapsed().as_millis() as u32;
         if let Some(pointer) = self.seat.get_pointer() {
+            pointer.unset_grab(self, serial, time);
             let location = self.pointer_location;
-            let time = self.start_time.elapsed().as_millis() as u32;
             pointer.motion(
                 self,
                 None,
@@ -68,70 +134,48 @@ impl SessionLockHandler for MindeState {
             );
             pointer.frame(self);
         }
-
-        // Force a blank frame onto every output before telling the client the
-        // session is locked: the spec wants a cleared frame presented first,
-        // so the last desktop frame is not still on screen when we confirm.
-        // Under winit this requests a redraw of the locked scene; only the
-        // DRM path presents synchronously here.
-        self.render_all_outputs_now();
-
-        // Only fire the Scheme transition hook on a real unlocked->locked
-        // edge, not on a takeover of an already-locked session.
-        if !was_locked {
-            tracing::info!("session locked (ext-session-lock)");
-            crate::guile::on_session_lock();
+        if let Some(touch) = self.seat.get_touch() {
+            touch.cancel(self);
+            touch.unset_grab(self);
         }
-
-        confirmation.lock();
+        // Repaint through the normal backend scheduler. A desktop flip may
+        // still be pending; its completion must not acknowledge this lock.
+        self.schedule_lock_redraw();
     }
 
-    /// The lock client unlocked the session. Leave the locked state and
-    /// restore focus to whatever the Scheme layer considered focused.
     fn unlock(&mut self) {
-        if !self.locked {
-            return;
-        }
+        // Only the owning, confirmed protocol object reaches this callback:
+        // dispatch_lock_request checks it before Smithay's dispatch.
+        crate::guile::set_session_lock_confirmed(false);
         self.locked = false;
+        self.session_lock.owner = None;
+        self.session_lock.owner_client = None;
+        self.session_lock.pending = None;
+        self.session_lock.confirmed = false;
         self.lock_surfaces.clear();
         self.schedule_redraw();
         crate::guile::set_session_locked(false);
         tracing::info!("session unlocked (ext-session-lock)");
-
-        // Restore keyboard focus by re-running the same focus path as
-        // `WmCommand::Focus` for the currently-focused window; clear it if
-        // nothing was focused. The Scheme side sees the unlock hook and can
-        // resync too if it wants.
         let serial = SERIAL_COUNTER.next_serial();
         let focus = self
             .focused_window
             .as_ref()
             .and_then(|w| w.wl_surface().map(|s| s.into_owned()));
         if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, focus, serial);
+            keyboard.unset_grab(self);
+            keyboard.set_focus(self, focus.clone(), serial);
         }
-
+        self.set_text_input_focus(focus);
         crate::guile::on_session_unlock();
     }
 
-    /// A lock client created a lock surface for one output. Size it to that
-    /// output, give it keyboard focus (so password entry lands there), and
-    /// track it for the render pass.
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
         let Some(output) = Output::from_resource(&output) else {
-            tracing::warn!("session-lock surface for an unknown output; ignoring");
             return;
         };
         self.configure_lock_surface(&surface, &output);
-
-        let serial = SERIAL_COUNTER.next_serial();
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, Some(surface.wl_surface().clone()), serial);
-        }
-
-        // Replace any prior surface for this output (client reconnect).
-        self.lock_surfaces.retain(|(o, _)| o != &output);
         self.lock_surfaces.push((output, surface));
+        self.enforce_lock_focus();
         self.schedule_redraw();
     }
 
@@ -139,6 +183,126 @@ impl SessionLockHandler for MindeState {
 }
 
 impl MindeState {
+    pub(super) fn dispatch_lock_request(
+        &mut self,
+        client: &Client,
+        lock: &ExtSessionLockV1,
+        request: LockRequest,
+        handle: &DisplayHandle,
+        data_init: &mut DataInit<'_, Self>,
+    ) {
+        let owns_lock = self.locked && self.session_lock.owner.as_ref() == Some(lock);
+        match request {
+            LockRequest::UnlockAndDestroy if !owns_lock || self.session_lock.pending.is_some() => {
+                // Smithay at our pinned revision posts this error but falls
+                // through to unlock(). Never delegate an invalid unlock.
+                lock.post_error(
+                    Error::InvalidUnlock,
+                    "lock is not the confirmed session owner",
+                );
+            }
+            LockRequest::GetLockSurface { id, .. } if !owns_lock => {
+                data_init.init(id, RejectedLockSurface);
+            }
+            LockRequest::GetLockSurface { ref output, .. }
+                if Output::from_resource(output).is_some_and(|output| {
+                    self.lock_surfaces
+                        .iter()
+                        .any(|(existing, _)| existing == &output)
+                }) =>
+            {
+                // Two wl_output bindings can represent the same physical head.
+                lock.post_error(Error::DuplicateOutput, "output already has a lock surface");
+            }
+            request => {
+                let data = lock.data::<SessionLockState>().expect("Smithay lock state");
+                data.request(self, client, lock, request, handle, data_init);
+            }
+        }
+    }
+
+    /// Drop desktop/IME grabs and preserve focus only on this owner's lock
+    /// surfaces. Called at lock entry and after protocol requests, since an
+    /// inactive IME can otherwise reinstall a grab while the session is locked.
+    pub(crate) fn enforce_lock_focus(&mut self) {
+        if !self.locked {
+            return;
+        }
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        keyboard.unset_grab(self);
+        let current = keyboard.current_focus();
+        let valid = |surface: &WlSurface| {
+            self.session_lock
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.is_alive() && owner.client() == surface.client())
+                && self
+                    .lock_surfaces
+                    .iter()
+                    .any(|(_, lock)| lock.alive() && lock.wl_surface() == surface)
+        };
+        let focus = current.filter(&valid).or_else(|| {
+            self.lock_surfaces
+                .iter()
+                .map(|(_, lock)| lock.wl_surface())
+                .find(|surface| valid(surface))
+                .cloned()
+        });
+        if keyboard.current_focus() != focus {
+            keyboard.set_focus(self, focus, SERIAL_COUNTER.next_serial());
+        }
+    }
+
+    pub(crate) fn lock_generation(&self) -> u64 {
+        self.session_lock.presentation.generation
+    }
+
+    pub(crate) fn lock_frame_presented(&mut self, output: &Output, generation: u64) {
+        if self.session_lock.pending.is_some() {
+            self.session_lock.presentation.presented(output, generation);
+        }
+    }
+
+    pub(crate) fn invalidate_lock_presentation(&mut self) {
+        if self.session_lock.pending.is_some() {
+            self.session_lock.presentation.reset();
+            self.schedule_lock_redraw();
+        }
+    }
+
+    /// Runs after event dispatch, when output hotplug/power changes and frame
+    /// completions have settled. Removed/off DRM outputs no longer expose any
+    /// content; newly active outputs must have their own presentation receipt.
+    pub(crate) fn maybe_confirm_lock(&mut self) {
+        if self.session_lock.pending.is_none() {
+            return;
+        }
+        if !self
+            .session_lock
+            .owner
+            .as_ref()
+            .is_some_and(Resource::is_alive)
+        {
+            self.session_lock.pending = None;
+            return; // stay locked after a client dies, even before confirmation
+        }
+        let Some(outputs) = self.lock_confirmation_outputs() else {
+            return;
+        };
+        if !self.session_lock.presentation.ready(&outputs) {
+            return;
+        }
+        self.session_lock.pending.take().unwrap().lock();
+        if !self.session_lock.confirmed {
+            self.session_lock.confirmed = true;
+            crate::guile::set_session_lock_confirmed(true);
+            tracing::info!("session locked (ext-session-lock)");
+            crate::guile::on_session_lock();
+        }
+    }
+
     /// Configures a lock surface to its output's current logical size and
     /// sends the configure. Called on surface creation and whenever the
     /// output changes size (see the backends' resize paths).
@@ -179,5 +343,64 @@ impl MindeState {
             .find(|(o, _)| o == output)
             .map(|(_, surface)| surface)
             .filter(|surface| surface.alive())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smithay::output::{PhysicalProperties, Subpixel};
+
+    fn output(name: &str) -> Output {
+        Output::new(
+            name.into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+                serial_number: name.into(),
+            },
+        )
+    }
+
+    #[test]
+    fn confirmation_waits_for_every_output_and_ignores_old_frames() {
+        let outputs = [output("left"), output("right")];
+        let mut progress = LockPresentation::default();
+        progress.reset();
+        assert!(!progress.ready(&outputs));
+        progress.presented(&outputs[0], progress.generation - 1);
+        progress.presented(&outputs[1], progress.generation);
+        assert!(!progress.ready(&outputs));
+        progress.presented(&outputs[0], progress.generation);
+        assert!(progress.ready(&outputs));
+    }
+
+    #[test]
+    fn takeover_and_output_reconfiguration_require_new_receipts() {
+        let outputs = [output("screen")];
+        let mut progress = LockPresentation::default();
+        progress.reset();
+        let old_generation = progress.generation;
+        progress.presented(&outputs[0], old_generation);
+        assert!(progress.ready(&outputs));
+        progress.reset();
+        progress.presented(&outputs[0], old_generation);
+        assert!(!progress.ready(&outputs));
+        progress.presented(&outputs[0], progress.generation);
+        assert!(progress.ready(&outputs));
+    }
+
+    #[test]
+    fn hotplug_requires_new_output_and_removal_does_not_wait_for_dead_head() {
+        let outputs = [output("original"), output("hotplugged")];
+        let mut progress = LockPresentation::default();
+        progress.reset();
+        progress.presented(&outputs[0], progress.generation);
+        assert!(progress.ready(&outputs[..1]));
+        assert!(!progress.ready(&outputs));
+        assert!(progress.ready(&outputs[..1]));
+        assert!(progress.ready(&[]));
     }
 }

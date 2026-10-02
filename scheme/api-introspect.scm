@@ -128,6 +128,8 @@
      "Return ((name cap ...) ...): the present libinput devices.")
     (wm-configure-input-rule! "(wm-configure-input-rule! match key value kind flag)"
      "Low-level libinput rule primitive wrapped by wm-configure-input!.")
+    (wm-session-lock-confirmed? "(wm-session-lock-confirmed?)"
+                              "Whether the locked session has passed its output presentation barrier; safe to suspend.")
     (wm-session-locked? "(wm-session-locked?)"
      "Return whether the session is currently locked.")
     (wm-publish-event "(wm-publish-event line)"

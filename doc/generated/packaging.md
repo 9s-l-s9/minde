@@ -39,6 +39,7 @@ Entered with `guix shell -m manifest.scm`:
 - `xorg-server-xwayland`
 - `xorg-server`
 - `xdotool`
+- `python`
 - `imagemagick`
 - `grim`
 - `swaybg`

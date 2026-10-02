@@ -108,6 +108,8 @@ static RUNTIME_STARTED: OnceLock<std::time::Instant> = OnceLock::new();
 /// including the REPL. Set from the session-lock handler's lock/unlock
 /// transitions (see `src/handlers/session_lock.rs`).
 static SESSION_LOCKED: AtomicBool = AtomicBool::new(false);
+// Readiness for suspend is stricter than the immediate input/privacy guard.
+static SESSION_LOCK_CONFIRMED: AtomicBool = AtomicBool::new(false);
 
 /// One head (output/monitor) as reported to Scheme: stable id + usable
 /// rect (global coordinates) + connector name.
@@ -247,6 +249,10 @@ pub fn set_xwayland_status(status: &str, display: Option<u32>) {
 
 pub fn set_session_locked(locked: bool) {
     SESSION_LOCKED.store(locked, Ordering::SeqCst);
+}
+
+pub fn set_session_lock_confirmed(confirmed: bool) {
+    SESSION_LOCK_CONFIRMED.store(confirmed, Ordering::SeqCst);
 }
 
 thread_local! {
@@ -801,6 +807,13 @@ unsafe extern "C" fn wm_idle_ms() -> Scm {
 /// locked via ext-session-lock (swaylock &c.).
 unsafe extern "C" fn wm_session_locked() -> Scm {
     from_bool(SESSION_LOCKED.load(Ordering::SeqCst))
+}
+
+/// `(wm-session-lock-confirmed?)` -> whether this locked session has
+/// passed its initial output presentation barrier. The rendering guard stays
+/// active through takeover/hotplug. Used by suspend!, not privacy filtering.
+unsafe extern "C" fn wm_session_lock_confirmed() -> Scm {
+    from_bool(SESSION_LOCK_CONFIRMED.load(Ordering::SeqCst))
 }
 
 /// `(wm-publish-event line)` -- mirror one already-serialized event LINE (an
@@ -1668,6 +1681,12 @@ pub fn init(loop_signal: LoopSignal) {
             gsubr!(wm_configure_input_rule, 5),
         );
         register_gsubr("wm-session-locked?", 0, 0, gsubr!(wm_session_locked, 0));
+        register_gsubr(
+            "wm-session-lock-confirmed?",
+            0,
+            0,
+            gsubr!(wm_session_lock_confirmed, 0),
+        );
         register_gsubr("wm-publish-event", 1, 0, gsubr!(wm_publish_event, 1));
         register_gsubr("wm-events-active?", 0, 0, gsubr!(wm_events_active, 0));
     }

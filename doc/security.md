@@ -29,10 +29,20 @@ inspection remains mandatory before sharing diagnostic material.
 `ext-session-lock-v1` backs `(minde session)`'s `lock-screen!`
 (`Print s l`), which spawns a configurable external locker (default
 `swaylock -f`, `%lock-command`). `suspend!` (`Print s z`) does not suspend
-until the compositor confirms the lock surface is actually up
-(`wm-on-session-lock`), and refuses to suspend at all if that confirmation
+until the compositor confirms that locked content has replaced the desktop
+(`wm-on-session-lock` / `wm-session-lock-confirmed?`), and refuses to suspend at all if that confirmation
 times out (`%lock-timeout-ms`), so a suspend cannot silently wake the machine
-unlocked. Layer shell is not a safe substitute for this protocol: a fake lock
+unlocked. The DRM backend waits for a tagged locked-frame page flip on every active
+output. The nested backend acknowledges a successful buffer swap into its host
+window; physical presentation and locking of the surrounding desktop remain
+under the host compositor's control. `wm-session-locked?` becomes true immediately
+for input isolation and event redaction, before presentation confirmation.
+Only the active lock object may unlock; another client can take over after the
+owner dies, and the session stays locked throughout recovery. A client that
+abandons an unconfirmed lock must reconnect before trying again: the pinned
+protocol library retains output bindings from its abandoned lock.
+
+Layer shell is not a safe substitute for this protocol: a fake lock
 surface without exclusive input and correct output lifecycle would create a
 false security boundary.
 

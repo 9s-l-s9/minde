@@ -30,6 +30,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 (define (wm-warp-pointer-relative . arguments) #t)
 (define (wm-set-key-repeat . arguments) #t)
 (define (wm-session-locked?) #f)
+(define (wm-session-lock-confirmed?) #f)
 
 (setenv "MINDE_RULES_FILE" "/nonexistent-minde-rules.scm")
 (setenv "MINDE_CONFIG" "scheme/default-config.scm")

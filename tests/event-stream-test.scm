@@ -9,6 +9,15 @@
 ;; the envelope loads headlessly.
 (define %log '())
 (define (wm-log message) (set! %log (cons message %log)) #t)
+;; Install runtime fakes before loading: event-stream captures these callbacks
+;; once, just as it does after the Rust gsubrs are registered in the compositor.
+(define %immediate-locked? #f)
+(define %lock-confirmed? #f)
+(define %published '())
+(define (wm-session-locked?) %immediate-locked?)
+(define (wm-session-lock-confirmed?) %lock-confirmed?)
+(define (wm-publish-event line)
+  (set! %published (cons line %published)) #t)
 (load-from-path "ipc-reply.scm")
 (load-from-path "event-stream.scm")
 
@@ -72,16 +81,30 @@
 
 ;; --- minde-mirror-event drives wm-publish-event with the finished line --
 
-(let ((published '()))
-  ;; Stand in for the Rust gsubrs the running compositor provides.
-  (define (wm-session-locked?) #f)
-  (define (wm-publish-event line) (set! published (cons line published)) #t)
-  (module-define! (current-module) 'wm-session-locked? wm-session-locked?)
-  (module-define! (current-module) 'wm-publish-event wm-publish-event)
-  (minde-mirror-event 'new-window '(1 "t" "a"))
-  (check "mirror published exactly one line" (= (length published) 1))
-  (check "mirrored line parses to the event datum"
-         (equal? (parse-line (car published)) '(new-window 1 "t" "a"))))
+(set! %published '())
+(minde-mirror-event 'new-window '(1 "t" "a"))
+(check "mirror published exactly one line" (= (length %published) 1))
+(check "mirrored line parses to the event datum"
+       (equal? (parse-line (car %published)) '(new-window 1 "t" "a")))
+
+;; An accepted lock must redact immediately, before locked presentation makes
+;; suspend safe. Switching this mirror to the confirmed predicate would leak.
+(set! %immediate-locked? #t)
+(set! %lock-confirmed? #f)
+(set! %published '())
+(minde-mirror-event 'new-window '(42 "Secret Doc" "org.example"))
+(check "pending lock presentation still mirrors the redacted lifecycle event"
+       (= (length %published) 1))
+(check "mirror redacts title and app-id before presentation confirmation"
+       (equal? (parse-line (car %published)) '(new-window 42 "" "")))
+(minde-mirror-event 'message '("balance is 1234"))
+(check "mirror suppresses private messages before presentation confirmation"
+       (= (length %published) 1))
+(set! %immediate-locked? #f)
+(minde-mirror-event 'new-window '(43 "Public Doc" "org.public"))
+(check "mirror restores ordinary event payloads after unlock"
+       (equal? (parse-line (car %published))
+               '(new-window 43 "Public Doc" "org.public")))
 
 (if (zero? failures)
     (format #t "event-stream-test: all checks passed~%")

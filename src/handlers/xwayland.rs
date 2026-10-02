@@ -43,7 +43,10 @@ impl XWaylandShellHandler for MindeState {
             .and_then(|w| w.x11_surface())
             .map(|x| x == &surface)
             .unwrap_or(false);
-        if is_focused && let Some(keyboard) = self.seat.get_keyboard() {
+        if !self.locked
+            && is_focused
+            && let Some(keyboard) = self.seat.get_keyboard()
+        {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             keyboard.set_focus(self, Some(wl_surface), serial);
         }

@@ -471,6 +471,7 @@ impl MindeState {
         if !self.output_management.heads_all.contains(output) {
             self.output_management.heads_all.push(output.clone());
         }
+        self.invalidate_lock_presentation();
         self.output_management_refresh();
     }
 
@@ -478,6 +479,7 @@ impl MindeState {
     /// which `finished()`s its head on every bound manager.
     pub fn output_management_remove_output(&mut self, output: &Output) {
         self.output_management.heads_all.retain(|o| o != output);
+        self.invalidate_lock_presentation();
         self.output_management_refresh();
     }
 

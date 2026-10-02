@@ -98,7 +98,7 @@ impl MindeState {
         use smithay::wayland::text_input::TextInputSeat;
         let text_input = self.seat.text_input();
         text_input.leave();
-        text_input.set_focus(focus);
+        text_input.set_focus(if self.locked { None } else { focus });
         text_input.enter();
     }
 }

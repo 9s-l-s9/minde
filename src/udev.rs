@@ -121,7 +121,11 @@ type UdevRenderer<'a> = MultiRenderer<
 /// frame is actually scanned out. Returned by `frame_submitted` on the
 /// matching vblank (see `frame_finish`). The feedback is `None` for
 /// frames that owe none (e.g. the locked blank frame).
-type FrameUserData = (u64, Option<OutputPresentationFeedback>);
+struct FrameUserData {
+    generation: u64,
+    feedback: Option<OutputPresentationFeedback>,
+    lock_generation: Option<u64>,
+}
 
 type GbmDrmOutputManager = DrmOutputManager<
     GbmAllocator<DrmDeviceFd>,
@@ -473,6 +477,7 @@ pub fn init_udev(
                 // handler every 40 ms into the paused session -- and keep
                 // going after resume. Drop it with the session.
                 state.cancel_key_repeat();
+                state.invalidate_lock_presentation();
                 let handle = state.handle.clone();
                 if let Some(udev) = state.udev_data.as_mut() {
                     udev.paused = true;
@@ -506,6 +511,7 @@ pub fn init_udev(
                         }
                     }
                 }
+                state.invalidate_lock_presentation();
                 for (node, crtc) in to_repaint {
                     state.handle_repaint_now(node, crtc);
                 }
@@ -1224,8 +1230,15 @@ impl MindeState {
         // and only claim Vsync).
         let mut stale_flip = false;
         match submitted {
-            Ok(Some((generation, feedback))) => {
+            Ok(Some(FrameUserData {
+                generation,
+                feedback,
+                lock_generation,
+            })) => {
                 stale_flip = generation != current_generation;
+                if let Some(generation) = lock_generation {
+                    self.lock_frame_presented(&output, generation);
+                }
                 if let Some(mut feedback) = feedback {
                     let (clock, flags) = match metadata.as_ref().map(|m| m.time) {
                         Some(DrmEventTime::Monotonic(tp)) => (
@@ -1743,34 +1756,42 @@ impl MindeState {
         None
     }
 
-    /// Forces an immediate repaint of every udev output. Used by the
-    /// session-lock handler so a blank frame reaches every DRM screen before
-    /// the lock is confirmed. Under winit, requests a redraw of the locked scene.
-    /// If a flip is still pending the frame is queued behind it by the DRM
-    /// compositor; its vblank is then absorbed by `frame_finish`.
-    pub(crate) fn render_all_outputs_now(&mut self) {
-        if let Some(ping) = &self.winit_redraw_ping {
-            ping.ping();
+    /// Force damage even for a takeover of an already black screen, but
+    /// respect an in-flight flip. Only frame_finish can acknowledge a lock.
+    pub(crate) fn schedule_lock_redraw(&mut self) {
+        if let Some(udev) = self.udev_data.as_mut() {
+            for device in udev.devices.values_mut() {
+                for head in device.heads.values_mut() {
+                    if let Some(surface) = head.surface.as_mut() {
+                        surface
+                            .drm_output
+                            .with_compositor(|c| c.reset_buffer_ages());
+                    }
+                }
+            }
         }
-        let Some(udev) = self.udev_data.as_ref() else {
-            return;
-        };
-        if udev.paused {
-            return;
-        }
-        let targets: Vec<(DrmNode, crtc::Handle)> = udev
-            .devices
-            .iter()
-            .flat_map(|(node, device)| {
-                device
-                    .heads
-                    .iter()
-                    .filter(|(_, head)| head.enabled())
-                    .map(move |(crtc, _)| (*node, *crtc))
-            })
-            .collect();
-        for (node, crtc) in targets {
-            self.render_now(node, crtc);
+        self.schedule_redraw();
+    }
+
+    /// Physical outputs that must acknowledge a locked frame. A paused seat
+    /// cannot prove presentation; powered-off CRTCs expose no content. Winit's
+    /// output is a host window, so even a disabled virtual head must swap its
+    /// locked/black buffer before acknowledging.
+    pub(crate) fn lock_confirmation_outputs(&self) -> Option<Vec<smithay::output::Output>> {
+        if let Some(udev) = self.udev_data.as_ref() {
+            if udev.paused {
+                return None;
+            }
+            Some(
+                udev.devices
+                    .values()
+                    .flat_map(|device| device.heads.values())
+                    .filter(|head| head.enabled() && head.power == PowerState::On)
+                    .map(|head| head.output.clone())
+                    .collect(),
+            )
+        } else {
+            Some(self.output_management.heads_all().to_vec())
         }
     }
 
@@ -1855,6 +1876,7 @@ impl MindeState {
         node: DrmNode,
         crtc: crtc::Handle,
     ) -> Result<bool, SwapBuffersError> {
+        let lock_generation = self.lock_generation();
         let udev = self
             .udev_data
             .as_mut()
@@ -1927,7 +1949,11 @@ impl MindeState {
                 output_surface.flip_generation = output_surface.flip_generation.wrapping_add(1);
                 output_surface
                     .drm_output
-                    .queue_frame((output_surface.flip_generation, None))
+                    .queue_frame(FrameUserData {
+                        generation: output_surface.flip_generation,
+                        feedback: None,
+                        lock_generation: Some(lock_generation),
+                    })
                     .map_err(Into::<SwapBuffersError>::into)?;
             }
             // Frame callback so the lock client keeps drawing.
@@ -2054,7 +2080,11 @@ impl MindeState {
             output_surface.flip_generation = output_surface.flip_generation.wrapping_add(1);
             output_surface
                 .drm_output
-                .queue_frame((output_surface.flip_generation, Some(presentation_feedback)))
+                .queue_frame(FrameUserData {
+                    generation: output_surface.flip_generation,
+                    feedback: Some(presentation_feedback),
+                    lock_generation: None,
+                })
                 .map_err(Into::<SwapBuffersError>::into)?;
         } else {
             // No frame will be scanned out, so no vblank will arrive to deliver

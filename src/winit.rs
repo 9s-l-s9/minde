@@ -157,6 +157,7 @@ pub fn init_winit(
                     );
                     // Re-derive the usable area from the new size (layer
                     // exclusive zones re-arranged inside).
+                    state.invalidate_lock_presentation();
                     state.reported_heads.clear();
                     state.update_usable_area();
                     // Re-send preferred fractional scales (surface/output
@@ -182,7 +183,7 @@ pub fn init_winit(
                                     &mut *renderer,
                                     lock.wl_surface(),
                                     (0, 0),
-                                    1.0,
+                                    output.current_scale().fractional_scale(),
                                     1.0,
                                     smithay::backend::renderer::element::Kind::Unspecified,
                                 );
@@ -197,7 +198,13 @@ pub fn init_winit(
                             )
                             .unwrap();
                     }
+                    // This output is the nested host window: a successful
+                    // swap replaces its content. The host compositor owns
+                    // physical presentation; winit exposes no presentation
+                    // feedback for it. Never acknowledge merely requesting a
+                    // redraw or an unsuccessful swap.
                     backend.submit(Some(&[damage])).unwrap();
+                    state.lock_frame_presented(&output, state.lock_generation());
 
                     // Frame callback so the lock client keeps drawing.
                     if let Some(lock) = state.lock_surface_for(&output) {

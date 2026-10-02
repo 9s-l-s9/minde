@@ -285,6 +285,7 @@
    ((name . wm-idle-ms) (signature . "(wm-idle-ms)") (documentation . "Return milliseconds elapsed since the last input event."))
    ((name . wm-input-devices) (signature . "(wm-input-devices)") (documentation . "Return ((name cap ...) ...): the present libinput devices."))
    ((name . wm-configure-input-rule!) (signature . "(wm-configure-input-rule! match key value kind flag)") (documentation . "Low-level libinput rule primitive wrapped by wm-configure-input!."))
+   ((name . wm-session-lock-confirmed?) (signature . "(wm-session-lock-confirmed?)") (documentation . "Whether the locked session has passed its output presentation barrier; safe to suspend."))
    ((name . wm-session-locked?) (signature . "(wm-session-locked?)") (documentation . "Return whether the session is currently locked."))
    ((name . wm-publish-event) (signature . "(wm-publish-event line)") (documentation . "Mirror one serialized event LINE to every event-socket subscriber."))
    ((name . wm-events-active?) (signature . "(wm-events-active?)") (documentation . "Return whether any event-socket subscriber is connected."))

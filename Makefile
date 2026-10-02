@@ -158,6 +158,7 @@ check-e2e:
 	sh tests/clipboard-e2e.sh
 	sh tests/foreign-toplevel-e2e.sh
 	sh tests/event-subscribe-e2e.sh
+	sh tests/session-lock-e2e.sh
 	sh tests/output-management-e2e.sh
 	sh tests/output-scheme-e2e.sh
 	sh tests/keyboard-layout-e2e.sh

@@ -118,6 +118,9 @@ impl MindeState {
                     tracing::warn!("keyboard event received before keyboard initialization");
                     return;
                 };
+                if self.locked {
+                    self.enforce_lock_focus();
+                }
                 keyboard.input::<(), _>(
                     self,
                     key_code,

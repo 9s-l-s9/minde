@@ -113,6 +113,9 @@ impl XdgShellHandler for MindeState {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        if self.locked {
+            return;
+        }
         let Some(seat) = Seat::from_resource(&seat) else {
             tracing::warn!("move request used an unknown seat");
             return;
@@ -149,6 +152,9 @@ impl XdgShellHandler for MindeState {
         serial: Serial,
         edges: xdg_toplevel::ResizeEdge,
     ) {
+        if self.locked {
+            return;
+        }
         let Some(seat) = Seat::from_resource(&seat) else {
             tracing::warn!("resize request used an unknown seat");
             return;
@@ -187,6 +193,10 @@ impl XdgShellHandler for MindeState {
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        if self.locked {
+            surface.send_popup_done();
+            return;
+        }
         let Some(seat) = Seat::<MindeState>::from_resource(&seat) else {
             tracing::warn!("popup grab used an unknown seat");
             return;

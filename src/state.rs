@@ -169,6 +169,7 @@ pub struct MindeState {
     /// regular clients or the Scheme keybinding layer. This is the security
     /// boundary: no desktop pixel and no stray input while locked.
     pub locked: bool,
+    pub(crate) session_lock: crate::handlers::session_lock::LockState,
     /// Committed lock surfaces, one per output (keyed by the compositor
     /// `Output`). A missing or dead entry for an output means "draw solid
     /// black" -- the spec forbids ever flashing desktop content while
@@ -616,6 +617,7 @@ impl MindeState {
             popups,
             session_lock_state,
             locked: false,
+            session_lock: Default::default(),
             lock_surfaces: Vec::new(),
             seat,
 
@@ -949,7 +951,9 @@ impl MindeState {
         // record/raise/activate in that case; the keyboard focus is applied
         // retroactively in `surface_associated` (handlers/xwayland.rs), or
         // emacs & co. think they're unfocused (hollow cursor) forever.
-        if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
+        if !self.locked
+            && let Some(surface) = window.wl_surface().map(|s| s.into_owned())
+        {
             let serial = SERIAL_COUNTER.next_serial();
             if let Some(keyboard) = self.seat.get_keyboard() {
                 keyboard.set_focus(self, Some(surface), serial);
@@ -964,6 +968,13 @@ impl MindeState {
 
     /// `wm-clear-focus`: no window holds the keyboard or is activated.
     fn clear_focus(&mut self) {
+        if self.locked {
+            self.activate_only(None);
+            self.focused_window = None;
+            self.foreign_toplevel_focus(None);
+            self.schedule_redraw();
+            return;
+        }
         let serial = SERIAL_COUNTER.next_serial();
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Option::<WlSurface>::None, serial);
@@ -2213,6 +2224,7 @@ impl MindeState {
     /// fractional-scale clients, keep lock surfaces covering each output,
     /// then tell Scheme.
     pub(crate) fn output_configuration_applied(&mut self) {
+        self.invalidate_lock_presentation();
         self.update_usable_area();
         self.update_fractional_scales();
         self.reconfigure_lock_surfaces();
@@ -2390,7 +2402,9 @@ impl MindeState {
         on: bool,
     ) -> Result<(), String> {
         if self.udev_data.is_some() {
-            return self.udev_set_output_power(output, on);
+            self.udev_set_output_power(output, on)?;
+            self.invalidate_lock_presentation();
+            return Ok(());
         }
         if !self.output_enabled(output) {
             return Err("output is disabled".into());

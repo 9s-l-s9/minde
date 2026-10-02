@@ -355,9 +355,16 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Session locks now retain their protocol owner, reject unauthorized unlocks,
+  and keep desktop windows and input-method/popup grabs from taking lock-screen
+  keyboard input. Lock acknowledgement and suspend wait for locked-frame DRM
+  presentation (or a successful nested-window buffer swap).
 - Event subscribers drain their final buffered events when the socket becomes
   writable, without requiring another publication. Idle disconnects free their
   slots; subscriber write-half-close remains supported.
+- Completed suspend attempts cannot cancel a later attempt through an old lock
+  timeout. Event privacy begins immediately; `wm-session-lock-confirmed?` is the
+  separate readiness check used for suspend.
 
 - `mindectl subscribe --json` no longer trails the compositor by one
   change. It woke on the event line and re-read status.json before the
