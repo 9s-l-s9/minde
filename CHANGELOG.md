@@ -355,6 +355,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Event subscribers drain their final buffered events when the socket becomes
+  writable, without requiring another publication. Idle disconnects free their
+  slots; subscriber write-half-close remains supported.
+
 - `mindectl subscribe --json` no longer trails the compositor by one
   change. It woke on the event line and re-read status.json before the
   deferred write had landed, so bars showed the previous state until the 2 s
