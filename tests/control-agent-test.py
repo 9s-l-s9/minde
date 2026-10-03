@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -228,7 +229,9 @@ class AgentTests(unittest.TestCase):
     def test_cli_evaluation_writes_metric_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "metrics.json"
-            reply = subprocess.run([str(ROOT / "scripts/minde-agent"), "evaluate", "--corpus",
+            # Through the interpreter: Guix builders lack /usr/bin/env.
+            reply = subprocess.run([sys.executable, str(ROOT / "scripts/minde-agent"),
+                                    "evaluate", "--corpus",
                                     str(ROOT / "tests/fixtures/control-agent/corpus.json"),
                                     "--output", str(output)], capture_output=True, check=True)
             self.assertEqual(json.loads(reply.stdout), json.loads(output.read_text()))

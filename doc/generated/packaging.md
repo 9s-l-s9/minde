@@ -23,6 +23,7 @@ Entered with `guix shell -m manifest.scm`:
 - `gcc-toolchain`
 - `pkg-config`
 - `guile`
+- `guile-readline`
 - `wayland`
 - `wayland-protocols`
 - `libxkbcommon`

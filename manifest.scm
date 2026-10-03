@@ -9,6 +9,8 @@
    "pkg-config"
    ;; Guile (embedded via libguile)
    "guile"
+   ;; mindectl repl's history and completion; tests/control-cli-test.py.
+   "guile-readline"
    ;; Smithay native deps
    "wayland"
    "wayland-protocols"
