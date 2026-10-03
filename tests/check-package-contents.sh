@@ -14,7 +14,7 @@ fail() {
     exit 1
 }
 
-for executable in minde minde-session minde-cmd minde-msg mindectl; do
+for executable in minde minde-session minde-cmd minde-msg mindectl minde-agent; do
     [ -x "$out/bin/$executable" ] || fail "missing executable bin/$executable"
 done
 
@@ -24,6 +24,10 @@ for file in \
     share/minde/scheme/init.scm \
     share/guile/site/3.0/minde/foundation/geometry.scm \
     share/guile/site/3.0/minde/ui/prompt.scm \
+    share/guile/site/3.0/minde/control.scm \
+    share/guile/site/3.0/minde/control-client.scm \
+    share/guile/site/3.0/minde/control-json.scm \
+    share/doc/minde/doc/agent-control.md \
     share/doc/minde/README.md \
     share/doc/minde/CHANGELOG.md \
     share/doc/minde/COPYING \

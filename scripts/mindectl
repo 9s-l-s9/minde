@@ -22,13 +22,50 @@ fi
 
 usage() {
     cat <<'EOF'
-usage: mindectl eval EXPR
+usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
+       mindectl capabilities [--scheme|--json]
+       mindectl help ACTION [--scheme|--json]
+       mindectl search QUERY [--scheme|--json]
+       mindectl query desktop|windows [--scheme|--json]
+       mindectl request [--scheme|--json]
+       mindectl call ACTION ARGS-DATUM [--session S --revision N --request-id ID] [--scheme|--json]
+       mindectl wait ID [--session S --timeout-ms N] [--scheme|--json]
+       mindectl events-since SEQUENCE [--session S] [--scheme|--json]
+       mindectl watch [--scheme|--json] [--count N]
+       mindectl repl
        mindectl check-config FILE
        mindectl query state --json
        mindectl subscribe --json
        mindectl subscribe --events
        mindectl report --output DIRECTORY
+
+--scheme/--machine preserve the complete IPC envelope; --json projects typed
+control data and tags arbitrary Scheme values as {"$scheme":"..."}.
+Exit codes: 0 success, 1 operation error, 2 usage error, 3 transport/observation
+failure. A timeout never cancels an action; inspect its receipt before retrying.
 EOF
+}
+
+control_client() {
+    script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+    if [ -f "$script_dir/../scheme/minde/control-client.scm" ]; then
+        modules=$script_dir/../scheme
+    elif [ -f "$script_dir/../share/minde/scheme/minde/control-client.scm" ]; then
+        modules=$script_dir/../share/minde/scheme
+    elif [ -n "${MINDE_SCHEME_DIR:-}" ]; then
+        modules=$MINDE_SCHEME_DIR
+    else
+        echo "mindectl: cannot locate Scheme client modules" >&2
+        exit 1
+    fi
+    ccache=$script_dir/../lib/guile/3.0/site-ccache
+    if [ -d "$ccache" ]; then
+        GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
+        export GUILE_LOAD_COMPILED_PATH
+    fi
+    exec "$GUILE" -q --no-auto-compile -L "$modules" -c \
+        '(use-modules (minde control-client))
+         (exit (control-client-main (cdr (command-line))))' "$socket_path" "$@"
 }
 
 # Shared by every socket client: refuse a runtime directory that is not a
@@ -173,9 +210,8 @@ write_report() {
 
 command=${1:-}
 case "$command" in
-    eval)
-        [ "$#" -eq 2 ] || { usage >&2; exit 2; }
-        ipc_request scheme "$2"
+    eval|capabilities|help|search|request|call|wait|events-since|watch|repl|--machine|--scheme|--json)
+        control_client "$@"
         ;;
     check-config)
         [ "$#" -eq 2 ] || { usage >&2; exit 2; }
@@ -213,6 +249,9 @@ case "$command" in
             "$2"
         ;;
     query)
+        if [ "${2:-}" = desktop ] || [ "${2:-}" = windows ]; then
+            control_client "$@"
+        fi
         if [ "$#" -ne 3 ] || [ "$2" != state ] || [ "$3" != --json ]; then
             usage >&2
             exit 2

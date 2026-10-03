@@ -258,10 +258,9 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                     .space
                     .element_location(&self.window)
                     .unwrap_or(self.initial_rect.loc);
-                data.publish_window_geometry(
-                    id,
-                    smithay::utils::Rectangle::new(loc, self.last_window_size),
-                );
+                // The inspection mirror reports the committed size; the
+                // configure below can still be awaiting its final commit.
+                data.publish_window_geometry(id);
                 // Deferred to an idle callback: see move_grab.rs for why this
                 // can't run inline from PointerHandle::button's dispatch.
                 let size = self.last_window_size;

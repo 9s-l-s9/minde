@@ -1,5 +1,11 @@
 # PLAN: Observability and agent-driven manipulation
 
+The agreed [Scheme API, REPL, and agent experience plan](doc/agent-api-plan.md)
+(2026-10-02) refines the implementation order for this roadmap: improve the
+coding-agent API first, then add classifier support. It takes precedence for
+overlapping API work, including client-side waits for asynchronous operations.
+The broader observability, ownership, and annotation epics remain below.
+
 ## Goal
 
 Make minde the desktop that an agent (or a curious user at the REPL) can
@@ -15,7 +21,10 @@ enough for one commit series.  Issues carry: motivation, design, tasks,
 acceptance, dependencies.  Effort is S (< 1 day), M (1–3 days),
 L (a week or more of real sessions).
 
-Status: drafted 2026-09-05.  Nothing here is started.
+Status: original roadmap drafted 2026-09-05. The overlapping control API,
+receipts, client-side screenshot waits, and sequenced journal are implemented
+as of 2026-10-03; see the linked plan's validation record. The remaining
+ownership, richer window facts, annotation, and accessibility work is future scope.
 
 ## What already exists (do not rebuild)
 
@@ -23,7 +32,7 @@ Status: drafted 2026-09-05.  Nothing here is started.
 |---|---|---|
 | Deferred screenshot with token | `wm-screenshot`, `wm-automation-status`, `automation-result` event | PNG of output under pointer or a window's region; async |
 | Event push socket | `$XDG_RUNTIME_DIR/minde-events.sock`, `mindectl subscribe --events` | one s-expression per fired hook, filtered like status.json |
-| Live API catalog | IPC `api-catalog`, `doc/generated/api-catalog.scm` | commands, procedures, gsubrs, hooks; apropos filter |
+| Live API catalog | IPC `describe-api`, `doc/generated/api-catalog.scm` | commands, procedures, gsubrs, hooks; apropos filter |
 | Status snapshot | `current-state`, `status.json`, schema v1 | outputs, groups, layout; redactable |
 | Consistency checks | `mirror-drift`, `check-compositor-callbacks!` | owner/mirror table in doc/architecture.md |
 | Timing | `wm-timing-stats`, `src/timing.rs` | histograms per command / key / frame |
@@ -46,7 +55,7 @@ Status: drafted 2026-09-05.  Nothing here is started.
 4. **Async has a token, sync has a value.**  Anything that needs a
    render or a client round trip (screenshot, key injection with
    confirmation) returns a token and fires `automation-result`.  A
-   blocking convenience wrapper may exist in Scheme, with a timeout.
+   convenience wait runs in an external client, with a timeout.
 5. **Every observable has a test on the nested backend.**  Extend
    `tests/e2e.sh` scenarios rather than adding hardware-only checks.
 6. **Redaction rules follow status.json.**  Titles and content-bearing
@@ -250,7 +259,7 @@ alongside `bind-key!`; document in doc/keybindings.md; add a
 key map no longer lists it.  Also move `bind-key!`, `bind-prefix-key!`
 and the new unbinders into a documented `(minde keys)` module so they
 appear in the API catalog; today they live in init.scm and are
-invisible to `api-catalog`.
+invisible to `describe-api`.
 
 ### D2. `owned-by` and `retract!`  (S)
 

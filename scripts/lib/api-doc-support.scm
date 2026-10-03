@@ -22,7 +22,8 @@
     (minde input)
     (minde commands)
     (minde hooks)
-    (minde status)))
+    (minde status)
+    (minde control)))
 
 ;; SRFI-9 accessors are syntax transformers, and exported constants are
 ;; values; neither can carry a procedure docstring. Their defining module
@@ -53,7 +54,8 @@
 ;; label) rather than baking a format's syntax into the shared value.
 (define (binding-demo-id module-name name value info)
   (let ((command (command-for name)))
-    (if command (symbol->string (command-demo-id command)) "non-visual")))
+    (if (and command (symbol? (command-demo-id command)))
+        (symbol->string (command-demo-id command)) "non-visual")))
 
 (define (documentation-fallback module-name name value)
   (let ((command (command-for name)))

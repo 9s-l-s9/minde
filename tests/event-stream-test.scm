@@ -16,6 +16,7 @@
 (define %published '())
 (define (wm-session-locked?) %immediate-locked?)
 (define (wm-session-lock-confirmed?) %lock-confirmed?)
+(define (wm-events-active?) #f)
 (define (wm-publish-event line)
   (set! %published (cons line %published)) #t)
 (load-from-path "ipc-reply.scm")
@@ -71,6 +72,11 @@
 (check "locked message events are suppressed entirely"
        (not (event->line 'message '("balance is 1234") #t)))
 
+(check "locked title-change events redact both content fields"
+       (equal? (parse-line
+                (event->line 'window-title-changed '(42 "Secret Doc" "org.example") #t))
+               '(window-title-changed 42 "" "")))
+
 (check "locked id-only lifecycle events keep flowing"
        (equal? (parse-line (event->line 'destroy-window '(9) #t))
                '(destroy-window 9)))
@@ -84,6 +90,8 @@
 (set! %published '())
 (minde-mirror-event 'new-window '(1 "t" "a"))
 (check "mirror published exactly one line" (= (length %published) 1))
+(check "journal receives events even without live subscribers"
+       (and (not (wm-events-active?)) (= (length %published) 1)))
 (check "mirrored line parses to the event datum"
        (equal? (parse-line (car %published)) '(new-window 1 "t" "a")))
 

@@ -10,11 +10,11 @@ and [`debugging.md`](debugging.md).
 `./check` with no arguments and `make check` are not the same
 gate: the bare `./check` fast path runs `cargo check` (a type
 check, no build or tests) alongside the Scheme/API/configuration/
-keymap suites and static analysis, while `make check` runs
+keymap and control-client suites, static analysis, and docs, while `make check` runs
 `check-rust` (`cargo fmt --check`, a full `cargo build`,
 `cargo test`, and `cargo clippy`) ahead of the same Scheme/API/
-configuration/keymap suites. `make check` is strictly stronger and
-slower; `./check` is the fast inner-loop gate for Scheme-only
+configuration/keymap/control-client suites (docs remain `make check-docs`).
+Its Rust gate is stronger and slower; `./check` is the fast inner-loop gate for Scheme-only
 changes. This divergence is intentional but easy to forget, so use
 `make check` (or `make check-rust` alone) before trusting a Rust
 change that only `./check` has seen.
@@ -25,7 +25,8 @@ change that only `./check` has seen.
 usage: ./check [TEST.scm ...]
 
 With no arguments, run the fixed fast development gate: Rust format/check,
-Scheme/API/configuration/keymap suites, static analysis, and documentation.
+Scheme/API/configuration/keymap and control-client suites, static analysis,
+and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
@@ -53,6 +54,8 @@ Every target below is declared `.PHONY` in `Makefile`. Run
 | `make check-tools` | - |
 | `make check-rust` | - |
 | `make check-cli` | - |
+| `make check-control` | Real Unix-socket clients and offline selector contracts, without a desktop or provider credentials. The real compositor scenario is a separate gate. |
+| `make check-control-e2e` | - |
 | `make check-static` | - |
 | `make compile-scheme` | Compile scheme/**/*.scm (modules, init.scm and the files it loads) to $(CCACHE); only sources newer than their .go are rebuilt. The Guix package does the same into lib/guile/3.0/site-ccache (guix.scm, compile-scheme phase). default-config.scm is data read by the validator, not code. |
 | `make bench-scheme` | Timing of the frame-sync hot path against stubbed primitives; prints numbers, asserts nothing. Arguments: windows, iterations. Set `MINDE_BENCH_STATUS=1` to include status generation and per-event file writes in a temporary runtime directory. |

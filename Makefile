@@ -32,15 +32,18 @@ SCHEME_TESTS := \
 	tests/placement-test.scm \
 	tests/dynamic-test.scm \
 	tests/ipc-reply-test.scm \
+	tests/commands-test.scm \
+	tests/control-test.scm \
+	tests/control-client-test.scm \
 	tests/event-stream-test.scm \
 	tests/api-introspect-test.scm
 
-.PHONY: compile-scheme bench-scheme check check-tools check-rust check-cli check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
+.PHONY: compile-scheme bench-scheme check check-tools check-rust check-cli check-control check-control-e2e check-scheme check-api check-config check-keymaps check-foundation check-ui check-static check-e2e check-stress check-soak \
 	check-apps check-apps-all check-apps-core check-apps-toolkits check-apps-desktop check-apps-layer check-apps-strict check-docs check-package check-all check-hardware demos \
 	docs check-generated-docs check-demos check-foundation-package check-ui-package \
 	release-archives check-release-archives release clean-test-output
 
-check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps
+check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps check-control
 
 check-tools:
 	@command -v cargo >/dev/null 2>&1 || { \
@@ -56,6 +59,15 @@ check-rust:
 
 check-cli: check-rust
 	sh tests/check-cli.sh target/debug/minde
+
+# Real Unix-socket clients and offline selector contracts, without a desktop
+# or provider credentials. The real compositor scenario is a separate gate.
+check-control: compile-scheme
+	$(GUILE_ENV) PYTHONDONTWRITEBYTECODE=1 python3 tests/control-cli-test.py
+	$(GUILE_ENV) PYTHONDONTWRITEBYTECODE=1 python3 tests/control-agent-test.py
+
+check-control-e2e:
+	sh tests/control-e2e.sh
 
 check-static:
 	sh tests/lint-borrows.sh
@@ -158,6 +170,7 @@ check-e2e:
 	sh tests/clipboard-e2e.sh
 	sh tests/foreign-toplevel-e2e.sh
 	sh tests/event-subscribe-e2e.sh
+	sh tests/control-e2e.sh
 	sh tests/session-lock-e2e.sh
 	sh tests/output-management-e2e.sh
 	sh tests/output-scheme-e2e.sh
@@ -220,6 +233,7 @@ check-docs: check-generated-docs
 	@test -s doc/concepts.md
 	@test -s doc/keybindings.md
 	@test -s doc/ipc-eww.md
+	@test -s doc/agent-control.md
 	@test -s doc/debugging.md
 	@test -s doc/testing.md
 	@test -s doc/architecture.md

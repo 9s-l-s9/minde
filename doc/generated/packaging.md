@@ -81,6 +81,7 @@ Entered with `guix shell -m manifest.scm`:
 - `libseat`
 - `libxkbcommon`
 - `mesa`
+- `python`
 - `wayland`
 
 ### Propagated inputs (installed alongside minde in the same profile)
@@ -94,7 +95,7 @@ Entered with `guix shell -m manifest.scm`:
 
 | Path (relative to the package output) | Contents |
 |---|---|
-| `bin` | minde binary, minde-session wrapper, REPL-socket helpers (minde-cmd, minde-msg, mindectl) |
+| `bin` | minde binary, minde-session wrapper, control helpers (minde-cmd, minde-msg, mindectl), optional classifier client (minde-agent) |
 | `share/minde` | runtime Scheme tree and default-config.scm |
 | `share/guile/site/3.0` | installed minde Guile modules (GUILE_LOAD_PATH root) |
 | `share/doc/minde` | README, changelog, policies, provenance, licenses, doc/, release/ |

@@ -10,6 +10,19 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- A typed agent control interface over the existing Scheme socket: desktop-wide
+  snapshots, discoverable schemas, explicit targets, session/revision checks,
+  bounded action receipts, asynchronous completion, and sequenced event replay.
+  `mindectl` adds machine/JSON output, discovery, calls, waits, watch recovery,
+  and a multiline remote REPL with registry completion and private history.
+  The optional `minde-agent` selector defaults to dry-run; deterministic,
+  Jev, and loopback transports share the validated executor. Live model
+  evaluation remains deferred. See [agent control](doc/agent-control.md).
+- IPC reply serialization now checks value types, preserves literal `#<`
+  strings, represents unspecified values, and distinguishes execution from
+  result-encoding failures without suggesting that prior effects rolled back.
+  Targeted screenshots accept window ID zero and select the target's output.
+
 - StumpWM-style window gaps with configurable inner, outer and head padding,
   live enable/disable/toggle commands, transient and fullscreen exceptions,
   and safe sizing on small frames. Existing `set-gaps!` calls retain their

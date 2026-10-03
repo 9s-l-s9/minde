@@ -828,10 +828,40 @@ unsafe extern "C" fn wm_publish_event(line: Scm) -> Scm {
 }
 
 /// `(wm-events-active?)` -> boolean: whether any event-socket subscriber is
-/// connected. The Scheme mirror consults it before serialising an event, so
-/// with nobody listening a hook firing costs no `write` at all.
+/// connected. Journaling remains enabled when this returns false.
 unsafe extern "C" fn wm_events_active() -> Scm {
     from_bool(crate::events::has_subscribers())
+}
+
+/// `(wm-event-cursor)` -> current process-local event journal sequence.
+unsafe extern "C" fn wm_event_cursor() -> Scm {
+    from_i64(crate::events::cursor() as i64)
+}
+
+/// Whether controlled mutations execute directly rather than merely queue.
+/// Arbitrary eval remains available on the explicitly unsafe REPL thread.
+unsafe extern "C" fn wm_control_ready() -> Scm {
+    from_bool(
+        on_guile_thread()
+            && !APPLYING.with(|cell| cell.get())
+            && STATE.with(|cell| !cell.get().is_null()),
+    )
+}
+
+/// `(wm-events-since cursor)` -> `((sequence . N) (gap . BOOL)
+/// (events . ((SEQUENCE LINE) ...)))`. A gap requires a new desktop snapshot.
+/// The public Scheme wrapper applies lock-time privacy to historical lines.
+unsafe extern "C" fn wm_events_since(cursor: Scm) -> Scm {
+    let cursor = to_i64(cursor);
+    let page = crate::events::since(if cursor < 0 { u64::MAX } else { cursor as u64 });
+    let events = scm_list_map(&page.events, |event| {
+        scm_list(&[from_i64(event.sequence as i64), from_str(&event.line)])
+    });
+    scm_list(&[
+        scm_field("sequence", from_i64(page.sequence as i64)),
+        scm_field("gap", from_bool(page.gap)),
+        scm_field("events", events),
+    ])
 }
 
 unsafe extern "C" fn wm_send_string(text: Scm, delay: Scm) -> Scm {
@@ -885,7 +915,8 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
 }
 
 /// `(wm-screenshot path [window-id])` -- deferred PNG screenshot of the
-/// output under the pointer (or the region of `window-id`). Returns an
+/// output under the pointer, or the rectangle of `window-id` using its
+/// largest-overlap output's scene and scale. Returns an
 /// automation token; completion via `(wm-automation-status token)` ->
 /// `(screenshot done|failed)` plus an `automation-result` event line.
 unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
@@ -899,7 +930,7 @@ unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
         None
     } else {
         let id = to_i64(window_id);
-        if id <= 0 {
+        if id < 0 {
             return from_bool(false);
         }
         Some(id as u64)
@@ -1117,7 +1148,14 @@ unsafe extern "C" fn wm_pointer_position() -> Scm {
 
 unsafe extern "C" fn wm_window_geometry(id: Scm) -> Scm {
     let id = to_i64(id) as u64;
-    match crate::automation_observe::window_geometry(id) {
+    // A configure request is not the committed surface size: terminals can
+    // round it to a character grid and clients can commit asynchronously.
+    // Safe compositor-thread queries use the same Space facts as screenshot
+    // capture. Only unavailable live-state access falls back to the mirror;
+    // a live None (unknown or hidden) must not resurrect stale visible bounds.
+    let geometry = with_state(|state| state.window_geometry(id))
+        .unwrap_or_else(|| crate::automation_observe::window_geometry(id));
+    match geometry {
         Some([x, y, w, h]) => scm_list(&[
             from_i64(x as i64),
             from_i64(y as i64),
@@ -1126,6 +1164,12 @@ unsafe extern "C" fn wm_window_geometry(id: Scm) -> Scm {
         ]),
         None => from_bool(false),
     }
+}
+
+/// Native committed-geometry epoch, including changes later reversed before
+/// Scheme observes them. A query is safe from any Guile-owned thread.
+unsafe extern "C" fn wm_geometry_revision() -> Scm {
+    from_i64(crate::automation_observe::geometry_revision() as i64)
 }
 
 fn string_list(mut list: Scm) -> Option<Vec<String>> {
@@ -1624,6 +1668,12 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr("wm-warp-pointer", 2, 0, gsubr!(wm_warp_pointer, 2));
         register_gsubr("wm-pointer-position", 0, 0, gsubr!(wm_pointer_position, 0));
         register_gsubr("wm-window-geometry", 1, 0, gsubr!(wm_window_geometry, 1));
+        register_gsubr(
+            "wm-geometry-revision",
+            0,
+            0,
+            gsubr!(wm_geometry_revision, 0),
+        );
         register_gsubr("wm-drop-files", 3, 0, gsubr!(wm_drop_files, 3));
         register_gsubr("wm-drop-text", 3, 0, gsubr!(wm_drop_text, 3));
         register_gsubr(
@@ -1689,6 +1739,9 @@ pub fn init(loop_signal: LoopSignal) {
         );
         register_gsubr("wm-publish-event", 1, 0, gsubr!(wm_publish_event, 1));
         register_gsubr("wm-events-active?", 0, 0, gsubr!(wm_events_active, 0));
+        register_gsubr("wm-event-cursor", 0, 0, gsubr!(wm_event_cursor, 0));
+        register_gsubr("wm-events-since", 1, 0, gsubr!(wm_events_since, 1));
+        register_gsubr("wm-control-ready?", 0, 0, gsubr!(wm_control_ready, 0));
     }
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >

@@ -4,6 +4,11 @@ The modeline is external. Minde publishes stable state so a bar such as Eww
 can display groups, focused window, urgency, outputs, runtime information and
 layout without parsing compositor logs.
 
+For desktop-wide snapshots, typed actions, receipts, completion waits, a
+remote Scheme REPL, and sequenced observation, see
+[agent control](agent-control.md). The status interface below remains useful
+for bars and existing integrations.
+
 ## Query and subscription
 
 ```sh
@@ -27,20 +32,30 @@ window-policy mutation with protocol events.
 Every reply is a single readable Scheme datum:
 
 - `(ok RESULT)` on success;
-- `(error KEY ARGS MESSAGE BACKTRACE)` on failure, where `KEY` is the Guile
-  exception key (a symbol), `ARGS` its raw throw arguments, `MESSAGE` a
+- `(error KEY ARGS MESSAGE BACKTRACE METADATA)` on failure, where `KEY` is the Guile
+  exception key (a symbol), `ARGS` its sanitized throw arguments, `MESSAGE` a
   human-readable rendering of the condition, and `BACKTRACE` a bounded Guile
   backtrace string. `MESSAGE` and `BACKTRACE` let an automated client or a human self-correct
   without a second round trip; the backtrace is capped to a few frames and a
-  bounded length, and error formatting is itself guarded so it never throws.
+  bounded length, and error formatting is itself guarded. The first five
+  fields retain their legacy positions. `METADATA` records the failure stage
+  (`validation`, `execution`, or `result-encoding`), whether execution began
+  or completed, and whether effects may already have occurred. An encoding
+  failure does not mean evaluation failed or changes were rolled back.
 
 **Writable-data guarantee.** `RESULT` is always `write`-able and re-`read`-able
-data. Public catalog commands return plain data (lists, symbols, strings,
-numbers, booleans), never opaque records, procedures, or other objects that
-print as `#<...>`. The IPC reply path enforces this: an unreadable result is
-converted into an `(error unreadable-result ...)` datum rather than emitted as
-an unparseable reply, so a client's `read` never fails on a well-formed
-response.
+data. Supported values include lists/dotted pairs, vectors, bytevectors,
+symbols, keywords, strings, characters, numbers, and booleans. Unspecified
+values become `(unspecified)`. Strings containing `#<` are valid data.
+Opaque objects and cycles are rejected by inspecting their types, and
+traversal/output limits produce complete errors instead of truncated datums.
+Errors such as `unreadable-result`, `cyclic-result`, and `result-too-large`
+identify encoding failures. Clients must also handle missing or incomplete
+transport replies, which can leave the action outcome unknown.
+
+`mindectl --scheme`/`--machine` preserve complete envelopes; `--json` emits
+schema-directed payloads and tagged arbitrary Scheme data. See the
+[machine-output contract](agent-control.md#scheme-json-and-exit-codes).
 
 ## Discovering the API (`describe-api`)
 
@@ -57,9 +72,9 @@ of any frozen public module. It returns an alist of four sections, each a list
 of per-item alists — all plain, re-readable data honoring the writable-data
 guarantee above:
 
-- `commands` — the registered command catalog: `name`, `category`, `summary`,
-  `arguments`, `documentation`;
-- `procedures` — the public bindings of the eight documented `(minde …)`
+- `commands` — the registered command catalog: legacy fields plus typed
+  parameters, result schemas, scope/effects, completion, retry, and examples;
+- `procedures` — the public bindings of the documented `(minde …)`
   modules: `name`, `module`, `signature`, `documentation`;
 - `gsubrs` — the `wm-*` Rust primitives: `name`, `signature`, `documentation`;
 - `hooks` — the `(minde hooks)` event hooks: `name`, `arguments` (the payload
@@ -72,7 +87,9 @@ The same procedure produces the machine-readable
 [`doc/generated/api-catalog.scm`](generated/api-catalog.scm) (emitted by
 `scripts/generate-api-catalog.scm` and checked by the doc-drift gate), so the
 committed catalog and the live reply are generated from one source and cannot
-drift.
+drift for bundled registrations. User-defined runtime registrations naturally
+extend the live catalog. `capabilities`, `search-actions`, and
+`describe-action` provide more concise discovery.
 
 ## Event subscription (push)
 
@@ -87,6 +104,8 @@ line — the event name followed by its hook payload, matching the shapes in
 
 ```
 (new-window 42 "firefox" "org.mozilla.firefox")
+(window-title-changed 42 "New title" "org.mozilla.firefox")
+(window-geometry 42 (10 20 640 480))
 (focus-window 42)
 (focus-frame 0 0 1280 760)
 (destroy-window 42)
@@ -103,14 +122,19 @@ payload value honors the same **writable-data guarantee** as the eval reply: a
 value that would print as `#<...>` is bounded to a string, so a subscriber's
 `read` never fails on a well-formed line.
 
+`automation-result` and `window-geometry` are native events written directly
+to this stream and the journal, rather than Scheme hooks. `window-geometry`
+reports committed client geometry, or `#f` when hidden or unavailable; this
+can differ from a requested resize while the client processes its configure.
+
 **Privacy while locked.** When the session is locked (ext-session-lock),
 title- and content-bearing events are filtered, mirroring `status.json`'s
 `redact?` policy (window id retained; human-readable title and app-id omitted):
 
-- `new-window` keeps its id but reports empty `""` title and app-id;
+- `new-window` and `window-title-changed` keep their id but report empty `""` title and app-id;
 - `message` events (arbitrary on-screen text) are suppressed entirely;
 - id-only lifecycle and geometry events (`focus-window`, `destroy-window`,
-  `focus-frame`, `focus-group`, `session-lock`, `session-unlock`) keep flowing,
+  `focus-frame`, `focus-group`, `window-geometry`, `session-lock`, `session-unlock`) keep flowing,
   so an agent can still track focus and window churn while locked.
 
 **Slow-consumer and eviction policy.** Delivery never blocks the compositor
@@ -120,6 +144,13 @@ further behind is evicted — its connection is closed and the eviction is
 logged. A clean client disconnect is likewise detected on the next write and
 dropped. Multiple simultaneous subscribers are supported up to a fixed cap (16);
 connections beyond the cap are rejected.
+
+**Sequenced observation.** The legacy stream above keeps its payload shape.
+New clients can use `mindectl watch` or `events-since` with a desktop snapshot
+cursor. A separate journal retains at most 128 events and 16 KiB, records
+events even without subscribers, and explicitly signals gaps requiring a
+new snapshot. `watch` performs that recovery after gaps and reconnects; see
+the [snapshot/journal handoff](agent-control.md#watch-changes-and-recover-from-gaps).
 
 ## Published files
 
@@ -156,4 +187,6 @@ so an Eww bar does not need to overlap managed windows.
 
 `MINDE_UNSAFE_REPL=1` restores the old threaded Guile REPL for exceptional
 interactive debugging. It is not an automation API: mutation from that thread
-can violate compositor ownership assumptions. Use `mindectl eval` instead.
+can violate compositor ownership assumptions. Use `mindectl eval` or the
+client-side `mindectl repl` instead. Controlled actions reject unsupported
+and reentrant execution contexts.

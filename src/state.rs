@@ -118,6 +118,33 @@ fn clamp_point_to_rectangles(
     nearest.map_or(pos, |(_, point)| point)
 }
 
+/// Choose the output whose scene and scale a screenshot captures. A targeted
+/// window uses its largest intersection with an enabled output; the pointer
+/// only selects an output for untargeted captures. A parked/offscreen window
+/// has no capture source. Ties preserve output order for predictable behavior.
+fn screenshot_output_index(
+    pointer: Point<f64, Logical>,
+    window: Option<Rectangle<i32, Logical>>,
+    outputs: &[Rectangle<i32, Logical>],
+) -> Option<usize> {
+    match window {
+        Some(window) => outputs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, output)| {
+                let intersection = output.intersection(window)?;
+                let area = i64::from(intersection.size.w) * i64::from(intersection.size.h);
+                (area > 0).then_some((index, area))
+            })
+            .max_by_key(|(index, area)| (*area, std::cmp::Reverse(*index)))
+            .map(|(index, _)| index),
+        None => outputs
+            .iter()
+            .position(|output| output.to_f64().contains(pointer))
+            .or_else(|| (!outputs.is_empty()).then_some(0)),
+    }
+}
+
 /// Compositor state. Adapted from Smithay's `smallvil` example
 /// (https://github.com/Smithay/Smithay, MIT licensed); see README for details.
 pub struct MindeState {
@@ -875,8 +902,9 @@ impl MindeState {
     /// to `rect` and map it there. Scheme re-places every window of every
     /// head on each sync, so the common case is "nothing changed": Smithay
     /// already elides an unchanged xdg configure, and when neither the
-    /// configure nor the location changed the map, geometry event and
-    /// foreign-toplevel refresh are skipped too.
+    /// configure nor the location changed the map and foreign-toplevel
+    /// refresh are skipped. Geometry observation still checks visibility,
+    /// since an output can move or disappear without moving this window.
     fn place_window(&mut self, id: u64, rect: Rectangle<i32, Logical>, tiled: bool) -> bool {
         let Some(window) = self.window_by_id(id) else {
             tracing::warn!(id, "wm-place-window: unknown window id");
@@ -917,10 +945,11 @@ impl MindeState {
         };
         let moved = self.space.element_location(&window) != Some(rect.loc);
         if !configured && !moved {
+            self.publish_window_geometry(id);
             return true;
         }
         self.space.map_element(window, rect.loc, false);
-        self.publish_window_geometry(id, rect);
+        self.publish_window_geometry(id);
         if tiled {
             self.refresh_foreign_toplevel_outputs();
         }
@@ -1053,7 +1082,7 @@ impl MindeState {
                 let _ = x11.configure(geo);
                 self.space.map_element(window.clone(), geo.loc, false);
                 self.space.raise_element(&window, true);
-                self.publish_window_geometry(id, geo);
+                self.publish_window_geometry(id);
                 self.schedule_redraw();
             }
             return;
@@ -1074,7 +1103,7 @@ impl MindeState {
             toplevel.send_pending_configure();
             self.space.map_element(window.clone(), geo.loc, false);
             self.space.raise_element(&window, true);
-            self.publish_window_geometry(id, geo);
+            self.publish_window_geometry(id);
         } else {
             toplevel.with_pending_state(|state| {
                 state.states.unset(XdgState::Fullscreen);
@@ -1136,10 +1165,10 @@ impl MindeState {
         self.enqueue_synthetic(actions, false);
     }
 
-    /// Queues a `wm-screenshot` capture against the output under the pointer
-    /// (full output, or the region of `window_id`). Satisfied like any other
-    /// screen capture after the next composite; completion lands in the
-    /// automation-result registry under `token`.
+    /// Queues a `wm-screenshot` capture of the output under the pointer, or
+    /// the full rectangle of `window_id` using that window's output. A window
+    /// spanning outputs uses the scene/scale of its largest intersection.
+    /// Completion lands in the automation-result registry after writing PNG.
     fn queue_screenshot(&mut self, path: String, window_id: Option<u64>, token: u64) {
         use crate::automation_dnd::{AutomationOperation, AutomationStatus, record_and_publish};
         let fail = |token| {
@@ -1149,26 +1178,7 @@ impl MindeState {
                 AutomationStatus::Failed,
             );
         };
-        let pos = self.pointer_location;
-        let output = self
-            .space
-            .outputs()
-            .find(|o| {
-                self.space
-                    .output_geometry(o)
-                    .map(|g| g.to_f64().contains(pos))
-                    .unwrap_or(false)
-            })
-            .or_else(|| self.space.outputs().next())
-            .cloned();
-        let Some(output) = output else {
-            return fail(token);
-        };
-        let Some(output_geo) = self.space.output_geometry(&output) else {
-            return fail(token);
-        };
-        let (origin, logical_size) = match window_id {
-            None => (Point::from((0, 0)), output_geo.size),
+        let window_rect = match window_id {
             Some(id) => {
                 let Some(window) = self.window_by_id(id) else {
                     return fail(token);
@@ -1176,8 +1186,28 @@ impl MindeState {
                 let Some(rect) = self.space.element_geometry(&window) else {
                     return fail(token);
                 };
-                (rect.loc - output_geo.loc, rect.size)
+                Some(rect)
             }
+            None => None,
+        };
+        let outputs: Vec<_> = self
+            .space
+            .outputs()
+            .filter_map(|output| {
+                self.space
+                    .output_geometry(output)
+                    .map(|geometry| (output.clone(), geometry))
+            })
+            .collect();
+        let rectangles: Vec<_> = outputs.iter().map(|(_, geometry)| *geometry).collect();
+        let Some(index) = screenshot_output_index(self.pointer_location, window_rect, &rectangles)
+        else {
+            return fail(token);
+        };
+        let (output, output_geo) = outputs[index].clone();
+        let (origin, logical_size) = match window_rect {
+            None => (Point::from((0, 0)), output_geo.size),
+            Some(rect) => (rect.loc - output_geo.loc, rect.size),
         };
         let scale = output.current_scale().fractional_scale();
         let size: smithay::utils::Size<i32, smithay::utils::Physical> = (
@@ -1355,9 +1385,12 @@ impl MindeState {
         crate::automation_dnd::record_and_publish(token, operation, status);
     }
 
-    /// Publish a window rectangle for thread-safe Scheme inspection. Windows
-    /// parked outside every output are intentionally reported as hidden.
-    pub(crate) fn publish_window_geometry(&self, id: u64, rect: Rectangle<i32, Logical>) {
+    /// Read current committed bounds, not the size of a pending configure.
+    /// This is the same Space geometry used by targeted screenshot capture.
+    /// Windows parked outside every output are intentionally reported hidden.
+    pub(crate) fn window_geometry(&self, id: u64) -> Option<[i32; 4]> {
+        let window = self.window_by_id(id)?;
+        let rect = self.space.element_geometry(&window)?;
         let visible = rect.size.w > 0
             && rect.size.h > 0
             && self
@@ -1365,10 +1398,24 @@ impl MindeState {
                 .outputs()
                 .filter_map(|output| self.space.output_geometry(output))
                 .any(|output| rect.overlaps(output));
-        crate::automation_observe::set_window_geometry(
-            id,
-            visible.then_some([rect.loc.x, rect.loc.y, rect.size.w, rect.size.h]),
-        );
+        visible.then_some([rect.loc.x, rect.loc.y, rect.size.w, rect.size.h])
+    }
+
+    /// Update the off-thread inspection mirror with committed window bounds.
+    /// Placement, commit, and drag paths call this after updating the Space.
+    pub(crate) fn publish_window_geometry(&self, id: u64) {
+        let geometry = self.window_geometry(id);
+        if crate::automation_observe::set_window_geometry(id, geometry) {
+            let line = match geometry {
+                Some([x, y, width, height]) => {
+                    format!("(window-geometry {id} ({x} {y} {width} {height}))")
+                }
+                None => format!("(window-geometry {id} #f)"),
+            };
+            // Direct journal publication is safe even during pointer dispatch;
+            // no Scheme callback can reenter a held input/renderer lock.
+            crate::events::publish_line(&line);
+        }
     }
 
     /// Drops the active compositor-side key-repeat timer, if any.
@@ -2684,6 +2731,63 @@ mod tests {
 
     fn rectangle(x: i32, y: i32, width: i32, height: i32) -> Rectangle<i32, Logical> {
         Rectangle::new((x, y).into(), (width, height).into())
+    }
+
+    #[test]
+    fn screenshot_window_chooses_its_output_even_when_pointer_is_elsewhere() {
+        let outputs = [rectangle(0, 0, 1280, 720), rectangle(-800, 100, 800, 600)];
+        assert_eq!(
+            screenshot_output_index(
+                (400.0, 200.0).into(),
+                Some(rectangle(-750, 200, 300, 250)),
+                &outputs,
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            screenshot_output_index((400.0, 200.0).into(), None, &outputs),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn screenshot_spanning_window_uses_largest_overlap_with_stable_ties() {
+        let outputs = [rectangle(0, 0, 800, 600), rectangle(800, 0, 800, 600)];
+        assert_eq!(
+            screenshot_output_index(
+                (100.0, 100.0).into(),
+                Some(rectangle(700, 0, 400, 300)),
+                &outputs,
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            screenshot_output_index(
+                (1000.0, 100.0).into(),
+                Some(rectangle(700, 0, 200, 300)),
+                &outputs,
+            ),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn screenshot_parked_window_fails_instead_of_capturing_pointer_output() {
+        let outputs = [rectangle(0, 0, 800, 600)];
+        assert_eq!(
+            screenshot_output_index(
+                (100.0, 100.0).into(),
+                Some(rectangle(-10000, -10000, 300, 250)),
+                &outputs,
+            ),
+            None
+        );
+        // An untargeted screenshot keeps its historical first-output fallback.
+        assert_eq!(
+            screenshot_output_index((-100.0, -100.0).into(), None, &outputs),
+            Some(0)
+        );
+        assert_eq!(screenshot_output_index((0.0, 0.0).into(), None, &[]), None);
     }
 
     #[test]

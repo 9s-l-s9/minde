@@ -34,6 +34,7 @@
              (gnu packages rust)
              (gnu packages pkg-config)
              (gnu packages guile)
+             (gnu packages python)
              (gnu packages admin)
              (gnu packages freedesktop)
              (gnu packages xdisorg)
@@ -142,7 +143,13 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                  "tests/next-pull-test.scm"
                  "tests/groups-test.scm"
                  "tests/layouts-test.scm"
-                 "tests/portable-keymap-test.scm")))))
+                 "tests/portable-keymap-test.scm"
+                 "tests/ipc-reply-test.scm"
+                 "tests/commands-test.scm"
+                 "tests/control-test.scm"
+                 "tests/control-client-test.scm"))
+              (setenv "PYTHONDONTWRITEBYTECODE" "1")
+              (invoke "python3" "tests/control-agent-test.py"))))
         (replace 'install
           (lambda* (#:key inputs #:allow-other-keys)
             (let* ((out #$output)
@@ -282,6 +289,13 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                                      "/bin/guile")))
                    (chmod dest #o755)))
                '("minde-cmd" "minde-msg" "mindectl"))
+              (let ((dest (string-append bin "/minde-agent")))
+                (copy-file "scripts/minde-agent" dest)
+                (substitute* dest
+                  (("^#!/usr/bin/env python3")
+                   (string-append "#!" #$(this-package-input "python")
+                                  "/bin/python3")))
+                (chmod dest #o755))
               (call-with-output-file (string-append sessions "/minde.desktop")
                 (lambda (port)
                   (display "[Desktop Entry]
@@ -298,6 +312,7 @@ Type=Application
   (inputs
    (list bash-minimal
          guile-3.0
+         python
          wayland
          libxkbcommon
          libinput-minimal

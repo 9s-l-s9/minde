@@ -12,11 +12,13 @@ exec guile --no-auto-compile -L scheme -L tools/guile-autodoc -s "$0" "$@"
 (use-modules (autodoc scan)
              (autodoc browser)
              (minde commands)
+             (minde control)
              (minde command-catalog))
 
 (load (string-append (dirname (current-filename)) "/lib/api-doc-support.scm"))
 
 (register-builtin-command-schemas!)
+(register-control-commands!)
 
 (display (generate-api-browser
           #:modules public-modules

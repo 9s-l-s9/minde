@@ -1004,7 +1004,9 @@ rule that missed the window at map time is applied now."
               (sync-frames!)))))
     ;; External bars show the focused window's title. A title-only update
     ;; does not otherwise require a frame synchronization.
-    (refresh-external-status!)))
+    (refresh-external-status!)
+    (unless (and (equal? old-title title) (equal? old-app-id app-id))
+      (run-event-hook! 'window-title-changed id title app-id))))
 
 (define (next-urgent!)
   "Jumps to the oldest urgent window (StumpWM next-urgent), switching to

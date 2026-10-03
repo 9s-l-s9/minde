@@ -25,6 +25,7 @@
              (minde layouts)
              (minde hooks)
              (minde commands)
+             (minde control)
              (minde command-catalog)
              (minde config)
              (minde status)
@@ -35,7 +36,9 @@
 ;; Publish the versioned status document after every policy synchronization.
 ;; publish-status! suppresses unchanged states and keeps the historical
 ;; one-line file updated for existing eww configurations.
-(set-sync-hook! publish-status!)
+(set-sync-hook! (lambda ()
+                  (note-desktop-change!)
+                  (publish-status!)))
 
 (define (call-with-scheme-backtrace context thunk handler)
   "Runs THUNK and logs a Guile backtrace before invoking HANDLER on error."
@@ -1740,6 +1743,7 @@ reload baseline. Call once after adding imperative user bindings."
 (register-builtin-command! 'gaps-off! gaps-off!)
 (register-builtin-command! 'toggle-gaps! toggle-gaps!)
 (register-builtin-command! 'reload-configuration! reload-configuration!)
+(register-control-commands!)
 
 (define (refresh-command-help!)
   ;; Fill key help from registry summaries wherever a binding is a command.

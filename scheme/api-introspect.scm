@@ -84,6 +84,8 @@
      "Queue a switch of the active XKB layout group; SPEC is an index or the symbol next/prev; wrapped by set-keyboard-layout!.")
     (wm-runtime-info "(wm-runtime-info)"
      "Return (backend xwayland-status xdisplay uptime-ms).")
+    (wm-control-ready? "(wm-control-ready?)"
+     "Return whether this is the compositor Guile thread with live state outside nested Rust command application; controlled actions require this context.")
     (wm-set-clipboard "(wm-set-clipboard text)"
      "Set the Wayland CLIPBOARD selection contents to TEXT.")
     (wm-set-primary "(wm-set-primary text)"
@@ -92,6 +94,8 @@
      "Move and size the floating window ID to the given rectangle.")
     (wm-window-title "(wm-window-title id)"
      "The (title . app-id) pair the client set on window ID, or #f.")
+    (wm-geometry-revision "(wm-geometry-revision)"
+     "Monotonic process-local epoch for changes in committed window geometry, including changes reverted between snapshot reads.")
     (wm-transient-ids "(wm-transient-ids)"
      "Return transient window IDs from Wayland parent and X11 transient hints.")
     (wm-floating-ids "(wm-floating-ids)"
@@ -117,7 +121,7 @@
     (wm-scroll "(wm-scroll dx dy)"
      "Scroll DX/DY wheel notches (1 = one wheel click) at the current pointer position; sends discrete value120 plus continuous values.")
     (wm-screenshot "(wm-screenshot path [window-id])"
-     "Write a deferred PNG of the output under the pointer (or WINDOW-ID's region) to absolute PATH; returns an automation token, completion via wm-automation-status.")
+     "Write a deferred PNG to absolute PATH. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full window rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token; completion via wm-automation-status.")
     (wm-warp-pointer-relative "(wm-warp-pointer-relative dx dy)"
      "Warp the pointer by a relative delta DX,DY.")
     (wm-set-key-repeat "(wm-set-key-repeat spec)"
@@ -136,6 +140,10 @@
      "Mirror one serialized event LINE to every event-socket subscriber.")
     (wm-events-active? "(wm-events-active?)"
      "Return whether any event-socket subscriber is connected.")
+    (wm-event-cursor "(wm-event-cursor)"
+     "Return the current journal sequence, including events published without listeners.")
+    (wm-events-since "(wm-events-since cursor)"
+     "Return ((sequence . N) (gap . BOOL) (events . ((SEQ LINE) ...))). A gap means CURSOR is stale or in the future; resnapshot. The journal has finite count and byte bounds.")
     (wm-drop-files "(wm-drop-files x y paths)"
      "Schedule a native Wayland copy drop of absolute regular-file PATHS and return its token or #f.")
     (wm-drop-text "(wm-drop-text x y text)"
@@ -143,10 +151,13 @@
     (wm-automation-status "(wm-automation-status token)"
      "Return (OPERATION STATUS) for a recent asynchronous automation token, or #f.")))
 
-;; Event hooks fired by the bundled modules (see scheme/minde/hooks.scm).
+;; Hook events and native journal events (automation-result, window-geometry).
 ;; name, payload argument names, one-line description.
 (define %api-hook-metadata
   '((new-window (id title app-id) "A window was mapped and placed.")
+    (window-title-changed (id title app-id) "A mapped window changed its title or application identifier.")
+    (window-geometry (id rectangle)
+     "Native journal event: committed window geometry changed; RECTANGLE is (x y width height), or #f for a hidden or unavailable window.")
     (destroy-window (id) "A window was unmapped.")
     (focus-window (id) "The shown window changed (ID or #f).")
     (focus-frame (x y w h) "The current frame changed.")
@@ -157,7 +168,7 @@
     (automation-result (token operation status)
      "An asynchronous automation request reached a terminal status.")))
 
-;; The eight documented public modules, matching generate-api-reference.scm.
+;; The documented public modules, matching generate-api-reference.scm.
 (define %api-public-modules
   '((minde windows)
     (minde frames)
@@ -166,7 +177,8 @@
     (minde input)
     (minde commands)
     (minde hooks)
-    (minde status)))
+    (minde status)
+    (minde control)))
 
 ;;; --- Helpers ---------------------------------------------------------------
 
@@ -207,13 +219,7 @@
   (filter-map
    (lambda (name)
      (and (api-name-matches? filter name)
-          (let ((command (command-ref name)))
-            (list (cons 'name name)
-                  (cons 'category (command-category command))
-                  (cons 'summary (api-string (command-summary command)))
-                  (cons 'arguments (command-arguments command))
-                  (cons 'documentation
-                        (api-string (command-documentation command)))))))
+          (describe-action name)))
    (command-names)))
 
 (define (api-module-procedures module-name filter)

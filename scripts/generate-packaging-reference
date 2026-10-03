@@ -111,7 +111,7 @@ session_desktop_exec=$(sed -n 's/^Exec=//p' guix.scm)
     echo "|---|---|"
     for path in $installed_layout; do
         case "$path" in
-        bin) purpose="minde binary, minde-session wrapper, REPL-socket helpers (minde-cmd, minde-msg, mindectl)" ;;
+        bin) purpose="minde binary, minde-session wrapper, control helpers (minde-cmd, minde-msg, mindectl), optional classifier client (minde-agent)" ;;
         share/minde) purpose="runtime Scheme tree and default-config.scm" ;;
         share/guile/site/3.0) purpose="installed minde Guile modules (GUILE_LOAD_PATH root)" ;;
         share/doc/minde) purpose="README, changelog, policies, provenance, licenses, doc/, release/" ;;

@@ -18,9 +18,9 @@
 //! straight to each socket and only the unwritten remainder is buffered, so a
 //! healthy subscriber never costs a backlog copy. Write readiness drains pending
 //! bytes when readers resume, and writer sources are removed once drained.
-//! Scheme asks
-//! [`has_subscribers`] (the `wm-events-active?` gsubr) before serialising at
-//! all, so an idle socket costs nothing per hook firing.
+//! A bounded journal records publications even without subscribers. Clients
+//! take a desktop snapshot with [`cursor`] and then call [`since`] to recover
+//! events; the legacy socket is only a latency optimization for waking them.
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Write};
@@ -40,6 +40,95 @@ use crate::MindeState;
 
 const MAX_SUBSCRIBERS: usize = 16;
 const MAX_BACKLOG_BYTES: usize = 256 * 1024;
+// Raw lines are escaped once more in the IPC response. Keep enough headroom
+// under the reply encoder's bounds, including pathological control characters.
+const MAX_JOURNAL_EVENTS: usize = 128;
+const MAX_JOURNAL_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JournalEvent {
+    pub sequence: u64,
+    pub line: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct JournalPage {
+    pub sequence: u64,
+    pub gap: bool,
+    pub events: Vec<JournalEvent>,
+}
+
+#[derive(Default)]
+struct EventJournal {
+    sequence: u64,
+    // All entries at or below this watermark have been evicted. Tracking it
+    // explicitly also handles one oversized publication with no retained row.
+    floor: u64,
+    bytes: usize,
+    events: VecDeque<JournalEvent>,
+}
+
+impl EventJournal {
+    fn record(&mut self, line: &str) {
+        self.sequence += 1;
+        if line.len() > MAX_JOURNAL_BYTES {
+            self.events.clear();
+            self.bytes = 0;
+            self.floor = self.sequence;
+            return;
+        }
+        while self.events.len() >= MAX_JOURNAL_EVENTS || self.bytes + line.len() > MAX_JOURNAL_BYTES
+        {
+            let evicted = self.events.pop_front().expect("bounded journal entry");
+            self.bytes -= evicted.line.len();
+            self.floor = evicted.sequence;
+        }
+        self.bytes += line.len();
+        self.events.push_back(JournalEvent {
+            sequence: self.sequence,
+            line: line.to_owned(),
+        });
+    }
+
+    fn since(&self, cursor: u64) -> JournalPage {
+        let gap = cursor < self.floor || cursor > self.sequence;
+        JournalPage {
+            sequence: self.sequence,
+            gap,
+            // A partial suffix is unsafe to apply after a gap; require an
+            // explicit resnapshot instead of offering misleading recovery.
+            events: if gap {
+                Vec::new()
+            } else {
+                self.events
+                    .iter()
+                    .filter(|event| event.sequence > cursor)
+                    .cloned()
+                    .collect()
+            },
+        }
+    }
+}
+
+static JOURNAL: Mutex<EventJournal> = Mutex::new(EventJournal {
+    sequence: 0,
+    floor: 0,
+    bytes: 0,
+    events: VecDeque::new(),
+});
+
+/// Current process-local publication sequence. A desktop snapshot reads this
+/// after gathering its facts on the compositor thread; a restart requires a
+/// new session identifier and snapshot, even when the cursor happens to match.
+pub fn cursor() -> u64 {
+    JOURNAL.lock().unwrap().sequence
+}
+
+/// Return every retained publication strictly after `cursor`, or an explicit
+/// gap when it is no longer possible to supply a complete suffix.
+pub fn since(cursor: u64) -> JournalPage {
+    JOURNAL.lock().unwrap().since(cursor)
+}
 
 struct Subscriber {
     id: u64,
@@ -161,6 +250,10 @@ fn publish_to(shared: &SharedSubscribers, bytes: &[u8]) {
 /// Mirrors one serialized event, appending a newline. Slow readers have a
 /// bounded backlog, drained by write readiness even after the last publish.
 pub fn publish_line(line: &str) {
+    // Keep journal and legacy delivery in one order, including publications
+    // from the optional REPL thread and the direct automation completion path.
+    let mut journal = JOURNAL.lock().unwrap();
+    journal.record(line);
     if !has_subscribers() {
         return;
     }
@@ -348,6 +441,76 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn journal_returns_ordered_suffix_and_detects_future_cursors() {
+        let mut journal = EventJournal::default();
+        assert_eq!(journal.since(0).sequence, 0);
+        assert!(!journal.since(0).gap);
+        journal.record("(focus-window 7)");
+        journal.record("(automation-result 1 screenshot done)");
+        let page = journal.since(1);
+        assert_eq!(page.sequence, 2);
+        assert!(!page.gap);
+        assert_eq!(
+            page.events,
+            vec![JournalEvent {
+                sequence: 2,
+                line: "(automation-result 1 screenshot done)".into(),
+            }]
+        );
+        assert!(journal.since(2).events.is_empty());
+        assert!(journal.since(3).gap);
+        assert!(journal.since(3).events.is_empty());
+    }
+
+    #[test]
+    fn journal_eviction_requires_snapshot_instead_of_partial_replay() {
+        let mut journal = EventJournal::default();
+        for _ in 0..=MAX_JOURNAL_EVENTS {
+            journal.record("(focus-window 7)");
+        }
+        assert_eq!(journal.events.len(), MAX_JOURNAL_EVENTS);
+        assert_eq!(journal.floor, 1);
+        assert!(journal.since(0).gap);
+        assert!(journal.since(0).events.is_empty());
+        assert!(!journal.since(1).gap);
+        assert_eq!(journal.since(1).events.len(), MAX_JOURNAL_EVENTS);
+    }
+
+    #[test]
+    fn journal_is_byte_bounded_and_oversized_lines_advance_gap_watermark() {
+        let mut journal = EventJournal::default();
+        let half = "x".repeat(MAX_JOURNAL_BYTES / 2);
+        journal.record(&half);
+        journal.record(&half);
+        journal.record("x");
+        assert_eq!(journal.events.len(), 2);
+        assert_eq!(journal.floor, 1);
+        assert!(journal.bytes <= MAX_JOURNAL_BYTES);
+        journal.record(&"x".repeat(MAX_JOURNAL_BYTES + 1));
+        assert_eq!(journal.sequence, 4);
+        assert_eq!(journal.floor, 4);
+        assert_eq!(journal.bytes, 0);
+        assert!(journal.since(3).gap);
+        assert!(!journal.since(4).gap);
+        journal.record("(focus-window 8)");
+        assert_eq!(journal.since(4).events[0].sequence, 5);
+    }
+
+    #[test]
+    fn publications_without_subscribers_are_still_recoverable() {
+        let before = cursor();
+        publish_line("(journal-no-subscribers-test)");
+        let page = since(before);
+        assert!(!page.gap);
+        assert!(
+            page.events
+                .iter()
+                .any(|event| event.line == "(journal-no-subscribers-test)")
+        );
+        assert!(page.sequence > before);
+    }
 
     fn fixture() -> (EventLoop<'static, ()>, SharedSubscribers, UnixStream) {
         let event_loop = EventLoop::try_new().unwrap();

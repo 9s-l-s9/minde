@@ -8,6 +8,7 @@
 ;; Usage: guix shell -m manifest-scheme.scm
 (specifications->manifest
  '("guile"
+   "python"
    "shellcheck"
    "ripgrep"
    "diffutils"

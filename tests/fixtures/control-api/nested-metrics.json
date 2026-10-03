@@ -1,0 +1,244 @@
+{
+  "scenario": "isolated-native-wayland",
+  "passed": true,
+  "cli_calls": 44,
+  "p50_ms": 141.04507599995486,
+  "p95_ms": 185.8506380003746,
+  "max_response_bytes": 4846,
+  "deterministic_selector_calls": [
+    {
+      "request": "focus control-two",
+      "ms": 708.2173010003316
+    },
+    {
+      "request": "focus Same title",
+      "ms": 766.6544510002495
+    },
+    {
+      "request": "focus control-two",
+      "ms": 945.3935799992905
+    }
+  ],
+  "measurements": [
+    {
+      "command": "capabilities",
+      "ms": 203.53450600032374,
+      "response_bytes": 4846
+    },
+    {
+      "command": "help",
+      "ms": 134.8437209999247,
+      "response_bytes": 399
+    },
+    {
+      "command": "help",
+      "ms": 146.58238199990592,
+      "response_bytes": 531
+    },
+    {
+      "command": "help",
+      "ms": 141.75077799973224,
+      "response_bytes": 663
+    },
+    {
+      "command": "help",
+      "ms": 136.73236800059385,
+      "response_bytes": 668
+    },
+    {
+      "command": "help",
+      "ms": 103.43413300051907,
+      "response_bytes": 676
+    },
+    {
+      "command": "help",
+      "ms": 101.0518070006583,
+      "response_bytes": 822
+    },
+    {
+      "command": "help",
+      "ms": 102.37568400043529,
+      "response_bytes": 729
+    },
+    {
+      "command": "help",
+      "ms": 101.44624999975349,
+      "response_bytes": 575
+    },
+    {
+      "command": "help",
+      "ms": 140.89944399984233,
+      "response_bytes": 744
+    },
+    {
+      "command": "query",
+      "ms": 149.01972899951943,
+      "response_bytes": 1726
+    },
+    {
+      "command": "call",
+      "ms": 141.1907080000674,
+      "response_bytes": 168
+    },
+    {
+      "command": "query",
+      "ms": 180.31281999992643,
+      "response_bytes": 1725
+    },
+    {
+      "command": "query",
+      "ms": 148.5687059994234,
+      "response_bytes": 1725
+    },
+    {
+      "command": "query",
+      "ms": 156.9044230000145,
+      "response_bytes": 1726
+    },
+    {
+      "command": "call",
+      "ms": 185.8506380003746,
+      "response_bytes": 168
+    },
+    {
+      "command": "request",
+      "ms": 184.98036100027093,
+      "response_bytes": 85
+    },
+    {
+      "command": "call",
+      "ms": 150.1749140006723,
+      "response_bytes": 176
+    },
+    {
+      "command": "query",
+      "ms": 126.59488099961891,
+      "response_bytes": 1706
+    },
+    {
+      "command": "call",
+      "ms": 99.18611600005534,
+      "response_bytes": 176
+    },
+    {
+      "command": "call",
+      "ms": 103.22538800028269,
+      "response_bytes": 178
+    },
+    {
+      "command": "call",
+      "ms": 101.61685200000647,
+      "response_bytes": 255
+    },
+    {
+      "command": "query",
+      "ms": 124.95483600014268,
+      "response_bytes": 1706
+    },
+    {
+      "command": "request",
+      "ms": 139.08343500042974,
+      "response_bytes": 85
+    },
+    {
+      "command": "call",
+      "ms": 149.7098959998766,
+      "response_bytes": 166
+    },
+    {
+      "command": "call",
+      "ms": 151.45530300014798,
+      "response_bytes": 278
+    },
+    {
+      "command": "query",
+      "ms": 154.06684600020526,
+      "response_bytes": 1704
+    },
+    {
+      "command": "call",
+      "ms": 151.11102300033963,
+      "response_bytes": 168
+    },
+    {
+      "command": "call",
+      "ms": 118.33428600039042,
+      "response_bytes": 232
+    },
+    {
+      "command": "wait",
+      "ms": 223.93924100015283,
+      "response_bytes": 232
+    },
+    {
+      "command": "query",
+      "ms": 102.04309100026876,
+      "response_bytes": 1706
+    },
+    {
+      "command": "call",
+      "ms": 105.94410900012008,
+      "response_bytes": 248
+    },
+    {
+      "command": "wait",
+      "ms": 127.5107459996434,
+      "response_bytes": 295
+    },
+    {
+      "command": "query",
+      "ms": 140.46695100023499,
+      "response_bytes": 1706
+    },
+    {
+      "command": "call",
+      "ms": 168.32102199987276,
+      "response_bytes": 180
+    },
+    {
+      "command": "query",
+      "ms": 152.54502300012973,
+      "response_bytes": 1699
+    },
+    {
+      "command": "events-since",
+      "ms": 136.90393100023357,
+      "response_bytes": 153
+    },
+    {
+      "command": "call",
+      "ms": 158.27443899979698,
+      "response_bytes": 255
+    },
+    {
+      "command": "call",
+      "ms": 139.58828500017262,
+      "response_bytes": 329
+    },
+    {
+      "command": "query",
+      "ms": 108.48946599980991,
+      "response_bytes": 1699
+    },
+    {
+      "command": "call",
+      "ms": 148.49021500049275,
+      "response_bytes": 195
+    },
+    {
+      "command": "wait",
+      "ms": 132.39040999997087,
+      "response_bytes": 195
+    },
+    {
+      "command": "query",
+      "ms": 144.56380499996158,
+      "response_bytes": 1461
+    },
+    {
+      "command": "call",
+      "ms": 162.53344500000821,
+      "response_bytes": 265
+    }
+  ]
+}

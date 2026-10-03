@@ -35,21 +35,34 @@ impl CompositorHandler for MindeState {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
-        if !is_sync_subsurface(surface) {
+        let committed_window = if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = crate::state::window_for_surface(&self.space, &root) {
+            let window = crate::state::window_for_surface(&self.space, &root);
+            if let Some(window) = &window {
                 window.on_commit();
                 // Title/app-id arrive (and change) via ordinary commits
                 // after the map-time report, which is usually empty.
-                self.report_title_if_changed(&window);
+                self.report_title_if_changed(window);
             }
+            window
+        } else {
+            None
         };
 
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
+        // Resizing can also move the origin during commit. Publish after that
+        // adjustment and after Window::on_commit refreshed the committed size.
+        // `committed_window` owns a clone, not a borrow into compositor state
+        // held across report_title_if_changed's possible Scheme callback.
+        if let Some(window) = committed_window
+            && let Some(id) = self.id_for_window(&window)
+        {
+            self.publish_window_geometry(id);
+        }
         self.handle_layer_commit(surface);
         // Every commit may carry new content or a frame-callback request;
         // both need a render pass (see `udev` repaint scheduling).
