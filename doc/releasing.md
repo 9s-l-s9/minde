@@ -14,6 +14,9 @@ to `main`, and can also be started manually on `main`. It publishes a prerelease
 named `guix-<full commit>`, containing the signed runtime closure, metadata,
 the build's public signing key, and GitHub provenance. It includes Xwayland,
 which is a propagated runtime dependency. Build dependencies are not exported.
+The job reserves its commit tag before building; a newer push supersedes an
+unfinished build. This avoids GitHub's restriction on job tokens tagging older
+commits after workflow changes. A failed build can leave a tag without a release.
 
 The builder uses the authenticated revision in `guix/ci-channels.scm` and an
 upstream-signed Guix 1.5.0 bootstrap whose SHA-256 is pinned in
@@ -30,11 +33,14 @@ make reconfigure-system
 make reconfigure-home
 ```
 
-The import requires `guix`, `gh`, `xz`, `unshare`/`mount`, internet access, and
+The import requires `guix`, `gh`, `curl`, `xz`, `unshare`/`mount`, internet access, and
 `sudo` on a machine with a root-owned Guix store (as on these System configurations). Commit the
 resulting `minde-binary.lock.scm` with the System configuration. On another
 `x86_64-linux` PC using that configuration, `make minde-install` imports the
-same pinned build; no Minde source checkout or Rust compiler is needed.
+same pinned build; no GitHub login, Minde source checkout, or Rust compiler is
+needed for the import.
+The existing System Home configuration separately loads Shikane's package
+recipe from the Minde checkout; retain that checkout when using that configuration.
 
 The importer verifies GitHub's signature against the exact repository,
 workflow, `main` ref, and source commit, and rejects self-hosted attestations.

@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: guix-binary-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -61,6 +61,21 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      # GITHUB_TOKEN cannot create a tag for an old commit whose workflows
+      # differ from main. Reserve it while this is the current main commit,
+      # before compilation gives a later push time to change the workflow.
+      - name: Reserve the build tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="guix-$GITHUB_SHA"
+          if tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null); then
+            test "$tagged" = "$GITHUB_SHA"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" >/dev/null
+          fi
+
       - name: Install verified Guix bootstrap
         run: scripts/ci-bootstrap-guix
 
@@ -88,6 +103,6 @@ jobs:
         run: |
           cp "$ATTESTATION_BUNDLE" build/ci/binary/provenance.json
           gh release create "guix-$GITHUB_SHA" build/ci/binary/* \
-            --target "$GITHUB_SHA" --prerelease \
+            --verify-tag --prerelease \
             --title "Guix binary ${GITHUB_SHA:0:12}" \
             --notes "Verified Guix runtime closure for commit $GITHUB_SHA. Import with the System repository's scripts/minde-binary.scm."
