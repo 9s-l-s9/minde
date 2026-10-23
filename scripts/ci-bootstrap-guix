@@ -44,6 +44,8 @@ sudo install -m 644 "$work/guix-daemon.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now gnu-store.mount guix-daemon.service
 for key in "$guix_profile"/share/guix/*.pub; do
+    # These public key files are intentionally read without root privileges.
+    # shellcheck disable=SC2024
     sudo "$guix_profile/bin/guix" archive --authorize < "$key"
 done
 # This signing key exists only on this disposable runner. It is authenticated

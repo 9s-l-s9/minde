@@ -27,6 +27,10 @@ export MINDE_VERSION="$version" MINDE_BUILD_REVISION="$revision"
 minde_out=$("$MINDE_BINARY_GUIX" build -f guix/release.scm)
 xwayland_out=$("$MINDE_BINARY_GUIX" build xorg-server-xwayland)
 tests/check-package-contents.sh "$minde_out" "$version"
+[[ $("$minde_out/bin/minde" --version) == "minde $version ($revision)" ]] || {
+    echo 'binary revision differs from the workflow commit' >&2
+    exit 1
+}
 "$MINDE_BINARY_GUIX" describe -f channels > "$output/channels.scm"
 cp /etc/guix/signing-key.pub "$output/signing-key.pub"
 "$MINDE_BINARY_GUIX" gc --requisites "$minde_out" "$xwayland_out" \

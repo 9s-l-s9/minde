@@ -79,6 +79,7 @@ check-static:
 			scripts/minde-cmd \
 			scripts/minde-msg scripts/mindectl \
 			scripts/create-release-archives scripts/check-guix-package \
+			scripts/ci scripts/ci-binary scripts/ci-bootstrap-guix \
 			scripts/hardware-report scripts/release; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \

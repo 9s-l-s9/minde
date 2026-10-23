@@ -81,7 +81,7 @@ jobs:
           predicate-type: ${{ steps.predicate.outputs.predicate-type }}
           predicate: ${{ steps.predicate.outputs.predicate }}
 
-      - name: Publish immutable-by-commit download
+      - name: Publish commit-specific download
         env:
           GH_TOKEN: ${{ github.token }}
           ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
