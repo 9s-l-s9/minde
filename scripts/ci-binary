@@ -18,6 +18,7 @@ revision=$(git rev-parse HEAD)
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
 output=build/ci/binary
 mkdir -p "$output"
+"$MINDE_BINARY_GUIX" repl -q -- scripts/check-ci-import.scm "$MINDE_BINARY_GUIX"
 # Never restore a Cargo target/ cache into a release build. Guix compiles from
 # this locked source in its isolated build environment.
 cargo vendor --locked vendor >/dev/null

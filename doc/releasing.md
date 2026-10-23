@@ -30,7 +30,8 @@ make reconfigure-system
 make reconfigure-home
 ```
 
-The import requires `guix`, `gh`, `xz`, internet access, and `sudo`. Commit the
+The import requires `guix`, `gh`, `xz`, `unshare`/`mount`, internet access, and
+`sudo` on a machine with a root-owned Guix store (as on these System configurations). Commit the
 resulting `minde-binary.lock.scm` with the System configuration. On another
 `x86_64-linux` PC using that configuration, `make minde-install` imports the
 same pinned build; no Minde source checkout or Rust compiler is needed.
@@ -42,7 +43,10 @@ SHA-256. The privileged import copies the inputs to a private directory and
 verifies them again before using Guix's signature-checking NAR importer.
 The build key is authorized only in that process's temporary Guix configuration;
 it is never added to `/etc/guix/acl`. No long-lived signing secret is stored in
-GitHub. Installed outputs are retained under `/var/guix/gcroots/minde-binary/`.
+GitHub. The import runs in a private mount namespace, preserving the system's
+read-only store mount. CI tests rejection of an unauthorized archive and the
+successful restoration of a signed store item before publishing. Installed
+outputs are retained under `/var/guix/gcroots/minde-binary/`.
 
 The System selector defaults to the imported binary and fails with instructions
 if it is missing. Its local derivations only create symlinks to the imported
