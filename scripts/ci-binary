@@ -1,0 +1,55 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Build and export a complete Minde runtime closure, using pinned Guix.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${MINDE_CA_BUNDLE:?run the TLS trust setup first}"
+if [[ ${MINDE_BINARY_ENV:-0} != 1 ]]; then
+    build_profile=$(guix time-machine -C guix/ci-channels.scm)
+    exec "$build_profile/bin/guix" shell rust:cargo git tar gzip xz python coreutils -- \
+        env MINDE_BINARY_ENV=1 MINDE_BINARY_GUIX="$build_profile/bin/guix" \
+        SSL_CERT_FILE="$MINDE_CA_BUNDLE" \
+        CURL_CA_BUNDLE="$MINDE_CA_BUNDLE" GIT_SSL_CAINFO="$MINDE_CA_BUNDLE" \
+        CARGO_HTTP_CAINFO="$MINDE_CA_BUNDLE" bash scripts/ci-binary
+fi
+revision=$(git rev-parse HEAD)
+[[ $revision == "${GITHUB_SHA:?}" ]] || { echo 'checkout differs from workflow commit' >&2; exit 1; }
+[[ -z $(git status --porcelain --untracked-files=no) ]] || { echo 'dirty tracked source' >&2; exit 1; }
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+output=build/ci/binary
+mkdir -p "$output"
+# Never restore a Cargo target/ cache into a release build. Guix compiles from
+# this locked source in its isolated build environment.
+cargo vendor --locked vendor >/dev/null
+scripts/create-release-archives "$version" build/ci/source >/dev/null
+export MINDE_SOURCE_ARCHIVE="$PWD/build/ci/source/minde-$version-vendored.tar.gz"
+export MINDE_VERSION="$version" MINDE_BUILD_REVISION="$revision"
+minde_out=$("$MINDE_BINARY_GUIX" build -f guix/release.scm)
+xwayland_out=$("$MINDE_BINARY_GUIX" build xorg-server-xwayland)
+tests/check-package-contents.sh "$minde_out" "$version"
+"$MINDE_BINARY_GUIX" describe -f channels > "$output/channels.scm"
+cp /etc/guix/signing-key.pub "$output/signing-key.pub"
+"$MINDE_BINARY_GUIX" gc --requisites "$minde_out" "$xwayland_out" \
+    | sort -u > "$output/closure.txt"
+"$MINDE_BINARY_GUIX" archive --export --recursive "$minde_out" "$xwayland_out" \
+    | xz -T2 -6 > "$output/minde-x86_64-linux.nar.xz"
+python3 - "$output" "$revision" "$version" "$minde_out" "$xwayland_out" <<'PY'
+import hashlib, json, pathlib, sys
+out, revision, version, minde, xwayland = sys.argv[1:]
+out = pathlib.Path(out)
+def digest(name):
+    with (out / name).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+if (out / 'minde-x86_64-linux.nar.xz').stat().st_size >= 2 * 1024**3:
+    raise SystemExit('binary archive exceeds the GitHub Release asset limit')
+# A Scheme data expression, read as data (never loaded/evaluated) by consumers.
+fields = {'schema': 1, 'repository': '9s-l-s9/minde', 'commit': revision,
+          'version': version, 'system': 'x86_64-linux', 'minde': minde,
+          'xwayland': xwayland,
+          'archive-sha256': digest('minde-x86_64-linux.nar.xz'),
+          'key-sha256': digest('signing-key.pub'),
+          'closure-sha256': digest('closure.txt')}
+(out / 'binary.scm').write_text('(\n' + ''.join(
+    f' ({key} . {json.dumps(value)})\n' for key, value in fields.items()) + ')\n')
+PY
+echo "Binary closure exported for $revision"
