@@ -3,7 +3,7 @@
 ;; reproduce the build environment or compile Minde when their channels change.
 (list (channel
        (name 'guix)
-       (url "https://git.savannah.gnu.org/git/guix.git")
+       (url "https://codeberg.org/guix/guix.git")
        (commit "0802546301e0a9fab4d43b872ddac96c753a2430")
        (introduction
         (make-channel-introduction
