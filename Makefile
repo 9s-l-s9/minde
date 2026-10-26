@@ -163,6 +163,7 @@ check-e2e:
 	sh tests/keyboard-layout-e2e.sh
 	sh tests/output-power-e2e.sh
 	sh tests/pointer-constraints-e2e.sh
+	sh tests/fullscreen-pointer-e2e.sh
 	sh tests/fractional-scale-e2e.sh
 	sh tests/idle-e2e.sh
 	sh tests/cursor-shape-e2e.sh

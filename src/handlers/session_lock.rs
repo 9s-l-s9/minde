@@ -42,6 +42,7 @@ impl SessionLockHandler for MindeState {
         // so that no desktop frame can ever be produced once we are locked.
         let was_locked = self.locked;
         self.locked = true;
+        self.absolute_pointer_motion.reset();
         crate::guile::set_session_locked(true);
 
         // Input hygiene: cancel any armed compositor-side key-repeat and take
@@ -93,6 +94,7 @@ impl SessionLockHandler for MindeState {
             return;
         }
         self.locked = false;
+        self.absolute_pointer_motion.reset();
         self.lock_surfaces.clear();
         self.schedule_redraw();
         crate::guile::set_session_locked(false);

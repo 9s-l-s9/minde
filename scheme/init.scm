@@ -776,8 +776,8 @@ group holding it (if any) and focuses it; a no-op if it has since vanished."
 
 (define (handle-foreign-fullscreen! id on)
   "Rust: a taskbar asked to (un)fullscreen window ID. Activates the window,
-then drives the single-fullscreen model (fullscreen-window / fullscreen!)
-so at most one window is fullscreen and the frame layout re-syncs on exit."
+then drives the group's fullscreen model (fullscreen-window / fullscreen!)
+so at most one window per group is fullscreen and the layout re-syncs on exit."
   (handle-foreign-activate! id)
   (let ((current (fullscreen-window)))
     (cond

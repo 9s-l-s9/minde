@@ -246,6 +246,17 @@
 ;; here needs to know about groups plural.
 (define %active-group (make-group "default" %frame-tree %current-frame))
 
+;; Fullscreen belongs to a group, not the entire desktop. Weak keys let
+;; deleted groups disappear without retaining their records. The value does
+;; not refer back to its key. Geometry is saved when the group is parked.
+(define-record-type <fullscreen-state>
+  (make-fullscreen-state id shown? geometry)
+  fullscreen-state?
+  (id fullscreen-id)
+  (shown? fullscreen-shown? set-fullscreen-shown?!)
+  (geometry fullscreen-geometry set-fullscreen-geometry!))
+(define %group-fullscreens (make-weak-key-hash-table))
+
 (define (current-group)
   "Returns the active group record."
   %active-group)
@@ -413,6 +424,17 @@ active one may be omitted -- it is included automatically). New heads
 get lazy empty trees; removed heads' windows are adopted into each
 group's surviving current head; survivors are resized."
   (unless (null? raw)
+    (unless (equal? raw %raw-heads)
+      ;; Real output changes must resize fullscreen too. Saved fullscreen
+      ;; coordinates in hidden groups may now refer to a removed/moved head;
+      ;; restore from their reconciled frame/float instead. Gap-only policy
+      ;; updates do not pass through here and keep fullscreen untouched.
+      (hash-for-each
+       (lambda (group full)
+         (set-fullscreen-geometry! full #f)
+         (when (eq? group %active-group)
+           (set-fullscreen-shown?! full #f)))
+       %group-fullscreens))
     (set! %raw-heads raw)
     (apply-effective-heads! (effective-heads raw) groups)))
 
@@ -479,19 +501,36 @@ and 'span (one tree over the union of all monitors)."
 ;; touching focus. Used when a group is about to be hidden.
 (define (park-group-windows! g)
   "Moves every tiled and floating window in G off screen."
-  (for-each
-   (lambda (frame)
-     (for-each
-      (lambda (id) (wm-place-window id %offscreen-x %offscreen-y (frame-w frame) (frame-h frame)))
-      (frame-window-ids frame)))
-   (append-map frame-leaves (group-all-trees g)))
+  (prune-fullscreen-owners!)
+  (let ((full (hashq-ref %group-fullscreens g)))
+    (when full
+      ;; Keep the full buffer size while parked. A game must not receive a
+      ;; tiled-size configure merely because the user visits another group.
+      (set-fullscreen-geometry! full
+        (or (rust-call-if-bound 'wm-window-geometry (fullscreen-id full))
+            (fullscreen-geometry full)))
+      (set-fullscreen-shown?! full #f))
+    (for-each
+     (lambda (frame)
+       (for-each
+        (lambda (id)
+          (let ((rect (and full (equal? id (fullscreen-id full))
+                           (fullscreen-geometry full))))
+            (wm-place-window id %offscreen-x %offscreen-y
+                             (if rect (caddr rect) (frame-w frame))
+                             (if rect (cadddr rect) (frame-h frame)))))
+        (frame-window-ids frame)))
+     (append-map frame-leaves (group-all-trees g))))
   ;; Park the group's floats too (keeping their size; wm-place-float so
   ;; they don't pick up tiled states while hidden).
   (for-each
    (lambda (id)
-     (let ((r (hash-ref %floating id)))
+     (let* ((full (hashq-ref %group-fullscreens g))
+            (r (or (and full (equal? id (fullscreen-id full))
+                        (fullscreen-geometry full))
+                   (hash-ref %floating id))))
        (rust-place-float! id %offscreen-x %offscreen-y
-                       (if r (caddr r) 100) (if r (cadddr r) 100))))
+                         (if r (caddr r) 100) (if r (cadddr r) 100))))
    (group-floats g)))
 
 ;; Total window count tracked by G (active or not), across all heads.
@@ -1020,7 +1059,7 @@ otherwise put a tiled window above the floats)."
   (for-each
    (lambda (id)
      (let ((r (hash-ref %floating id)))
-       (when r
+       (when (and r (not (equal? id (fullscreen-window))))
          (rust-place-float! id (car r) (cadr r) (caddr r) (cadddr r))
          (rust-call 'wm-raise-window id))))
    (reverse (group-floats %active-group))))
@@ -2329,7 +2368,10 @@ then the focus/shown bookkeeping and hooks run."
          ;; marks the frame itself (visible even when the frame is empty).
          (focus-rect (frame-display-rect %current-frame))
          (focused (focused-window-id)))
-    (apply-placements! plan)
+    ;; Restoring a fullscreen group also lays out its other windows/heads,
+    ;; but never briefly resizes the fullscreen client to a tiled frame.
+    (apply-placements! (filter (lambda (p) (not (equal? (car p) (fullscreen-window))))
+                              plan))
     (apply wm-focus-rect focus-rect)
     (if focused
         (wm-focus-window focused)
@@ -2361,46 +2403,92 @@ then the focus/shown bookkeeping and hooks run."
   (when %sync-hook (%sync-hook)))
 
 (define (sync-frames!)
-  "Like sync-frames-now!, but a no-op while a fullscreen window is active,
-so incidental re-syncs (hooks, geometry echoes) don't fight the
-fullscreen geometry. Leaving fullscreen clears the flag first and then
-syncs, restoring the frame layout."
-  (unless %fullscreen-window
-    (sync-frames-now!)))
+  "Synchronizes the active group's frames unless its fullscreen window is
+already shown. A fullscreen window in another group does not suppress
+layout. Returning to a fullscreen group restores its window and focus."
+  (prune-fullscreen-owners!)
+  (let ((full (hashq-ref %group-fullscreens %active-group)))
+    (cond
+     ((not full) (sync-frames-now!))
+     ((not (fullscreen-shown? full))
+      ;; Focus helpers sync recursively. Mark shown before calling them so
+      ;; only this outer restore lays out the group and raises fullscreen.
+      (set-fullscreen-shown?! full #t)
+      (let ((id (fullscreen-id full)))
+        (focus-window-by-id! id)
+        (sync-frames-now!)
+        ;; Re-anchor on the saved head before asking Rust for that output's
+        ;; current full geometry. Otherwise an off-screen window defaults
+        ;; to the first output, even if it belonged to another monitor.
+        (let ((rect (or (fullscreen-geometry full)
+                        (and (window-floating? id) (float-geometry id))
+                        (frame-display-rect %current-frame))))
+          (apply (if (window-floating? id) rust-place-float! wm-place-window)
+                 id rect))
+        (rust-call 'wm-set-fullscreen id #t)
+        (forget-placement! id))))))
 
 ;; ---------------------------------------------------------------------
 ;; Fullscreen, force kill, pointer control, urgency
 ;; ---------------------------------------------------------------------
 
-;; Window id currently fullscreen, or #f. Only ever one at a time.
-(define %fullscreen-window #f)
+(define (group-owns-window? group id)
+  (or (member id (group-floats group))
+      (any (lambda (frame) (member id (frame-window-ids frame)))
+           (append-map frame-leaves (group-all-trees group)))))
+
+(define (prune-fullscreen-owners!)
+  ;; Explicit moves/merges/sticky transfers end fullscreen for the moved
+  ;; window. Do not let an old group's record freeze layout or keep the
+  ;; fullscreen protocol hint after the window changes ownership.
+  (for-each
+   (lambda (group)
+     (let ((full (hashq-ref %group-fullscreens group)))
+       (hashq-remove! %group-fullscreens group)
+       (forget-placement! (fullscreen-id full))
+       (rust-call 'wm-set-fullscreen (fullscreen-id full) #f)))
+   (filter identity
+           (hash-map->list
+            (lambda (group full)
+              (and (not (group-owns-window? group (fullscreen-id full))) group))
+            %group-fullscreens))))
 
 (define (fullscreen-window)
-  "Returns the fullscreen window identifier, or #f."
-  %fullscreen-window)
+  "Returns the active group's fullscreen window identifier, or #f."
+  (let ((full (hashq-ref %group-fullscreens %active-group)))
+    (and full (fullscreen-id full))))
 
 (define (fullscreen!)
-  "Toggles fullscreen on the current window (StumpWM fullscreen). While
-active the frame layout is frozen; toggling off re-syncs it."
-  (if %fullscreen-window
-      (begin
-        (rust-call 'wm-set-fullscreen %fullscreen-window #f)
-        (forget-placement! %fullscreen-window)
-        (set! %fullscreen-window #f)
-        (sync-frames!))
-      (let ((id (focused-window-id)))
-        (if id
-            (begin
-              (set! %fullscreen-window id)
-              (forget-placement! id)
-              (rust-call 'wm-set-fullscreen id #t))
-            (echo "No window to fullscreen")))))
+  "Toggles fullscreen on the active group's current window. Fullscreen
+survives group switches; other groups retain their own layout and focus.
+Toggling off restores this group's tiled or floating geometry."
+  (let ((id (fullscreen-window)))
+    (if id
+        (begin
+          (rust-call 'wm-set-fullscreen id #f)
+          (forget-placement! id)
+          (hashq-remove! %group-fullscreens %active-group)
+          (sync-frames!))
+        (let ((id (focused-window-id)))
+          (if id
+              (begin
+                (hashq-set! %group-fullscreens %active-group
+                            (make-fullscreen-state id #t #f))
+                (forget-placement! id)
+                (rust-call 'wm-set-fullscreen id #t))
+              (echo "No window to fullscreen"))))))
 
 (define (clear-fullscreen-if-window! id)
-  "Drops the fullscreen flag if ID owns it (window unmapped) and re-syncs."
-  (when (equal? %fullscreen-window id)
-    (set! %fullscreen-window #f)
-    (sync-frames!)))
+  "Drops fullscreen state for unmapped window ID, including hidden groups.
+Only re-syncs if the active group's fullscreen window was removed."
+  (let ((active? (equal? (fullscreen-window) id)))
+    (for-each
+     (lambda (group) (hashq-remove! %group-fullscreens group))
+     (filter identity
+             (hash-map->list
+              (lambda (group full) (and (equal? (fullscreen-id full) id) group))
+              %group-fullscreens)))
+    (when active? (sync-frames!))))
 
 (define (kill-current-window!)
   "Force-kills the current window's client connection (StumpWM

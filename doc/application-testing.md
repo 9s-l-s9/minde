@@ -83,6 +83,19 @@ guix shell -m manifest.scm xorg-server imagemagick jq util-linux \
   swaybg fuzzel swaylock eww -- make check-apps-layer
 ```
 
+## Fullscreen and pointer constraints
+
+`sh tests/fullscreen-pointer-e2e.sh` runs small C protocol clients in a hidden
+Xvfb/winit session. It checks native and X11 fullscreen (including a pre-map
+EWMH hint), client self-resize against tiling, fullscreen panel/border pixels
+and input routing, null and explicit pointer confinement, input regions,
+subtracted holes, Xwayland pointer grabs, relative motion during a lock and
+cursor-position hints on unlock. It also checks consecutive absolute-input
+lock deltas, warp resets, keyboard focus across fullscreen group switches and
+fullscreen resizing when output scaling changes. It is part of `make check-e2e` and uses the
+normal development manifest; all client lifetimes are bounded. This does not
+replace testing an actual game on the DRM/libinput backend.
+
 ## Portable and historical keymaps
 
 `make check-e2e` runs two nested sessions. The broad behavior suite retains

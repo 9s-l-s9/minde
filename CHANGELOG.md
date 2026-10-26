@@ -8,6 +8,31 @@ shims or migration notes.
 
 Target version: `1.0.0-rc1`.
 
+### Fixed
+
+- Fullscreen state is now local to each group. Switching away leaves other
+  groups free to tile and receive keyboard focus; returning restores the
+  original fullscreen window without shrinking it in between. Closing hidden
+  fullscreen windows and moving them to another group clear stale ownership.
+- Fullscreen follows output size, scale and hotplug changes, including windows
+  restored from a hidden group after their monitor moved or disappeared.
+- Absolute-input relative pointer events now use consecutive samples from the
+  same device, even while the cursor is locked or confined. Warps, device/input
+  switches and coordinate-space changes reset the baseline without a jump.
+
+- Pointer confinement now applies to the surface input region when the client
+  supplies no explicit region. Explicit regions are intersected with surface
+  bounds/input regions, respect subtracted holes, and keep motion inside
+  exclusive edges without jumping between disconnected regions.
+- Xwayland fullscreen requests, including startup fullscreen hints, now use
+  the same layout policy as native clients and cover the window's own output.
+  Fullscreen hides the tiled focus border and Top-layer desktop panels in both
+  rendering and pointer hit testing; Overlay-layer surfaces remain available.
+- Managed tiled X11 clients can no longer shrink themselves independently of
+  the placement cache, leaving content smaller than the selected frame.
+- Added a nested regression gate for actual pointer lock/confinement, X11
+  grabs, native/X11 fullscreen, panel visibility/input and tiled self-resizes.
+
 ### Added
 
 - StumpWM-style window gaps with configurable inner, outer and head padding,

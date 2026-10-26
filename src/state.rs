@@ -76,6 +76,26 @@ pub fn window_for_surface(space: &Space<Window>, surface: &WlSurface) -> Option<
         .cloned()
 }
 
+/// Shared scene/input policy: fullscreen covers desktop panels and the
+/// tiling border, but Overlay-layer surfaces (notifications/OSD) stay above.
+/// Ignore fullscreen windows parked off this output by the layout.
+pub(crate) fn output_has_fullscreen(
+    space: &Space<Window>,
+    output: Rectangle<i32, Logical>,
+) -> bool {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State;
+    space.elements().any(|window| {
+        let fullscreen = window.x11_surface().is_some_and(|x| x.is_fullscreen())
+            || window.toplevel().is_some_and(|t| {
+                t.with_committed_state(|s| s.is_some_and(|s| s.states.contains(State::Fullscreen)))
+            });
+        fullscreen
+            && space
+                .element_geometry(window)
+                .is_some_and(|g| g.overlaps(output))
+    })
+}
+
 /// Clamp a point to the nearest mapped output.  Treating outputs as a summed
 /// horizontal strip breaks for negative origins, vertical arrangements and
 /// gaps, so keep this calculation independent and table-testable.
@@ -261,6 +281,7 @@ pub struct MindeState {
     /// by every pointer-motion input event (absolute in winit, relative in
     /// the udev/libinput backend) and used to render the cursor.
     pub pointer_location: Point<f64, Logical>,
+    pub(crate) absolute_pointer_motion: crate::input::AbsolutePointerMotion,
     /// Current pointer cursor image (default fallback vs. client surface),
     /// set via `SeatHandler::cursor_image`; consulted by the udev render
     /// pass.
@@ -641,6 +662,7 @@ impl MindeState {
             active_automation_dnd: None,
 
             pointer_location: (0.0, 0.0).into(),
+            absolute_pointer_motion: Default::default(),
             cursor_state: crate::render::CursorState::default(),
             session: None,
             udev_data: None,
@@ -1022,8 +1044,7 @@ impl MindeState {
     }
 
     /// `wm-set-fullscreen`: cover the full geometry of the output showing the
-    /// window (not the usable area: fullscreen covers reserved bar space,
-    /// though Top-layer surfaces still render above; documented limitation).
+    /// window (not the usable area: fullscreen covers reserved bar space).
     /// Leaving fullscreen only clears the state; Scheme re-syncs the frame
     /// geometry right after.
     fn set_fullscreen(&mut self, id: u64, on: bool) {
@@ -1033,12 +1054,16 @@ impl MindeState {
         };
         self.foreign_toplevel_fullscreen(id, on);
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgState;
+        let window_center = self
+            .space
+            .element_geometry(&window)
+            .map(|g| Point::from((g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2)));
+        let geo = self.output_rect_containing(window_center);
         // X11 windows: set the fullscreen hint and apply the full rect
         // through configure.
         if let Some(x11) = window.x11_surface() {
             let _ = x11.set_fullscreen(on);
             if on {
-                let geo = self.output_rect_containing(None);
                 let _ = x11.configure(geo);
                 self.space.map_element(window.clone(), geo.loc, false);
                 self.space.raise_element(&window, true);
@@ -1051,11 +1076,6 @@ impl MindeState {
             return;
         };
         if on {
-            let window_center = self
-                .space
-                .element_geometry(&window)
-                .map(|g| Point::from((g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2)));
-            let geo = self.output_rect_containing(window_center);
             toplevel.with_pending_state(|state| {
                 state.states.set(XdgState::Fullscreen);
                 state.size = Some(geo.size);
@@ -1197,6 +1217,9 @@ impl MindeState {
     pub(crate) fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
         let pos = self.clamp_to_outputs(pos);
         let old_pos = self.pointer_location;
+        if pos != old_pos {
+            self.absolute_pointer_motion.reset();
+        }
         self.pointer_location = pos;
         crate::automation_observe::set_pointer_position(pos.x, pos.y);
         self.schedule_redraw_at(&[old_pos, pos]);
@@ -2218,6 +2241,7 @@ impl MindeState {
         self.reconfigure_lock_surfaces();
         // A smaller mode or a moved head can leave the pointer outside
         // every output.
+        self.absolute_pointer_motion.reset();
         self.pointer_location = self.clamp_to_outputs(self.pointer_location);
         self.schedule_redraw();
         guile::on_output_configured();
@@ -2573,7 +2597,12 @@ impl MindeState {
             })
         };
 
-        layer_surface_under(&[Layer::Overlay, Layer::Top])
+        let upper_layers: &[Layer] = if output_has_fullscreen(&self.space, output_geo) {
+            &[Layer::Overlay]
+        } else {
+            &[Layer::Overlay, Layer::Top]
+        };
+        layer_surface_under(upper_layers)
             .or_else(|| {
                 self.space
                     .element_under(pos)

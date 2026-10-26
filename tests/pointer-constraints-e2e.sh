@@ -3,15 +3,9 @@
 # Bounded nested e2e gate for zwp_pointer_constraints_v1 (pointer lock /
 # confinement) and zwp_relative_pointer_manager_v1 (raw relative motion).
 #
-# There is no canonical scriptable pointer-lock CLI client in Guix (the only
-# exercisers are interactive: weston's weston-simple-pointer-constraints demo
-# and full games), and driving a real lock end to end would need synthesized
-# libinput motion the nested winit backend cannot receive. So this gate
-# asserts both manager globals are advertised (wayland-info, the same client
-# the clipboard and foreign-toplevel gates use); the constraint enforcement
-# and region-clamp logic are covered by Rust unit tests in
-# src/handlers/pointer_constraints.rs. Every client call is wrapped in
-# `timeout`.
+# This fast smoke gate checks the globals. tests/fullscreen-pointer-e2e.sh
+# additionally uses a small native protocol client, an X11 grab client and
+# virtual-pointer motion to exercise real confinement/lock/fullscreen events.
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh

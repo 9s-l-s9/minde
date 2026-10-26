@@ -258,10 +258,12 @@ where
     // Append each layer directly to the scene, preserving layer-map order.
     // Two borrowed passes avoid partition Vecs and temporary element lists
     // on every frame (and on every capture).
+    let fullscreen = crate::state::output_has_fullscreen(space, output_geo);
     let layer_map = layer_map_for_output(output);
     let append_layers = |lower: bool, renderer: &mut R, out: &mut Vec<MindeRenderElements<R>>| {
         for surface in layer_map.layers().filter(|surface| {
-            matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom) == lower
+            (matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom) == lower)
+                && !(fullscreen && surface.layer() == WlrLayer::Top)
         }) {
             let loc = layer_map
                 .layer_geometry(surface)
@@ -283,6 +285,7 @@ where
 
     // Focus border around the selected frame.
     if let Some(geo) = focus
+        && !fullscreen
         && geo.overlaps(output_geo)
     {
         let mut local = geo;

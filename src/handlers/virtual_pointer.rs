@@ -42,8 +42,8 @@ use smithay::reexports::{
         zwlr_virtual_pointer_v1::{self, ZwlrVirtualPointerV1},
     },
     wayland_server::{
-        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, WEnum, backend::GlobalId,
-        protocol::wl_pointer,
+        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
+        backend::GlobalId, protocol::wl_pointer,
     },
 };
 use smithay::utils::Point;
@@ -126,7 +126,7 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
     fn request(
         state: &mut Self,
         _client: &Client,
-        _pointer: &ZwlrVirtualPointerV1,
+        pointer: &ZwlrVirtualPointerV1,
         request: zwlr_virtual_pointer_v1::Request,
         data: &VirtualPointerData,
         _dhandle: &DisplayHandle,
@@ -165,7 +165,12 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 };
                 let px = geo.loc.x as f64 + (x as f64 / x_extent as f64) * geo.size.w as f64;
                 let py = geo.loc.y as f64 + (y as f64 / y_extent as f64) * geo.size.h as f64;
-                state.pointer_absolute_motion((px, py).into(), time, (time as u64) * 1000);
+                state.pointer_absolute_motion(
+                    crate::input::AbsolutePointerSource::Virtual(pointer.id()),
+                    (px, py).into(),
+                    time,
+                    (time as u64) * 1000,
+                );
             }
             zwlr_virtual_pointer_v1::Request::Button {
                 time,

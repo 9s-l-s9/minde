@@ -146,6 +146,7 @@ pub fn init_winit(
             }
             match event {
                 WinitEvent::Resized { size, .. } => {
+                    state.absolute_pointer_motion.reset();
                     output.change_current_state(
                         Some(Mode {
                             size,

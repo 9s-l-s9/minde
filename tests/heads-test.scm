@@ -10,6 +10,22 @@
 (use-modules (srfi srfi-1))
 
 (define %placements (make-hash-table)) ; id -> (x y w h)
+(define (wm-window-geometry id) (hash-ref %placements id))
+(define (wm-place-float id x y w h) (wm-place-window id x y w h))
+(define (wm-set-floating id on) #t)
+(define (wm-raise-window id) #t)
+(define (wm-set-fullscreen id on)
+  (when on
+    (let* ((p (hash-ref %placements id))
+           (x (+ (car p) (quotient (caddr p) 2)))
+           (y (+ (cadr p) (quotient (cadddr p) 2)))
+           (head (or (find (lambda (h)
+                             (and (<= (cadr h) x) (< x (+ (cadr h) (cadddr h)))
+                                  (<= (caddr h) y) (< y (+ (caddr h) (list-ref h 4)))))
+                           (heads))
+                     (car (heads)))))
+      (hash-set! %placements id (cdr head))))
+  #t)
 (define %focused #f)
 (define %messages '())
 
@@ -244,6 +260,34 @@
             (begin (handle-keyboard-layout-changed! "English (US)") #t))
 
 ;; ---------------------------------------------------------------------
+
+;; Fullscreen reconciles real output geometry changes (#3), including a
+;; parked group on a moved head and adoption after its monitor disappears.
+(handle-heads-change! '((10 0 0 1280 800) (11 1280 0 1280 800)))
+(set-head-mode! 'per-head)
+(create-group! " fullscreen-heads ")
+(focus-head! 11)
+(handle-window-map! 500 "fullscreen-head" "foot")
+(fullscreen!)
+(check "fullscreen starts on the window's own head" (placement 500) '(1280 0 1280 800))
+(handle-heads-change! '((10 0 0 1280 800) (11 1280 0 640 400)))
+(check "fullscreen follows a resized second head" (placement 500) '(1280 0 640 400))
+(check "output resize preserves fullscreen focus" %focused 500)
+(create-group! " fullscreen-heads-other ")
+(handle-heads-change! '((10 0 0 1280 800) (11 -640 0 640 400)))
+(switch-to-group! " fullscreen-heads ")
+(check "hidden fullscreen restores on its moved head" (placement 500) '(-640 0 640 400))
+(handle-heads-change! '((10 0 0 1280 800)))
+(check "fullscreen moves to surviving head after unplug" (placement 500) '(0 0 1280 800))
+(check "unplug keeps fullscreen state" (fullscreen-window) 500)
+(fullscreen!)
+(check "exit after output changes restores tiling" (placement 500) '(3 3 1274 794))
+(float-window! 500)
+(fullscreen!)
+(handle-heads-change! '((10 0 0 640 400)))
+(check "floating fullscreen follows output changes" (placement 500) '(0 0 640 400))
+(fullscreen!)
+(check "floating fullscreen exit uses clamped float geometry" (placement 500) (float-geometry 500))
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

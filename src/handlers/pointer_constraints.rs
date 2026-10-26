@@ -17,10 +17,13 @@
 //! requests activated by pointer focus, not compositor policy, so there is
 //! nothing to route through `(minde ...)`.
 
+use smithay::backend::renderer::utils::with_renderer_surface_state;
 use smithay::input::pointer::PointerHandle;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Rectangle};
-use smithay::wayland::compositor::{RectangleKind, RegionAttributes};
+use smithay::wayland::compositor::{
+    RectangleKind, RegionAttributes, SurfaceAttributes, with_states,
+};
 use smithay::wayland::pointer_constraints::{
     PointerConstraint, PointerConstraintsHandler, with_pointer_constraint,
 };
@@ -86,6 +89,9 @@ impl MindeState {
         let origin = *origin;
         let current = self.pointer_location;
         let mut out = (proposed, false);
+        // Smithay holds the surface-state lock inside with_pointer_constraint;
+        // collect input geometry first, never re-enter with_states there.
+        let input_region = surface_input_region(surface);
         with_pointer_constraint(surface, &pointer, |constraint| {
             let Some(constraint) = constraint else {
                 return;
@@ -93,15 +99,21 @@ impl MindeState {
             if !constraint.is_active() {
                 return;
             }
+            let region = constraint_region(&input_region, constraint.region());
+            let local = current - origin;
+            // A committed input/constraint region can exclude the parked
+            // pointer. Release it instead of retaining an impossible grab.
+            if !region.iter().any(|r| r.to_f64().contains(local)) {
+                constraint.deactivate();
+                return;
+            }
             match &*constraint {
                 PointerConstraint::Locked(_) => out = (current, true),
-                PointerConstraint::Confined(confined) => {
-                    if let Some(region) = confined.region() {
-                        let local = proposed - origin;
-                        if !region_contains(region, local) {
-                            out = (clamp_local_to_region(local, region) + origin, false);
-                        }
-                    }
+                PointerConstraint::Confined(_) => {
+                    out = (
+                        confine_motion(local, proposed - origin, &region) + origin,
+                        false,
+                    );
                 }
             }
         });
@@ -122,14 +134,17 @@ impl MindeState {
             return;
         };
         let loc = self.pointer_location;
+        // Smithay holds the surface-state lock inside with_pointer_constraint;
+        // collect input geometry first, never re-enter with_states there.
+        let input_region = surface_input_region(surface);
         with_pointer_constraint(surface, &pointer, |constraint| {
             if let Some(constraint) = constraint
                 && !constraint.is_active()
             {
                 let local = loc - *origin;
-                let inside = constraint
-                    .region()
-                    .is_none_or(|region| region_contains(region, local));
+                let inside = constraint_region(&input_region, constraint.region())
+                    .iter()
+                    .any(|r| r.to_f64().contains(local));
                 if inside {
                     constraint.activate();
                 }
@@ -138,73 +153,222 @@ impl MindeState {
     }
 }
 
-fn region_contains(region: &RegionAttributes, local: Point<f64, Logical>) -> bool {
-    region.contains((local.x.round() as i32, local.y.round() as i32))
+/// The effective region is the intersection of the surface bounds, its
+/// committed input region, and the optional constraint region. A null region
+/// means the whole input region, not "unconfined".
+fn surface_input_region(surface: &WlSurface) -> Vec<Rectangle<i32, Logical>> {
+    let Some(size) = with_renderer_surface_state(surface, |data| data.surface_size()).flatten()
+    else {
+        return Vec::new();
+    };
+    let input = with_states(surface, |states| {
+        states
+            .cached_state
+            .get::<SurfaceAttributes>()
+            .current()
+            .input_region
+            .clone()
+    });
+    region_rectangles(Rectangle::from_size(size), input.as_ref())
 }
 
-/// Clamp a surface-local point into the bounding box of a region's additive
-/// rectangles. A confinement region can be an arbitrary add/subtract shape;
-/// clamping to the additive bounding box keeps the pointer on the surface
-/// without solving nearest-point-in-region, which is enough to keep games
-/// and lock clients from escaping.
-fn clamp_local_to_region(
-    local: Point<f64, Logical>,
-    region: &RegionAttributes,
-) -> Point<f64, Logical> {
-    let mut bbox: Option<Rectangle<i32, Logical>> = None;
+fn constraint_region(
+    input: &[Rectangle<i32, Logical>],
+    constraint: Option<&RegionAttributes>,
+) -> Vec<Rectangle<i32, Logical>> {
+    input
+        .iter()
+        .flat_map(|r| region_rectangles(*r, constraint))
+        .collect()
+}
+
+/// Preserve ordered add/subtract operations; a bounding box would fill holes
+/// and join disjoint islands, allowing the pointer through forbidden space.
+fn region_rectangles(
+    bounds: Rectangle<i32, Logical>,
+    region: Option<&RegionAttributes>,
+) -> Vec<Rectangle<i32, Logical>> {
+    let Some(region) = region else {
+        return vec![bounds];
+    };
+    let mut rectangles = Vec::new();
     for (kind, rect) in &region.rects {
-        if matches!(kind, RectangleKind::Add) {
-            bbox = Some(match bbox {
-                Some(b) => b.merge(*rect),
-                None => *rect,
-            });
+        let Some(rect) = bounds.intersection(*rect) else {
+            continue;
+        };
+        match kind {
+            RectangleKind::Add => rectangles.push(rect),
+            RectangleKind::Subtract => {
+                rectangles = Rectangle::subtract_rects_many(rectangles, [rect]);
+            }
         }
     }
-    let Some(b) = bbox else {
-        return local;
-    };
-    let x = local.x.clamp(b.loc.x as f64, (b.loc.x + b.size.w) as f64);
-    let y = local.y.clamp(b.loc.y as f64, (b.loc.y + b.size.h) as f64);
-    (x, y).into()
+    rectangles
+}
+
+/// Clip the motion segment at the first exit from the union. In particular,
+/// a large delta cannot jump across a hole into another valid rectangle.
+fn confine_motion(
+    current: Point<f64, Logical>,
+    proposed: Point<f64, Logical>,
+    region: &[Rectangle<i32, Logical>],
+) -> Point<f64, Logical> {
+    let clipped = clip_motion(current, proposed, region);
+    // Retain tangential movement when pushing against an edge, as games
+    // need to reach corners for edge scrolling.
+    let horizontal = clip_motion(clipped, (proposed.x, clipped.y).into(), region);
+    clip_motion(horizontal, (horizontal.x, proposed.y).into(), region)
+}
+
+fn clip_motion(
+    current: Point<f64, Logical>,
+    proposed: Point<f64, Logical>,
+    region: &[Rectangle<i32, Logical>],
+) -> Point<f64, Logical> {
+    let delta = proposed - current;
+    if delta == Point::from((0.0, 0.0)) {
+        return current;
+    }
+    let mut intervals = Vec::new();
+    for rect in region {
+        let mut enter: f64 = 0.0;
+        let mut leave: f64 = 1.0;
+        for (p, d, lo, hi) in [
+            (
+                current.x,
+                delta.x,
+                rect.loc.x as f64,
+                (rect.loc.x + rect.size.w) as f64,
+            ),
+            (
+                current.y,
+                delta.y,
+                rect.loc.y as f64,
+                (rect.loc.y + rect.size.h) as f64,
+            ),
+        ] {
+            if d == 0.0 {
+                if p < lo || p >= hi {
+                    leave = -1.0;
+                }
+            } else {
+                let a = (lo - p) / d;
+                let b = (hi - p) / d;
+                enter = enter.max(a.min(b));
+                leave = leave.min(a.max(b));
+            }
+        }
+        if enter <= leave {
+            intervals.push((enter, leave));
+        }
+    }
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut end: f64 = 0.0;
+    for (enter, leave) in intervals {
+        if enter > end {
+            break;
+        }
+        end = end.max(leave);
+    }
+    let at = current + Point::from((delta.x * end, delta.y * end));
+    if end == 1.0 && region.iter().any(|r| r.to_f64().contains(at)) {
+        return at;
+    }
+    // wl_pointer coordinates have 1/256 pixel precision. Stay a full protocol
+    // unit inside exclusive right/bottom edges, even after wire conversion.
+    let inset = (1.0 / 256.0) / delta.x.abs().max(delta.y.abs());
+    current
+        + Point::from((
+            delta.x * (end - inset).max(0.0),
+            delta.y * (end - inset).max(0.0),
+        ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn add_rect(x: i32, y: i32, w: i32, h: i32) -> RegionAttributes {
-        RegionAttributes {
-            rects: vec![(
-                RectangleKind::Add,
-                Rectangle::new((x, y).into(), (w, h).into()),
-            )],
+    fn bounds() -> Rectangle<i32, Logical> {
+        Rectangle::new((0, 0).into(), (200, 200).into())
+    }
+
+    #[test]
+    fn null_region_confines_to_surface_edges() {
+        let region = region_rectangles(bounds(), None);
+        let result = confine_motion((50.0, 50.0).into(), (800.0, 50.0).into(), &region);
+        assert!(result.x > 199.0 && result.x < 200.0);
+        assert_eq!(result.y, 50.0);
+        assert!(bounds().to_f64().contains(result));
+    }
+
+    #[test]
+    fn movement_slides_along_an_edge() {
+        let result = confine_motion(
+            (199.99609375, 50.0).into(),
+            (220.0, 90.0).into(),
+            &[bounds()],
+        );
+        assert!(result.x < 200.0);
+        assert_eq!(result.y, 90.0);
+    }
+
+    #[test]
+    fn exclusive_edge_is_inside_at_wire_precision() {
+        let result = confine_motion((50.0, 50.0).into(), (200.0, 200.0).into(), &[bounds()]);
+        assert!(result.x <= 200.0 - 1.0 / 256.0);
+        assert!(result.y <= 200.0 - 1.0 / 256.0);
+    }
+
+    #[test]
+    fn region_holes_and_disjoint_islands_cannot_be_crossed() {
+        let region = RegionAttributes {
+            rects: vec![
+                (RectangleKind::Add, bounds()),
+                (
+                    RectangleKind::Subtract,
+                    Rectangle::new((80, 0).into(), (40, 200).into()),
+                ),
+            ],
+        };
+        let rectangles = region_rectangles(bounds(), Some(&region));
+        // Both the hole and a valid point on its far side must stop at x=80.
+        for x in [100.0, 150.0, 800.0] {
+            let result = confine_motion((50.0, 50.0).into(), (x, 50.0).into(), &rectangles);
+            assert!(result.x > 79.0 && result.x < 80.0);
         }
     }
 
     #[test]
-    fn confinement_clamps_into_the_region_bbox() {
-        let region = add_rect(10, 20, 100, 50);
-        // Left/top escape clamps to the region origin.
+    fn adjacent_rectangles_do_not_create_artificial_barriers() {
+        let rects = [
+            Rectangle::new((0, 0).into(), (100, 200).into()),
+            Rectangle::new((100, 0).into(), (100, 200).into()),
+        ];
         assert_eq!(
-            clamp_local_to_region((-5.0, 5.0).into(), &region),
-            (10.0, 20.0).into()
-        );
-        // Right/bottom escape clamps to the far edge.
-        assert_eq!(
-            clamp_local_to_region((500.0, 500.0).into(), &region),
-            (110.0, 70.0).into()
-        );
-        // Inside is unchanged.
-        assert_eq!(
-            clamp_local_to_region((50.0, 40.0).into(), &region),
-            (50.0, 40.0).into()
+            confine_motion((50.0, 50.0).into(), (150.0, 50.0).into(), &rects),
+            (150.0, 50.0).into()
         );
     }
 
     #[test]
-    fn region_membership_rounds_to_the_nearest_pixel() {
-        let region = add_rect(0, 0, 10, 10);
-        assert!(region_contains(&region, (9.4, 0.0).into()));
-        assert!(!region_contains(&region, (10.6, 0.0).into()));
+    fn regions_are_clipped_to_surface_and_add_after_subtract_is_preserved() {
+        let region = RegionAttributes {
+            rects: vec![
+                (
+                    RectangleKind::Add,
+                    Rectangle::new((-100, -100).into(), (500, 500).into()),
+                ),
+                (RectangleKind::Subtract, bounds()),
+                (
+                    RectangleKind::Add,
+                    Rectangle::new((10, 10).into(), (20, 20).into()),
+                ),
+            ],
+        };
+        assert_eq!(
+            region_rectangles(bounds(), Some(&region)),
+            vec![Rectangle::new((10, 10).into(), (20, 20).into())]
+        );
+        assert!(region_rectangles(bounds(), Some(&RegionAttributes::default())).is_empty());
     }
 }

@@ -29,8 +29,12 @@ layout.
 
 Floats remain members of the group window list but are placed above tiled
 frames with remembered geometry. `super+left-drag` moves a float and
-`super+right-drag` resizes it. Fullscreen temporarily freezes ordinary frame
-synchronization; leaving fullscreen restores the tree geometry.
+`super+right-drag` resizes it. Each group can keep one fullscreen window.
+Switching groups preserves fullscreen and restores its geometry and keyboard
+focus on return, while other groups continue to tile normally. Explicitly
+moving the fullscreen window to another group ends its fullscreen state.
+Fullscreen follows output scale, size and hotplug changes; leaving fullscreen
+restores the tiled or floating geometry.
 
 ## Outputs and hotplug
 

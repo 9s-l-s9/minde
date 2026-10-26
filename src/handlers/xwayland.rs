@@ -76,10 +76,15 @@ impl XwmHandler for MindeState {
         let title = window.title();
         let class = window.class();
         tracing::debug!(?title, ?class, geo = ?window.geometry(), "x11 map request");
+        // Clients may set _NET_WM_STATE_FULLSCREEN before MapRequest.
+        let fullscreen = window.is_fullscreen();
         let element = Window::new_x11_window(window);
         self.space.map_element(element.clone(), (0, 0), false);
         let id = self.register_window(element);
         guile::on_window_map(id, &title, &class);
+        if fullscreen {
+            guile::on_foreign_fullscreen(id, true);
+        }
         tracing::info!(
             component = "window",
             protocol = "xwayland",
@@ -140,8 +145,16 @@ impl XwmHandler for MindeState {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
-        // Grant the size (needed pre-map so clients can draw); position
-        // stays ours -- the next sync re-places managed windows anyway.
+        // The placement cache only reconfigures changed frame geometry.
+        // Accepting a tiled client's self-resize would leave its real size
+        // smaller than the cached frame indefinitely (e.g. Chromium).
+        if let Some((id, _)) = self.window_for_x11(&window)
+            && (!self.floating_ids.contains(&id) || window.is_fullscreen())
+        {
+            let _ = window.configure(window.geometry());
+            return;
+        }
+        // Unmanaged/pre-map and floating clients may choose their size.
         let mut geo = window.geometry();
         if let Some(w) = w {
             geo.size.w = w as i32;
@@ -319,12 +332,20 @@ impl XwmHandler for MindeState {
         }
     }
 
-    // The frame tree owns geometry: refuse client-initiated state
-    // changes, mirroring the xdg-shell handlers.
+    // Keep tiling policy for maximize/move/resize. Fullscreen requests go
+    // through the same Scheme model as native Wayland clients and taskbars.
     fn maximize_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn unmaximize_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn fullscreen_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn unfullscreen_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some((id, _)) = self.window_for_x11(&window) {
+            guile::on_foreign_fullscreen(id, true);
+        }
+    }
+    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if let Some((id, _)) = self.window_for_x11(&window) {
+            guile::on_foreign_fullscreen(id, false);
+        }
+    }
     fn resize_request(
         &mut self,
         _xwm: XwmId,

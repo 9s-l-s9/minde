@@ -13,12 +13,23 @@
 ;; ---------------------------------------------------------------------
 
 (define %placements (make-hash-table)) ; id -> (x y w h)
+(define %placement-history '())
+(define %fullscreen-flags (make-hash-table))
+(define (wm-window-geometry id) (hash-ref %placements id))
+(define (wm-set-fullscreen id on)
+  (hash-set! %fullscreen-flags id on)
+  (when on (hash-set! %placements id '(0 0 1280 720)))
+  #t)
+(define (wm-place-float id x y w h) (wm-place-window id x y w h))
+(define (wm-set-floating id on) #t)
+(define (wm-raise-window id) #t)
 (define %focused #f)
 (define %focus-cleared 0)
 (define %closed '())
 (define %log-lines '())
 
 (define (wm-place-window id x y w h)
+  (set! %placement-history (cons (list id x y w h) %placement-history))
   (hash-set! %placements id (list x y w h))
   #t)
 
@@ -395,6 +406,67 @@
 (check "large numeric window IDs retain equality semantics"
        ((@@ (minde groups) distinct-window-count)
         (list (expt 2 80) (+ (expt 2 80) 0) 7)) 2)
+
+;; Fullscreen is group-local: other groups keep tiling/focus, and coming
+;; back restores fullscreen without an intermediate tiled-size configure.
+(create-group! " full-a ")
+(handle-window-map! 300 "fullscreen-a" "foot")
+(fullscreen!)
+(check "group A owns fullscreen" (fullscreen-window) 300)
+(check "fullscreen geometry recorded by Rust" (hash-ref %placements 300) '(0 0 1280 720))
+(create-group! " full-b ")
+(check "new group has no fullscreen window" (fullscreen-window) #f)
+(check "switching from fullscreen to empty group clears focus" %focused #f)
+(check "hidden fullscreen window keeps its full size"
+       (cddr (hash-ref %placements 300)) '(1280 720))
+(handle-window-map! 301 "fullscreen-b" "foot")
+(check "new group's client fills its frame" (hash-ref %placements 301) '(3 3 1274 714))
+(check "new group's client receives focus" %focused 301)
+(fullscreen!)
+(check "group B can have its own fullscreen" (fullscreen-window) 301)
+(set! %placement-history '())
+(switch-to-group! " full-a ")
+(check "returning restores A's fullscreen id" (fullscreen-window) 300)
+(check "returning restores A's fullscreen geometry" (hash-ref %placements 300) '(0 0 1280 720))
+(check "returning restores A's focus" %focused 300)
+(check-true "A never received a tiled-size configure on return"
+            (every (lambda (p) (or (not (= (car p) 300))
+                                  (equal? (cdddr p) '(1280 720))))
+                   %placement-history))
+(switch-to-group! " full-b ")
+(check "returning restores B's independent fullscreen" (fullscreen-window) 301)
+(fullscreen!)
+(check "exiting B's fullscreen restores its tiled rectangle" (hash-ref %placements 301) '(3 3 1274 714))
+(handle-window-unmap! 300)
+(check "closing hidden fullscreen does not change B's focus" %focused 301)
+(switch-to-group! " full-a ")
+(check "closing a hidden fullscreen window clears its group's state" (fullscreen-window) #f)
+(check "empty former fullscreen group clears focus" %focused #f)
+(handle-window-map! 302 "move-fullscreen" "foot")
+(fullscreen!)
+(move-current-window-to-next-group-and-follow!)
+(check "moving fullscreen to another group clears old ownership" (fullscreen-window) #f)
+(check "moving fullscreen clears the protocol state" (hash-ref %fullscreen-flags 302) #f)
+(check "moved fullscreen window tiles in its destination" (hash-ref %placements 302) '(3 3 1274 714))
+(switch-to-group! " full-a ")
+(check "old group remains usable after moving fullscreen away" (fullscreen-window) #f)
+(handle-window-map! 303 "replacement" "foot")
+(check "old group places new windows after fullscreen was moved" (hash-ref %placements 303) '(3 3 1274 714))
+
+;; Floating fullscreen windows likewise retain their full buffer while
+;; parked, then recover their original float rectangle when fullscreen ends.
+(float-window! 303)
+(define saved-float (float-geometry 303))
+(fullscreen!)
+(switch-to-group! " full-b ")
+(check "parked floating fullscreen keeps its full size"
+       (cddr (hash-ref %placements 303)) '(1280 720))
+(switch-to-group! " full-a ")
+(check "floating fullscreen restores focus" %focused 303)
+(check "floating fullscreen restores full geometry" (hash-ref %placements 303) '(0 0 1280 720))
+(fullscreen!)
+(check "fullscreen exit restores the original floating rectangle"
+       (hash-ref %placements 303) saved-float)
 
 (if (zero? %failures)
     (begin

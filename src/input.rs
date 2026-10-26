@@ -13,7 +13,7 @@ use smithay::{
         pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
         touch::{DownEvent, MotionEvent as TouchMotionEvent, UpEvent},
     },
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::wayland_server::{backend::ObjectId, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
     wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
 };
@@ -22,6 +22,44 @@ use smithay::{
 /// tip-down/up "click" for tablet-unaware clients.
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+
+/// Absolute samples belong to a device, not to the visible (possibly locked
+/// or confined) cursor. Switching devices establishes a new baseline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AbsolutePointerSource {
+    Device(String),
+    Tablet(String),
+    Virtual(ObjectId),
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AbsolutePointerMotion {
+    last: Option<(AbsolutePointerSource, Point<f64, Logical>)>,
+}
+
+impl AbsolutePointerMotion {
+    fn sample(
+        &mut self,
+        source: AbsolutePointerSource,
+        position: Point<f64, Logical>,
+    ) -> Point<f64, Logical> {
+        let delta = self
+            .last
+            .as_ref()
+            .filter(|(previous, _)| previous == &source)
+            .map(|(_, previous)| position - *previous)
+            .unwrap_or_else(|| (0.0, 0.0).into());
+        self.last = Some((source, position));
+        delta
+    }
+
+    /// Warps, relative input and coordinate-space changes break the sample
+    /// sequence. The next absolute event still positions the cursor, but
+    /// must not manufacture a relative delta from an unrelated old sample.
+    pub(crate) fn reset(&mut self) {
+        self.last = None;
+    }
+}
 
 /// Whether a tablet tool's input drives the real tablet protocol (the surface
 /// under the tool is tablet-aware) or falls back to emulating the pointer so a
@@ -269,7 +307,12 @@ impl MindeState {
 
                 let proposed =
                     event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-                self.pointer_absolute_motion(proposed, event.time_msec(), event.time());
+                self.pointer_absolute_motion(
+                    AbsolutePointerSource::Device(event.device().id()),
+                    proposed,
+                    event.time_msec(),
+                    event.time(),
+                );
             }
             InputEvent::PointerButton { event, .. } => {
                 self.pointer_button_event(event.button_code(), event.state(), event.time_msec());
@@ -390,6 +433,7 @@ impl MindeState {
                 tracing::info!(name = device.name(), "input device added");
             }
             InputEvent::DeviceRemoved { device } => {
+                self.absolute_pointer_motion.reset();
                 tracing::info!(name = device.name(), "input device removed");
             }
             _ => {}
@@ -408,6 +452,7 @@ impl MindeState {
         time_msec: u32,
         utime: u64,
     ) {
+        self.absolute_pointer_motion.reset();
         let mut proposed = self.pointer_location + delta;
         proposed = self.clamp_to_outputs(proposed);
         // One hit test for the pre-move position serves both the constraint
@@ -465,8 +510,9 @@ impl MindeState {
     /// `zwlr_virtual_pointer_v1` motion_absolute). Synthesizes a relative
     /// delta from consecutive positions so the relative-pointer protocol
     /// still works, then applies constraints.
-    pub fn pointer_absolute_motion(
+    pub(crate) fn pointer_absolute_motion(
         &mut self,
+        source: AbsolutePointerSource,
         proposed: Point<f64, Logical>,
         time_msec: u32,
         utime: u64,
@@ -479,12 +525,11 @@ impl MindeState {
             return;
         };
 
-        // Winit only ever delivers absolute motion, but pointer-lock
-        // clients (games) need relative_pointer events. Synthesize the
-        // delta from consecutive absolute positions and forward it so
-        // the relative-pointer protocol is honestly usable nested; the
-        // libinput backend supplies true unaccelerated deltas instead.
-        let delta = proposed - self.pointer_location;
+        // Keep sampling even while locked/confined: the logical cursor may
+        // stay parked or hit an edge, but device motion must not accumulate
+        // against that parked position. The first sample only establishes
+        // a baseline; it still drives ordinary absolute pointer motion.
+        let delta = self.absolute_pointer_motion.sample(source, proposed);
         pointer.relative_motion(
             self,
             under_current,
@@ -746,6 +791,7 @@ impl MindeState {
             ToolRoute::Tablet => {
                 // Tablet-aware client owns the tool events; move only the
                 // visible cursor (no wl_pointer events, which would double up).
+                self.absolute_pointer_motion.reset();
                 let old_pos = self.pointer_location;
                 self.pointer_location = location;
                 crate::automation_observe::set_pointer_position(location.x, location.y);
@@ -756,7 +802,12 @@ impl MindeState {
                 // This reuses the shared pointer path, so the cursor follows and
                 // hover/enter-leave are delivered; constraints only ever apply
                 // to real pointer focus, which a stylus never grabs.
-                self.pointer_absolute_motion(location, event.time_msec(), event.time());
+                self.pointer_absolute_motion(
+                    AbsolutePointerSource::Tablet(event.device().id()),
+                    location,
+                    event.time_msec(),
+                    event.time(),
+                );
             }
         }
     }
@@ -771,6 +822,7 @@ impl MindeState {
     ) {
         let tablet_seat = self.seat.tablet_seat();
         let dh = self.display_handle.clone();
+        self.absolute_pointer_motion.reset();
         let tablet_desc = TabletDescriptor::from(&event.device());
         // Idempotent: ensures a tablet exists even under winit / before a
         // DeviceAdded was seen for it.
@@ -893,8 +945,70 @@ fn map_absolute_to_global(
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolRoute, map_absolute_to_global, modifier_bitmask, tool_route};
+    use super::{
+        AbsolutePointerMotion, AbsolutePointerSource, ToolRoute, map_absolute_to_global,
+        modifier_bitmask, tool_route,
+    };
     use smithay::utils::Point;
+
+    #[test]
+    fn absolute_deltas_follow_samples_while_cursor_is_parked() {
+        let mut motion = AbsolutePointerMotion::default();
+        let device = AbsolutePointerSource::Device("winit".into());
+        assert_eq!(
+            motion.sample(device.clone(), (50.0, 50.0).into()),
+            (0.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(device.clone(), (60.0, 50.0).into()),
+            (10.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(device.clone(), (70.0, 50.0).into()),
+            (10.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(device.clone(), (70.0, 50.0).into()),
+            (0.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(device, (65.0, 45.0).into()),
+            (-5.0, -5.0).into()
+        );
+    }
+
+    #[test]
+    fn switching_absolute_devices_does_not_generate_a_jump() {
+        let mut motion = AbsolutePointerMotion::default();
+        let first = AbsolutePointerSource::Device("first".into());
+        let second = AbsolutePointerSource::Device("second".into());
+        motion.sample(first.clone(), (10.0, 10.0).into());
+        assert_eq!(
+            motion.sample(second.clone(), (900.0, 500.0).into()),
+            (0.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(second, (901.0, 502.0).into()),
+            (1.0, 2.0).into()
+        );
+        assert_eq!(motion.sample(first, (12.0, 12.0).into()), (0.0, 0.0).into());
+    }
+
+    #[test]
+    fn resetting_absolute_samples_does_not_generate_a_jump() {
+        let mut motion = AbsolutePointerMotion::default();
+        let device = AbsolutePointerSource::Device("winit".into());
+        motion.sample(device.clone(), (50.0, 50.0).into());
+        motion.reset();
+        assert_eq!(
+            motion.sample(device.clone(), (900.0, 700.0).into()),
+            (0.0, 0.0).into()
+        );
+        assert_eq!(
+            motion.sample(device, (905.0, 695.0).into()),
+            (5.0, -5.0).into()
+        );
+    }
 
     #[test]
     fn modifier_translation_matches_the_scheme_contract() {
