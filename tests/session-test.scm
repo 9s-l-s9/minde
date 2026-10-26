@@ -24,8 +24,12 @@
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 ;; Stands in for init.scm's own (define (wm-run-after ms thunk) ...) wrapper.
 (define (wm-run-after ms thunk) (set! %timers (cons (cons ms thunk) %timers)) #t)
-(define %already-locked? #f)
-(define (wm-session-locked?) %already-locked?)
+;; Privacy/input locking starts immediately; suspend readiness waits for
+;; presentation confirmation. Keep both fakes distinct to exercise that gap.
+(define %immediate-locked? #f)
+(define %lock-confirmed? #f)
+(define (wm-session-locked?) %immediate-locked?)
+(define (wm-session-lock-confirmed?) %lock-confirmed?)
 
 ;; Now it's safe to load the modules under test.
 (use-modules (minde compositor frames))
@@ -45,7 +49,7 @@
  #:spawn wm-spawn
  #:quit wm-quit
  #:run-after wm-run-after
- #:session-locked? wm-session-locked?)
+ #:session-locked? wm-session-lock-confirmed?)
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -183,15 +187,74 @@
 (check "the pending suspend still completes exactly once"
        (length (filter (lambda (c) (string=? c "false")) %spawned)) 1)
 
+;; A completed attempt's timer can arrive during a later attempt (e.g. a
+;; quick resume and re-suspend). It must only cancel the attempt that armed it.
+(set! %timers '())
+(suspend!)
+(define first-suspend-timeout (cdar %timers))
+(wm-on-session-lock)
+(wm-on-session-unlock)
+(set! %spawned '())
+(set! %messages '())
+(suspend!)
+(first-suspend-timeout)
+(check "an earlier successful suspend's timeout does not cancel a new attempt"
+       (echoed-containing? "cancelled") #f)
+(wm-on-session-lock)
+(check "the new suspend still completes after a stale timeout"
+       (length (filter (lambda (c) (string=? c "false")) %spawned)) 1)
+((cdar %timers))
+(check "a timeout after confirmation does not suspend again"
+       (length (filter (lambda (c) (string=? c "false")) %spawned)) 1)
+
+(set! %timers '())
+(set! %spawned '())
+(set! %messages '())
+(suspend!)
+(first-suspend-timeout)
+(check "an ignored stale timeout leaves the current attempt armed"
+       (echoed-containing? "cancelled") #f)
+((cdar %timers))
+(check "the current attempt's timeout still cancels after a stale timeout"
+       (echoed-containing? "cancelled") #t)
+(check "the current timeout never runs the suspend command"
+       (spawned? "false") #f)
+(wm-on-session-lock)
+(check "confirmation after the current timeout does not suspend"
+       (spawned? "false") #f)
+
 ;; ---------------------------------------------------------------------
-;; suspend! while the session is ALREADY locked: the 'session-lock hook
-;; only fires on a real unlocked->locked edge, so suspend! must not
-;; lock-and-wait (it would just time out) -- it asks wm-session-locked?
-;; and suspends immediately. The injected predicate reads the mutable fake
-;; above, so every earlier suspend! call exercised the unlocked result.
+;; An accepted lock protects input/privacy before its first locked frame is
+;; presented. That immediate guard must not take suspend!'s confirmed shortcut.
 ;; ---------------------------------------------------------------------
 
-(set! %already-locked? #t)
+(set! %immediate-locked? #t)
+(set! %lock-confirmed? #f)
+(set! %spawned '())
+(set! %timers '())
+(suspend!)
+(check "an immediately locked but unconfirmed session waits before suspend"
+       (spawned? "false") #f)
+(check "an unconfirmed session arms its confirmation timeout"
+       (length %timers) 1)
+(set! %lock-confirmed? #t)
+(wm-on-session-lock)
+(check "presentation confirmation completes the waiting suspend once"
+       (length (filter (lambda (c) (string=? c "false")) %spawned)) 1)
+(wm-on-session-lock)
+(check "repeated confirmation does not complete the same suspend twice"
+       (length (filter (lambda (c) (string=? c "false")) %spawned)) 1)
+(set! %immediate-locked? #f)
+(set! %lock-confirmed? #f)
+
+;; ---------------------------------------------------------------------
+;; Once locked presentation is confirmed, another suspend! needs neither
+;; another locker nor a confirmation hook. Its injected callback reports
+;; confirmed safety, rather than the earlier input/privacy guard.
+;; ---------------------------------------------------------------------
+
+(set! %immediate-locked? #t)
+(set! %lock-confirmed? #t)
 (set! %spawned '())
 (set! %timers '())
 (suspend!)
@@ -200,7 +263,8 @@
 (check "suspend! while already locked does not respawn the locker"
        (spawned? "true") #f)
 (check "suspend! while already locked arms no timeout" %timers '())
-(set! %already-locked? #f)
+(set! %immediate-locked? #f)
+(set! %lock-confirmed? #f)
 
 ;; ---------------------------------------------------------------------
 ;; wm-on-session-lock / wm-on-session-unlock ((minde groups)) run

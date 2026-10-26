@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 mod compositor;
+mod dispatch;
 pub mod foreign_toplevel;
 pub mod gamma_control;
 mod idle;
@@ -11,7 +12,7 @@ pub mod output_management;
 pub mod output_power;
 pub mod pointer_constraints;
 pub mod screencopy;
-mod session_lock;
+pub(crate) mod session_lock;
 pub mod tearing_control;
 pub mod virtual_pointer;
 pub mod wlr_screencopy;
@@ -228,6 +229,10 @@ impl WaylandDndGrabHandler for MindeState {
         serial: Serial,
         type_: GrabType,
     ) {
+        if self.locked {
+            source.cancel();
+            return;
+        }
         match type_ {
             GrabType::Pointer => {
                 let Some(ptr) = seat.get_pointer() else {
@@ -321,5 +326,3 @@ impl smithay::wayland::fractional_scale::FractionalScaleHandler for MindeState {
         });
     }
 }
-
-smithay::delegate_dispatch2!(MindeState);

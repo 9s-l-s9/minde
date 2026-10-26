@@ -76,7 +76,7 @@ impl WlrLayerShellHandler for MindeState {
 
         // The layer (e.g. fuzzel) held the keyboard: hand focus back to
         // the frame tree's focused window.
-        if had_keyboard_focus {
+        if had_keyboard_focus && !self.locked {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             let surface = self
                 .focused_window

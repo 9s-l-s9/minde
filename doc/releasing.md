@@ -7,6 +7,70 @@ are checked together by `make check-docs`.
 Status and diagnostic schemas: `1`.
 Persistent state formats: `1`.
 
+## GitHub-built Guix binaries
+
+`.github/workflows/guix-binary.yml` builds the complete Guix package on pushes
+to `main`, and can also be started manually on `main`. It publishes a prerelease
+named `guix-<full commit>`, containing the signed runtime closure, metadata,
+the build's public signing key, and GitHub provenance. It includes Xwayland,
+which is a propagated runtime dependency. Build dependencies are not exported.
+The job reserves its commit tag before building; a newer push supersedes an
+unfinished build. This avoids GitHub's restriction on job tokens tagging older
+commits after workflow changes. A failed build can leave a tag without a release.
+
+The builder uses the authenticated revision in `guix/ci-channels.scm` and an
+upstream-signed Guix 1.5.0 bootstrap whose SHA-256 is pinned in
+`scripts/ci-bootstrap-guix`. Cargo vendors the locked dependency graph, then
+Guix builds and tests the archive in its isolated build environment. Neither a
+developer's `target/` cache nor a local checkout is used for the installed binary.
+
+The personal System repository consumes these builds with:
+
+```sh
+cd ../System
+make minde-install COMMIT=<full commit from a successful guix-binary run>
+make reconfigure-system
+make reconfigure-home
+```
+
+The import requires `guix`, `gh`, `curl`, `xz`, `unshare`/`mount`, internet access, and
+`sudo` on a machine with a root-owned Guix store (as on these System configurations). Commit the
+resulting `minde-binary.lock.scm` with the System configuration. On another
+`x86_64-linux` PC using that configuration, `make minde-install` imports the
+same pinned build; no GitHub login, Minde source checkout, or Rust compiler is
+needed for the import.
+The existing System Home configuration separately loads Shikane's package
+recipe from the Minde checkout; retain that checkout when using that configuration.
+
+The importer verifies GitHub's signature against the exact repository,
+workflow, `main` ref, and source commit, and rejects self-hosted attestations.
+The attested metadata pins the archive, closure list, and Guix public key by
+SHA-256. The privileged import copies the inputs to a private directory and
+verifies them again before using Guix's signature-checking NAR importer.
+The build key is authorized only in that process's temporary Guix configuration;
+it is never added to `/etc/guix/acl`. No long-lived signing secret is stored in
+GitHub. The import runs in a private mount namespace, preserving the system's
+read-only store mount. CI tests rejection of an unauthorized archive and the
+successful restoration of a signed store item before publishing. Installed
+outputs are retained under `/var/guix/gcroots/minde-binary/`.
+
+The System selector defaults to the imported binary and fails with instructions
+if it is missing. Its local derivations only create symlinks to the imported
+Minde and Xwayland outputs. Updating unrelated Guix channels or editing the
+Minde checkout therefore does not compile Minde. `MINDE_BUILD_LOCAL=1` explicitly
+opts back into a source build; the RC archive overrides below remain available.
+
+The build and import paths exclude `emSign ECC Root CA - G3` and the older
+`AAA Certificate Services` root by certificate fingerprint, covering both trust
+paths for the compromised eMudhra intermediate keys. TLS verification stays
+enabled. This is scoped to these workflows and downloads; it does not update
+the machine's general-purpose trust store. See the
+[Mozilla incident report](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449).
+
+The GitHub Release itself is not an immutable trust anchor: repository admins
+can modify assets. The importer rejects changed metadata for an already pinned
+commit, and changing the binary requires selecting and reviewing a new commit.
+
 ## Package entry points
 
 `guix.scm` packages the current checkout for local development. It deliberately

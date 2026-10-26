@@ -236,6 +236,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &state.socket_name) };
 
     let run = event_loop.run(None, &mut state, move |state| {
+        state.enforce_lock_focus();
+        state.maybe_confirm_lock();
         // Push queued protocol events to the clients after every loop
         // iteration. The render paths flush too, but since repaints became
         // damage-driven a key release, pointer motion or any other event

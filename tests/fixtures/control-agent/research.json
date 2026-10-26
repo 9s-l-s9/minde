@@ -1,0 +1,42 @@
+{
+  "checked": "2026-10-02",
+  "live_jev_evaluation": "deferred by user; no live provider calls made",
+  "local_inference": "not installed or benchmarked",
+  "recommendation": "Start with GLiClass for bounded selection; consider GLiNER2 for structured target extraction. Neither has demonstrated parity with Jev on Minde tasks.",
+  "models": [
+    {
+      "name": "knowledgator/gliclass-small-v1.0",
+      "parameters": 144000000,
+      "license": "Apache-2.0",
+      "role": "zero-shot classification",
+      "fp32_weight_bytes_estimate": 576000000,
+      "memory_note": "Arithmetic weight-only estimate, excluding runtime, tokenizer, activations and library overhead; not a measured RAM requirement.",
+      "sources": [
+        "https://huggingface.co/knowledgator/gliclass-small-v1.0",
+        "https://github.com/Knowledgator/GLiClass",
+        "https://github.com/Knowledgator/GLiClass/blob/main/gliclass/pipeline.py"
+      ],
+      "cpu_note": "Official pipeline selects CPU when device=cpu; GPU optional. CPU latency has not been measured."
+    },
+    {
+      "name": "fastino/gliner2-base-v1",
+      "parameters": 205000000,
+      "license": "Apache-2.0",
+      "role": "CPU-first classification and structured extraction; upstream says GPU not required",
+      "install_note": "Current official README: gliner2[local] adds local inference dependencies including Torch; plain gliner2 is insufficient.",
+      "fp32_weight_bytes_estimate": 820000000,
+      "memory_note": "Arithmetic weight-only estimate; actual inference RAM and latency have not been measured here.",
+      "sources": [
+        "https://huggingface.co/fastino/gliner2-base-v1",
+        "https://github.com/fastino-ai/GLiNER2"
+      ]
+    }
+  ],
+  "integration": {
+    "provider": "local",
+    "endpoint": "http://127.0.0.1:8123/select",
+    "contract": "TypeSafe Choice-shaped request and response, model version checked; independent local service required. No model libraries are dependencies of minde-agent.",
+    "execution": "dry-run by default; explicit threshold and allowlist for execution",
+    "threshold_note": "Evaluate each model separately; confidence values are not interchangeable."
+  }
+}

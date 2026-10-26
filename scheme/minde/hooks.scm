@@ -61,6 +61,12 @@
 (define (run-event-hook! name . args)
   "Runs every procedure registered on NAME with ARGS; errors are logged
 via the wm-log subr (when present) and swallowed."
+  ;; Invalidate control snapshots even when a change is later reversed before
+  ;; the next read. Keep the foundation decoupled from the optional facade.
+  (unless (eq? name 'message)
+    (let ((var (guile-user-variable 'note-desktop-change!)))
+      (when var
+        (catch #t (lambda () ((variable-ref var))) (lambda _ #f)))))
   ;; Mirror every firing to the read-only event push socket before running
   ;; user hooks. The mirror procedure (minde-mirror-event, defined in the
   ;; plain-loaded event-stream.scm) is resolved from guile-user so this module

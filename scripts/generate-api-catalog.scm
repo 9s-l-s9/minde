@@ -15,6 +15,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 (use-modules (srfi srfi-1)
              (srfi srfi-13)
              (minde commands)
+             (minde control)
              (minde command-catalog))
 
 ;; describe-api is a plain top-level procedure, not a module export; load its
@@ -24,6 +25,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 ;; Populate the command registry with the built-in catalog schemas so the
 ;; commands section is complete without a running compositor.
 (register-builtin-command-schemas!)
+(register-control-commands!)
 
 (define catalog (describe-api))
 

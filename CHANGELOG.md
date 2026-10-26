@@ -35,6 +35,19 @@ Target version: `1.0.0-rc1`.
 
 ### Added
 
+- A typed agent control interface over the existing Scheme socket: desktop-wide
+  snapshots, discoverable schemas, explicit targets, session/revision checks,
+  bounded action receipts, asynchronous completion, and sequenced event replay.
+  `mindectl` adds machine/JSON output, discovery, calls, waits, watch recovery,
+  and a multiline remote REPL with registry completion and private history.
+  The optional `minde-agent` selector defaults to dry-run; deterministic,
+  Jev, and loopback transports share the validated executor. Live model
+  evaluation remains deferred. See [agent control](doc/agent-control.md).
+- IPC reply serialization now checks value types, preserves literal `#<`
+  strings, represents unspecified values, and distinguishes execution from
+  result-encoding failures without suggesting that prior effects rolled back.
+  Targeted screenshots accept window ID zero and select the target's output.
+
 - StumpWM-style window gaps with configurable inner, outer and head padding,
   live enable/disable/toggle commands, transient and fullscreen exceptions,
   and safe sizing on small frames. Existing `set-gaps!` calls retain their
@@ -379,6 +392,17 @@ Target version: `1.0.0-rc1`.
   `CONTRIBUTING.md` carries condensed pointers.
 
 ### Fixed
+
+- Session locks now retain their protocol owner, reject unauthorized unlocks,
+  and keep desktop windows and input-method/popup grabs from taking lock-screen
+  keyboard input. Lock acknowledgement and suspend wait for locked-frame DRM
+  presentation (or a successful nested-window buffer swap).
+- Event subscribers drain their final buffered events when the socket becomes
+  writable, without requiring another publication. Idle disconnects free their
+  slots; subscriber write-half-close remains supported.
+- Completed suspend attempts cannot cancel a later attempt through an old lock
+  timeout. Event privacy begins immediately; `wm-session-lock-confirmed?` is the
+  separate readiness check used for suspend.
 
 - `mindectl subscribe --json` no longer trails the compositor by one
   change. It woke on the event line and re-read status.json before the

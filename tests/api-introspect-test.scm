@@ -158,6 +158,36 @@
   (check "unmatched filter empties every section"
          (every (lambda (key) (null? (assq-ref none key))) sections)))
 
+;; New user commands share the runtime and generated discovery contract.
+(register-command!
+ 'example-focus! (lambda (window) window)
+ #:parameters '(((name . window) (type . integer) (minimum . 1)))
+ #:category 'window #:summary "Focus an explicit window"
+ #:result-schema 'integer #:scope '(window explicit) #:effects '(focus)
+ #:completion 'synchronous #:retry 'idempotent
+ #:examples '((invoke-command/named 'example-focus! '((window . 42)))))
+(let ((entry (car (assq-ref (describe-api "example-focus!") 'commands))))
+  (check "describe-api and detailed action help agree"
+         (equal? entry (describe-action 'example-focus!)))
+  (check "typed introspection still includes the legacy command fields"
+         (every (lambda (key) (assq key entry))
+                '(name category summary arguments documentation)))
+  (check "typed metadata provides argument/result/effect contracts"
+         (and (equal? '(window) (assq-ref entry 'arguments))
+              (assq-ref entry 'typed?)
+              (equal? 'integer (assq-ref entry 'result-schema))
+              (equal? 'synchronous (assq-ref entry 'completion))
+              (assq-ref (car (assq-ref entry 'parameters)) 'required)))
+  (check "typed catalog with executable examples is readable"
+         (writable-roundtrips? entry)))
+(check "concise discovery finds a custom command"
+       (equal? '(example-focus!)
+               (map (lambda (entry) (assq-ref entry 'name))
+                    (search-actions "explicit window"))))
+(check "concise discovery has fewer fields than detailed help"
+       (< (length (car (search-actions "explicit window")))
+          (length (describe-action 'example-focus!))))
+
 (if (zero? failures)
     (format #t "api-introspect-test: all checks passed~%")
     (begin

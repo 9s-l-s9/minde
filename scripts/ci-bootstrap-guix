@@ -1,0 +1,56 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Install a hash-pinned, upstream-signed Guix release on a disposable runner.
+set -euo pipefail
+
+[[ ${GITHUB_ACTIONS:-} == true && $(uname -m) == x86_64 ]] || {
+    echo 'ci-bootstrap-guix: intended for GitHub x86_64 Linux runners' >&2
+    exit 1
+}
+: "${MINDE_CA_BUNDLE:?run the TLS trust setup first}"
+: "${SSL_CERT_DIR:?run the TLS trust setup first}"
+work=$(mktemp -d "${RUNNER_TEMP}/guix-bootstrap.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+archive=$work/guix-binary-1.5.0.x86_64-linux.tar.xz
+curl --fail --silent --show-error --location --retry 3 \
+    --proto '=https' --proto-redir '=https' --cacert "$MINDE_CA_BUNDLE" \
+    --output "$archive" \
+    https://ftp.gnu.org/gnu/guix/guix-binary-1.5.0.x86_64-linux.tar.xz
+# Verified against the GNU release signature by Efraim Flashner:
+# A28B F40C 3E55 1372 662D 14F7 41AA E7DC CA3D 8351.
+printf '%s  %s\n' aa41025489c5061543e9c48873eaa829b900b2da75d40f9648913622f5f47817 \
+    "$archive" | sha256sum --check --strict
+sudo tar --extract --file "$archive" -C / --no-overwrite-dir
+sudo groupadd --system guixbuild
+for number in $(seq -w 1 10); do
+    sudo useradd --system --gid guixbuild --groups guixbuild \
+        --home-dir /var/empty --shell /usr/sbin/nologin "guixbuilder${number}"
+done
+guix_profile=/var/guix/profiles/per-user/root/current-guix
+sudo cp "$guix_profile/lib/systemd/system/gnu-store.mount" /etc/systemd/system/
+cat > "$work/guix-daemon.service" <<EOF
+[Unit]
+Description=GNU Guix build daemon
+[Service]
+ExecStart=$guix_profile/bin/guix-daemon --build-users-group=guixbuild
+Environment=SSL_CERT_FILE=$MINDE_CA_BUNDLE SSL_CERT_DIR=$SSL_CERT_DIR
+Environment=GUIX_LOCPATH=/var/guix/profiles/per-user/root/guix-profile/lib/locale LC_ALL=en_US.utf8
+OOMPolicy=continue
+TasksMax=8192
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo install -m 644 "$work/guix-daemon.service" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gnu-store.mount guix-daemon.service
+for key in "$guix_profile"/share/guix/*.pub; do
+    # These public key files are intentionally read without root privileges.
+    # shellcheck disable=SC2024
+    sudo "$guix_profile/bin/guix" archive --authorize < "$key"
+done
+# This signing key exists only on this disposable runner. It is authenticated
+# by the provenance attestation on the exported bundle, never globally trusted
+# by a consumer and never saved in GitHub Secrets.
+sudo "$guix_profile/bin/guix" archive --generate-key
+printf '%s\n' "$guix_profile/bin" >> "$GITHUB_PATH"
+printf '%s\n' 'LANG=en_US.utf8' >> "$GITHUB_ENV"

@@ -23,6 +23,9 @@ layer. What you learn about the running system becomes code you can use every da
 - **Connect your tools.** Query versioned JSON state and subscribe to events.
   External panels such as Eww can use the same status interface; Scheme commands
   can combine window operations with your own logic.
+- **Give agents a clear control surface.** Discover typed actions, inspect every
+  group, and verify changes with session-bound receipts. Use the remote Scheme
+  REPL or optional classifier adapter; see [agent control](doc/agent-control.md).
 
 ## How it fits together
 
@@ -68,8 +71,9 @@ atomically:
     scripts/mindectl query state --json
 
 The IPC socket belongs to the session user and runs requests on the
-compositor thread.  doc/ipc-eww.md describes the status and event
-interfaces.
+compositor thread. [IPC and Eww](doc/ipc-eww.md) describes the status and event
+interfaces; [agent control and the REPL](doc/agent-control.md) covers typed
+calls, receipts, JSON, and observation after reconnects.
 
 ## Documentation
 

@@ -121,7 +121,15 @@ if [ "${MINDE_CI_ENV:-0}" != 1 ]; then
     esac
 fi
 
-if [ -z "${SSL_CERT_FILE:-}" ] \
+if [ -n "${MINDE_CA_BUNDLE:-}" ]; then
+    # guix shell can select its pinned (older) nss-certs bundle. CI must keep
+    # using the filtered roots established before checkout.
+    export SSL_CERT_FILE="$MINDE_CA_BUNDLE"
+    export SSL_CERT_DIR="${MINDE_CA_BUNDLE%/*}/empty"
+    export CURL_CA_BUNDLE="$MINDE_CA_BUNDLE"
+    export GIT_SSL_CAINFO="$MINDE_CA_BUNDLE"
+    export CARGO_HTTP_CAINFO="$MINDE_CA_BUNDLE"
+elif [ -z "${SSL_CERT_FILE:-}" ] \
     && [ -f "${GUIX_ENVIRONMENT:-/nonexistent}/etc/ssl/certs/ca-certificates.crt" ]; then
     export SSL_CERT_FILE="$GUIX_ENVIRONMENT/etc/ssl/certs/ca-certificates.crt"
     export SSL_CERT_DIR="$GUIX_ENVIRONMENT/etc/ssl/certs"

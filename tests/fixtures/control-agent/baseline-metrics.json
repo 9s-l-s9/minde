@@ -1,0 +1,257 @@
+{
+  "schema-version": 1,
+  "corpus-version": 1,
+  "provider": "deterministic",
+  "model": "deterministic-v1",
+  "threshold": null,
+  "execution": "disabled",
+  "provider-contact-attempted": false,
+  "research": {
+    "checked": "2026-10-02",
+    "sources": [
+      "https://docs.typesafe.ai/api",
+      "https://docs.typesafe.ai/models",
+      "https://docs.typesafe.ai/confidence",
+      "https://docs.typesafe.ai/model-jaggedness/jev-1.13"
+    ],
+    "model": "jev-1.13.0",
+    "notes": "Choice has at most 255 options. Confidence summarizes the answer distribution, not measured desktop accuracy. Titles are untrusted data. Numeric computation and action construction stay local."
+  },
+  "metrics": {
+    "cases": 10,
+    "correct": 10,
+    "selected": 5,
+    "abstained": 5,
+    "errors": 0,
+    "wrong-target": 0,
+    "latency-p50-ms": 0.08613849786343053,
+    "latency-p95-ms": 0.6703719991492108
+  },
+  "cases": [
+    {
+      "case": "browser",
+      "correct": true,
+      "selected": true,
+      "wrong-target": false,
+      "latency-ms": 0.6703719991492108,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "c0",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.5160129949217662,
+        "session": "synthetic-session",
+        "revision": 7,
+        "action": "focus-window!",
+        "arguments": {
+          "window": 42
+        },
+        "status": "dry-run"
+      }
+    },
+    {
+      "case": "title",
+      "correct": true,
+      "selected": true,
+      "wrong-target": false,
+      "latency-ms": 0.14836600166745484,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "c0",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.023492000764235854,
+        "session": "synthetic-session",
+        "revision": 7,
+        "action": "focus-window!",
+        "arguments": {
+          "window": 42
+        },
+        "status": "dry-run"
+      }
+    },
+    {
+      "case": "exact-id",
+      "correct": true,
+      "selected": true,
+      "wrong-target": false,
+      "latency-ms": 0.09156600572168827,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "c1",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.01788699591998011,
+        "session": "synthetic-session",
+        "revision": 7,
+        "action": "focus-window!",
+        "arguments": {
+          "window": 43
+        },
+        "status": "dry-run"
+      }
+    },
+    {
+      "case": "duplicate-title",
+      "correct": true,
+      "selected": false,
+      "wrong-target": false,
+      "latency-ms": 0.08129198977258056,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "ambiguous",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.013671000488102436,
+        "session": "synthetic-session",
+        "revision": 7,
+        "status": "abstained",
+        "reason": "ambiguous"
+      }
+    },
+    {
+      "case": "missing-id",
+      "correct": true,
+      "selected": false,
+      "wrong-target": false,
+      "latency-ms": 0.07842999184504151,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "none",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.01308599894400686,
+        "session": "synthetic-session",
+        "revision": 7,
+        "status": "abstained",
+        "reason": "none"
+      }
+    },
+    {
+      "case": "missing-title",
+      "correct": true,
+      "selected": false,
+      "wrong-target": false,
+      "latency-ms": 0.084892992163077,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "none",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.011612006346695125,
+        "session": "synthetic-session",
+        "revision": 7,
+        "status": "abstained",
+        "reason": "none"
+      }
+    },
+    {
+      "case": "group",
+      "correct": true,
+      "selected": true,
+      "wrong-target": false,
+      "latency-ms": 0.07454700244124979,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "c4",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.010167990694753826,
+        "session": "synthetic-session",
+        "revision": 7,
+        "action": "switch-group!",
+        "arguments": {
+          "group": "chat"
+        },
+        "status": "dry-run"
+      }
+    },
+    {
+      "case": "missing-group",
+      "correct": true,
+      "selected": false,
+      "wrong-target": false,
+      "latency-ms": 0.07066500256769359,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "none",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.008417002391070127,
+        "session": "synthetic-session",
+        "revision": 7,
+        "status": "abstained",
+        "reason": "none"
+      }
+    },
+    {
+      "case": "unsupported-action",
+      "correct": true,
+      "selected": false,
+      "wrong-target": false,
+      "latency-ms": 0.10159298835787922,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "none",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.04019700281787664,
+        "session": "synthetic-session",
+        "revision": 7,
+        "status": "abstained",
+        "reason": "none"
+      }
+    },
+    {
+      "case": "adversarial-title",
+      "correct": true,
+      "selected": true,
+      "wrong-target": false,
+      "latency-ms": 0.08738400356378406,
+      "result": {
+        "schema-version": 1,
+        "provider": "deterministic",
+        "model": "deterministic-v1",
+        "choice": "c0",
+        "confidence": null,
+        "threshold": null,
+        "candidate-count": 6,
+        "latency-ms": 0.013212993508204818,
+        "session": "synthetic-session",
+        "revision": 7,
+        "action": "focus-window!",
+        "arguments": {
+          "window": 42
+        },
+        "status": "dry-run"
+      }
+    }
+  ]
+}

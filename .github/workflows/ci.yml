@@ -17,18 +17,9 @@
 # drift) surface without waiting on `cargo check` to finish compiling
 # Smithay.
 #
-# `pullAfterInstall: false` on every Install Guix step: measured directly
-# (job logs), `guix pull` -- rebuilding Guix's entire channel from
-# git.guix.gnu.org -- costs ~25 of every ~30 minute run, dwarfing
-# everything else in this file combined; the actual gate afterward takes
-# minutes. It's skipped in favor of whatever's in the nightly guix-binary
-# tarball guix-install-action downloads first anyway (also built from the
-# same channel, just without a redundant local rebuild). There is no
-# `/gnu/store` cache here: it was tried and confirmed non-functional --
-# `/var/guix/substitute/cache/*` is owned by the Guix daemon/build users,
-# unreadable by the unprivileged runner account actions/cache saves as
-# ("Cannot open: Permission denied" on every save, so it always missed on
-# restore too), pure overhead for zero benefit.
+# Guix bootstrap bytes and channel revisions are pinned. The TLS step runs
+# before checkout and excludes the compromised eMudhra trust paths. See
+# scripts/ci-bootstrap-guix and guix/ci-channels.scm.
 name: ci
 
 on:
@@ -43,59 +34,114 @@ permissions:
 
 jobs:
   check-rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --use-openssl-ca
     steps:
+      - name: Exclude compromised certificate chains
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, ssl
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'minde-trust'
+          root.mkdir(mode=0o700)
+          (root / 'empty').mkdir()
+          blocked = {
+              # emSign ECC Root CA - G3, plus AAA Certificate Services
+              # (cross-signed the same compromised eMudhra intermediates).
+              '86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b',
+              'd7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4',
+          }
+          source = pathlib.Path('/etc/ssl/certs/ca-certificates.crt').read_text()
+          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', source, re.S)
+          certs = [c for c in certs if hashlib.sha256(ssl.PEM_cert_to_DER_cert(c)).hexdigest() not in blocked]
+          assert len(certs) > 50, 'unexpected/empty CA bundle'
+          bundle = root / 'ca-certificates.crt'
+          bundle.write_text('\n'.join(certs) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key in ('MINDE_CA_BUNDLE', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO', 'CARGO_HTTP_CAINFO', 'REQUESTS_CA_BUNDLE'):
+                  env.write(f'{key}={bundle}\n')
+              env.write(f'SSL_CERT_DIR={root / "empty"}\n')
+          print(f'TLS trust: {len(certs)} certificates; compromised trust paths excluded')
+          PY
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: true
+          persist-credentials: false
 
       # `cargo check` compiles the full dependency graph (Smithay and its
       # transitive deps) from network-fetched sources -- not the vendored
       # crate mirror, which is only materialized for --release-artifacts.
       # Without this, every run recompiles all of it from scratch.
       #
-      # The "v2" prefix: switching to pullAfterInstall: false changed which
-      # gcc-toolchain build (and so which /gnu/store path its libgcc_s.so.1
-      # lives at) this environment resolves to. A "v1" target/ cache held
-      # build-script binaries (x11-dl's, libudev-sys's) RPATH-linked against
-      # the old build's now-nonexistent store path -- "cannot open shared
-      # object file" at build-script *run* time, not link time, so it only
-      # ever affected a cache hit, not a cold build. Bumping the key
-      # abandons those stale binaries; ./check's rust_gate also now sets
-      # LD_LIBRARY_PATH scoped to just the `cargo check` invocation as
-      # defense in depth against the same class of gap recurring silently
-      # -- exporting it for the rest of the process instead, an earlier
-      # version of this fix, broke plain shell tools further down the gate
-      # (a segfault) by feeding them mismatched libraries.
+      # Cache build-script executables only across the same pinned Guix
+      # toolchain: their ELF interpreter/RPATH embeds Guix store paths.
       - name: Cache Rust build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target
-          key: rust-target-v2-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
+          key: rust-target-v3-${{ runner.os }}-${{ hashFiles('guix/ci-channels.scm') }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
           restore-keys: |
-            rust-target-v2-${{ runner.os }}-
+            rust-target-v3-${{ runner.os }}-${{ hashFiles('guix/ci-channels.scm') }}-
 
-      - name: Install Guix
-        uses: PromyLOPh/guix-install-action@v1
-        with:
-          pullAfterInstall: false
+      - name: Install verified Guix bootstrap
+        run: scripts/ci-bootstrap-guix
+
+      - name: Select pinned Guix revision
+        run: |
+          profile=$(guix time-machine -C guix/ci-channels.scm)
+          echo "$profile/bin" >> "$GITHUB_PATH"
 
       - name: Run CI entry point
         run: scripts/ci --ci-rust
 
   check-scheme:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --use-openssl-ca
     steps:
+      - name: Exclude compromised certificate chains
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, ssl
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'minde-trust'
+          root.mkdir(mode=0o700)
+          (root / 'empty').mkdir()
+          blocked = {
+              # emSign ECC Root CA - G3, plus AAA Certificate Services
+              # (cross-signed the same compromised eMudhra intermediates).
+              '86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b',
+              'd7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4',
+          }
+          source = pathlib.Path('/etc/ssl/certs/ca-certificates.crt').read_text()
+          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', source, re.S)
+          certs = [c for c in certs if hashlib.sha256(ssl.PEM_cert_to_DER_cert(c)).hexdigest() not in blocked]
+          assert len(certs) > 50, 'unexpected/empty CA bundle'
+          bundle = root / 'ca-certificates.crt'
+          bundle.write_text('\n'.join(certs) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key in ('MINDE_CA_BUNDLE', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO', 'CARGO_HTTP_CAINFO', 'REQUESTS_CA_BUNDLE'):
+                  env.write(f'{key}={bundle}\n')
+              env.write(f'SSL_CERT_DIR={root / "empty"}\n')
+          print(f'TLS trust: {len(certs)} certificates; compromised trust paths excluded')
+          PY
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: true
+          persist-credentials: false
 
-      - name: Install Guix
-        uses: PromyLOPh/guix-install-action@v1
-        with:
-          pullAfterInstall: false
+      - name: Install verified Guix bootstrap
+        run: scripts/ci-bootstrap-guix
+
+      - name: Select pinned Guix revision
+        run: |
+          profile=$(guix time-machine -C guix/ci-channels.scm)
+          echo "$profile/bin" >> "$GITHUB_PATH"
 
       - name: Run CI entry point
         run: scripts/ci --ci-scheme
@@ -105,35 +151,70 @@ jobs:
     # the check-rust/check-scheme jobs via the same scripts/ci entry point.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [check-rust, check-scheme]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --use-openssl-ca
     permissions:
       contents: write
     steps:
+      - name: Exclude compromised certificate chains
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, ssl
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'minde-trust'
+          root.mkdir(mode=0o700)
+          (root / 'empty').mkdir()
+          blocked = {
+              # emSign ECC Root CA - G3, plus AAA Certificate Services
+              # (cross-signed the same compromised eMudhra intermediates).
+              '86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b',
+              'd7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4',
+          }
+          source = pathlib.Path('/etc/ssl/certs/ca-certificates.crt').read_text()
+          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', source, re.S)
+          certs = [c for c in certs if hashlib.sha256(ssl.PEM_cert_to_DER_cert(c)).hexdigest() not in blocked]
+          assert len(certs) > 50, 'unexpected/empty CA bundle'
+          bundle = root / 'ca-certificates.crt'
+          bundle.write_text('\n'.join(certs) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key in ('MINDE_CA_BUNDLE', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO', 'CARGO_HTTP_CAINFO', 'REQUESTS_CA_BUNDLE'):
+                  env.write(f'{key}={bundle}\n')
+              env.write(f'SSL_CERT_DIR={root / "empty"}\n')
+          print(f'TLS trust: {len(certs)} certificates; compromised trust paths excluded')
+          PY
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           submodules: true
+          persist-credentials: false
 
       - name: Cache Rust build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target
-          key: rust-target-v2-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
+          key: rust-target-v3-${{ runner.os }}-${{ hashFiles('guix/ci-channels.scm') }}-${{ hashFiles('Cargo.lock', 'manifest-check.scm') }}
           restore-keys: |
-            rust-target-v2-${{ runner.os }}-
+            rust-target-v3-${{ runner.os }}-${{ hashFiles('guix/ci-channels.scm') }}-
 
-      - name: Install Guix
-        uses: PromyLOPh/guix-install-action@v1
-        with:
-          pullAfterInstall: false
+      - name: Install verified Guix bootstrap
+        run: scripts/ci-bootstrap-guix
+
+      - name: Select pinned Guix revision
+        run: |
+          profile=$(guix time-machine -C guix/ci-channels.scm)
+          echo "$profile/bin" >> "$GITHUB_PATH"
 
       - name: Build release artifacts
         run: scripts/ci --release-artifacts
 
       - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            build/ci/artifacts/minde-*.tar.gz
-            build/ci/artifacts/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            build/ci/artifacts/minde-*.tar.gz build/ci/artifacts/SHA256SUMS \
+            --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "Source archives for $GITHUB_SHA."

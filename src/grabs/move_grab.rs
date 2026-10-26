@@ -40,6 +40,9 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
         // Already raised/activated when the grab started; a plain move.
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), false);
+        if let Some(id) = data.id_for_window(&self.window) {
+            data.publish_window_geometry(id);
+        }
         data.schedule_redraw();
     }
 
@@ -62,7 +65,7 @@ impl PointerGrab<MindeState> for MoveSurfaceGrab {
                 data.id_for_window(&self.window),
                 data.space.element_geometry(&self.window),
             ) {
-                data.publish_window_geometry(id, geo);
+                data.publish_window_geometry(id);
                 // Deferred to an idle callback: `handle.button` above is still
                 // running inside PointerHandle's dispatch, which holds a
                 // non-reentrant lock. A Scheme hook that touches the pointer

@@ -11,7 +11,8 @@ usage() {
 usage: ./check [TEST.scm ...]
 
 With no arguments, run the fixed fast development gate: Rust format/check,
-Scheme/API/configuration/keymap suites, static analysis, and documentation.
+Scheme/API/configuration/keymap and control-client suites, static analysis,
+and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
@@ -52,7 +53,7 @@ rust_gate() {
 }
 
 scheme_gate() {
-    make check-scheme check-api check-config check-keymaps
+    make check-scheme check-api check-config check-keymaps check-control
     make check-static
     make check-docs
 }

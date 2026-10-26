@@ -174,6 +174,7 @@ inert wm-spawn, same as pressing a launcher key for a missing program."
 ;; ---------------------------------------------------------------------
 
 (define %suspend-armed? #f)
+(define %suspend-generation 0)
 
 (define (on-locked-for-suspend!)
   (when %suspend-armed?
@@ -181,8 +182,8 @@ inert wm-spawn, same as pressing a launcher key for a missing program."
     (remove-event-hook! 'session-lock on-locked-for-suspend!)
     (spawn! %suspend-command)))
 
-(define (on-lock-timeout!)
-  (when %suspend-armed?
+(define (on-lock-timeout! generation)
+  (when (and %suspend-armed? (= generation %suspend-generation))
     (set! %suspend-armed? #f)
     (remove-event-hook! 'session-lock on-locked-for-suspend!)
     (echo "suspend cancelled: lock did not confirm in time")))
@@ -195,15 +196,19 @@ suspends immediately without locking."
   (cond
    ((not %lock-on-suspend?) (spawn! %suspend-command))
    ;; Already locked (locker running before suspend! was called): the
-   ;; 'session-lock hook only fires on a real unlocked->locked edge, so
-   ;; waiting for it here would just time out. wm-session-locked? is a
-   ;; boolean callback. Unlike the former dynamic lookup, an absent callback
+   ;; 'session-lock hook fires after every active output is safe, so
+   ;; waiting for it here would just time out. The runtime callback is
+   ;; wm-session-lock-confirmed?, not the immediate wm-session-locked?
+   ;; input/privacy guard. Unlike the former dynamic lookup, an absent callback
    ;; is a configuration error rather than being mistaken for "unlocked".
    (((runtime-capability 'session-locked? %runtime-session-locked?))
     (spawn! %suspend-command))
    (%suspend-armed? (echo "suspend already pending"))
    (else
+    (set! %suspend-generation (+ %suspend-generation 1))
     (set! %suspend-armed? #t)
     (add-event-hook! 'session-lock on-locked-for-suspend!)
     (lock-screen!)
-    (run-after %lock-timeout-ms on-lock-timeout!))))
+    (let ((generation %suspend-generation))
+      (run-after %lock-timeout-ms
+                 (lambda () (on-lock-timeout! generation)))))))
