@@ -14,6 +14,7 @@ No inference or waiting runs inside the compositor. No automatic retries.
 """
 
 import argparse
+import http.client
 import json
 import math
 import os
@@ -281,7 +282,7 @@ def jev_select(request, candidates, threshold, timeout=10, model=MODEL, opener=N
     try:
         with opener(http_request, timeout=timeout) as reply:
             answer = load_json(reply.read(MAX_JSON + 1))
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
         # Never expose error bodies, request headers, or credentials.
         raise AgentError("provider-unavailable") from error
     return parse_jev_response(answer, candidates, model)
@@ -310,7 +311,7 @@ def local_select(request, candidates, threshold, endpoint, model, timeout=10, op
     try:
         with opener(request, timeout=timeout) as reply:
             answer = load_json(reply.read(MAX_JSON + 1))
-    except (urllib.error.URLError, TimeoutError, OSError) as error:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
         raise AgentError("provider-unavailable") from error
     return parse_jev_response(answer, candidates, model)
 
