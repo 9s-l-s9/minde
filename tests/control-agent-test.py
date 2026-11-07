@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline classifier contracts; stubs are not model-quality evidence."""
 import copy
+import http.client
 import importlib.machinery
 import importlib.util
 import io
@@ -9,7 +10,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import socket
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -149,6 +152,9 @@ class AgentTests(unittest.TestCase):
             self.assert_code("provider-unavailable", agent.jev_select, "focus browser",
                              self.candidates, 0.8,
                              opener=lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError()))
+            self.assert_code("provider-unavailable", agent.jev_select, "focus browser",
+                             self.candidates, 0.8,
+                             opener=lambda *args, **kwargs: (_ for _ in ()).throw(http.client.BadStatusLine("garbage")))
         with patch.dict(os.environ, {}, clear=True):
             self.assert_code("missing-api-key", agent.jev_select, "focus browser", self.candidates, 0.8)
         self.assert_code("threshold-required", agent.jev_select, "focus browser", self.candidates, None)
@@ -162,6 +168,9 @@ class AgentTests(unittest.TestCase):
         answer = agent.local_select("focus browser", self.candidates, 0.8,
                                     "http://127.0.0.1:8123/select", agent.MODEL, opener=opener)
         self.assertEqual("c0", answer["choice"])
+        self.assert_code("provider-unavailable", agent.local_select, "focus browser",
+                         self.candidates, 0.8, "http://127.0.0.1:8123/select", agent.MODEL,
+                         opener=lambda *args, **kwargs: (_ for _ in ()).throw(http.client.BadStatusLine("garbage")))
         for endpoint in ("https://example.com", "http://evil.test", "http://user:pass@localhost"):
             self.assert_code("invalid-local-endpoint", agent.local_select, "request",
                              self.candidates, 0.8, endpoint, "model", opener=opener)
@@ -235,6 +244,91 @@ class AgentTests(unittest.TestCase):
                                     str(ROOT / "tests/fixtures/control-agent/corpus.json"),
                                     "--output", str(output)], capture_output=True, check=True)
             self.assertEqual(json.loads(reply.stdout), json.loads(output.read_text()))
+
+
+    def test_malformed_http_status_line_maps_to_provider_unavailable(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+
+        def serve():
+            try:
+                conn, _ = server.accept()
+                conn.recv(4096)
+                conn.sendall(b"garbage\r\n\r\n")
+                conn.close()
+            except OSError:
+                pass
+            finally:
+                server.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+
+        self.assert_code("provider-unavailable", agent.local_select, "focus browser",
+                         self.candidates, 0.8, f"http://127.0.0.1:{port}/select", agent.MODEL)
+
+        with tempfile.TemporaryDirectory() as d:
+            s_file = Path(d) / "s.json"
+            c_file = Path(d) / "c.json"
+            s_file.write_text(json.dumps(self.snapshot))
+            c_file.write_text(json.dumps(self.catalog))
+
+            server2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server2.bind(("127.0.0.1", 0))
+            server2.listen(1)
+            port2 = server2.getsockname()[1]
+
+            def serve2():
+                try:
+                    conn, _ = server2.accept()
+                    conn.recv(4096)
+                    conn.sendall(b"garbage\r\n\r\n")
+                    conn.close()
+                except OSError:
+                    pass
+                finally:
+                    server2.close()
+
+            thread2 = threading.Thread(target=serve2, daemon=True)
+            thread2.start()
+
+            reply = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/minde-agent"), "select", "focus my browser",
+                 "--snapshot", str(s_file), "--catalog", str(c_file), "--provider", "local",
+                 "--endpoint", f"http://127.0.0.1:{port2}", "--model", agent.MODEL, "--threshold", "0.5"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, reply.returncode)
+            self.assertIn('"error": "provider-unavailable"', reply.stdout)
+            self.assertNotIn("Traceback", reply.stderr)
+            self.assertNotIn("BadStatusLine", reply.stderr)
+
+        server3 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server3.bind(("127.0.0.1", 0))
+        server3.listen(1)
+        port3 = server3.getsockname()[1]
+
+        def serve3():
+            try:
+                conn, _ = server3.accept()
+                conn.recv(4096)
+                conn.sendall(b"garbage\r\n\r\n")
+                conn.close()
+            except OSError:
+                pass
+            finally:
+                server3.close()
+
+        thread3 = threading.Thread(target=serve3, daemon=True)
+        thread3.start()
+
+        mini_corpus = {"version": 1, "snapshot": self.snapshot, "catalog": self.catalog,
+                       "cases": [{"id": "test-1", "request": "focus browser", "expected": "none"}]}
+        eval_report = agent.evaluate(mini_corpus, "local", 0.5, endpoint=f"http://127.0.0.1:{port3}")
+        self.assertEqual("error", eval_report["cases"][0]["result"]["status"])
+        self.assertEqual("provider-unavailable", eval_report["cases"][0]["result"]["error"])
 
 
 if __name__ == "__main__":
