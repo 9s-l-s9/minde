@@ -53,10 +53,15 @@ impl CompositorHandler for MindeState {
                 root = parent;
             }
             let window = crate::state::window_for_surface(&self.space, &root);
+            let window = if &root == surface {
+                self.handle_toplevel_commit(surface, window)
+            } else {
+                window
+            };
             if let Some(window) = &window {
                 window.on_commit();
                 // Title/app-id arrive (and change) via ordinary commits
-                // after the map-time report, which is usually empty.
+                // after the first buffer-bearing commit.
                 self.report_title_if_changed(window);
             }
             window
@@ -64,7 +69,7 @@ impl CompositorHandler for MindeState {
             None
         };
 
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
+        xdg_shell::handle_popup_commit(&mut self.popups, surface);
         resize_grab::handle_commit(&mut self.space, surface);
         // Resizing can also move the origin during commit. Publish after that
         // adjustment and after Window::on_commit refreshed the committed size.

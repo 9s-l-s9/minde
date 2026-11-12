@@ -233,7 +233,7 @@ pub struct MindeState {
     pub seat: Seat<Self>,
 
     /// Registry of mapped toplevels by their stable id, assigned in
-    /// `handlers::xdg_shell::new_toplevel`. Scheme addresses windows only by
+    /// the shell's map path. Scheme addresses windows only by
     /// this id (see `wm-place-window` &c. in `guile::mod`). A `BTreeMap`
     /// gives O(log n) id lookup (`window_by_id` was a linear scan over a
     /// `Vec`) while keeping iteration in id order, which -- since ids are
@@ -281,8 +281,8 @@ pub struct MindeState {
     pub border_color: [f32; 4],
 
     /// Last title/app-id reported to Scheme per window id. Clients set
-    /// them only after the initial commit (so the map-time report is
-    /// usually empty) and retitle at will; the commit handler diffs
+    /// them before or after the first buffer commit and retitle at will;
+    /// the commit handler diffs
     /// against this and calls `handle-window-title-change!` on change.
     pub reported_titles: std::collections::HashMap<u64, (String, String)>,
 
@@ -1162,7 +1162,7 @@ impl MindeState {
     /// Full geometry of the output containing `point` (the first output when
     /// `None` or when no output contains it), or a 1280x720 stand-in before
     /// any output exists.
-    fn output_rect_containing(
+    pub(crate) fn output_rect_containing(
         &self,
         point: Option<Point<i32, Logical>>,
     ) -> Rectangle<i32, Logical> {
@@ -2214,8 +2214,8 @@ impl MindeState {
     pub fn register_window(&mut self, window: Window) -> u64 {
         let id = self.next_window_id;
         self.next_window_id += 1;
-        // Any title/app-id already known at map time (empty for a Wayland
-        // toplevel that configures first, the class/title for an X11 window).
+        // Metadata is known at map time for ordinary clients; later changes
+        // still arrive through the title-change hooks.
         let (title, app_id) = self.window_title_app_id(&window);
         window.user_data().insert_if_missing(|| WindowId(id));
         self.windows.insert(id, window);

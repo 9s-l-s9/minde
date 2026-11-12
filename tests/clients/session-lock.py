@@ -201,16 +201,19 @@ class Client:
         self.send(surface, 2, uints(0, 0, width, height))
         self.send(surface, 6)
 
-    def toplevel(self):
+    def toplevel(self, map_on_configure=True):
         self.get_keyboard()
+        self.map_on_configure = map_on_configure
         self.surface = self.new_surface()
         shell = self.bind("xdg_wm_base")
         self.handlers[shell] = lambda op, data: self.send(shell, 3, data) if op == 0 else None
         xdg_surface, toplevel = self.alloc(), self.alloc()
+        self.xdg_surface, self.toplevel_object = xdg_surface, toplevel
         self.send(shell, 2, uints(xdg_surface, self.surface))
         self.send(xdg_surface, 1, uints(toplevel))
         self.send(toplevel, 2, string(self.name))
         size = [640, 480]
+        self.configured_size = size
 
         def toplevel_event(opcode, data):
             if opcode == 0:
@@ -220,7 +223,8 @@ class Client:
         def configure(opcode, data):
             if opcode == 0:
                 self.send(xdg_surface, 4, data)
-                self.paint(self.surface, *size, 0x00FF00FF)
+                if self.map_on_configure:
+                    self.paint(self.surface, *size, 0x00FF00FF)
 
         self.handlers[toplevel] = toplevel_event
         self.handlers[xdg_surface] = configure

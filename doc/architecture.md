@@ -47,6 +47,13 @@ with injected display operations. They build and test independently; see
 
 ## State and persistence
 
+Native xdg toplevel roles remain unmanaged until their first buffer-bearing
+commit. A null-buffer commit unmaps the window while keeping its role alive:
+the layout entry and foreign-toplevel handles are removed, focus moves on,
+and associated grabs and popups end. A subsequent map receives a fresh window
+ID, so stale selectors cannot address it. Initial title/app-id and fullscreen
+requests are applied when the first buffer maps.
+
 Runtime state is authoritative in the compositor thread. Status publication
 uses versioned JSON and atomic files. Layouts and placement rules use versioned
 Scheme datums and atomic replacement. Configuration reload validates a complete

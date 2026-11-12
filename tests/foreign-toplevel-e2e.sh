@@ -1,13 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Bounded nested e2e gate for wlr-foreign-toplevel-management. Guix packages no
-# dedicated foreign-toplevel CLI (taskbars are GUI apps), so this gate proves
-# the integration surface non-interactively: with a real toplevel mapped, a
-# client that binds zwlr_foreign_toplevel_manager_v1 (wayland-info) must
-# receive the toplevel/title/app_id/state/done stream without the compositor
-# erroring -- i.e. the per-manager handle-creation path runs against a live
-# window. Combined with the Rust and Scheme unit tests for the request
-# handlers. Every client call is wrapped in `timeout`.
+# Bounded nested gate for xdg map/unmap and foreign-toplevel lifetimes.
+# A raw protocol client checks bufferless roles, remaps, focus and grabs;
+# foot and wayland-info exercise the real-application announcement path.
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
@@ -15,9 +10,9 @@ cd "$(dirname "$0")/.."
 OUT=${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-/tmp/swm-ft-e2e}
 trap nested_stop EXIT HUP INT TERM
 
-for tool in wayland-info foot; do
+for tool in python3 wayland-info foot; do
     command -v "$tool" >/dev/null 2>&1 || {
-        echo "error: $tool is required (add wayland-utils / foot)" >&2
+        echo "error: $tool is required for foreign-toplevel-e2e" >&2
         exit 127
     }
 done
@@ -26,6 +21,13 @@ nested_start "$OUT" "${MINDE_FOREIGN_TOPLEVEL_E2E_DISPLAY:-:98}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
 }
+
+PYTHONDONTWRITEBYTECODE=1 timeout 40 python3 tests/clients/window-lifecycle.py \
+    >"$OUT/window-lifecycle.log" 2>&1 || {
+    cat "$OUT/window-lifecycle.log" >&2
+    exit 1
+}
+cat "$OUT/window-lifecycle.log"
 
 # Map a real toplevel so the manager-bind path creates a handle for it.
 before=$(nested_window_count 2>/dev/null || printf '0')

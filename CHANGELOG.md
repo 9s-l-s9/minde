@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Native Wayland toplevels enter the layout only after their first buffer
+  commit. Null-buffer commits remove hidden windows, focus, fullscreen and
+  foreign-toplevel handles, and end their grabs and popups. Remapping uses
+  a fresh window ID and preserves requests made before mapping (#39).
 - Invalid `XKB_DEFAULT_*` keymaps log their requested settings and fall back
   to a plain US keymap without reusing the failing environment. If the
   fallback cannot compile either, startup exits cleanly instead of panicking

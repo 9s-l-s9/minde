@@ -982,22 +982,19 @@ geometries re-applied. Groups not in the dump are left alone."
       (retile-dynamic!))))
 
 (define (handle-window-title-change! id title app-id)
-  "Rust: a mapped toplevel's title/app-id changed. Wayland clients set
-both only after the initial configure, so handle-window-map! usually saw
-empty strings and the real values arrive here (and again on every
-retitle). Refreshes the bookkeeping (windowlist, remapped keys, rules,
-status line); when the app-id first becomes known, a lock placement
-rule that missed the window at map time is applied now."
+  "Rust: a mapped toplevel's title/app-id changed. Refreshes bookkeeping
+(windowlist, remapped keys, rules, status line). If the app-id was empty
+at the first buffer commit, apply any locked placement rule when it
+first becomes known."
   (let ((old-title (window-title id))
         (old-app-id (window-app-id id))
         (first-app-id? (let ((old (window-app-id id)))
                          (and (or (not old) (string-null? old))
                               (not (string-null? app-id))))))
     (update-window-title! id title app-id)
-    ;; Float rules mostly fire here, not at map: Wayland clients set
-    ;; title/app-id only after the initial configure, so e.g. Firefox's
-    ;; Picture-in-Picture window maps with empty strings. Only the edge
-    ;; where the rule newly matches floats, so unfloating by hand isn't
+    ;; A client can set title/app-id after its first buffer commit, so a
+    ;; Picture-in-Picture window may initially map with empty strings. Only
+    ;; newly matching rules float it, so unfloating by hand isn't
     ;; overridden by later retitles.
     (when (and (not (window-floating? id))
                (window-in-active-group? id))

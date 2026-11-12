@@ -51,7 +51,7 @@ impl From<xdg_toplevel::ResizeEdge> for ResizeEdge {
 
 pub struct ResizeSurfaceGrab {
     start_data: PointerGrabStartData<MindeState>,
-    window: Window,
+    pub(crate) window: Window,
 
     edges: ResizeEdge,
 
@@ -279,6 +279,15 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
 
     fn unset(&mut self, _data: &mut MindeState) {
         self.configures.lock().unwrap().cancel();
+        if let Some(xdg) = self.window.toplevel() {
+            // Cancellation can leave the surface alive for a later mapping.
+            // Normal button release sets WaitingForLastCommit after unsetting
+            // the grab; forced cancellation must not retain the old anchor.
+            ResizeSurfaceState::with(xdg.wl_surface(), |state| {
+                *state = ResizeSurfaceState::Idle;
+            });
+            xdg.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Resizing));
+        }
     }
 }
 
