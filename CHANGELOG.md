@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Output mode configuration rejects negative, non-finite and out-of-range
+  refresh values before conversion or matching. Extreme refresh rates cannot
+  overflow mode comparisons or abort the compositor (#55).
 - Extreme virtual-pointer wheel steps are bounded before conversion, keeping
   both legacy discrete scrolling and v8 wheel values free of overflow (#89).
 - NUL-padded EDID monitor names and serials are sanitized before Wayland

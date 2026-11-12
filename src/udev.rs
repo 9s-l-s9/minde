@@ -276,7 +276,7 @@ fn resolve_connector_mode<M: Copy>(
     modes
         .iter()
         .filter(|(wl, _)| wl.size == wanted.size)
-        .map(|(wl, drm)| ((wl.refresh - wanted.refresh).abs(), *drm))
+        .map(|(wl, drm)| (wl.refresh.abs_diff(wanted.refresh), *drm))
         .filter(|(diff, _)| *diff <= 1000)
         .min_by_key(|(diff, _)| *diff)
         .map(|(_, drm)| drm)
@@ -2239,6 +2239,20 @@ mod tests {
         assert_eq!(
             resolve_connector_mode(&[], wl(1920, 1080, 60_000), true),
             None::<&str>
+        );
+        for refresh in [i32::MIN, -1, 0, i32::MAX] {
+            assert_eq!(
+                resolve_connector_mode(&m, wl(1920, 1080, refresh), true),
+                None
+            );
+        }
+        assert_eq!(
+            resolve_connector_mode(
+                &[(wl(1920, 1080, i32::MIN), "invalid")],
+                wl(1920, 1080, i32::MAX),
+                true
+            ),
+            None
         );
     }
 }

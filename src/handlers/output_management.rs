@@ -206,6 +206,9 @@ pub(crate) fn validate(
                 if m.size.w <= 0 || m.size.h <= 0 {
                     return Err(OutputConfigError::new("custom mode has non-positive size"));
                 }
+                if m.refresh < 0 {
+                    return Err(OutputConfigError::new("custom mode has negative refresh"));
+                }
                 // A custom mode that names an advertised mode (same size,
                 // refresh within 1 Hz -- `--custom-mode 1920x1080@60` for
                 // a 59.94 Hz panel) is that mode; the backend then sees an
@@ -266,7 +269,7 @@ fn nearest_advertised_mode(output: &Output, wanted: Mode) -> Option<Mode> {
         .modes()
         .into_iter()
         .filter(|m| m.size == wanted.size)
-        .map(|m| ((m.refresh - wanted.refresh).abs(), m))
+        .map(|m| (m.refresh.abs_diff(wanted.refresh), m))
         .filter(|(diff, _)| *diff <= 1000)
         .min_by_key(|(diff, _)| *diff)
         .map(|(_, m)| m)
@@ -1105,10 +1108,10 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData> for MindeState {
                 height,
                 refresh,
             } => {
-                if width <= 0 || height <= 0 {
+                if width <= 0 || height <= 0 || refresh < 0 {
                     config_head.post_error(
                         zwlr_output_configuration_head_v1::Error::InvalidCustomMode,
-                        "custom mode dimensions must be positive",
+                        "custom mode dimensions must be positive and refresh non-negative",
                     );
                     return;
                 }
@@ -1255,6 +1258,39 @@ mod tests {
         assert!(validate(&heads, &[c], false).is_err());
         let d = HeadChange::new(heads[0].output.clone(), true);
         assert!(validate(&heads, &[d.clone(), d], false).is_err());
+    }
+
+    #[test]
+    fn custom_refresh_validation_and_matching_handle_integer_limits() {
+        let heads = [head("a", true, None)];
+        let output = &heads[0].output;
+        let mut change = HeadChange::new(output.clone(), true);
+        for refresh in [i32::MIN, -1, 0, i32::MAX] {
+            change.custom_mode = Some((800, 600, refresh));
+            assert_eq!(
+                validate(&heads, &[change.clone()], false).is_ok(),
+                refresh >= 0
+            );
+            assert_eq!(
+                nearest_advertised_mode(output, change.requested_mode().unwrap()),
+                None
+            );
+        }
+        // A backend-provided extreme must not wrap into a nearby match either.
+        output.add_mode(Mode {
+            size: (800, 600).into(),
+            refresh: i32::MIN,
+        });
+        assert_eq!(
+            nearest_advertised_mode(
+                output,
+                Mode {
+                    size: (800, 600).into(),
+                    refresh: i32::MAX
+                }
+            ),
+            None
+        );
     }
 
     #[test]

@@ -74,6 +74,27 @@ for value in '#t' '(if #f #f)' '(list 1)'; do
 done
 echo 'ok - real key events accept boolean, unspecified and list hook results'
 
+check 'invalid mode values leave the output configuration unchanged' '
+(let ((before (output-heads)))
+  (for-each
+   (lambda (mode)
+     (unless (catch #t (lambda () (configure-output! "winit" #:mode mode) #f)
+                       (lambda args #t))
+       (error "bad mode accepted" mode))
+     (unless (equal? before (output-heads))
+       (error "bad mode changed outputs" mode)))
+   (quote ((1280 800 -2147483648) (1280 800 -1) (1280 800 2147483648.0)
+           "1280x800@-inf" "1280x800@inf" "1280x800@NaN"
+           "1280x800@-0.0001" "1280x800@2147483.648")))
+  #t)'
+
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
+    python3 tests/clients/output-mode.py >"$OUT/output-mode.log" 2>&1 || {
+    cat "$OUT/output-mode.log" >&2
+    exit 1
+}
+cat "$OUT/output-mode.log"
+
 seval '(define (output-configuration-allowed?) (list 1))' >/dev/null
 nested_wayland timeout 15 wlr-randr --output winit --scale 1.25 >"$OUT/output.log" 2>&1
 check 'external output requests accept a true Scheme value' \

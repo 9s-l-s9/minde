@@ -119,7 +119,12 @@ pub fn parse_transform(name: &str) -> Option<Transform> {
 fn int_of(v: &SpecValue, what: &str) -> Result<i32, String> {
     match v {
         SpecValue::Int(i) => i32::try_from(*i).map_err(|_| format!("{what}: {i} out of range")),
-        SpecValue::Real(r) if r.fract() == 0.0 => Ok(*r as i32),
+        SpecValue::Real(r) if r.fract() == 0.0 => {
+            if !(i32::MIN as f64..=i32::MAX as f64).contains(r) {
+                return Err(format!("{what}: {r} out of range"));
+            }
+            Ok(*r as i32)
+        }
         other => Err(format!("{what}: expected an integer, got {other}")),
     }
 }
@@ -171,7 +176,11 @@ pub fn parse_mode_string(s: &str) -> Result<(i32, i32, i32), String> {
             let hz: f64 = r
                 .parse()
                 .map_err(|_| format!("mode {s:?}: bad refresh rate"))?;
-            (hz * 1000.0).round() as i32
+            let mhz = (hz * 1000.0).round();
+            if !hz.is_finite() || hz < 0.0 || mhz > i32::MAX as f64 {
+                return Err(format!("mode {s:?}: refresh rate out of range"));
+            }
+            mhz as i32
         }
     };
     if w <= 0 || h <= 0 {
@@ -204,6 +213,9 @@ pub fn parse_output_change_spec(
                         };
                         if w <= 0 || h <= 0 {
                             return Err("mode: size must be positive".into());
+                        }
+                        if r < 0 {
+                            return Err("mode: refresh rate must be non-negative".into());
                         }
                         (w, h, r)
                     }
@@ -318,6 +330,51 @@ mod tests {
         )])
         .unwrap();
         assert_eq!(spec.mode, Some((1920, 1080, 0)));
+    }
+
+    #[test]
+    fn mode_refresh_rejects_negative_nonfinite_and_unrepresentable_values() {
+        for refresh in [
+            "-2147483.648",
+            "-0.0001",
+            "-inf",
+            "inf",
+            "NaN",
+            "2147483.648",
+            "1e100",
+        ] {
+            assert!(
+                parse_mode_string(&format!("1280x800@{refresh}")).is_err(),
+                "{refresh}"
+            );
+        }
+        assert_eq!(parse_mode_string("1280x800@0"), Ok((1280, 800, 0)));
+        assert_eq!(
+            parse_mode_string("1280x800@2147483.647"),
+            Ok((1280, 800, i32::MAX))
+        );
+        for refresh in [
+            SpecValue::Int(i32::MIN as i64),
+            SpecValue::Int(-1),
+            SpecValue::Real(2147483648.0),
+        ] {
+            assert!(
+                parse_output_change_spec(&[e(
+                    "mode",
+                    SpecValue::List(vec![SpecValue::Int(1280), SpecValue::Int(800), refresh,])
+                )])
+                .is_err()
+            );
+        }
+        assert_eq!(
+            int_of(&SpecValue::Real(i32::MIN as f64), "position"),
+            Ok(i32::MIN)
+        );
+        assert_eq!(
+            int_of(&SpecValue::Real(i32::MAX as f64), "position"),
+            Ok(i32::MAX)
+        );
+        assert!(int_of(&SpecValue::Real(i32::MIN as f64 - 1.0), "position").is_err());
     }
 
     #[test]
