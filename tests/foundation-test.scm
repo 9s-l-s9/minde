@@ -59,10 +59,27 @@
   (check "hook survives callback error" seen '(payload))
   (check "hook reports callback error" errors 1))
 
+(for-each
+ (lambda (case)
+   (check "duplicate and aliased modifiers preserve their bits"
+          (modifiers->bitmask (car case)) (cadr case))
+   (check "duplicate and aliased modifiers preserve key notation"
+          (key-notation (car case) "x") (caddr case)))
+ '((() 0 "x")
+   ((ctrl ctrl) 4 "C-x")
+   ((ctrl control) 4 "C-x")
+   ((alt meta) 8 "M-x")
+   ((shift shift) 1 "S-x")
+   ((super logo super) 64 "s-x")
+   ((ctrl shift shift) 5 "C-S-x")
+   ((ctrl control alt meta shift shift super logo) 77 "C-M-S-s-x")))
+
 (let ((registry (make-key-registry)))
   (register-key! registry '(ctrl alt) "x" 'command)
   (check "canonical key notation" (key-notation '(ctrl alt) "x") "C-M-x")
   (check "key registry lookup" (lookup-key registry 12 "x") 'command)
+  (check "key registry lookup accepts repeated aliases"
+         (lookup-key registry '(control ctrl meta alt) "x") 'command)
   (check "key collision rejected"
          (catch #t
            (lambda () (register-key! registry 12 "x" 'other) #f)

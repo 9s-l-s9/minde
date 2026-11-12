@@ -12,8 +12,8 @@
     (else (error "unknown modifier" modifier))))
 
 (define (modifiers->bitmask modifiers)
-  "Returns the sum of the canonical bits for MODIFIERS."
-  (apply + (map modifier->bit modifiers)))
+  "Returns canonical modifier bits, collapsing repeated names and aliases."
+  (apply logior 0 (map modifier->bit modifiers)))
 
 ;; key-notation runs on every keystroke (init.scm's dispatch-key calls it
 ;; up to twice per key), so the C-/M-/S-/s- prefix -- one of only 16

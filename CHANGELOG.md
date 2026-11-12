@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Repeated modifier names and aliases now keep the intended key binding
+  instead of adding their bits into a different modifier mask (#5).
 - CI, `./check`, and `make check-rust` now share Rust build, unit-test and
   Clippy gates. Guix package checks also run Rust tests and Clippy offline
   in release mode (#169).
