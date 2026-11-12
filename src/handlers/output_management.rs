@@ -178,7 +178,7 @@ pub(crate) struct ResolvedChange {
 /// a mode picks its preferred (else current) mode; adaptive sync may only
 /// be enabled where the backend supports it; the configuration must leave
 /// at least one head enabled unless `allow_no_heads`. A no-op configuration
-/// is fine.
+/// is fine. Settings may only accompany an enabled head.
 pub(crate) fn validate(
     heads: &[HeadFacts],
     changes: &[HeadChange],
@@ -193,6 +193,18 @@ pub(crate) fn validate(
         };
         if resolved.iter().any(|r| r.change.output == change.output) {
             return Err(OutputConfigError::new("head configured twice"));
+        }
+        if !change.enabled
+            && (change.mode.is_some()
+                || change.custom_mode.is_some()
+                || change.position.is_some()
+                || change.scale.is_some()
+                || change.transform.is_some()
+                || change.adaptive_sync.is_some())
+        {
+            return Err(OutputConfigError::new(
+                "settings require an enabled head; pass #:enabled #t",
+            ));
         }
         let mut mode = None;
         if change.enabled {
@@ -211,7 +223,7 @@ pub(crate) fn validate(
                     return Err(OutputConfigError::new("custom mode has negative refresh"));
                 }
                 // A custom mode that names an advertised mode (same size,
-                // refresh within 1 Hz -- `--custom-mode 1920x1080@60` for
+                // unspecified refresh or within 1 Hz -- e.g. 60 Hz for
                 // a 59.94 Hz panel) is that mode; the backend then sees an
                 // exact match and the output state stays coherent with the
                 // mode list. Anything else stays custom for the backend to
@@ -264,8 +276,21 @@ pub(crate) fn validate(
 }
 
 /// The advertised mode of `output` with the same size as `wanted` and the
-/// nearest refresh within +-1000 mHz, if any.
+/// nearest refresh within +-1000 mHz, if any. Unspecified refresh chooses
+/// the preferred mode at that size, otherwise the highest refresh.
 fn nearest_advertised_mode(output: &Output, wanted: Mode) -> Option<Mode> {
+    if wanted.refresh == 0 {
+        return output
+            .preferred_mode()
+            .filter(|mode| mode.size == wanted.size)
+            .or_else(|| {
+                output
+                    .modes()
+                    .into_iter()
+                    .filter(|mode| mode.size == wanted.size)
+                    .max_by_key(|mode| mode.refresh)
+            });
+    }
     output
         .modes()
         .into_iter()
@@ -1335,6 +1360,74 @@ mod tests {
     }
 
     #[test]
+    fn unspecified_refresh_prefers_preferred_then_highest_at_the_requested_size() {
+        for enabled in [false, true] {
+            let heads = [head("a", enabled, None)];
+            let output = &heads[0].output;
+            let fast = Mode {
+                refresh: 144_000,
+                ..mode(1280, 800)
+            };
+            output.change_current_state(Some(fast), None, None, None);
+            let smaller = Mode {
+                refresh: 75_000,
+                ..mode(800, 600)
+            };
+            output.add_mode(smaller);
+            let mut change = HeadChange::new(output.clone(), true);
+            for (size, expected) in [((1280, 800), mode(1280, 800)), ((800, 600), smaller)] {
+                change.custom_mode = Some((size.0, size.1, 0));
+                let resolved = validate(&heads, &[change.clone()], false).unwrap();
+                assert_eq!(resolved[0].mode, Some(expected));
+            }
+            // An explicit refresh still overrides the preferred choice.
+            change.custom_mode = Some((1280, 800, 144_500));
+            assert_eq!(
+                validate(&heads, &[change.clone()], false).unwrap()[0].mode,
+                Some(fast)
+            );
+            // Unknown sizes stay custom for the backend to accept or reject.
+            change.custom_mode = Some((640, 480, 0));
+            assert_eq!(
+                validate(&heads, &[change.clone()], false).unwrap()[0].mode,
+                change.requested_mode()
+            );
+        }
+    }
+
+    #[test]
+    fn settings_cannot_be_discarded_on_a_disabled_head() {
+        for enabled in [false, true] {
+            let heads = [head("a", enabled, Some(false))];
+            let off = HeadChange::new(heads[0].output.clone(), false);
+            assert!(validate(&heads, std::slice::from_ref(&off), true).is_ok());
+            for property in [
+                "mode",
+                "custom",
+                "position",
+                "scale",
+                "transform",
+                "adaptive-sync",
+            ] {
+                let mut change = off.clone();
+                match property {
+                    "mode" => change.mode = Some(mode(1280, 800)),
+                    "custom" => change.custom_mode = Some((1280, 800, 0)),
+                    "position" => change.position = Some((100, 20)),
+                    "scale" => change.scale = Some(2.0),
+                    "transform" => change.transform = Some(WlTransform::_90),
+                    "adaptive-sync" => change.adaptive_sync = Some(false),
+                    _ => unreachable!(),
+                }
+                let error = validate(&heads, &[change.clone()], true).unwrap_err();
+                assert!(error.0.contains("#:enabled #t"), "{property}: {error}");
+                change.enabled = true;
+                assert!(validate(&heads, &[change], false).is_ok(), "{property}");
+            }
+        }
+    }
+
+    #[test]
     fn unknown_head_and_duplicate_are_rejected() {
         let heads = [head("a", true, None)];
         let other = head("b", true, None);
@@ -1357,7 +1450,7 @@ mod tests {
             );
             assert_eq!(
                 nearest_advertised_mode(output, change.requested_mode().unwrap()),
-                None
+                (refresh == 0).then(|| mode(800, 600))
             );
         }
         // A backend-provided extreme must not wrap into a nearby match either.

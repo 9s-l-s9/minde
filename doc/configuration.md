@@ -380,8 +380,14 @@ sees; `(wm-outputs)` remains the enabled heads' usable rectangles.
 `(configure-output! name #:mode #:position #:scale #:transform #:enabled
 #:adaptive-sync)` queues a change for the head called `name`; every omitted
 keyword is left unchanged. `#:mode` accepts `'(w h refresh-mhz)`, `'(w h)`
-(any refresh at that size) or a string `"1920x1080@60"`; `#:transform` a
-symbol or the rotation in degrees. The request is validated and applied
+(any refresh at that size) or a string `"1920x1080@60"`. An omitted or zero
+refresh selects the preferred mode at that size, otherwise the highest
+advertised refresh. `#:transform` accepts a symbol or rotation in degrees.
+To change settings on a disabled head, include `#:enabled #t` in the same
+request. Settings combined with `#:enabled #f` are rejected through
+`handle-output-configure-failed!`.
+
+The request is validated and applied
 through the same revert-on-failure routine as external clients (unknown
 head or mode, unsupported adaptive sync, disabling the last head and -- under
 the nested winit backend -- mode changes are refused, in which case

@@ -1120,6 +1120,9 @@ when omitted:
   #:enabled       #t or #f
   #:adaptive-sync #t or #f
 Example: (configure-output! \"DP-1\" #:scale 1.5 #:position '(1920 0)).
+An omitted or zero mode refresh chooses the preferred mode at that size,
+otherwise the highest advertised refresh. To configure a disabled head,
+include #:enabled #t; settings combined with #:enabled #f are rejected.
 The change is queued to the compositor thread, validated (unknown head
 or mode, unsupported adaptive sync, disabling the last head are refused)
 and applied through the same revert-on-failure routine external

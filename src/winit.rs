@@ -151,15 +151,21 @@ pub fn init_winit(
             match event {
                 WinitEvent::Resized { size, .. } => {
                     state.absolute_pointer_motion.reset();
-                    output.change_current_state(
-                        Some(Mode {
-                            size,
-                            refresh: 60_000,
-                        }),
-                        None,
-                        None,
-                        None,
-                    );
+                    let mode = Mode {
+                        size,
+                        refresh: 60_000,
+                    };
+                    // The host size is the only realizable mode. Set its
+                    // preference before change_current_state emits the
+                    // wl_output mode flags; output-management retires the
+                    // old resources when it observes the changed list.
+                    for old in output.modes() {
+                        if old != mode {
+                            output.delete_mode(old);
+                        }
+                    }
+                    output.set_preferred(mode);
+                    output.change_current_state(Some(mode), None, None, None);
                     // Re-derive the usable area from the new size (layer
                     // exclusive zones re-arranged inside).
                     state.invalidate_lock_presentation();

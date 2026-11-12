@@ -16,6 +16,14 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Host window resizes replace the nested output's mode list and preferred
+  mode, retiring obsolete modes for output-management clients (#30).
+- Custom modes with an omitted or zero refresh select the preferred mode
+  at that size, otherwise the highest advertised refresh. Scheme and
+  output-management requests use the same selection rules (#53).
+- Output settings that would be discarded on a disabled head now fail
+  with an instruction to include `#:enabled #t`; disabling alone remains
+  valid (#56).
 - Output-manager binds preserve other clients' configuration serials. Invalid
   configuration requests now raise the specified protocol errors, and
   destroying a configuration also destroys its head objects (#28, #29).

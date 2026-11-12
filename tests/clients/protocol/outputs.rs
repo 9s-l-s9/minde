@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::wire::*;
+use std::{collections::BTreeSet, env, process::Command};
 
 pub struct Outputs {
     pub c: Client,
@@ -222,7 +223,193 @@ pub fn management(selected: &[String]) {
             "ok - valid properties succeed, backend refusals stay nonfatal, and destroy retires children"
         );
     }
+    if run("custom-unspecified") {
+        custom_unspecified();
+    }
+    if run("resize") {
+        resize();
+    }
+    if selected.iter().any(|s| s == "disabled-scheme") {
+        disabled_scheme();
+    }
 }
+
+fn custom_unspecified() {
+    let mut o = Outputs::new("custom mode without refresh");
+    let size = o.c.event(o.mode, 0).data.clone();
+    let before = ipc("(output-heads)");
+    for opcode in [3, 2] {
+        let (config, head) = o.configuration(Some(true));
+        let mut custom = size.clone();
+        custom.extend(words(&[0]));
+        o.c.send(head, 1, &custom);
+        o.result(config, opcode, 0);
+        assert_eq!(ipc("(output-heads)"), before);
+    }
+    println!("ok - unspecified refresh tests and applies as the advertised mode");
+}
+
+fn single_mode(o: &mut Outputs, size: (u32, u32)) -> u32 {
+    let mut modes: BTreeSet<_> =
+        o.c.events
+            .iter()
+            .filter(|e| e.is(o.head, 3))
+            .map(|e| e.word(0))
+            .collect();
+    modes.retain(|id| !o.c.events.iter().any(|e| e.is(*id, 3)));
+    assert_eq!(modes.len(), 1, "obsolete output modes remain advertised");
+    let mode = *modes.first().unwrap();
+    assert_eq!(o.c.event(mode, 0).data, words(&[size.0, size.1]));
+    o.c.event(mode, 2); // Preferred.
+    assert_eq!(
+        o.c.events
+            .iter()
+            .rfind(|e| e.is(o.head, 5))
+            .unwrap()
+            .word(0),
+        mode
+    );
+    mode
+}
+
+fn resize() {
+    let mut o = Outputs::new("mode retirement after host resize");
+    let output = o.c.bind("wl_output", 4);
+    o.c.roundtrip();
+    let initial = o.c.event(o.mode, 0);
+    let original = (initial.word(0), initial.word(1));
+    let host = |args: &[&str]| {
+        let out = Command::new("timeout")
+            .args(["5", "xdotool"])
+            .args(args)
+            .env("DISPLAY", env::var("MINDE_OUTPUT_HOST_DISPLAY").unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "xdotool: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let window = host(&["search", "--name", "Smithay"])
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    for size in [(700, 500), (800, 600), (900, 650), original] {
+        let previous =
+            o.c.events
+                .iter()
+                .rfind(|e| e.is(o.head, 5))
+                .unwrap()
+                .word(0);
+        let (stale, _) = o.configuration(Some(true));
+        o.c.roundtrip();
+        let start = o.c.events.len();
+        host(&[
+            "windowsize",
+            &window,
+            &size.0.to_string(),
+            &size.1.to_string(),
+        ]);
+        o.c.wait(start, |e| e.is(o.manager, 1));
+        o.c.roundtrip();
+        single_mode(&mut o, size);
+        assert_eq!(
+            o.c.events[start..]
+                .iter()
+                .filter(|e| e.is(previous, 3))
+                .count(),
+            1
+        );
+        let current = o.c.events[start..]
+            .iter()
+            .rfind(|e| e.is(output, 1))
+            .unwrap();
+        assert_eq!(
+            current.data,
+            words(&[3, size.0, size.1, 60_000]),
+            "wl_output current/preferred flags"
+        );
+        let mut fresh = Outputs::new("new client after host resize");
+        let mode = single_mode(&mut fresh, size);
+        let (config, head) = fresh.configuration(Some(true));
+        fresh.c.send(head, 0, &words(&[mode]));
+        fresh.result(config, 2, 0);
+        o.result(stale, 3, 2);
+    }
+    println!("ok - resizes retire modes and update current/preferred for existing and new clients");
+}
+
+fn scheme_wait(expression: &str) {
+    until(|| ipc(expression) == "(ok #t)", expression);
+}
+
+fn disabled_scheme() {
+    assert_eq!(ipc("(assq-ref (car (output-heads)) 'enabled)"), "(ok #f)");
+    ipc("(begin
+      (define %disabled-before (output-heads))
+      (define %disabled-failures '())
+      (define %disabled-successes 0)
+      (define %saved-configure-failed handle-output-configure-failed!)
+      (define %saved-configured handle-output-configured!)
+      (define (handle-output-configure-failed! name reason)
+        (set! %disabled-failures (cons (list name reason) %disabled-failures)))
+      (define (handle-output-configured!)
+        (set! %disabled-successes (+ 1 %disabled-successes))))");
+    let settings = [
+        "#:mode '(1280 800)",
+        "#:mode '(799 599)",
+        "#:position '(100 20)",
+        "#:scale 2",
+        "#:transform 90",
+        "#:adaptive-sync #f",
+        "#:enabled #f #:scale 2",
+    ];
+    for (index, setting) in settings.iter().enumerate() {
+        assert_eq!(
+            ipc(&format!("(configure-output! \"winit\" {setting})")),
+            "(ok #t)"
+        );
+        scheme_wait(&format!("(= (length %disabled-failures) {})", index + 1));
+        assert_eq!(ipc("(equal? %disabled-before (output-heads))"), "(ok #t)");
+    }
+    assert_eq!(ipc("%disabled-successes"), "(ok 0)");
+    assert_eq!(
+        ipc("%disabled-failures").matches("#:enabled #t").count(),
+        settings.len()
+    );
+    ipc("(configure-output! \"winit\" #:enabled #t #:scale 2 #:position '(100 20) #:transform 90)");
+    scheme_wait("(= %disabled-successes 1)");
+    assert_eq!(
+        ipc("(let ((h (car (output-heads))))
+      (and (assq-ref h 'enabled) (= (assq-ref h 'scale) 2)
+           (equal? (assq-ref h 'position) '(100 20))
+           (equal? (symbol->string (assq-ref h 'transform)) \"90\")))"),
+        "(ok #t)"
+    );
+    // Combining disable with settings must also fail while the head is on.
+    ipc("(configure-output! \"winit\" #:enabled #f #:scale 1)");
+    scheme_wait(&format!(
+        "(= (length %disabled-failures) {})",
+        settings.len() + 1
+    ));
+    assert_eq!(ipc("(assq-ref (car (output-heads)) 'enabled)"), "(ok #t)");
+    assert_eq!(ipc("%disabled-successes"), "(ok 1)");
+    ipc("(configure-output! \"winit\" #:scale 1 #:position '(0 0) #:transform 'normal)");
+    scheme_wait("(= %disabled-successes 2)");
+    ipc("(configure-output! \"winit\" #:enabled #f)");
+    scheme_wait("(= %disabled-successes 3)");
+    ipc("(configure-output! \"winit\" #:enabled #f)");
+    scheme_wait("(= %disabled-successes 4)");
+    ipc(
+        "(begin (set! handle-output-configure-failed! %saved-configure-failed)
+                (set! handle-output-configured! %saved-configured))",
+    );
+    println!("ok - disabled-head settings fail without mutation; explicit enable applies them");
+}
+
 pub fn mode_limits() {
     let before = ipc("(output-heads)");
     for refresh in [i32::MIN, -1, 0, i32::MAX, 60000] {
@@ -236,7 +423,14 @@ pub fn mode_limits() {
             o.c.expect_error(head, 3);
         } else {
             let event = o.c.wait(0, |e| e.object == config && e.opcode <= 2);
-            assert_eq!(event.opcode, if refresh == 60000 { 0 } else { 1 });
+            assert_eq!(
+                event.opcode,
+                if refresh == 0 || refresh == 60000 {
+                    0
+                } else {
+                    1
+                }
+            );
         }
         assert_eq!(ipc("(output-heads)"), before);
     }

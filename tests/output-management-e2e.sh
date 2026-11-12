@@ -4,9 +4,9 @@
 # (the canonical wlr-output-management client, as kanshi/wdisplays do) to query
 # the head and then apply a scale change, confirming the change is reflected
 # back -- i.e. the query, configuration-apply and re-advertise paths all work
-# and reconcile with the compositor's output state. Mode changes are not
-# exercised: under the nested winit backend the output size is fixed by the
-# host window, so the compositor deliberately fails differing modes. Also
+# and reconcile with the compositor's output state. Host window resizes
+# replace the sole advertised mode; custom modes without a refresh match
+# its size. The compositor deliberately fails differing mode requests. Also
 # covers: honest Enabled/Adaptive Sync reporting, a no-op apply, refusal of
 # disabling the last head and of adaptive sync, and (with the test-only
 # MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1 override) a disable -> enable round
@@ -33,6 +33,7 @@ nested_start "$OUT" "${MINDE_OUTPUT_MGMT_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
 }
+export MINDE_OUTPUT_HOST_DISPLAY="$NESTED_DISPLAY"
 
 nested_wayland timeout 60 "$NESTED_PROTOCOL_CLIENT" output-management >"$OUT/protocol.log" 2>&1 || {
     cat "$OUT/protocol.log" >&2
@@ -177,7 +178,7 @@ printf '%s' "$q3" | grep -q 'Enabled: no' || {
 }
 echo "ok - the disabled head stays advertised with Enabled: no"
 
-nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" output-management omitted-test omitted-apply \
+nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" output-management omitted-test omitted-apply disabled-scheme \
     >"$OUT/disabled-protocol.log" 2>&1 || {
     cat "$OUT/disabled-protocol.log" >&2
     exit 1

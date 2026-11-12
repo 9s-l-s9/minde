@@ -2591,28 +2591,9 @@ impl MindeState {
         };
         let enabled = spec.enabled.unwrap_or_else(|| self.output_enabled(&output));
         let mut change = HeadChange::new(output.clone(), enabled);
-        if let Some((w, h, refresh)) = spec.mode {
-            let advertised = output.modes();
-            let exact = advertised
-                .iter()
-                .find(|m| m.size.w == w && m.size.h == h && m.refresh == refresh)
-                .copied();
-            // `(w h)` / "WxH" without a refresh: the highest advertised
-            // refresh at that size, if any.
-            let by_size = (refresh == 0)
-                .then(|| {
-                    advertised
-                        .iter()
-                        .filter(|m| m.size.w == w && m.size.h == h)
-                        .max_by_key(|m| m.refresh)
-                        .copied()
-                })
-                .flatten();
-            match exact.or(by_size) {
-                Some(mode) => change.mode = Some(mode),
-                None => change.custom_mode = Some((w, h, refresh)),
-            }
-        }
+        // Resolve dimensions and optional refresh through the same rules
+        // as external clients, including preferred-mode selection.
+        change.custom_mode = spec.mode;
         change.position = spec.position;
         change.scale = spec.scale;
         change.transform = spec.transform.map(Into::into);
