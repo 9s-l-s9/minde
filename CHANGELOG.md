@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Failed personal Scheme init files report the exception and source location,
+  then restart once with clean bundled policy and display the error. A broken
+  bundled init aborts startup. Ctrl+Alt+Backspace exits independently of
+  Scheme keybindings (#141).
 - X11 unmaps cancel their move/resize grabs. Losing Xwayland removes its
   managed windows, menus and foreign handles and reports a failed server;
   native clients keep running. Spawned children receive only minde's live

@@ -215,6 +215,18 @@ impl MindeState {
                             data.cancel_key_repeat();
                             let keysym = keysym_handle.modified_sym();
 
+                            // Always available, even with broken Scheme policy,
+                            // a session lock or a shortcuts inhibitor. Some XKB
+                            // options translate this chord to Terminate_Server.
+                            if mods.ctrl
+                                && mods.alt
+                                && matches!(keysym.raw(), xkb::KEY_BackSpace | xkb::KEY_Terminate_Server)
+                            {
+                                tracing::warn!("emergency exit: Ctrl+Alt+Backspace");
+                                data.loop_signal.stop();
+                                return FilterResult::Intercept(());
+                            }
+
                             // VT switching: only meaningful (and only
                             // wired up) under the udev/libseat backend.
                             // xkb::KEY_XF86Switch_VT_1..=12 map to VTs 1..12.

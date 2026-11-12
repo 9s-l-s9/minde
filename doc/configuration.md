@@ -9,12 +9,29 @@ application. Guix Home may layer those choices on top.
 The Scheme entry point is selected in this order:
 
 1. `MINDE_INIT`;
-2. `~/.config/minde/init.scm`;
+2. `$XDG_CONFIG_HOME/minde/init.scm` (normally `~/.config/minde/init.scm`);
 3. the packaged/repository `scheme/init.scm` fallback.
 
 `MINDE_SCHEME_DIR` selects the bundled module directory. The declarative
 configuration comes from `MINDE_CONFIG`, otherwise
 `scheme/default-config.scm` beside the selected entry point.
+
+If a personal init raises an exception, Minde logs its path, the Scheme
+exception and source information, then restarts once with the bundled init
+before acquiring the display or seat. The fresh process discards partially
+installed hooks, timers and compositor settings, and restores the original
+working directory and environment. The recovered session displays the error
+for 30 seconds and keeps it in the session log. `MINDE_CONFIG` still selects
+the declarative configuration. If the bundled init also fails, startup exits
+with an error; selecting the bundle through a symlink does not retry it.
+
+External effects such as files written or programs started by a failed init
+cannot be undone. Put autostart programs in `handle-startup!`, which runs
+after policy has loaded successfully.
+
+**Ctrl+Alt+Backspace** immediately exits Minde through Rust, even if Scheme
+keybindings fail, shortcuts are inhibited, or the session is locked. This is
+an emergency exit and does not prompt applications to save their work.
 
 ## Declarative configuration
 

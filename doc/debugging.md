@@ -39,6 +39,20 @@ Session logs are retained under `~/.local/state/minde/` as `session.log`,
 startup for structured tracing. Scheme binding, reload, hook and IPC failures
 include Guile backtraces.
 
+A failing personal `init.scm` is logged before Minde restarts once with the
+bundled policy. Look for `failed to load scheme init file`: it includes the
+selected path, exception key and arguments, and a backtrace. For interpreted
+code, the load-port location identifies the expression being evaluated;
+compiled code also retains source locations in the backtrace. The recovered
+desktop shows the error for 30 seconds. Fix the personal init before the next
+login. A failure in the bundled init aborts startup instead of leaving a
+session without policy; there is no retry loop.
+
+If a running policy stops handling keys, **Ctrl+Alt+Backspace** exits directly
+through Rust. It also works while locked or while an application inhibits
+shortcuts. It terminates the session without an application save prompt.
+On the DRM backend, the usual VT-switch keys remain available too.
+
 The report command conservatively redacts home paths and focused-window data,
 but inspect every file before sharing it. Never add clipboard contents,
 unrelated environment variables, or private command arguments manually.

@@ -142,6 +142,11 @@ fn select_backend(choice: BackendChoice) -> Backend {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A one-use marker for our own exec below. Remove it before any threads
+    // start, so applications (including nested Minde instances) cannot inherit
+    // recovery mode. Preserve the original environment before user Scheme runs.
+    let recovery = std::env::var("_MINDE_INIT_RECOVERY").ok();
+    unsafe { std::env::remove_var("_MINDE_INIT_RECOVERY") };
     let action = match parse_args(std::env::args().skip(1)) {
         Ok(action) => action,
         Err(error) => {
@@ -180,6 +185,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!(component = "runtime", ?backend, "selected backend");
 
+    let mut restart = std::process::Command::new(std::env::current_exe()?);
+    restart
+        .args(std::env::args_os().skip(1))
+        .current_dir(std::env::current_dir()?)
+        .env_clear()
+        .envs(std::env::vars_os());
+
     let mut event_loop: EventLoop<MindeState> = EventLoop::try_new()?;
 
     let display: Display<MindeState> = Display::new()?;
@@ -211,7 +223,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // connectors synchronously, reaching `handle-heads-change!` and
     // `handle-startup!`; winit calls `handle-startup!` directly), so the
     // policy layer has to be loaded by then.
-    guile::init(state.loop_signal.clone());
+    if let Err(error) = guile::init(state.loop_signal.clone(), recovery) {
+        guile::clear_state();
+        if !error.can_recover {
+            tracing::error!(%error, "bundled init failed; aborting startup");
+            return Err(error.into());
+        }
+        tracing::warn!(%error, "restarting with bundled init after user init failed");
+        // Release listeners and their Wayland lock file before exec. No backend
+        // or Xwayland has started yet. Exec clears Guile modules, queued Rust
+        // commands, timers and partial policy mutations, retaining the PID.
+        drop(state);
+        drop(event_loop);
+        use std::os::unix::process::CommandExt;
+        let exec_error = restart.env("_MINDE_INIT_RECOVERY", error.message).exec();
+        return Err(format!("could not restart with bundled init: {exec_error}").into());
+    }
 
     match backend {
         Backend::Winit => {

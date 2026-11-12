@@ -12,11 +12,13 @@ mod command;
 pub mod ffi;
 pub mod output_config;
 mod paths;
+mod startup;
 
 pub use command::{KeyboardLayoutSpec, WmCommand};
 pub use output_config::OutputHeadInfo;
 use output_config::{SpecValue, parse_output_change_spec, transform_name};
 pub use paths::scheme_dir;
+pub use startup::init;
 
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
@@ -405,32 +407,6 @@ pub fn eval_string(code: &str) -> Option<Scm> {
     let c = to_cstring(code);
     let ptr = c.as_ptr();
     protected_call(move || unsafe { ffi::scm_c_eval_string(ptr) })
-}
-
-/// Loads a Scheme file with `load` semantics, catching errors.
-///
-/// `load` (rather than `scm_c_primitive_load`) goes through Guile's
-/// autocompiler: the file is compiled to a cached `.go` on first use (or when
-/// the source changes) and runs in the VM from then on, exactly like the
-/// bundled modules. `scm_c_primitive_load` would hand the whole policy layer
-/// to the tree-walking evaluator on every start. Top-level definitions still
-/// land in the current module, so re-loading the same file redefines in
-/// place.
-pub fn load_file(path: &std::path::Path) -> Option<Scm> {
-    eval_string(&init_load_expression(path, &scheme_dir()))
-}
-
-fn init_load_expression(path: &std::path::Path, bundled_dir: &std::path::Path) -> String {
-    if path == bundled_dir.join("init.scm") {
-        // boot() prepends bundled_dir to %load-path before any init runs.
-        // load-from-path finds site-ccache/init.go and checks freshness.
-        // An absolute (load ...) instead searches for PATH/init.scm.go,
-        // missing our installed bytecode when auto-compilation is disabled.
-        r#"(load-from-path "init")"#.to_owned()
-    } else {
-        // A user init with the same basename must never pick bundled bytecode.
-        format!("(load {})", scheme_string(&path.to_string_lossy()))
-    }
 }
 
 /// A Scheme top-level name Rust calls into, with its symbol interned once.
@@ -1736,36 +1712,6 @@ fn register_primitives() {
     }
 }
 
-/// Initializes Guile on the compositor's main thread, registers all Rust
-/// subrs, then loads policy. Call only once, before any other libguile call.
-pub fn init(loop_signal: LoopSignal) {
-    set_loop_signal(loop_signal);
-    boot();
-    register_primitives();
-
-    // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
-    // the repo's scheme/init.scm (the tested default).
-    let init_path = std::env::var("MINDE_INIT")
-        .map(std::path::PathBuf::from)
-        .ok()
-        .or_else(|| {
-            let user_config = std::env::var("XDG_CONFIG_HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                        .join(".config")
-                })
-                .join("minde/init.scm");
-            user_config.exists().then_some(user_config)
-        })
-        .unwrap_or_else(|| scheme_dir().join("init.scm"));
-
-    tracing::info!(path = %init_path.display(), "loading scheme init file");
-    if load_file(&init_path).is_none() {
-        tracing::error!("failed to load scheme init file; wm-handle-key etc. will be unavailable");
-    }
-}
-
 /// Validates a configuration file with the bundled `(minde config)` module
 /// in-process. Boots Guile on the calling thread (so this is for the
 /// `--check-config` entry point, never a running compositor) and prints
@@ -1985,6 +1931,7 @@ pub fn on_input_device_added(name: &str, capabilities: &[String]) {
 /// nested or standalone.
 pub fn on_startup() {
     STARTUP.call(&[]);
+    startup::show_recovery_message();
 }
 
 /// Calls `(wm-on-session-lock)` if bound, once the session becomes locked
