@@ -1531,7 +1531,7 @@ refresh)."
    (iota 10))
   (bind-portable-key! "Return" (lambda () (wm-spawn (terminal-command))) "terminal")
   (bind-portable-key! "r" run-prompt! "run command")
-  (bind-portable-key! "Space" command-palette! "command palette")
+  (bind-portable-key! "space" command-palette! "command palette")
   (bind-portable-key! "colon" eval-prompt! "evaluate Scheme")
   (let* ((pull-map
           (make-documented-keymap

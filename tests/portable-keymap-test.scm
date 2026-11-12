@@ -51,12 +51,20 @@
 
 (define required-keys
   '("h" "j" "k" "l" "n" "p"
-    "r" "Space" "colon" "w" "x" "f" "g" "m" "s"))
+    "r" "space" "colon" "w" "x" "f" "g" "m" "s"))
 (for-each
  (lambda (key)
    (check (string-append "portable binding exists: " key)
           (hash-ref %prefix-bindings key)))
  required-keys)
+
+;; Rust supplies xkbcommon's keysym name "space" for the space bar.
+;; Exercise dispatch and the visible menu state, not only table membership.
+(check "prefix is consumed" (wm-handle-key 4 #x74 "t" "t"))
+(check "space after prefix is consumed" (wm-handle-key 0 #x20 "space" " "))
+(check "prefix-space opens the command palette" (menu-active?))
+(wm-handle-key 0 #xff1b "Escape" "")
+(check "Escape dismisses the command palette" (not (menu-active?)))
 
 (for-each
  (lambda (number)

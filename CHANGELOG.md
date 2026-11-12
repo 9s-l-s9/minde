@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- The portable prefix followed by the space bar opens the command palette
+  using xkbcommon's canonical `space` keysym name (#100).
 - Frame and placement tests now check actual focus, geometry and restored
   rule behavior; nested protocol checks catch errors without unrelated log
   markers, and the input smoke test reports its no-device scope (#170).

@@ -31,7 +31,6 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `8` | select numbered window | action |
 | `9` | select numbered window | action |
 | `Return` | terminal | action |
-| `Space` | command palette | action |
 | `colon` | evaluate Scheme | action |
 | `f` | frame commands | submap |
 | `f 0` | select frame 0 | action |
@@ -77,6 +76,7 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 | `s q` | log out (asks) | action |
 | `s r` | reload configuration | action |
 | `s z` | suspend (locks first) | action |
+| `space` | command palette | action |
 | `w` | window commands | submap |
 | `w 0` | pull window 0 | action |
 | `w 1` | pull window 1 | action |
