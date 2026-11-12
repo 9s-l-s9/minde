@@ -909,8 +909,12 @@ to run its own sync-frames!."
                         #t))))))))
 
 (define (frame-add-window! frame id)
-  "Appends window ID to FRAME and makes it FRAME's current window."
-  (set-frame-window-ids! frame (append (frame-window-ids frame) (list id)))
+  "Adds window ID to FRAME once and selects it, preserving existing order.
+ID must be an exact nonnegative integer."
+  (unless (and (exact-integer? id) (>= id 0))
+    (error "window id must be an exact nonnegative integer" id))
+  (unless (member id (frame-window-ids frame))
+    (set-frame-window-ids! frame (append (frame-window-ids frame) (list id))))
   (set-frame-current-window! frame id))
 
 ;; Removes ID from every frame of TREE it appears in (there should be at
@@ -1481,13 +1485,13 @@ encloses the current frame. Ratio is clamped to [1/10, 9/10]."
                     (cadr node) (build (caddr node)) (build (cadddr node))))))
 
 (define (apply-layout-spec! spec)
-  "Replaces the active group's frame tree with one built from SPEC, sized
-to the current usable area. Existing windows are redistributed: the
-current window into the first leaf, the rest round-robin over all
-leaves. Windows never get lost -- every id ends up in some leaf."
+  "Replaces the current head's frame tree with one built from SPEC, sized
+to its usable area. Its tiled windows are redistributed: the current
+window into the first leaf, the rest round-robin over all leaves.
+Floating windows and other heads' trees are left unchanged."
   (let* ((tree (spec->tree spec))
          (leaves (frame-leaves tree))
-         (ids (all-window-ids))
+         (ids (tree-window-ids %frame-tree))
          (cur (current-frame-window))
          (ordered (if (and cur (member cur ids)) (cons cur (delete cur ids)) ids)))
     (resize-subtree! tree (head-rect-x) (head-rect-y)
@@ -1884,7 +1888,8 @@ is visible in another frame; a no-op when nothing is hidden."
   "Finds the next window (round-robin, starting just after the current
 frame) not already in the current frame, and moves it into the current
 frame as its new current window. A no-op if there is only one frame or no
-other frame holds any window."
+other frame holds any window. A cleared source contributes its first
+hidden window, leaving the remaining windows hidden."
   (let* ((leaves (frame-leaves %frame-tree))
          (n (length leaves))
          (idx (list-index (lambda (f) (eq? f %current-frame)) leaves)))
@@ -1893,7 +1898,8 @@ other frame holds any window."
         (when (<= i (- n 1))
           (let ((candidate (list-ref leaves (modulo (+ idx i) n))))
             (if (pair? (frame-window-ids candidate))
-                (let ((id (frame-current-window candidate)))
+                (let ((id (or (frame-current-window candidate)
+                              (car (frame-window-ids candidate)))))
                   (take-window-out! candidate id)
                   (frame-add-window! %current-frame id))
                 (loop (+ i 1))))))))
@@ -2094,8 +2100,8 @@ move; focus follows the current window."
 ;; ---------------------------------------------------------------------
 
 (define (collapse-to-one-frame!)
-  "Collapses the tree to one full-area frame keeping every window, the
-current one visible (StumpWM only)."
+  "Collapses the current head's tiled windows into one full-area frame,
+the current one visible (StumpWM only). Floats and other heads are unchanged."
   (apply-layout-spec! 'leaf))
 
 (define (clear-current-frame!)

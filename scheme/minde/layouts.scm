@@ -44,9 +44,9 @@ same-named saved layouts on load. Does not persist; see save-layout!."
   (assoc-ref %layouts name))
 
 (define (apply-layout! name)
-  "Rebuilds the active group's frame tree from the layout named NAME,
-redistributing its windows (see apply-layout-spec!). Echoes an error for
-an unknown name."
+  "Rebuilds the current head's frame tree from the layout named NAME,
+redistributing its tiled windows (see apply-layout-spec!). Floats and
+other heads are unchanged. Echoes an error for an unknown name."
   (let ((spec (layout-spec name)))
     (if spec
         (begin

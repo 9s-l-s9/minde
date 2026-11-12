@@ -158,6 +158,18 @@
 (retile-dynamic!)
 (check "float excluded from the tiling: 3 frames"
        (length (frame-leaves (current-tree))) 3)
+(focus-window-by-id! 5)
+(let ((before (dump-frames))
+      (tree (current-tree))
+      (order ((@@ (minde groups) dynamic-state) (current-group) (current-head-id)))
+      (placements (map rect '(1 2 4 5))))
+  (exchange-with-master!)
+  (check "exchange with a float leaves the frame dump unchanged" (dump-frames) before)
+  (check-true "exchange with a float does not rebuild the tree" (eq? tree (current-tree)))
+  (check "exchange with a float preserves the dynamic order"
+         ((@@ (minde groups) dynamic-state) (current-group) (current-head-id)) order)
+  (check "exchange with a float keeps keyboard focus" %focused 5)
+  (check "exchange with a float preserves placements" (map rect '(1 2 4 5)) placements))
 (unfloat-window! 5)
 (retile-dynamic!)
 (check "unfloat re-enters the tiling: 4 frames"

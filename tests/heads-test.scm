@@ -39,7 +39,7 @@
 (define (wm-message text . _) (set! %messages (cons text %messages)) #t)
 
 (use-modules (minde compositor frames))
-(use-modules (minde groups))
+(use-modules (minde groups) (minde layouts))
 
 (define %failures 0)
 (define (check name got expected)
@@ -288,6 +288,54 @@
 (check "floating fullscreen follows output changes" (placement 500) '(0 0 640 400))
 (fullscreen!)
 (check "floating fullscreen exit uses clamped float geometry" (placement 500) (float-geometry 500))
+
+;; Layout replacement belongs to the current head's tiled windows. The
+;; other head and floating geometry must survive both only and a preset.
+(handle-heads-change! '((10 0 0 1280 800) (11 1280 0 1280 800)))
+(create-group! " layout-membership ")
+(focus-head! 10)
+(handle-window-map! 601 "left one" "foot")
+(handle-window-map! 602 "left two" "foot")
+(handle-window-map! 603 "float" "foot")
+(float-window! 603 '(50 60 300 200))
+(focus-head! 11)
+(handle-window-map! 604 "right one" "foot")
+(handle-window-map! 605 "right two" "foot")
+(split-frame-vertical!)
+(move-window! 'down)
+(define other-tree (current-tree))
+(define other-members (map frame-window-ids (frame-leaves other-tree)))
+(define other-current (map frame-current-window (frame-leaves other-tree)))
+(define other-placements (map placement '(604 605)))
+(focus-head! 10)
+(focus-window-by-id! 603)
+(define-layout! "membership-split" '(hsplit 1/2 leaf leaf))
+(for-each
+ (lambda (command)
+   (command)
+   (check "layout contains only this head's tiled windows"
+          (sort (append-map frame-window-ids (frame-leaves (current-tree))) <) '(601 602))
+   (check "layout keeps floats separate" (group-floats (current-group)) '(603))
+   (check-true "layout preserves the floating flag" (window-floating? 603))
+   (check "layout preserves floating placement" (placement 603) '(50 60 300 200))
+   (check "layout preserves float focus" %focused 603)
+   (check "other head's membership is unchanged"
+          (map frame-window-ids (frame-leaves other-tree)) other-members)
+   (check "other head's selected windows are unchanged"
+          (map frame-current-window (frame-leaves other-tree)) other-current)
+   (check "other head's placements are unchanged" (map placement '(604 605)) other-placements)
+   (check "all windows appear once across heads and floats"
+          (sort (all-window-ids) <) '(601 602 603 604 605)))
+ (list collapse-to-one-frame! (lambda () (apply-layout! "membership-split"))))
+(handle-window-unmap! 603)
+(check "closing the float leaves no stale frame member" (sort (all-window-ids) <) '(601 602 604 605))
+(check "closed float leaves the floating list" (group-floats (current-group)) '())
+(handle-window-map! 606 "unfloat" "foot")
+(float-window! 606)
+(collapse-to-one-frame!)
+(unfloat-window! 606)
+(check "unfloating after only adds the window once"
+       (sort (append-map frame-window-ids (frame-leaves (current-tree))) <) '(601 602 606))
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

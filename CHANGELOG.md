@@ -16,6 +16,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Layout replacement and `only` keep floating windows and other heads'
+  windows out of the current head's frame tree (#4).
+- Pulling a resident window no longer duplicates it. Pulling from a cleared
+  frame moves its first hidden window while keeping the remaining windows
+  hidden; invalid window IDs are rejected before insertion (#7, #11).
+- Exchanging a focused float with the dynamic master leaves the tree,
+  window order, placements and focus unchanged (#17).
 - Host window resizes replace the nested output's mode list and preferred
   mode, retiring obsolete modes for output-management clients (#30).
 - Custom modes with an omitted or zero refresh select the preferred mode

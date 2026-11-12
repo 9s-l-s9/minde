@@ -27,7 +27,7 @@
 (define (wm-log msg) #t)
 
 ;; Now it's safe to load the module under test.
-(use-modules (minde compositor frames))
+(use-modules (minde compositor frames) (minde compositor model))
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -84,6 +84,18 @@
 (check-true "3 is in the current frame's list"
             (and (member 3 (current-frame-window-ids)) #t))
 
+(let ((ids (current-frame-window-ids))
+      (count (group-window-count (current-group))))
+  (pull-window-by-id! 3)
+  (pull-window-by-id! 3)
+  (pull-window-by-number! (window-number 1))
+  (check "pulling a resident by number selects it" (current-frame-window) 1)
+  (pull-window-by-number! (window-number 3))
+  (check "repeated pulls preserve frame membership and order"
+         (current-frame-window-ids) ids)
+  (check "repeated pulls preserve the group count"
+         (group-window-count (current-group)) count))
+
 (float-window! 3)
 (check-true "3 floats" (window-floating? 3))
 (pull-window-by-id! 3)
@@ -136,6 +148,46 @@
 (forget-window-title! 9)
 (update-window-title! 9 "fresh" "zen")
 (check "forget clears the override" (window-title 9) "fresh")
+
+;; Adding a window must preserve the frame's identity invariant, including
+;; the valid ID zero. Invalid IDs must fail before changing the frame.
+(let ((frame (make-frame 0 0 100 100 '() #f)))
+  (frame-add-window! frame 0)
+  (frame-add-window! frame 0)
+  (check "frame insertion is idempotent for window zero"
+         (frame-window-ids frame) '(0))
+  (check "window zero is selectable" (frame-current-window frame) 0))
+(for-each
+ (lambda (id)
+   (let ((frame (make-frame 0 0 100 100 '() #f)))
+     (check-true "invalid frame member is rejected"
+       (catch #t (lambda () (frame-add-window! frame id) #f) (lambda _ #t)))
+     (check "rejected insertion preserves frame membership" (frame-window-ids frame) '())
+     (check "rejected insertion preserves frame selection" (frame-current-window frame) #f)))
+ '(#f -1 1.5 "1" bogus))
+
+;; A cleared source retains windows but has no selected window. Pull its
+;; first hidden window without revealing the others or inserting #f.
+(for-each track-window-unmap! (all-window-ids))
+(collapse-to-one-frame!)
+(track-window-map! 90 "hidden one" "foot")
+(track-window-map! 91 "hidden two" "foot")
+(split-frame-horizontal!)
+(define cleared-source (current-frame))
+(clear-current-frame!)
+(focus-next-frame!)
+(pull-window-from-other-frame!)
+(check "pull from cleared source moves its first window" (current-frame-window-ids) '(90))
+(check "pulled hidden window receives focus" %focused 90)
+(check "remaining hidden window stays in the source" (frame-window-ids cleared-source) '(91))
+(check "pull does not reveal the cleared source" (frame-current-window cleared-source) #f)
+(pull-window-from-other-frame!)
+(check "second hidden window moves exactly once" (current-frame-window-ids) '(90 91))
+(check "source is empty after both pulls" (frame-window-ids cleared-source) '())
+(check "empty source stays cleared" (frame-current-window cleared-source) #f)
+(pull-window-from-other-frame!)
+(check "pull with no source preserves membership" (current-frame-window-ids) '(90 91))
+(check "pull with no source preserves focus" %focused 91)
 
 ;; ---------------------------------------------------------------------
 

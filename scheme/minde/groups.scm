@@ -608,15 +608,20 @@ rotate-windows)."
 
 (define (exchange-with-master!)
   "Swaps the focused window with the master (StumpWM
-exchange-with-master)."
-  (let ((cur (focused-window-id)))
-    (if (not cur)
-        (echo "no focused window")
-        (reorder-dynamic!
-         (lambda (order)
-           (if (or (null? order) (equal? cur (car order)))
-               order
-               (cons cur (delete cur order))))))))
+exchange-with-master). Does nothing unless focus belongs to the current
+head's tiled order."
+  (let* ((cur (focused-window-id))
+         (st (dynamic-state (current-group) (current-head-id))))
+    (cond
+     ((not cur) (echo "no focused window"))
+     ((not st) (echo "not a dynamic group"))
+     ((not (member cur (car st))) (echo "focused window is not tiled on this head"))
+     (else
+      (reorder-dynamic!
+       (lambda (order)
+         (if (equal? cur (car order))
+             order
+             (cons cur (delete cur order)))))))))
 
 (define (change-dynamic-param! setter)
   (let* ((g (current-group))
