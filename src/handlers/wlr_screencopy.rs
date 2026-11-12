@@ -39,7 +39,9 @@ use smithay::reexports::{
 use smithay::utils::{Logical, Physical, Rectangle, Scale, Size};
 use smithay::wayland::shm::{shm_format_to_fourcc, with_buffer_contents};
 
-use super::screencopy::{CaptureFrame, FillOutcome, PendingCapture};
+use super::screencopy::{
+    CaptureFrame, CaptureGeometry, FillOutcome, PendingCapture, capture_geometry,
+};
 use crate::MindeState;
 
 /// A wlr frame that has had a buffer attached (`copy`) and is waiting on the
@@ -51,6 +53,10 @@ pub struct WlrPending {
 }
 
 impl WlrPending {
+    pub fn fail(self) {
+        self.frame.failed();
+    }
+
     /// Signals the client after the shared renderer filled (or failed to fill)
     /// the buffer: `flags` + optional `damage` + `ready` on success, else
     /// `failed`.
@@ -85,6 +91,7 @@ pub struct WlrFrameData {
 
 struct WlrFrameInner {
     output: WeakOutput,
+    geometry: Option<CaptureGeometry>,
     /// Captured area in output-logical coords (full output for `capture_output`).
     region: Rectangle<i32, Logical>,
     /// Advertised destination buffer size (physical) and shm stride/format.
@@ -157,8 +164,7 @@ impl MindeState {
         region: Option<Rectangle<i32, Logical>>,
         data_init: &mut DataInit<'_, MindeState>,
     ) {
-        let output = Output::from_resource(wl_output)
-            .filter(|o| self.space.outputs().any(|mapped| mapped == o));
+        let output = Output::from_resource(wl_output).filter(|o| self.capture_output_available(o));
         let Some(output) = output else {
             // No mapped output: init the resource (mandatory) then fail it.
             let frame = data_init.init(id, placeholder_frame_data());
@@ -202,6 +208,7 @@ impl MindeState {
             WlrFrameData {
                 inner: Mutex::new(WlrFrameInner {
                     output: output.downgrade(),
+                    geometry: Some(capture_geometry(&output)),
                     region,
                     size: phys,
                     shm_stride,
@@ -232,6 +239,7 @@ fn placeholder_frame_data() -> WlrFrameData {
     WlrFrameData {
         inner: Mutex::new(WlrFrameInner {
             output: WeakOutput::default(),
+            geometry: None,
             region: Rectangle::default(),
             size: (0, 0).into(),
             shm_stride: 0,
@@ -280,22 +288,24 @@ impl Dispatch<ZwlrScreencopyFrameV1, WlrFrameData> for MindeState {
             frame.failed();
             return;
         };
-        if !state.space.outputs().any(|o| o == &output) {
+        if !state.capture_output_available(&output)
+            || inner.geometry != Some(capture_geometry(&output))
+        {
             frame.failed();
             return;
         }
 
-        state.pending_captures.push(PendingCapture {
+        state.pending_captures.push(PendingCapture::new(
             output,
-            frame: CaptureFrame::Wlr(WlrPending {
+            CaptureFrame::Wlr(WlrPending {
                 frame: frame.clone(),
                 buffer,
                 with_damage,
             }),
-            draw_cursor: inner.overlay_cursor,
-            origin: inner.region.loc,
-            size: inner.size,
-        });
+            inner.overlay_cursor,
+            inner.region.loc,
+            inner.size,
+        ));
         // Captures are satisfied by the next composite; make sure one runs.
         state.schedule_redraw();
     }

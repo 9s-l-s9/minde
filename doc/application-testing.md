@@ -107,6 +107,24 @@ the desktop, lock surfaces, lock confirmation, output disable and DPMS off,
 and verifies clean shutdown after context loss during rendering or swapping.
 It runs in `make check-e2e`; no fault-injection code is built into Minde.
 
+## Screen capture lifecycle
+
+`sh tests/screencapture-e2e.sh` checks both capture protocols and file captures
+in a private nested compositor. Raw clients batch capture requests with lock,
+disable and power-off requests to exercise transitions before the next render.
+Each affected frame must fail once; its buffer must remain untouched, and it
+must never receive a later `ready`. File captures report `screenshot failed`
+without creating the destination file. New requests succeed after recovery.
+
+Disabling or removing an output stops its ext capture sessions. Lock and DPMS
+off preserve sessions but fail their frames. Mode, scale and transform changes
+refresh ext buffer constraints and fail queued frames prepared against the old
+geometry; wlr frames awaiting `copy` also fail if their source changed.
+Both protocols capture the upright logical desktop at the output scale.
+The suite checks dimensions, damage bounds and buffer guards after rotation,
+fractional scaling and host-window resize, plus a new session on a rotated
+output. Physical DRM hotplug uses the same cleanup but is not exercised here.
+
 ## Gamma control lifecycle
 
 `cargo test handlers::gamma_control` uses real Wayland resource identities and

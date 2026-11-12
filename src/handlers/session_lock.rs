@@ -112,6 +112,10 @@ impl SessionLockHandler for MindeState {
         self.session_lock.presentation.reset();
         self.lock_surfaces.clear();
         self.locked = true;
+        self.fail_pending_captures(
+            None,
+            smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown,
+        );
         self.absolute_pointer_motion.reset();
         crate::guile::set_session_locked(true);
 

@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Screen captures fail promptly on session lock, DPMS off and output removal
+  instead of lingering until the desktop returns. Removed outputs stop ext
+  capture sessions; rotation, scale and mode changes refresh constraints and
+  invalidate frames prepared against the old geometry (#44, #45, #46).
 - Gamma controls enforce resource ownership: rejected or retired controls
   cannot change or remove a newer owner's ramps. Night-light tables survive
   DPMS, modesets and VT changes; off-screen updates and restoration are

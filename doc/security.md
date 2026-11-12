@@ -42,6 +42,12 @@ owner dies, and the session stays locked throughout recovery. A client that
 abandons an unconfirmed lock must reconnect before trying again: the pinned
 protocol library retains output bindings from its abandoned lock.
 
+Screen captures requested through either capture protocol or `wm-screenshot`
+fail while the session is locked. Accepting a lock also fails captures still
+waiting for a rendered frame, before confirming lock presentation. Those
+requests cannot capture the desktop later on unlock. Existing ext capture
+sessions remain usable for fresh requests after unlock.
+
 Layer shell is not a safe substitute for this protocol: a fake lock
 surface without exclusive input and correct output lifecycle would create a
 false security boundary.

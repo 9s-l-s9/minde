@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 
 OUT=${MINDE_SCREENCAPTURE_E2E_OUT:-/tmp/swm-e2e}
 trap nested_stop EXIT HUP INT TERM
+export MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1
 
 command -v grim >/dev/null 2>&1 || {
     echo "error: grim is required (speaks ext-image-copy-capture-v1)" >&2
@@ -32,6 +33,13 @@ nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
     exit 1
 }
 cat "$OUT/capture-clock.log"
+
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 MINDE_CAPTURE_HOST_DISPLAY="$DISPLAY" timeout 60 \
+    python3 tests/clients/capture-lifecycle.py >"$OUT/capture-lifecycle.log" 2>&1 || {
+    cat "$OUT/capture-lifecycle.log" >&2
+    exit 1
+}
+cat "$OUT/capture-lifecycle.log"
 
 # (wm-outputs) -> ((id x y w h name) ...); ask the running compositor for
 # the real mode instead of assuming the Xvfb geometry, so this gate cannot

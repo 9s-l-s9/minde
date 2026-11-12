@@ -1322,6 +1322,9 @@ impl MindeState {
             return fail(token);
         };
         let (output, output_geo) = outputs[index].clone();
+        if !self.capture_output_available(&output) {
+            return fail(token);
+        }
         let (origin, logical_size) = match window_rect {
             None => (Point::from((0, 0)), output_geo.size),
             Some(rect) => (rect.loc - output_geo.loc, rect.size),
@@ -1336,16 +1339,16 @@ impl MindeState {
             return fail(token);
         }
         self.pending_captures
-            .push(crate::handlers::screencopy::PendingCapture {
+            .push(crate::handlers::screencopy::PendingCapture::new(
                 output,
-                frame: crate::handlers::screencopy::CaptureFrame::File {
+                crate::handlers::screencopy::CaptureFrame::File {
                     path: path.into(),
                     token,
                 },
-                draw_cursor: false,
+                false,
                 origin,
                 size,
-            });
+            ));
         // Captures are satisfied by the next composite; make sure one runs.
         self.schedule_redraw();
     }
@@ -2651,6 +2654,12 @@ impl MindeState {
     ) -> Result<(), String> {
         if self.udev_data.is_some() {
             self.udev_set_output_power(output, on)?;
+            if !on {
+                self.fail_pending_captures(
+                    Some(output),
+                    smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown,
+                );
+            }
             self.invalidate_lock_presentation();
             return Ok(());
         }
@@ -2662,6 +2671,12 @@ impl MindeState {
         }
         tracing::info!(output = %output.name(), on, "winit output power");
         self.winit_powered_off = !on;
+        if !on {
+            self.fail_pending_captures(
+                Some(output),
+                smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown,
+            );
+        }
         self.schedule_redraw();
         Ok(())
     }

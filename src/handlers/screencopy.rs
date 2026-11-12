@@ -38,7 +38,7 @@ use smithay::{
         },
     },
     desktop::{Space, Window, layer_map_for_output},
-    output::Output,
+    output::{Mode, Output},
     reexports::wayland_server::protocol::wl_buffer::WlBuffer,
     utils::{
         Buffer as BufferCoords, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size, Time,
@@ -78,6 +78,30 @@ pub enum CaptureFrame {
     },
 }
 
+impl CaptureFrame {
+    fn fail(self, reason: CaptureFailureReason) {
+        match self {
+            Self::Ext(frame) => frame.fail(reason),
+            Self::Wlr(frame) => frame.fail(),
+            Self::File { token, .. } => crate::automation_dnd::record_and_publish(
+                token,
+                crate::automation_dnd::AutomationOperation::Screenshot,
+                crate::automation_dnd::AutomationStatus::Failed,
+            ),
+        }
+    }
+}
+
+pub(super) type CaptureGeometry = (Option<Mode>, f64, Transform);
+
+pub(super) fn capture_geometry(output: &Output) -> CaptureGeometry {
+    (
+        output.current_mode(),
+        output.current_scale().fractional_scale(),
+        output.current_transform(),
+    )
+}
+
 /// A capture queued against an output, awaiting the next render.
 pub struct PendingCapture {
     pub output: Output,
@@ -90,6 +114,94 @@ pub struct PendingCapture {
     pub origin: Point<i32, Logical>,
     /// Physical size of the destination buffer.
     pub size: Size<i32, Physical>,
+    geometry: CaptureGeometry,
+}
+
+impl PendingCapture {
+    pub fn new(
+        output: Output,
+        frame: CaptureFrame,
+        draw_cursor: bool,
+        origin: Point<i32, Logical>,
+        size: Size<i32, Physical>,
+    ) -> Self {
+        let geometry = capture_geometry(&output);
+        Self {
+            output,
+            frame,
+            draw_cursor,
+            origin,
+            size,
+            geometry,
+        }
+    }
+}
+
+impl MindeState {
+    pub(crate) fn capture_output_available(&self, output: &Output) -> bool {
+        !self.locked && self.output_enabled(output) && self.output_power_is_on(output)
+    }
+
+    fn capture_size(&self, output: &Output) -> Option<Size<i32, Physical>> {
+        let size = self
+            .space
+            .output_geometry(output)?
+            .size
+            .to_physical_precise_round(output.current_scale().fractional_scale());
+        (size.w > 0 && size.h > 0).then_some(size)
+    }
+
+    /// Complete requests before a lock or unavailable output can strand them.
+    pub(crate) fn fail_pending_captures(
+        &mut self,
+        output: Option<&Output>,
+        reason: CaptureFailureReason,
+    ) {
+        let pending = std::mem::take(&mut self.pending_captures);
+        for capture in pending {
+            if output.is_none_or(|output| output == &capture.output) {
+                capture.frame.fail(reason);
+            } else {
+                self.pending_captures.push(capture);
+            }
+        }
+    }
+
+    pub(crate) fn capture_output_removed(&mut self, output: &Output) {
+        self.fail_pending_captures(Some(output), CaptureFailureReason::Stopped);
+        // Dropping an owned Session sends stopped and retires its active frames.
+        self.capture_sessions.retain(|session| {
+            session
+                .source()
+                .user_data()
+                .get::<smithay::output::WeakOutput>()
+                .and_then(|weak| weak.upgrade())
+                .is_some_and(|source| &source != output)
+        });
+    }
+
+    /// Called with the final layout after resize, hotplug or configuration.
+    pub(crate) fn refresh_capture_constraints(&mut self) {
+        let pending = std::mem::take(&mut self.pending_captures);
+        for capture in pending {
+            if !self.capture_output_available(&capture.output) {
+                capture.frame.fail(CaptureFailureReason::Unknown);
+            } else if capture.geometry != capture_geometry(&capture.output) {
+                capture.frame.fail(CaptureFailureReason::BufferConstraints);
+            } else {
+                self.pending_captures.push(capture);
+            }
+        }
+        let sessions = std::mem::take(&mut self.capture_sessions);
+        for session in sessions {
+            if let Some(constraints) = self.capture_constraints(&session.source()) {
+                session.update_constraints(constraints);
+                self.capture_sessions.push(session);
+            } else {
+                session.stop();
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +239,8 @@ impl ImageCopyCaptureHandler for MindeState {
         if !self.space.outputs().any(|o| o == &output) {
             return None;
         }
-        let mode = output.current_mode()?;
-        let size: Size<i32, BufferCoords> = (mode.size.w, mode.size.h).into();
+        let size = self.capture_size(&output)?;
+        let size: Size<i32, BufferCoords> = (size.w, size.h).into();
 
         use smithay::reexports::wayland_server::protocol::wl_shm;
         let shm = vec![wl_shm::Format::Argb8888, wl_shm::Format::Xrgb8888];
@@ -160,21 +272,21 @@ impl ImageCopyCaptureHandler for MindeState {
             frame.fail(CaptureFailureReason::Unknown);
             return;
         };
-        if !self.space.outputs().any(|o| o == &output) {
+        if !self.capture_output_available(&output) {
             frame.fail(CaptureFailureReason::Unknown);
             return;
         }
-        let size: Size<i32, Physical> = output
-            .current_mode()
-            .map(|m| (m.size.w, m.size.h).into())
-            .unwrap_or_default();
-        self.pending_captures.push(PendingCapture {
+        let Some(size) = self.capture_size(&output) else {
+            frame.fail(CaptureFailureReason::Unknown);
+            return;
+        };
+        self.pending_captures.push(PendingCapture::new(
             output,
-            frame: CaptureFrame::Ext(frame),
-            draw_cursor: session.draw_cursor(),
-            origin: (0, 0).into(),
+            CaptureFrame::Ext(frame),
+            session.draw_cursor(),
+            (0, 0).into(),
             size,
-        });
+        ));
         // Captures are satisfied by the next composite; make sure one runs.
         self.schedule_redraw();
     }
@@ -382,6 +494,11 @@ where
     R::TextureId: Send + Clone + 'static,
     R::Error: Send + Sync + 'static,
 {
+    if !smithay::backend::renderer::buffer_dimensions(buffer)
+        .is_some_and(|actual| actual.w >= size.w && actual.h >= size.h)
+    {
+        return FillOutcome::UnsupportedBuffer;
+    }
     let buffer_size: Size<i32, BufferCoords> = (size.w, size.h).into();
     let region = Rectangle::from_size(buffer_size);
     let mut tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
@@ -529,6 +646,10 @@ pub fn satisfy_output_captures<R>(
     let mut border_buffers = BorderBuffers::default();
 
     for capture in mine {
+        if capture.geometry != capture_geometry(output) {
+            capture.frame.fail(CaptureFailureReason::BufferConstraints);
+            continue;
+        }
         let cursor = if capture.draw_cursor {
             Some((&mut *cursor_state, pointer_location))
         } else {

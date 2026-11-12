@@ -631,6 +631,7 @@ impl MindeState {
                     self.space.map_output(&b.output, b.location);
                 } else {
                     self.space.unmap_output(&b.output);
+                    self.capture_output_removed(&b.output);
                 }
                 // A position this configuration set marked the head
                 // explicit (`commit_head`); the revert takes that back so
@@ -655,6 +656,7 @@ impl MindeState {
         let output = &change.output;
         if !change.enabled {
             self.space.unmap_output(output);
+            self.capture_output_removed(output);
             return;
         }
         let new_transform = change.transform.map(wl_to_transform);
@@ -835,6 +837,7 @@ impl MindeState {
     /// bumps the serial and sends `done`. Call after applying a
     /// configuration and after any external output change (resize, hotplug).
     pub fn output_management_refresh(&mut self) {
+        self.refresh_capture_constraints();
         self.output_management.advertised = self.output_proto_snapshot();
         let outputs = self.output_management_outputs();
         let dh = self.display_handle.clone();

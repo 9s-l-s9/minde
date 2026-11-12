@@ -982,6 +982,7 @@ pub(crate) fn enable_head(
             retire_output_global(&dh, &handle, global);
         }
         state.space.unmap_output(&output);
+        state.capture_output_removed(&output);
         if prev_mode.is_some() || prev_location != position {
             output.change_current_state(prev_mode, None, None, Some(prev_location));
         }
@@ -1146,6 +1147,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     // (no restore possible once the surface is gone).
     state.gamma_output_removed(&output);
     state.space.unmap_output(&output);
+    state.capture_output_removed(&output);
     output.leave_all();
     // Releases the CRTC (Drop for DrmOutput).
     drop(surface);
