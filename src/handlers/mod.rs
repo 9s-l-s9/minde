@@ -130,7 +130,7 @@ impl smithay::wayland::selection::ext_data_control::DataControlHandler for Minde
 /// the Wayland side (`XwmHandler::new_selection`).
 #[derive(Debug, Clone)]
 pub enum SelectionOwner {
-    Text(String),
+    Text(crate::transfer::Payload),
     X11,
 }
 
@@ -145,6 +145,7 @@ impl SelectionHandler for MindeState {
         source: Option<smithay::wayland::selection::SelectionSource>,
         _seat: Seat<Self>,
     ) {
+        self.cancel_selection_transfers(ty);
         if let Some(xwm) = self.xwm.as_mut()
             && let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types()))
         {
@@ -162,14 +163,7 @@ impl SelectionHandler for MindeState {
     ) {
         match user_data {
             SelectionOwner::Text(text) => {
-                // Write on a detached thread so a slow/stalled reader
-                // can't block the event loop.
-                let text = text.clone();
-                std::thread::spawn(move || {
-                    use std::io::Write;
-                    let mut f = std::fs::File::from(fd);
-                    let _ = f.write_all(text.as_bytes());
-                });
+                self.transfers.write(fd, text.clone());
             }
             SelectionOwner::X11 => {
                 // A Wayland client pastes something an X11 app copied:

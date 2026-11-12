@@ -8,10 +8,9 @@
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use smithay::input::dnd::{DndAction, Source, SourceMetadata};
@@ -252,12 +251,12 @@ struct SourceState {
 /// A Smithay DnD source whose bytes are owned by the compositor.
 #[derive(Debug, Clone)]
 pub struct AutomationDndSource {
-    payload: Arc<[u8]>,
+    payload: crate::transfer::Payload,
+    transfers: Option<crate::transfer::Transfers>,
     mime_types: Arc<[String]>,
     operation: AutomationOperation,
     token: AutomationToken,
     results: AutomationResults,
-    alive: Arc<AtomicBool>,
     state: Arc<Mutex<SourceState>>,
 }
 
@@ -297,18 +296,23 @@ impl AutomationDndSource {
         results: AutomationResults,
     ) -> Self {
         Self {
-            payload: payload.into(),
+            payload: crate::transfer::Payload::new(payload),
+            transfers: None,
             mime_types: mime_types.into(),
             operation,
             token,
             results,
-            alive: Arc::new(AtomicBool::new(true)),
             state: Arc::new(Mutex::new(SourceState {
                 selected_action: DndAction::None,
                 dropped: false,
                 terminal: false,
             })),
         }
+    }
+
+    pub fn with_transfers(mut self, transfers: crate::transfer::Transfers) -> Self {
+        self.transfers = Some(transfers);
+        self
     }
 
     pub fn token(&self) -> AutomationToken {
@@ -329,7 +333,7 @@ impl AutomationDndSource {
             return;
         }
         state.terminal = true;
-        self.alive.store(false, Ordering::Release);
+        self.payload.cancel();
         self.results.record(AutomationResult {
             token: self.token,
             operation: self.operation,
@@ -338,76 +342,9 @@ impl AutomationDndSource {
     }
 }
 
-/// Write a DnD offer payload to `fd` without ever blocking indefinitely on a
-/// stalled reader (3.12). Payloads are automation-sized (small), so a
-/// bounded wait for the pipe to drain is enough; the fd is set
-/// `O_NONBLOCK` and each `WouldBlock` is handled with a short `poll()`
-/// wait, capped so a reader that never reads gives up instead of wedging
-/// this worker thread forever.
-fn write_offer_nonblocking(fd: OwnedFd, payload: &[u8]) -> std::io::Result<()> {
-    use std::os::fd::AsRawFd;
-
-    let raw = fd.as_raw_fd();
-    // SAFETY: `raw` is a valid, open fd for the lifetime of this call (owned
-    // by `fd`, which outlives the fcntl call below).
-    let flags = unsafe { libc::fcntl(raw, libc::F_GETFL) };
-    if flags >= 0 {
-        // SAFETY: same fd, setting flags is a well-defined fcntl use.
-        unsafe {
-            libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-    }
-
-    let mut file = fs::File::from(fd);
-    let mut written = 0usize;
-    // Overall wait budget: a reasonable ceiling on how long one stalled
-    // client can hold this worker thread before we give up on it.
-    const TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-    let deadline = std::time::Instant::now() + TOTAL_TIMEOUT;
-
-    while written < payload.len() {
-        match file.write(&payload[written..]) {
-            Ok(0) => break,
-            Ok(n) => written += n,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "DnD offer reader stalled",
-                    ));
-                }
-                let mut pfd = libc::pollfd {
-                    fd: raw,
-                    events: libc::POLLOUT,
-                    revents: 0,
-                };
-                // SAFETY: `pfd` is a single valid pollfd for `raw`, which
-                // stays open for the duration of this call.
-                let rc = unsafe {
-                    libc::poll(
-                        &mut pfd,
-                        1,
-                        remaining.as_millis().min(i32::MAX as u128) as i32,
-                    )
-                };
-                if rc < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                // Either POLLOUT is ready or we timed out; loop back to
-                // `write` (which reports WouldBlock again on a bare
-                // timeout) rather than duplicating the timeout check here.
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
-}
-
 impl IsAlive for AutomationDndSource {
     fn alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.payload.alive()
     }
 }
 
@@ -429,12 +366,9 @@ impl Source for AutomationDndSource {
         if !self.mime_types.iter().any(|offered| offered == mime_type) {
             return;
         }
-        let payload = Arc::clone(&self.payload);
-        std::thread::spawn(move || {
-            if let Err(error) = write_offer_nonblocking(fd, &payload) {
-                tracing::warn!(?error, "failed to send compositor DnD payload");
-            }
-        });
+        if let Some(transfers) = &self.transfers {
+            transfers.write(fd, self.payload.clone());
+        }
     }
 
     fn drop_performed(&self) {

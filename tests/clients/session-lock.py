@@ -82,6 +82,10 @@ class Client:
         self.next_id += 1
         return obj
 
+    def received_fd(self, fd):
+        """Protocol clients may override this to retain a selection's pipe."""
+        os.close(fd)
+
     def send(self, obj, opcode, payload=b"", fd=None):
         message = uints(obj, ((8 + len(payload)) << 16) | opcode) + payload
         if fd is None:
@@ -115,7 +119,7 @@ class Client:
                     fds = array.array("i")
                     fds.frombytes(content[:len(content) // fds.itemsize * fds.itemsize])
                     for fd in fds:
-                        os.close(fd)
+                        self.received_fd(fd)
             if not data:
                 raise ConnectionError(f"{self.name}: Wayland connection closed")
             self.buffer += data

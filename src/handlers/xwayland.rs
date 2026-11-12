@@ -243,12 +243,7 @@ impl XwmHandler for MindeState {
         // consumed, dropping the paste.
         match owner {
             Some(super::SelectionOwner::Text(text)) => {
-                // wm-set-clipboard text: write it ourselves.
-                std::thread::spawn(move || {
-                    use std::io::Write;
-                    let mut f = std::fs::File::from(fd);
-                    let _ = f.write_all(text.as_bytes());
-                });
+                self.transfers.write(fd, text);
             }
             Some(super::SelectionOwner::X11) => {
                 // An X11 mirror asking X11 back would loop; drop it.
@@ -289,6 +284,7 @@ impl XwmHandler for MindeState {
         mime_types: Vec<String>,
     ) {
         use smithay::wayland::selection::SelectionTarget;
+        self.cancel_selection_transfers(selection);
         match selection {
             SelectionTarget::Clipboard => {
                 smithay::wayland::selection::data_device::set_data_device_selection(
@@ -321,6 +317,7 @@ impl XwmHandler for MindeState {
         use smithay::wayland::selection::primary_selection::{
             clear_primary_selection, current_primary_selection_userdata,
         };
+        self.cancel_selection_transfers(selection);
         match selection {
             SelectionTarget::Clipboard => {
                 if current_data_device_selection_userdata(&self.seat).is_some() {

@@ -121,7 +121,12 @@ and accept an optional delay in milliseconds. `wm-click` accepts
 its optional count is sequenced as one multi-click gesture. `wm-set-clipboard`
 sets CLIPBOARD for Ctrl+V/`wm-paste`; `wm-set-primary` sets the middle-click
 PRIMARY selection. The older `wm-request-paste` asynchronously reads CLIPBOARD
-into minde's active prompt.
+into minde's active prompt. A client-owned paste completes on EOF, after
+64 KiB, or after five seconds, delivering the text collected so far (possibly
+empty). Clipboard, primary-selection and drag transfers share a limit of 32
+queued or active transfers; excess receive requests close immediately and
+excess paste requests complete with empty text. Stalled pipe transfers expire
+after five seconds. Replacing a selection cancels its pending writes.
 
 `wm-drop-files` accepts one or more absolute paths to existing regular files;
 `wm-drop-text` offers UTF-8 plain text. Both return a request token or `#f` for

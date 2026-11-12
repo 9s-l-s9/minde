@@ -170,6 +170,8 @@ fn screenshot_output_index(
 /// Compositor state. Adapted from Smithay's `smallvil` example
 /// (https://github.com/Smithay/Smithay, MIT licensed); see README for details.
 pub struct MindeState {
+    pub(crate) transfers: crate::transfer::Transfers,
+    owned_selections: [Option<crate::transfer::Payload>; 2],
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
@@ -467,6 +469,8 @@ pub struct MindeState {
 impl MindeState {
     pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
         let start_time = std::time::Instant::now();
+        let transfers = crate::transfer::Transfers::new(&event_loop.handle())
+            .expect("Failed to initialize selection transfers");
 
         let dh = display.handle();
 
@@ -644,6 +648,8 @@ impl MindeState {
 
         Self {
             start_time,
+            transfers,
+            owned_selections: [None, None],
             display_handle: dh,
 
             space,
@@ -919,24 +925,59 @@ impl MindeState {
             WmCommand::Paste => self.request_paste(),
             WmCommand::SetClipboard { text } => self.set_clipboard_text(text),
             WmCommand::SetPrimary { text } => {
+                let payload =
+                    self.own_selection(smithay::wayland::selection::SelectionTarget::Primary, text);
                 smithay::wayland::selection::primary_selection::set_primary_selection(
                     &self.display_handle,
                     &self.seat,
                     text_mime_types(),
-                    crate::handlers::SelectionOwner::Text(text),
+                    crate::handlers::SelectionOwner::Text(payload),
                 );
             }
             _ => unreachable!("apply_clipboard_command called with an unrelated WmCommand"),
         }
     }
 
+    /// Invalidate old bytes even when stale protocol offers still reference them.
+    pub(crate) fn cancel_selection_transfers(
+        &mut self,
+        target: smithay::wayland::selection::SelectionTarget,
+    ) {
+        let index = match target {
+            smithay::wayland::selection::SelectionTarget::Clipboard => 0,
+            smithay::wayland::selection::SelectionTarget::Primary => 1,
+        };
+        if let Some(payload) = self.owned_selections[index].take() {
+            payload.cancel();
+        }
+    }
+
+    fn own_selection(
+        &mut self,
+        target: smithay::wayland::selection::SelectionTarget,
+        text: String,
+    ) -> crate::transfer::Payload {
+        self.cancel_selection_transfers(target);
+        let payload = crate::transfer::Payload::new(text.into_bytes());
+        let index = match target {
+            smithay::wayland::selection::SelectionTarget::Clipboard => 0,
+            smithay::wayland::selection::SelectionTarget::Primary => 1,
+        };
+        self.owned_selections[index] = Some(payload.clone());
+        payload
+    }
+
     /// Makes the compositor the owner of the clipboard selection with `text`.
     fn set_clipboard_text(&mut self, text: String) {
+        let payload = self.own_selection(
+            smithay::wayland::selection::SelectionTarget::Clipboard,
+            text,
+        );
         smithay::wayland::selection::data_device::set_data_device_selection(
             &self.display_handle,
             &self.seat,
             text_mime_types(),
-            crate::handlers::SelectionOwner::Text(text),
+            crate::handlers::SelectionOwner::Text(payload),
         );
     }
 
@@ -1314,6 +1355,7 @@ impl MindeState {
         use smithay::input::dnd::DnDGrab;
         use smithay::input::pointer::Focus;
 
+        let source = source.with_transfers(self.transfers.clone());
         let token = source.token();
         let operation = source.operation();
         if self.locked || self.active_automation_dnd.is_some() {
@@ -2043,6 +2085,7 @@ impl MindeState {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(%e, "wm-request-paste: pipe failed");
+                guile::on_paste("");
                 return;
             }
         };
@@ -2057,7 +2100,9 @@ impl MindeState {
                 // text (wm-set-clipboard) or a mirror of an X11 copy.
                 let owner = current_data_device_selection_userdata(&self.seat).map(|o| o.clone());
                 match owner {
-                    Some(crate::handlers::SelectionOwner::Text(text)) => guile::on_paste(&text),
+                    Some(crate::handlers::SelectionOwner::Text(text)) => {
+                        guile::on_paste(&String::from_utf8_lossy(text.bytes()))
+                    }
                     Some(crate::handlers::SelectionOwner::X11) => {
                         // The first pipe's write end was consumed by the
                         // failed request; use a fresh one for Xwayland.
@@ -2088,28 +2133,14 @@ impl MindeState {
     }
 
     /// Streams READ_FD through a calloop source and delivers the collected
-    /// text to Scheme via `(handle-paste! text)` once the writer closes.
+    /// text to Scheme on EOF, at the size limit, or after a bounded wait.
     fn deliver_pipe_to_scheme(&mut self, read_fd: std::os::fd::OwnedFd) {
-        use smithay::reexports::rustix;
-        let mut acc: Vec<u8> = Vec::new();
-        let source = Generic::new(read_fd, Interest::READ, Mode::Level);
-        let _ = self.handle.insert_source(source, move |_, fd, _| {
-            let mut buf = [0u8; 4096];
-            match rustix::io::read(&**fd, &mut buf) {
-                Ok(n) if n > 0 => {
-                    // Cap pastes at 64 KiB; the prompt is one line.
-                    if acc.len() < 64 * 1024 {
-                        acc.extend_from_slice(&buf[..n]);
-                    }
-                    Ok(PostAction::Continue)
-                }
-                _ => {
-                    let text = String::from_utf8_lossy(&acc).into_owned();
-                    guile::on_paste(&text);
-                    Ok(PostAction::Remove)
-                }
-            }
-        });
+        if let Err(error) = self.transfers.read(&self.handle, read_fd, |bytes, _| {
+            guile::on_paste(&String::from_utf8_lossy(&bytes));
+        }) {
+            tracing::warn!(%error, "wm-request-paste: transfer could not start");
+            guile::on_paste("");
+        }
     }
 
     fn window_by_id(&self, id: u64) -> Option<Window> {

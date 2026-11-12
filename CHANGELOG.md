@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Clipboard, primary-selection and automation drag transfers share
+  payloads and a transfer quota instead of spawning a writer per receive.
+  Stalled pipes expire, replaced selections cancel pending writes, and prompt
+  pastes deliver partial text on timeout or at 64 KiB (#52, #62, #143).
 - Capture and fallback presentation timestamps use system monotonic time.
   Presentation feedback handles unknown refresh rates without dividing by
   zero and reports active adaptive sync as variable refresh (#47, #152).

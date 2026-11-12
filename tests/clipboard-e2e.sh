@@ -80,4 +80,10 @@ got=$(nested_wayland timeout 10 wl-paste --primary --no-newline 2>"$OUT/paste-pr
 }
 echo "ok - primary selection round trip via wl-clipboard"
 
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 MINDE_TRANSFER_TEST_PID="$NESTED_WM_PID" \
+    timeout 40 python3 tests/clients/selection-transfer.py >"$OUT/selection-transfer.log" 2>&1 || {
+    cat "$OUT/selection-transfer.log" >&2
+    exit 1
+}
+cat "$OUT/selection-transfer.log"
 echo "clipboard-e2e: all checks passed"
