@@ -219,6 +219,16 @@
 (load-placement-rules!)
 (check "all rules survived a save/load round-trip"
        (@@ (minde groups) %placement-rules) %saved-rules)
+(for-each
+ (lambda (boot)
+   (clear-placement-rules!)
+   (load-placement-rules!)
+   (add-placement-rule! "Picture-in-Picture" #:float? #t)
+   (remember!)
+   (check (format #f "restart ~a keeps identical rules and order" boot)
+          (read-versioned-datum-file %rules-path 'minde-placement-rules 1)
+          %saved-rules))
+ '(1 2 3))
 ;; New matching windows must be placed by the restored rule, even when the
 ;; selected frame would normally receive them elsewhere.
 (focus-frame-by-index! 1)

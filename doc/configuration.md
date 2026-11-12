@@ -387,3 +387,17 @@ The defaults are under `~/.config/minde/`; tests override them with
 `MINDE_LAYOUTS_FILE` and `MINDE_RULES_FILE`. Desktop dumps are explicit
 user-requested files. Before the first release, incompatible old state is
 intentionally rejected rather than migrated silently.
+
+`save-layout!` writes the named snapshot and retains earlier saved snapshots;
+it does not copy other configuration presets into the file. Definitions made
+with `define-layout!` take precedence over same-named saved layouts on load,
+including built-ins stored by older versions. Equivalent placement rules are
+deduplicated while preserving first-match order and distinct policies.
+
+An unreadable or invalid layouts/rules file is preserved. Failed loads leave
+the registry unchanged, log the filename and error, and display a diagnostic
+when the first output becomes available. Saves return `#f` until you repair
+the file and call `load-layouts!` or `load-placement-rules!` successfully, or
+move the file aside. Every save also checks for invalid external edits made
+since loading. Failed `save-layout!`, `remember!` and `forget!` operations leave
+the in-memory registry unchanged and never report success.

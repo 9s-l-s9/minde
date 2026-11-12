@@ -10,6 +10,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Invalid saved layouts and placement rules are preserved and block saves
+  until reloaded successfully or moved aside. Startup failures are logged and
+  shown when an output appears; failed saves leave memory unchanged (#102).
+- Layout saves exclude unsaved configuration presets, and configuration
+  definitions take precedence over legacy saved built-ins. Equivalent
+  placement rules no longer accumulate on restart or repeated remember
+  commands (#99, #101).
 - Clipboard, primary-selection and automation drag transfers share
   payloads and a transfer quota instead of spawning a writer per receive.
   Stalled pipes expire, replaced selections cancel pending writes, and prompt

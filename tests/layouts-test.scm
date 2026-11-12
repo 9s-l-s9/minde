@@ -6,7 +6,7 @@
 ;;;
 ;;; Same stub pattern as tests/frames-test.scm.
 
-(use-modules (srfi srfi-1))
+(use-modules (srfi srfi-1) (minde foundation serialization))
 
 ;; ---------------------------------------------------------------------
 ;; Stubs recording calls, standing in for the Rust-side subrs.
@@ -29,7 +29,7 @@
 
 ;; Persistence goes to a scratch file, not the user's config.
 (define %layouts-file (string-append (or (getenv "TMPDIR") "/tmp")
-                                     "/minde-layouts-test.scm"))
+                                     (format #f "/minde-layouts-test-~a.scm" (getpid))))
 (setenv "MINDE_LAYOUTS_FILE" %layouts-file)
 (when (file-exists? %layouts-file) (delete-file %layouts-file))
 
@@ -104,7 +104,7 @@
        (list 856 363 421 354))
 
 ;; ---------------------------------------------------------------------
-;; Persistence: save-layout! writes the registry; load-layouts! reads it.
+;; Persistence stores explicit snapshots, leaving configuration presets live.
 ;; ---------------------------------------------------------------------
 
 (save-layout! "snap")
@@ -114,6 +114,28 @@
 (check-true "load-layouts! keeps the snapshot present"
             (member "snap" (layout-names)))
 (check-true "saved echoed" (string-contains (car %messages) "saved layout"))
+(check "saving a snapshot excludes unsaved configuration definitions"
+       (map car (read-versioned-datum-file %layouts-file 'minde-layouts 1))
+       '("snap"))
+(collapse-to-one-frame!)
+(save-layout! "second")
+(check "saving another snapshot retains earlier snapshots"
+       (read-versioned-datum-file %layouts-file 'minde-layouts 1)
+       (list (cons "snap" %dumped) '("second" . leaf)))
+
+;; Old files can already contain built-ins: upgraded definitions must win.
+(write-versioned-datum-file %layouts-file 'minde-layouts 1
+                           '(("full" . leaf) ("old-user" . leaf)))
+(define-layout! "full" '(hsplit 1/2 leaf leaf))
+(load-layouts!)
+(check "configuration overrides a legacy saved built-in"
+       (layout-spec "full") '(hsplit 1/2 leaf leaf))
+(check "legacy user snapshots still load" (layout-spec "old-user") 'leaf)
+(write-versioned-datum-file %layouts-file 'minde-layouts 1
+                           '(("old-user" vsplit 1/2 leaf leaf)))
+(load-layouts!)
+(check "user snapshots can be updated by reloading"
+       (layout-spec "old-user") '(vsplit 1/2 leaf leaf))
 
 (delete-file %layouts-file)
 

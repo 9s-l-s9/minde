@@ -149,6 +149,7 @@
             resize-frame!
             balance-frames!
             apply-layout-spec!
+            valid-layout-spec?
             dump-layout-spec
             set-sync-hook!
             window-title
@@ -1460,16 +1461,24 @@ encloses the current frame. Ratio is clamped to [1/10, 9/10]."
 ;; split-frame-horizontal!) and RATIO is child-a's share.
 ;; ---------------------------------------------------------------------
 
+(define (valid-layout-spec? spec)
+  "Recognizes finite layout trees with real split ratios strictly between 0 and 1."
+  (let valid? ((node spec) (parents '()))
+    (or (eq? node 'leaf)
+        (and (list? node) (= (length node) 4)
+             (not (memq node parents))
+             (memq (car node) '(hsplit vsplit))
+             (real? (cadr node)) (< 0 (cadr node) 1)
+             (valid? (caddr node) (cons node parents))
+             (valid? (cadddr node) (cons node parents))))))
+
 (define (spec->tree spec)
-  (cond
-   ((eq? spec 'leaf) (make-frame 0 0 100 100 '() #f))
-   ((and (list? spec) (= (length spec) 4) (memq (car spec) '(hsplit vsplit))
-         (number? (cadr spec)) (< 0 (cadr spec) 1))
-    (make-split (if (eq? (car spec) 'hsplit) 'horizontal 'vertical)
-                (cadr spec)
-                (spec->tree (caddr spec))
-                (spec->tree (cadddr spec))))
-   (else (error "bad layout spec" spec))))
+  (unless (valid-layout-spec? spec) (error "bad layout spec" spec))
+  (let build ((node spec))
+    (if (eq? node 'leaf)
+        (make-frame 0 0 100 100 '() #f)
+        (make-split (if (eq? (car node) 'hsplit) 'horizontal 'vertical)
+                    (cadr node) (build (caddr node)) (build (cadddr node))))))
 
 (define (apply-layout-spec! spec)
   "Replaces the active group's frame tree with one built from SPEC, sized

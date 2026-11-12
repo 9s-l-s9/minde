@@ -13,7 +13,7 @@
 (define-module (minde layouts)
   #:use-module (srfi srfi-1)
   #:use-module (minde compositor frames)
-  #:use-module (minde foundation serialization)
+  #:use-module (minde persistence)
   #:export (define-layout!
             layout-names
             layout-spec
@@ -23,12 +23,17 @@
 
 ;; name (string) -> spec, insertion-ordered for stable completion lists.
 (define %layouts '())
+(define %defined-layout-names '())
 
-(define (define-layout! name spec)
-  "Registers (or replaces) the layout NAME as SPEC. Does not persist --
-see save-layout!."
+(define (register-layout! name spec)
   (set! %layouts
         (append (alist-delete name %layouts) (list (cons name spec)))))
+
+(define (define-layout! name spec)
+  "Registers configuration layout NAME as SPEC, taking precedence over
+same-named saved layouts on load. Does not persist; see save-layout!."
+  (set! %defined-layout-names (cons name (delete name %defined-layout-names)))
+  (register-layout! name spec))
 
 (define (layout-names)
   "Returns registered layout names in stable insertion order."
@@ -58,34 +63,36 @@ an unknown name."
       (string-append (or (getenv "HOME") ".") "/.config/minde/layouts.scm")))
 
 (define (save-layout! name)
-  "Snapshots the live frame tree as layout NAME and writes the whole
-registry to the layouts file."
-  (define-layout! name (dump-layout-spec))
-  (let ((path (layouts-file)))
-    (catch #t
-      (lambda ()
-        (let ((dir (dirname path)))
-          (unless (file-exists? dir) (mkdir dir)))
-        (write-versioned-datum-file path 'minde-layouts 1 %layouts)
-        (echo (string-append "saved layout: " name)))
-      (lambda (key . args)
-        (echo (format #f "could not save layouts: ~a ~s" key args))))))
+  "Saves the live frame tree as NAME, preserving previously saved layouts.
+Other configuration presets are not copied into the file. Returns #f on
+failure without changing the registry or overwriting an unreadable file."
+  (let* ((spec (dump-layout-spec))
+         (saved (save-persistent-state!
+                 (layouts-file) 'minde-layouts valid-layouts?
+                 (lambda (previous)
+                   (append (alist-delete name previous) (list (cons name spec)))))))
+    (and saved
+         (begin
+           (register-layout! name spec)
+           (echo (string-append "saved layout: " name))
+           #t))))
+
+(define (valid-layouts? saved)
+  (and (list? saved)
+       (every (lambda (entry)
+                (and (pair? entry) (string? (car entry))
+                     (valid-layout-spec? (cdr entry))))
+              saved)))
 
 (define (load-layouts!)
-  "Merges layouts from the layouts file into the registry (file entries
-win over same-named existing ones). Quietly does nothing if the file is
-missing or unreadable."
-  (let ((path (layouts-file)))
-    (when (file-exists? path)
-      (catch #t
-        (lambda ()
-          (let ((saved (read-versioned-datum-file
-                        path 'minde-layouts 1)))
-            (when (list? saved)
-              (for-each
-               (lambda (entry)
-                 (when (and (pair? entry) (string? (car entry)))
-                   (define-layout! (car entry) (cdr entry))))
-               saved))))
-        (lambda (key . args)
-          (echo (format #f "could not load layouts: ~a ~s" key args)))))))
+  "Loads validated saved layouts; configuration-defined names take precedence.
+Missing files are ignored. Invalid files leave the registry unchanged and
+block saves until a successful reload or removal. Returns #t on success."
+  (load-persistent-state!
+   (layouts-file) 'minde-layouts valid-layouts?
+   (lambda (saved)
+     (for-each
+      (lambda (entry)
+        (unless (member (car entry) %defined-layout-names)
+          (register-layout! (car entry) (cdr entry))))
+      saved))))

@@ -24,6 +24,7 @@ SCHEME_TESTS := \
 	tests/session-test.scm \
 	tests/unsafe-repl-test.scm \
 	tests/layouts-test.scm \
+	tests/persistence-test.scm \
 	tests/callbacks-test.scm \
 	tests/next-pull-test.scm \
 	tests/heads-test.scm \
@@ -161,6 +162,7 @@ check-e2e:
 	@command -v swayidle >/dev/null 2>&1 || { \
 		echo "error: swayidle is required by the idle scenario" >&2; exit 127; }
 	sh tests/init-bytecode-e2e.sh
+	sh tests/persistence-e2e.sh
 	sh tests/gaps-e2e.sh
 	sh tests/resize-e2e.sh
 	sh tests/guile-boundary-e2e.sh

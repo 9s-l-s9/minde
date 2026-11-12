@@ -73,11 +73,9 @@ grep -q "(version $MINDE_CONFIG_SCHEMA)" scheme/minde/config.scm ||
     fail "configuration validator differs from the frozen contract"
 grep -q "status-schema-version $MINDE_STATUS_SCHEMA" scheme/minde/status.scm ||
     fail "status implementation differs from the frozen contract"
-grep -q "minde-layouts $MINDE_PERSISTENT_SCHEMA" scheme/minde/layouts.scm ||
-    fail "layout persistence differs from the frozen contract"
-grep -q "minde-placement-rules $MINDE_PERSISTENT_SCHEMA" \
-    scheme/minde/groups.scm ||
-    fail "placement persistence differs from the frozen contract"
+grep -q "(define %persistent-state-version $MINDE_PERSISTENT_SCHEMA)" \
+    scheme/minde/persistence.scm ||
+    fail "persistent state schema differs from the frozen contract"
 grep -q "report_schema_version=$MINDE_REPORT_SCHEMA" scripts/mindectl ||
     fail "diagnostic report differs from the frozen contract"
 

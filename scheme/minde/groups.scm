@@ -20,6 +20,7 @@
   #:use-module (minde compositor model)
   #:use-module (minde compositor rust)
   #:use-module (minde foundation serialization)
+  #:use-module (minde persistence)
   #:re-export (focus-next-head! focus-previous-head!)
   #:export (switch-to-group!
             switch-to-last-group!
@@ -678,7 +679,7 @@ retile)."
 ;; or title.
 ;; ---------------------------------------------------------------------
 
-;; Each rule: (matcher group-name frame-index follow? lock?). MATCHER
+;; Each rule: (matcher group-name frame-index follow? lock? float?). MATCHER
 ;; is a string matched as a substring against the window's app-id, then
 ;; its title. GROUP-NAME is compared trimmed (" II " and "II" both
 ;; work); #f means "the current group". FRAME-INDEX is 0-based in tree
@@ -690,15 +691,14 @@ retile)."
 (define* (add-placement-rule! matcher #:key (group #f) (frame 0)
                               (follow? #f) (raise? #f) (lock? #t)
                               (float? #f))
-  "Appends a placement rule for MATCHER with group/frame/follow/lock policy.
+  "Appends a placement rule unless an equivalent rule already exists.
 #:float? #t makes matching windows float instead of joining a frame --
 e.g. Firefox's Picture-in-Picture player, which would otherwise hijack
 the current frame and push the browser window offscreen."
   ;; #:raise? is StumpWM's name for what our #:follow? does.
-  (set! %placement-rules
-        (append %placement-rules
-                (list (list matcher group frame (or follow? raise?) lock?
-                            float?)))))
+  (let ((rule (list matcher group frame (or follow? raise?) lock? float?)))
+    (unless (member rule %placement-rules)
+      (set! %placement-rules (append %placement-rules (list rule))))))
 
 (define (rule-lock? rule)
   ;; Rules loaded from an old 4-element file default to locked.
@@ -722,33 +722,45 @@ the current frame and push the browser window offscreen."
   (or (getenv "MINDE_RULES_FILE")
       (string-append (or (getenv "HOME") ".") "/.config/minde/rules.scm")))
 
+(define (valid-placement-rules? rules)
+  (and (list? rules)
+       (every (lambda (rule)
+                (and (list? rule) (<= 4 (length rule) 6)
+                     (string? (car rule))
+                     (or (not (cadr rule)) (string? (cadr rule)))
+                     (exact-integer? (caddr rule)) (>= (caddr rule) 0)
+                     (every boolean? (cdddr rule))))
+              rules)))
+
+(define (normalize-placement-rules rules)
+  ;; Preserve first-match order and different policies for the same matcher.
+  (delete-duplicates
+   (map (lambda (rule)
+          (append (take rule 4) (list (rule-lock? rule) (rule-float? rule))))
+        rules)))
+
+(define (persist-placement-rules! candidate)
+  (let ((saved (save-persistent-state!
+                (rules-file) 'minde-placement-rules valid-placement-rules?
+                (lambda (_)
+                  (unless (valid-placement-rules? candidate)
+                    (error "invalid placement rules" candidate))
+                  (normalize-placement-rules candidate)))))
+    (and saved (begin (set! %placement-rules saved) #t))))
+
 (define (save-placement-rules!)
-  "Writes the placement rules to the rules file."
-  (let ((path (rules-file)))
-    (catch #t
-      (lambda ()
-        (let ((dir (dirname path)))
-          (unless (file-exists? dir) (mkdir dir)))
-        (write-versioned-datum-file
-         path 'minde-placement-rules 1 %placement-rules))
-      (lambda (key . args)
-        (echo (format #f "could not save rules: ~a ~s" key args))))))
+  "Writes deduplicated placement rules atomically. Returns #f on failure,
+preserving unreadable files and leaving the in-memory rules unchanged."
+  (persist-placement-rules! %placement-rules))
 
 (define (load-placement-rules!)
-  "Replaces the placement rules with the rules file's contents. Quietly
-does nothing if the file is missing or unreadable."
-  (let ((path (rules-file)))
-    (when (file-exists? path)
-      (catch #t
-        (lambda ()
-          (let ((saved (read-versioned-datum-file
-                        path 'minde-placement-rules 1)))
-            (when (list? saved)
-              (set! %placement-rules
-                    (filter (lambda (r) (and (pair? r) (string? (car r))))
-                            saved)))))
-        (lambda (key . args)
-          (echo (format #f "could not load rules: ~a ~s" key args)))))))
+  "Loads fully validated rules, normalizing legacy flags and duplicates.
+Missing files are ignored. Invalid files preserve memory and block saves
+until a successful reload or removal. Returns #t on success."
+  (load-persistent-state!
+   (rules-file) 'minde-placement-rules valid-placement-rules?
+   (lambda (saved)
+     (set! %placement-rules (normalize-placement-rules saved)))))
 
 (define (remember!)
   "Adds a persistent placement rule pinning the focused window's
@@ -760,12 +772,14 @@ app-id (or title) to its current group and frame (StumpWM remember)."
               (frame-idx (or (list-index (lambda (f) (eq? f (current-frame)))
                                          (frame-leaves (current-tree)))
                              0)))
-          (add-placement-rule! matcher
-                               #:group (string-trim-both (current-group-name))
-                               #:frame frame-idx)
-          (save-placement-rules!)
-          (echo (format #f "remembered: ~a ->~a frame ~a"
-                        matcher (current-group-name) frame-idx))))))
+          (and (persist-placement-rules!
+                (append %placement-rules
+                        (list (list matcher (string-trim-both (current-group-name))
+                                    frame-idx #f #t #f))))
+               (begin
+                 (echo (format #f "remembered: ~a ->~a frame ~a"
+                               matcher (current-group-name) frame-idx))
+                 #t))))))
 
 (define (forget!)
   "Drops every placement rule matching the focused window and persists
@@ -776,12 +790,13 @@ app-id (or title) to its current group and frame (StumpWM remember)."
         (let* ((title (window-title id))
                (app (window-app-id id))
                (before (length %placement-rules)))
-          (set! %placement-rules
+          (and (persist-placement-rules!
                 (remove (lambda (r) (rule-matches? r title app))
                         %placement-rules))
-          (save-placement-rules!)
-          (echo (format #f "forgot ~a rule(s)"
-                        (- before (length %placement-rules))))))))
+               (begin
+                 (echo (format #f "forgot ~a rule(s)"
+                               (- before (length %placement-rules))))
+                 #t))))))
 
 (define (window-in-active-group? id)
   "True when ID is tiled in one of the active group's frame trees."
@@ -1058,12 +1073,14 @@ a sync since nothing hidden is on-screen)."
 (define (handle-output-geometry! x y width height)
   "Single-head compatibility path (old binaries / winit-era configs)."
   (when (and (> width 0) (> height 0))
-    (heads-changed! (list (list 0 x y width height)) %groups)))
+    (heads-changed! (list (list 0 x y width height)) %groups)
+    (show-persistence-errors!)))
 
 (define (handle-heads-change! heads)
   "Multi-head backends report the full usable-rect list here:
 ((id x y w h) ...)."
-  (heads-changed! heads %groups))
+  (heads-changed! heads %groups)
+  (when (pair? heads) (show-persistence-errors!)))
 
 (define (set-head-mode! mode)
   "'per-head (a frame tree per monitor, StumpWM style) or 'span (one
