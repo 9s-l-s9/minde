@@ -13,12 +13,13 @@ incomplete release gate, **external** is deliberately delegated, and
 | Manual frame trees, gaps, resize and layouts | supported | Scheme unit suites and nested e2e |
 | Groups, per-head trees and dynamic master/stack groups | supported | Scheme unit suites and nested e2e |
 | Floating windows and pointer move/resize | supported | Scheme unit suites and nested e2e |
+| Click and tap focus | supported | Window targets use the overridable `handle-pointer-focus!` Scheme hook. Nested tests check frame/float selection, keyboard events, activation, snapshots and command targets. Touch and stylus share the policy helper; physical tap delivery requires hardware validation. |
 | Window navigation, numbering, marks and placement rules | supported | Scheme unit suites and nested e2e |
 | Native prompt, menu, command/eval and contextual help | supported | Scheme unit suites and nested e2e |
 | Hooks and live Scheme configuration | supported | canonical API, atomic reload and serialized main-thread IPC |
 | Native Wayland xdg-shell clients | supported | required foot gate plus optional GTK, Qt, browser, Emacs and SDL structured scenarios |
 | Xwayland clients | experimental | X11 mapping, unmap during grabs and server-loss cleanup are tested in the nested fullscreen/pointer gate; failure removes X11 windows and reports a failed server while native clients continue. Automatic Xwayland restart remains missing |
-| Layer shell and exclusive zones | experimental | bounded eww/fuzzel/swaybg scenarios; owner visual/exclusive-zone check remains |
+| Layer shell and exclusive zones | experimental | Native tests cover noninteractive and on-demand click focus, exclusive Overlay/Top priority and focus restoration. Bounded eww/fuzzel/swaybg scenarios also run; owner visual/exclusive-zone check remains |
 | Session lock protocol | experimental | `ext-session-lock-v1` backs `logout!`/`lock-screen!`/`suspend!` ((minde session)); owner hardware verification that a locker actually blocks input/output remains |
 | Clipboard between Wayland and X11 | experimental | required Wayland MIME round trip and compositor e2e; primary selection (zwp_primary_selection, middle-click paste) now wired across Wayland and Xwayland; DnD remains |
 | Clipboard managers (data-control) | experimental | `zwlr_data_control_manager_v1` and `ext_data_control_manager_v1` advertised (Smithay delegates), sharing the clipboard/primary selection; nested e2e asserts the globals plus wl-clipboard clipboard and primary round trips; cliphist-style manager on hardware remains |

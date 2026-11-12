@@ -638,6 +638,12 @@ winit it is stored but configures nothing. Returns #t when stored."
 ;; Urgency: Rust calls (handle-urgent-window! id) on xdg-activation requests.
 (define (handle-urgent-window! id) (add-urgent-window! id))
 
+(define (handle-pointer-focus! id)
+  "Rust: a click, touch tap or stylus tip selected window ID. Update the
+frame/head or floating-window selection through the normal focus path.
+Personal configuration may replace this hook to disable click-to-focus."
+  (focus-window-by-id! id))
+
 ;; Foreign-toplevel management (wlr-foreign-toplevel-management): external
 ;; bars/switchers request actions on windows by their compositor id. Rust
 ;; (src/handlers/foreign_toplevel.rs) looks these up by plain top-level

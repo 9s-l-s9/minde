@@ -468,6 +468,7 @@ static HANDLE_KEY: Hook = Hook::new("wm-handle-key");
 static WINDOW_MAP: Hook = Hook::new("handle-window-map!");
 static WINDOW_TITLE: Hook = Hook::new("handle-window-title-change!");
 static WINDOW_UNMAP: Hook = Hook::new("handle-window-unmap!");
+static POINTER_FOCUS: Hook = Hook::new("handle-pointer-focus!");
 static HEADS_CHANGE: Hook = Hook::new("handle-heads-change!");
 static OUTPUT_GEOMETRY: Hook = Hook::new("handle-output-geometry!");
 static TIMER: Hook = Hook::new("handle-timer!");
@@ -1817,6 +1818,12 @@ pub fn on_window_title(id: u64, title: &str, app_id: &str) {
 /// Calls `(handle-window-unmap! id)` if bound.
 pub fn on_window_unmap(id: u64) {
     WINDOW_UNMAP.call(&[from_i64(id as i64)]);
+}
+
+/// Calls `(handle-pointer-focus! id)` for a clicked/tapped window. Scheme
+/// owns the frame, group and floating-window selection as for keyboard focus.
+pub fn on_pointer_focus(id: u64) {
+    POINTER_FOCUS.call(&[from_i64(id as i64)]);
 }
 
 /// Reports the full head list (usable rects) to Scheme:

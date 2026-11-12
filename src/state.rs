@@ -1106,7 +1106,9 @@ impl MindeState {
         // retroactively in `surface_associated` (handlers/xwayland.rs), or
         // emacs & co. think they're unfocused (hollow cursor) forever.
         if !self.locked
-            && let Some(surface) = window.wl_surface().map(|s| s.into_owned())
+            && let Some(surface) = self
+                .exclusive_layer_focus()
+                .or_else(|| window.wl_surface().map(|s| s.into_owned()))
         {
             let serial = SERIAL_COUNTER.next_serial();
             if let Some(keyboard) = self.seat.get_keyboard() {
@@ -1130,14 +1132,17 @@ impl MindeState {
             return;
         }
         let serial = SERIAL_COUNTER.next_serial();
+        let layer = self.exclusive_layer_focus();
         if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, Option::<WlSurface>::None, serial);
+            keyboard.set_focus(self, layer.clone(), serial);
         }
         // Clearing keyboard focus doesn't invoke `focus_changed`, so drop
         // text-input focus and deactivate any shortcuts inhibitor explicitly
         // (IME leaves the surface; the inhibitor must not survive focus loss).
-        self.set_text_input_focus(None);
-        self.update_keyboard_shortcuts_inhibitors(None);
+        if layer.is_none() {
+            self.set_text_input_focus(None);
+            self.update_keyboard_shortcuts_inhibitors(None);
+        }
         self.activate_only(None);
         self.focused_window = None;
         self.foreign_toplevel_focus(None);

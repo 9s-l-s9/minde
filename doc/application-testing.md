@@ -211,6 +211,12 @@ are retained in `/tmp/minde-soak/results.json`.
 Touch cancellation has headless Rust coverage using real Wayland surfaces and
 `wl_touch` resources: completed and pending frames, stationary contacts,
 multiple clients, pending releases and fresh gestures after cancellation.
+The fullscreen/pointer gate also checks click focus against actual keyboard
+events, toplevel activation, Scheme frame/float selection, control snapshots
+and commands. It covers disabling the window-focus hook, empty space, and
+noninteractive, on-demand and exclusive layer surfaces. Touch and stylus use
+the same target-selection helper; physical tap delivery remains a hardware
+check.
 Tablet-awareness tests use real Wayland tool bindings over socket pairs,
 including multiple bindings, newly registered tools, surface destruction and
 client disconnects. Repeated queries across clients with large object tables

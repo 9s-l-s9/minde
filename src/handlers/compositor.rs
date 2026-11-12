@@ -169,9 +169,7 @@ impl MindeState {
     /// (fuzzel, swaylock) the keyboard.
     fn handle_layer_commit(&mut self, surface: &WlSurface) {
         use smithay::desktop::{WindowSurfaceType, layer_map_for_output};
-        use smithay::wayland::shell::wlr_layer::{
-            KeyboardInteractivity, Layer, LayerSurfaceCachedState, LayerSurfaceData,
-        };
+        use smithay::wayland::shell::wlr_layer::LayerSurfaceData;
 
         // Plain toplevel/subsurface commits (the overwhelming majority) never
         // carry `LayerSurfaceData`; check that first so they skip the
@@ -218,21 +216,15 @@ impl MindeState {
 
         // Exclusive keyboard interactivity on a top/overlay layer takes
         // the keyboard (this is how fuzzel/swaylock type).
-        let wants_keyboard = with_states(surface, |states| {
-            let mut guard = states.cached_state.get::<LayerSurfaceCachedState>();
-            let state = guard.current();
-            state.keyboard_interactivity == KeyboardInteractivity::Exclusive
-                && matches!(state.layer, Layer::Top | Layer::Overlay)
-        });
         // While the session is locked, keyboard focus belongs to the lock
         // surface only -- never let a layer client (a regular client) grab it.
-        if wants_keyboard
-            && !self.locked
+        if !self.locked
+            && let Some(focus) = self.exclusive_layer_focus()
             && let Some(keyboard) = self.seat.get_keyboard()
-            && keyboard.current_focus().as_ref() != Some(surface)
+            && keyboard.current_focus().as_ref() != Some(&focus)
         {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            keyboard.set_focus(self, Some(surface.clone()), serial);
+            keyboard.set_focus(self, Some(focus), serial);
         }
     }
 }

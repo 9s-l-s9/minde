@@ -21,6 +21,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Click and tap focus use an overridable Scheme hook, keeping frame and
+  floating-window selection, activation, borders and control state aligned
+  with keyboard focus (#137).
+- Pointer and touch focus honor the actual layer surface under the input:
+  noninteractive layers preserve focus, on-demand layers accept it, and
+  exclusive Top/Overlay layers retain it across clicks and layout sync (#57).
 - Tablet samples reuse cached client awareness instead of walking every
   Wayland object on each event. Binding and destruction refresh the cache;
   pointer emulation reuses the tablet target when constraints allow (#140).

@@ -3,6 +3,7 @@
 mod capture;
 mod constraints;
 mod emergency;
+mod focus;
 mod input;
 mod keyboard;
 mod lock;
@@ -25,6 +26,7 @@ fn main() {
         Some("input-lifecycle") => input::run(),
         Some("keyboard-filter") => keyboard::run(),
         Some("pointer-constraints") => constraints::run(),
+        Some("pointer-focus") => focus::run(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

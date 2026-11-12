@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use smithay::wayland::seat::WaylandFocus;
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend,
@@ -8,6 +7,7 @@ use smithay::{
         PointerMotionEvent, ProximityState, TabletToolAxisEvent, TabletToolButtonEvent,
         TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
     },
+    desktop::{Window, WindowSurfaceType, layer_map_for_output},
     input::{
         keyboard::{FilterResult, keysyms as xkb},
         pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
@@ -493,7 +493,7 @@ impl MindeState {
                 // Tap-to-focus: a touch-down on an unfocused toplevel raises
                 // and focuses it, mirroring click-to-focus in the
                 // PointerButton arm.
-                self.focus_toplevel_under(location, serial);
+                self.focus_surface_under(location, serial);
 
                 let event = DownEvent {
                     slot: event.slot(),
@@ -783,95 +783,60 @@ impl MindeState {
 
         let serial = SERIAL_COUNTER.next_serial();
 
-        if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-            if let Some((window, _loc)) = self
-                .space
-                .element_under(pointer.current_location())
-                .map(|(w, l)| (w.clone(), l))
+        if ButtonState::Pressed == button_state
+            && !pointer.is_grabbed()
+            && let Some(window) = self.focus_surface_under(pointer.current_location(), serial)
+        {
+            // Super+drag on a floating window: left = move,
+            // right = resize from the bottom-right corner.
+            // The grab consumes the click (Focus::Clear) but
+            // the press is still forwarded through
+            // pointer.button below so current_pressed()
+            // tracks the drag button.
+            let floating = self
+                .id_for_window(&window)
+                .map(|id| self.floating_ids.contains(&id))
+                .unwrap_or(false);
+            if floating
+                && keyboard.modifier_state().logo
+                && (button == BTN_LEFT || button == BTN_RIGHT)
             {
-                // Super+drag on a floating window: left = move,
-                // right = resize from the bottom-right corner.
-                // The grab consumes the click (Focus::Clear) but
-                // the press is still forwarded through
-                // pointer.button below so current_pressed()
-                // tracks the drag button.
-                let floating = self
-                    .id_for_window(&window)
-                    .map(|id| self.floating_ids.contains(&id))
-                    .unwrap_or(false);
-                if floating
-                    && keyboard.modifier_state().logo
-                    && (button == BTN_LEFT || button == BTN_RIGHT)
-                {
-                    let start_data = smithay::input::pointer::GrabStartData {
-                        focus: None,
-                        button,
-                        location: pointer.current_location(),
-                    };
-                    self.space.raise_element(&window, true);
-                    self.schedule_redraw();
-                    if let Some(rect) = self.space.element_geometry(&window) {
-                        if button == BTN_LEFT {
-                            let grab = crate::grabs::MoveSurfaceGrab {
-                                start_data,
-                                window,
-                                initial_window_location: rect.loc,
-                            };
-                            pointer.set_grab(
-                                self,
-                                grab,
-                                serial,
-                                smithay::input::pointer::Focus::Clear,
-                            );
-                        } else {
-                            let grab = crate::grabs::ResizeSurfaceGrab::start(
-                                start_data,
-                                window,
-                                crate::grabs::ResizeEdge::BOTTOM_RIGHT,
-                                rect,
-                            );
-                            pointer.set_grab(
-                                self,
-                                grab,
-                                serial,
-                                smithay::input::pointer::Focus::Clear,
-                            );
-                        }
-                    }
-                    pointer.button(
-                        self,
-                        &ButtonEvent {
-                            button,
-                            state: button_state,
-                            serial,
-                            time: time_msec,
-                        },
-                    );
-                    pointer.frame(self);
-                    return;
-                }
+                let start_data = smithay::input::pointer::GrabStartData {
+                    focus: None,
+                    button,
+                    location: pointer.current_location(),
+                };
                 self.space.raise_element(&window, true);
                 self.schedule_redraw();
-                // X11-backed windows expose a wl_surface too (once
-                // the xwayland-shell association happened).
-                if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
-                    keyboard.set_focus(self, Some(surface), serial);
+                if let Some(rect) = self.space.element_geometry(&window) {
+                    if button == BTN_LEFT {
+                        let grab = crate::grabs::MoveSurfaceGrab {
+                            start_data,
+                            window,
+                            initial_window_location: rect.loc,
+                        };
+                        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                    } else {
+                        let grab = crate::grabs::ResizeSurfaceGrab::start(
+                            start_data,
+                            window,
+                            crate::grabs::ResizeEdge::BOTTOM_RIGHT,
+                            rect,
+                        );
+                        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                    }
                 }
-                self.space.elements().for_each(|window| {
-                    if let Some(t) = window.toplevel() {
-                        t.send_pending_configure();
-                    }
-                });
-            } else {
-                self.space.elements().for_each(|window| {
-                    window.set_activated(false);
-                    if let Some(t) = window.toplevel() {
-                        t.send_pending_configure();
-                    }
-                });
-                keyboard.set_focus(self, Option::<WlSurface>::None, serial);
-                self.set_text_input_focus(None);
-                self.update_keyboard_shortcuts_inhibitors(None);
+                pointer.button(
+                    self,
+                    &ButtonEvent {
+                        button,
+                        state: button_state,
+                        serial,
+                        time: time_msec,
+                    },
+                );
+                pointer.frame(self);
+                return;
             }
         };
 
@@ -922,30 +887,55 @@ impl MindeState {
         )
     }
 
-    /// Tap-to-focus: raise and give keyboard focus to the toplevel under the
-    /// given point, matching the click-to-focus behavior in the
-    /// PointerButton arm. Does nothing (keeping current focus) if no window
-    /// element is under the point.
-    fn focus_toplevel_under(
+    /// Clicks, taps and stylus tips share hit-testing and Scheme focus policy.
+    /// Return the actual window target for optional compositor move/resize.
+    fn focus_surface_under(
         &mut self,
         location: Point<f64, Logical>,
         serial: smithay::utils::Serial,
-    ) {
-        let Some(keyboard) = self.seat.get_keyboard() else {
-            return;
-        };
-        if let Some(window) = self.space.element_under(location).map(|(w, _)| w.clone()) {
-            self.space.raise_element(&window, true);
-            self.schedule_redraw();
-            if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
-                keyboard.set_focus(self, Some(surface), serial);
-            }
-            self.space.elements().for_each(|window| {
-                if let Some(t) = window.toplevel() {
-                    t.send_pending_configure();
-                }
-            });
+    ) -> Option<Window> {
+        use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer};
+
+        if self.locked {
+            return None;
         }
+        let keyboard = self.seat.get_keyboard()?;
+        if let Some(surface) = self.exclusive_layer_focus() {
+            keyboard.set_focus(self, Some(surface), serial);
+            return None;
+        }
+        let (surface, _) = self.surface_under(location)?;
+        let layer = self.space.outputs().find_map(|output| {
+            layer_map_for_output(output)
+                .layer_for_surface(&surface, WindowSurfaceType::ALL)
+                .cloned()
+        });
+        if let Some(layer) = layer {
+            let state = layer.cached_state();
+            if state.keyboard_interactivity == KeyboardInteractivity::OnDemand
+                || (state.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                    && matches!(state.layer, Layer::Top | Layer::Overlay))
+            {
+                keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+            }
+            return None;
+        }
+        // Include subsurfaces and popups; never focus an occluded window
+        // solely because its bounding box contains the input position.
+        let window = self
+            .space
+            .elements()
+            .find(|window| {
+                let mut owns = false;
+                window.with_surfaces(|candidate, _| owns |= candidate == &surface);
+                owns
+            })
+            .cloned()?;
+        let id = self.id_for_window(&window)?;
+        // No references into compositor state may cross this callback:
+        // Scheme can apply layout and focus commands synchronously.
+        guile::on_pointer_focus(id);
+        Some(window)
     }
 
     /// Tablet tool axis (motion + pressure/tilt/distance/etc.). Transforms the
@@ -1091,7 +1081,11 @@ impl MindeState {
                     .map(|(s, _)| self.client_is_tablet_aware(&s))
                     .unwrap_or(false);
                 let route = tool_route(tool.is_some(), aware);
-                self.focus_toplevel_under(self.pointer_location, serial);
+                // Pointer emulation performs the same focus step in the
+                // button path; call the policy hook only once per tip-down.
+                if route == ToolRoute::Tablet {
+                    self.focus_surface_under(self.pointer_location, serial);
+                }
                 if let Some(tool) = tool.as_ref() {
                     tool.tip_down(serial, event.time_msec());
                 }

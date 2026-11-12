@@ -323,6 +323,26 @@ policy:
     (wm-configure-input! name #:accel-profile 'flat)))
 ```
 
+### Click and tap focus
+
+Clicks, touch taps and stylus tip-downs on windows call
+`(handle-pointer-focus! id)`. The bundled hook uses `focus-window-by-id!`, so
+the selected frame/head or floating window, keyboard focus, activation,
+focus border and control snapshots follow the same policy. Clicking empty
+space leaves that selection intact. Personal Scheme can keep a strictly
+keyboard-driven window selection by replacing the hook:
+
+```scheme
+(define (handle-pointer-focus! id) #f)
+```
+
+The hook receives window IDs only. Layer-shell surfaces use their committed
+keyboard-interactivity setting: `none` preserves focus, `on_demand` accepts
+clicks/taps, and mapped `exclusive` Top/Overlay surfaces retain the keyboard
+even when another window is clicked or the frame layout is synchronized.
+Overlay takes precedence over Top. Layer focus preserves the desktop window
+selection for restoration when the layer closes.
+
 ### Keyboard layouts
 
 minde builds one keymap from the standard `XKB_DEFAULT_*` variables. A comma

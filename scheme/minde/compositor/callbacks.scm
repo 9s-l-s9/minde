@@ -33,6 +33,7 @@
     (handle-window-move! . 5)
     (handle-urgent-window! . 1)
     (handle-foreign-activate! . 1)
+    (handle-pointer-focus! . 1)
     (handle-foreign-fullscreen! . 2)
     (handle-foreign-minimize! . 2)
     (output-configuration-allowed? . 0)

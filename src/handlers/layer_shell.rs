@@ -7,11 +7,14 @@
 //! Adapted from Smithay's `anvil` example (see README for the revision).
 
 use smithay::{
+    backend::renderer::utils::with_renderer_surface_state,
     desktop::{LayerSurface, layer_map_for_output},
     output::Output,
-    reexports::wayland_server::protocol::wl_output,
+    reexports::wayland_server::protocol::{wl_output, wl_surface::WlSurface},
+    wayland::seat::WaylandFocus,
     wayland::shell::wlr_layer::{
-        Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState,
+        KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler,
+        WlrLayerShellState,
     },
 };
 
@@ -78,15 +81,53 @@ impl WlrLayerShellHandler for MindeState {
         // the frame tree's focused window.
         if had_keyboard_focus && !self.locked {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            let surface = self
-                .focused_window
-                .as_ref()
-                .and_then(|w| w.toplevel())
-                .map(|t| t.wl_surface().clone());
+            let surface = self.exclusive_layer_focus().or_else(|| {
+                self.focused_window
+                    .as_ref()
+                    .and_then(|w| w.wl_surface().map(|s| s.into_owned()))
+            });
+            let clear = surface.is_none();
             if let Some(keyboard) = self.seat.get_keyboard() {
                 keyboard.set_focus(self, surface, serial);
             }
+            if clear {
+                self.set_text_input_focus(None);
+                self.update_keyboard_shortcuts_inhibitors(None);
+            }
         }
+    }
+}
+
+impl MindeState {
+    /// Mapped exclusive Overlay surfaces take priority over Top surfaces.
+    /// Within one layer keep its current owner, otherwise choose the most
+    /// recently mapped candidate on the first enabled output with one.
+    pub(crate) fn exclusive_layer_focus(&self) -> Option<WlSurface> {
+        let current = self.seat.get_keyboard().and_then(|k| k.current_focus());
+        for kind in [Layer::Overlay, Layer::Top] {
+            let mut candidate = None;
+            for output in self.space.outputs() {
+                let map = layer_map_for_output(output);
+                for layer in map.layers_on(kind).rev() {
+                    let surface = layer.wl_surface();
+                    if layer.cached_state().keyboard_interactivity
+                        != KeyboardInteractivity::Exclusive
+                        || !with_renderer_surface_state(surface, |state| state.buffer().is_some())
+                            .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    if current.as_ref() == Some(surface) {
+                        return Some(surface.clone());
+                    }
+                    candidate.get_or_insert_with(|| surface.clone());
+                }
+            }
+            if candidate.is_some() {
+                return candidate;
+            }
+        }
+        None
     }
 }
 
