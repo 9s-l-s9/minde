@@ -11,6 +11,7 @@ mod lock;
 mod outputs;
 mod popup;
 mod render;
+mod scene;
 mod selection;
 mod virtual_pointer;
 mod window;
@@ -34,6 +35,8 @@ fn main() {
         Some("layer-output") => layer::output_lifecycle(),
         Some("popup-placement") => popup::run(),
         Some("fractional-popups") => popup::fractional_scales(),
+        Some("scene-layers") => scene::layers(),
+        Some("scene-message") => scene::message(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

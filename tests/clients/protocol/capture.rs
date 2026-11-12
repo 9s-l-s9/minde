@@ -17,7 +17,7 @@ struct Frame {
     request: Option<Request>,
     buffer: Option<(File, (u32, u32))>,
 }
-struct Capture {
+pub(super) struct Capture {
     c: Client,
     output: u32,
     sources: u32,
@@ -41,7 +41,7 @@ impl DerefMut for Capture {
     }
 }
 impl Capture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let mut c = Client::new("capture lifecycle");
         let output = c.bind("wl_output", 1);
         let sources = c.bind("ext_output_image_capture_source_manager_v1", 1);
@@ -74,6 +74,52 @@ impl Capture {
         self.send(self.ext, 0, &words(&[session, source, 0]));
         self.event(session, 4);
         session
+    }
+    pub(super) fn image(&mut self, ext: bool, region: Option<[u32; 4]>) -> Image {
+        self.roundtrip();
+        let frame = if let Some(region) = region {
+            assert!(!ext);
+            let id = self.alloc();
+            let mut args = words(&[id, 0, self.output]);
+            args.extend(words(&region));
+            self.send(self.wlr, 1, &args);
+            self.event(id, 6);
+            let info = self.event(id, 0);
+            let size = (info.word(1), info.word(2));
+            assert_eq!(info.word(3), size.0 * 4);
+            let file = memfile((size.0 * size.1 * 4 + 64) as usize, 0xa5);
+            let buffer = self.buffer_from(size.0, size.1, &file);
+            Frame {
+                ext,
+                id,
+                request: Some((id, 0, words(&[buffer]))),
+                buffer: Some((file, size)),
+            }
+        } else {
+            self.prepare(ext, None)
+        };
+        self.send_batch(std::slice::from_ref(frame.request.as_ref().unwrap()));
+        let ready = if ext { 3 } else { 2 };
+        let failed = if ext { 4 } else { 3 };
+        assert_eq!(
+            self.wait(0, |e| e.object == frame.id
+                && [ready, failed].contains(&e.opcode))
+                .opcode,
+            ready
+        );
+        let (file, size) = frame.buffer.as_ref().unwrap();
+        let mut bytes = vec![0; (size.0 * size.1 * 4) as usize];
+        file.read_exact_at(&mut bytes, 0).unwrap();
+        let image = Image {
+            width: size.0,
+            height: size.1,
+            pixels: bytes
+                .chunks_exact(4)
+                .map(|p| u32::from_ne_bytes(p.try_into().unwrap()) & 0xffffff)
+                .collect(),
+        };
+        self.result(frame, true, None);
+        image
     }
     fn size(&self) -> (u32, u32) {
         let e = self.events.iter().rfind(|e| e.is(self.session, 0)).unwrap();
@@ -248,6 +294,24 @@ impl Capture {
         requests.push(transition);
         self.send_batch(&requests);
         captures
+    }
+}
+pub(super) struct Image {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u32>,
+}
+impl Image {
+    pub fn pixel(&self, x: u32, y: u32) -> u32 {
+        self.pixels[(y * self.width + x) as usize]
+    }
+    pub fn crop(&self, [x, y, width, height]: [u32; 4]) -> Vec<u32> {
+        (y..y + height)
+            .flat_map(|row| {
+                let start = (row * self.width + x) as usize;
+                self.pixels[start..start + width as usize].iter().copied()
+            })
+            .collect()
     }
 }
 fn file_capture(name: &str, then: &str) -> String {

@@ -21,6 +21,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Layer rendering matches input order: Overlay above Top, windows above
+  Bottom and Background, and newer mappings above older ones within a layer.
+  Fullscreen still hides Top surfaces while preserving Overlay (#34).
+- Centered messages retain their scene position in region captures, including
+  fractional output scales. Centered and positioned overlays share one render
+  helper (#48).
 - Preferred fractional scale follows window placement and committed size
   changes immediately. Xdg popups, nested menus and subsurfaces inherit their
   owner's scale at creation and on output changes, without repeated events

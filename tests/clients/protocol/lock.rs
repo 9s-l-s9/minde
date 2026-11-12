@@ -68,6 +68,21 @@ impl HostPixels {
             })
             .collect()
     }
+    pub fn pixel(&self, x: i16, y: i16) -> u32 {
+        let image = self
+            .connection
+            .get_image(ImageFormat::Z_PIXMAP, self.window, x, y, 1, 1, u32::MAX)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let pixel = image.data[..4].try_into().unwrap();
+        let value = if self.connection.setup().image_byte_order == ImageOrder::LSB_FIRST {
+            u32::from_le_bytes(pixel)
+        } else {
+            u32::from_be_bytes(pixel)
+        };
+        value & 0xffffff
+    }
     pub fn wait_black(&self) {
         until(
             || self.samples().iter().all(|p| *p == 0),

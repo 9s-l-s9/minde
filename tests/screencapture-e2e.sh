@@ -34,6 +34,14 @@ nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" capture-clock >"$OUT/capture
 }
 cat "$OUT/capture-clock.log"
 
+for scenario in scene-layers scene-message; do
+    timeout 45 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1 || {
+        cat "$OUT/$scenario.log" >&2
+        exit 1
+    }
+    cat "$OUT/$scenario.log"
+done
+
 nested_wayland env MINDE_CAPTURE_HOST_DISPLAY="$DISPLAY" timeout 60 \
     "$NESTED_PROTOCOL_CLIENT" capture-lifecycle >"$OUT/capture-lifecycle.log" 2>&1 || {
     cat "$OUT/capture-lifecycle.log" >&2

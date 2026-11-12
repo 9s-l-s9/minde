@@ -350,15 +350,14 @@ where
     }
 
     // Centered message overlay.
-    if let Some(msg) = message
-        && let Some(elem) = crate::render::message_element(
-            renderer,
-            msg,
-            (output_geo.size.w, output_geo.size.h),
-            scale,
-        )
-    {
-        all.push(elem);
+    if let Some(msg) = message {
+        let center = Point::<i32, Logical>::from((
+            (output_geo.size.w - msg.size.0) / 2,
+            (output_geo.size.h - msg.size.1) / 2,
+        ));
+        if let Some(elem) = crate::render::overlay_element(renderer, msg, center - origin, scale) {
+            all.push(elem);
+        }
     }
 
     // Positioned overlays landing on this output.
@@ -368,30 +367,37 @@ where
         }
     }
 
-    // Append each layer directly to the scene, preserving layer-map order.
-    // Two borrowed passes avoid partition Vecs and temporary element lists
-    // on every frame (and on every capture).
+    // Front-to-back order matches hit-testing: higher levels first, newest
+    // mapping first within each level. Borrowed iteration avoids partitions
+    // and temporary element lists on every frame and capture.
     let fullscreen = crate::state::output_has_fullscreen(space, output_geo);
     let layer_map = layer_map_for_output(output);
     let append_layers = |lower: bool, renderer: &mut R, out: &mut Vec<MindeRenderElements<R>>| {
-        for surface in layer_map.layers().filter(|surface| {
-            (matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom) == lower)
-                && !(fullscreen && surface.layer() == WlrLayer::Top)
-        }) {
-            let loc = layer_map
-                .layer_geometry(surface)
-                .map(|geo| geo.loc)
-                .unwrap_or_default()
-                - origin;
-            out.extend(AsRenderElements::<R>::render_elements::<
-                MindeRenderElements<R>,
-            >(
-                surface,
-                renderer,
-                loc.to_physical_precise_round(scale),
-                scale,
-                1.0,
-            ));
+        let levels = if lower {
+            [WlrLayer::Bottom, WlrLayer::Background]
+        } else {
+            [WlrLayer::Overlay, WlrLayer::Top]
+        };
+        for level in levels {
+            if fullscreen && level == WlrLayer::Top {
+                continue;
+            }
+            for surface in layer_map.layers_on(level).rev() {
+                let loc = layer_map
+                    .layer_geometry(surface)
+                    .map(|geo| geo.loc)
+                    .unwrap_or_default()
+                    - origin;
+                out.extend(AsRenderElements::<R>::render_elements::<
+                    MindeRenderElements<R>,
+                >(
+                    surface,
+                    renderer,
+                    loc.to_physical_precise_round(scale),
+                    scale,
+                    1.0,
+                ));
+            }
         }
     };
     append_layers(false, renderer, &mut all);

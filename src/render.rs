@@ -270,42 +270,8 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
     }
 }
 
-/// Builds the render element showing `msg` centered on an output of
-/// logical size `output_size`, or `None` if import fails.
-pub fn message_element<R>(
-    renderer: &mut R,
-    msg: &MessageState,
-    output_size: (i32, i32),
-    scale: Scale<f64>,
-) -> Option<MindeRenderElements<R>>
-where
-    R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Send + Clone + 'static,
-{
-    let loc = Point::<i32, Logical>::from((
-        (output_size.0 - msg.size.0) / 2,
-        (output_size.1 - msg.size.1) / 2,
-    ));
-    match MemoryRenderBufferRenderElement::from_buffer(
-        renderer,
-        loc.to_f64().to_physical(scale),
-        &msg.buffer,
-        None,
-        None,
-        None,
-        Kind::Unspecified,
-    ) {
-        Ok(elem) => Some(elem.into()),
-        Err(err) => {
-            tracing::warn!(?err, "failed to render message element");
-            None
-        }
-    }
-}
-
-/// Builds the render element showing `msg` at an explicit output-local
-/// logical position (fselect/expose frame-number overlays), or `None`
-/// if import fails.
+/// Builds an overlay at logical position `loc` relative to the render target,
+/// or `None` if import fails.
 pub fn overlay_element<R>(
     renderer: &mut R,
     msg: &MessageState,

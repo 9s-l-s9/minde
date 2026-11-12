@@ -170,6 +170,12 @@ The suite checks dimensions, damage bounds and buffer guards after rotation,
 fractional scaling and host-window resize, plus a new session on a rotated
 output. Physical DRM hotplug uses the same cleanup but is not exercised here.
 
+Pixel regressions compare live layer rendering with both capture protocols
+and pointer hit-testing. They cover layer levels, mapping order, repainting an
+older surface and fullscreen policy. Centered-message region captures must
+equal the corresponding crop of a full frame at scales 1 and 1.5; the selected
+region must also contain message pixels, so an omitted overlay cannot pass.
+
 ## Gamma control lifecycle
 
 `cargo test handlers::gamma_control` uses real Wayland resource identities and
