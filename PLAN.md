@@ -474,7 +474,7 @@ is a separate decision and possibly a separate package.
 ### G1. AT-SPI bridge  (L, research)
 
 GTK, Qt, Firefox, Chromium and LibreOffice expose accessibility trees
-over D-Bus.  A helper (outside the compositor, Scheme or Python) that
+over D-Bus.  A Scheme helper outside the compositor that
 maps a `window-info` `pid` to its AT-SPI application and returns the
 focused widget, its role, name, and text.  This turns "type into the
 Calc window" into "put this in cell B7".  Decide whether it belongs

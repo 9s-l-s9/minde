@@ -34,7 +34,7 @@
              (gnu packages rust)
              (gnu packages pkg-config)
              (gnu packages guile)
-             (gnu packages python)
+             (gnu packages curl)
              (gnu packages admin)
              (gnu packages freedesktop)
              (gnu packages xdisorg)
@@ -153,8 +153,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                  "tests/commands-test.scm"
                  "tests/control-test.scm"
                  "tests/control-client-test.scm"))
-              (setenv "PYTHONDONTWRITEBYTECODE" "1")
-              (invoke "python3" "tests/control-agent-test.py"))))
+              (invoke "guile" "--no-auto-compile" "-L" "scheme" "tests/control-agent-test.scm"))))
         (replace 'install
           (lambda* (#:key inputs #:allow-other-keys)
             (let* ((out #$output)
@@ -288,12 +287,9 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                     (display "[preferred]\ndefault=wlr\n" port))))
               ;; REPL-socket helper scripts (used by prompt/message
               ;; workflows spawned from bindings). Pin their guile.
-              ;; mindectl is the only one that invokes guile directly (via
-              ;; the single GUILE=${MINDE_GUILE:-guile} line); minde-cmd
-              ;; and minde-msg delegate to it, so this substitute* is a
-              ;; no-op for those two (harmless: substitute* does not error
-              ;; on zero matches) but keeps all three scripts pinned the
-              ;; same way if that ever changes.
+              ;; Pin the interpreter in mindectl and minde-agent.
+              ;; minde-cmd and minde-msg delegate to mindectl, so the
+              ;; substitution is currently a no-op for those launchers.
               (for-each
                (lambda (script)
                  (let ((dest (string-append bin "/" script)))
@@ -303,14 +299,15 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                       (string-append "GUILE=" #$(this-package-input "guile")
                                      "/bin/guile")))
                    (chmod dest #o755)))
-               '("minde-cmd" "minde-msg" "mindectl"))
+               '("minde-cmd" "minde-msg" "mindectl" "minde-agent"))
               (let ((dest (string-append bin "/minde-agent")))
-                (copy-file "scripts/minde-agent" dest)
-                (substitute* dest
-                  (("^#!/usr/bin/env python3")
-                   (string-append "#!" #$(this-package-input "python")
-                                  "/bin/python3")))
-                (chmod dest #o755))
+                (wrap-program dest
+                  `("GUILE_LOAD_PATH" prefix
+                    (,(string-append #$(this-package-input "guile-json") "/share/guile/site/3.0")))
+                  `("GUILE_LOAD_COMPILED_PATH" prefix
+                    (,(string-append #$(this-package-input "guile-json") "/lib/guile/3.0/site-ccache")))
+                  `("MINDE_CURL" = (,(string-append #$(this-package-input "curl") "/bin/curl")))
+                  `("PATH" prefix (,(string-append #$(this-package-input "coreutils") "/bin")))))
               (call-with-output-file (string-append sessions "/minde.desktop")
                 (lambda (port)
                   (display "[Desktop Entry]
@@ -328,7 +325,9 @@ Type=Application
   (inputs
    (list bash-minimal
          guile-3.0
-         python
+         guile-json-4
+         curl
+         coreutils
          wayland
          libxkbcommon
          libinput-minimal

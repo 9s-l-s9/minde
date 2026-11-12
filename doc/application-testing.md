@@ -4,6 +4,13 @@ The test layout separates the small always-run compatibility gate from heavyweig
 toolkit/browser checks. Tests never require every application in one Guix
 environment.
 
+Raw Wayland protocol regressions share the Rust client in
+`tests/clients/protocol/`, built with `cargo build --example protocol-client`.
+The nested test scripts build it automatically and select the required
+scenario. Control-client and selector tests use Scheme and run through
+`make check-control`; `make check-control-e2e` exercises them against the
+compositor.
+
 ## Resource policy
 
 - One application scenario runs at a time.

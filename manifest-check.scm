@@ -18,6 +18,10 @@
    "pkg-config"
    ;; Guile (embedded via libguile)
    "guile"
+   "guile-readline"
+   "guile-json"
+   "curl"
+   "coreutils"
    ;; Smithay native deps -- required by the compositor and unit-test binaries.
    "wayland"
    "wayland-protocols"

@@ -299,8 +299,9 @@ Malformed completion data becomes a terminal `invalid-result` receipt.
 
 ## Optional classifier adapter
 
-`minde-agent` is a Python 3 standard-library client. Its default selector is
-a deterministic baseline, and its default behavior is a dry run:
+`minde-agent` is a Guile Scheme client, with curl for optional HTTP providers.
+Its default selector is a deterministic baseline, and its default behavior
+is a dry run:
 
 ```sh
 minde-agent select 'focus my browser'
@@ -331,7 +332,7 @@ Live Jev evaluation was explicitly deferred. The included evidence consists
 of offline provider stubs and a synthetic deterministic-selector corpus:
 
 ```sh
-python3 tests/control-agent-test.py
+guile --no-auto-compile -L scheme tests/control-agent-test.scm
 scripts/minde-agent evaluate \
   --corpus tests/fixtures/control-agent/corpus.json \
   --output /tmp/minde-agent-metrics.json
@@ -359,20 +360,8 @@ here, and these models have not demonstrated parity with Jev on Minde tasks.
 Both linked model cards use Apache-2.0 licenses. Their English checkpoints
 also need separate evaluation for German requests.
 
-Optional setup in a separate environment, following the
-[GLiClass](https://github.com/Knowledgator/GLiClass) and
-[GLiNER2](https://github.com/fastino-ai/GLiNER2) upstream instructions:
-
-```sh
-python3 -m venv /path/to/minde-model-env
-/path/to/minde-model-env/bin/pip install gliclass
-# Or, for GLiNER2 local inference (requires Python 3.10+):
-/path/to/minde-model-env/bin/pip install 'gliner2[local]'
-```
-
-The current GLiNER2 base install omits local inference dependencies; the
-`[local]` extra includes them. Loading a pretrained model downloads its
-weights. No models or these libraries were installed during this work.
+Run a separately managed model service if you want local inference. Model
+installation, dependencies and weights remain outside the Minde project.
 
 Minde's adapter provides a **loopback transport**, not a turnkey server for
 either library:

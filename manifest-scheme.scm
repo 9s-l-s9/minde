@@ -8,9 +8,11 @@
 ;; Usage: guix shell -m manifest-scheme.scm
 (specifications->manifest
  '("guile"
-   ;; mindectl repl's history and completion; tests/control-cli-test.py.
+   ;; mindectl repl's history and completion.
    "guile-readline"
-   "python"
+   "guile-json"
+   "curl"
+   "coreutils"
    "shellcheck"
    "ripgrep"
    "diffutils"

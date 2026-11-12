@@ -23,6 +23,9 @@ Entered with `guix shell -m manifest.scm`:
 - `gcc-toolchain`
 - `pkg-config`
 - `guile`
+- `guile-json`
+- `curl`
+- `coreutils`
 - `guile-readline`
 - `wayland`
 - `wayland-protocols`
@@ -40,7 +43,6 @@ Entered with `guix shell -m manifest.scm`:
 - `xorg-server-xwayland`
 - `xorg-server`
 - `xdotool`
-- `python`
 - `imagemagick`
 - `grim`
 - `swaybg`
@@ -77,14 +79,16 @@ Entered with `guix shell -m manifest.scm`:
 ### Inputs (linked/runtime)
 
 - `bash-minimal`
+- `coreutils`
+- `curl`
 - `eudev`
 - `guile-3.0`
+- `guile-json-4`
 - `libglvnd`
 - `libinput-minimal`
 - `libseat`
 - `libxkbcommon`
 - `mesa`
-- `python`
 - `wayland`
 
 ### Propagated inputs (installed alongside minde in the same profile)

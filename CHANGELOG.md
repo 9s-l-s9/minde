@@ -8,6 +8,12 @@ shims or migration notes.
 
 Target version: `1.0.0-rc1`.
 
+### Changed
+
+- The desktop selector and control tests now use Scheme, and protocol test
+  clients share a Rust harness. CI metadata is generated in Scheme, with
+  build manifests and package inputs updated accordingly.
+
 ### Fixed
 
 - Output-manager binds preserve other clients' configuration serials. Invalid

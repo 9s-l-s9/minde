@@ -62,8 +62,8 @@ check-cli: check-rust
 # Real Unix-socket clients and offline selector contracts, without a desktop
 # or provider credentials. The real compositor scenario is a separate gate.
 check-control: compile-scheme
-	$(GUILE_ENV) PYTHONDONTWRITEBYTECODE=1 python3 tests/control-cli-test.py
-	$(GUILE_ENV) PYTHONDONTWRITEBYTECODE=1 python3 tests/control-agent-test.py
+	$(GUILE) tests/control-cli-test.scm
+	$(GUILE) tests/control-agent-test.scm
 
 check-control-e2e:
 	sh tests/control-e2e.sh

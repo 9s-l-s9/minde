@@ -59,7 +59,7 @@ in this implementation. See the guide's
   output, without source, docs, or raw `eval`: 15 CLI calls and zero wrong
   targets or CLI failures. Its evidence boundary is documented with the
   nested metrics. Screenshot help was clarified from its feedback.
-- Guix package evaluation succeeds, and the package definition installs the Python helper
+- Guix package evaluation succeeds, and the package definition installs the Scheme helper
   and new Scheme modules. A full package build/install and physical
   multi-monitor run were not performed. Multioutput selection has native
   geometry tests; nested rendering has one output.

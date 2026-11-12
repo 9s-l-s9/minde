@@ -9,7 +9,11 @@
    "pkg-config"
    ;; Guile (embedded via libguile)
    "guile"
-   ;; mindectl repl's history and completion; tests/control-cli-test.py.
+   ;; Client JSON and optional provider HTTP transport.
+   "guile-json"
+   "curl"
+   "coreutils"
+   ;; mindectl repl's history and completion.
    "guile-readline"
    ;; Smithay native deps
    "wayland"
@@ -35,8 +39,6 @@
    ;; remain opt-in so the normal development environment stays reasonable.
    "xorg-server"
    "xdotool"
-   ;; Raw Wayland protocol clients for lock-security regressions.
-   "python"
    "imagemagick"
    ;; ext-image-copy-capture-v1 client used by the screen-capture e2e gate
    "grim"
