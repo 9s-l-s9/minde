@@ -214,4 +214,9 @@ kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     exit 1
 }
 
+timeout 45 "$NESTED_PROTOCOL_CLIENT" layer-output >"$OUT/layer-output.log" 2>&1 || {
+    cat "$OUT/layer-output.log" >&2
+    exit 1
+}
+cat "$OUT/layer-output.log"
 echo "output-management-e2e: all checks passed"

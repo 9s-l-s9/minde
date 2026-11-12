@@ -688,6 +688,13 @@ impl MindeState {
             return Err(err);
         }
         self.applying_output_config = false;
+        // Closing a layer role cannot be rolled back. Wait until every head
+        // succeeded, including when the DRM hook already unmapped the output.
+        for r in &resolved {
+            if !r.change.enabled {
+                self.close_output_layers(&r.change.output);
+            }
+        }
         Ok(())
     }
 

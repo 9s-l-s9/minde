@@ -291,6 +291,11 @@ MINDE_X11_DISPLAY="$xdisplay" \
     fail 'X11 keyboard focus restoration'
 }
 cat "$OUT/x11-focus.log"
+timeout 45 "$NESTED_PROTOCOL_CLIENT" layer-unlock >"$OUT/layer-unlock.log" 2>&1 || {
+    cat "$OUT/layer-unlock.log" >&2
+    fail 'exclusive layer focus after unlock'
+}
+cat "$OUT/layer-unlock.log"
 MINDE_X11_TEST_CLIENT="$OUT/x11-client" MINDE_TEST_COMPOSITOR_PID="$NESTED_WM_PID" \
     MINDE_X11_DISPLAY="$xdisplay" \
     timeout 45 "$NESTED_PROTOCOL_CLIENT" xwayland-lifecycle >"$OUT/xwayland-lifecycle.log" 2>&1 || {

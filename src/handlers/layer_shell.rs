@@ -8,7 +8,7 @@
 
 use smithay::{
     backend::renderer::utils::with_renderer_surface_state,
-    desktop::{LayerSurface, layer_map_for_output},
+    desktop::{LayerSurface, PopupManager, layer_map_for_output},
     output::Output,
     reexports::wayland_server::protocol::{wl_output, wl_surface::WlSurface},
     wayland::seat::WaylandFocus,
@@ -32,21 +32,19 @@ impl WlrLayerShellHandler for MindeState {
         layer: Layer,
         namespace: String,
     ) {
-        let output = wl_output
-            .as_ref()
-            .and_then(Output::from_resource)
-            .or_else(|| self.space.outputs().next().cloned());
+        let output = match wl_output.as_ref() {
+            Some(resource) => Output::from_resource(resource).filter(|o| self.output_enabled(o)),
+            None => self.space.outputs().next().cloned(),
+        };
         let Some(output) = output else {
-            tracing::warn!(
-                namespace,
-                "layer surface before any output exists; ignoring"
-            );
+            tracing::warn!(namespace, "layer surface has no enabled output; closing");
+            surface.send_close();
             return;
         };
-        if let Err(err) =
-            layer_map_for_output(&output).map_layer(&LayerSurface::new(surface, namespace.clone()))
-        {
+        let mapped_layer = LayerSurface::new(surface, namespace.clone());
+        if let Err(err) = layer_map_for_output(&output).map_layer(&mapped_layer) {
             tracing::warn!(?err, "failed to map layer surface");
+            mapped_layer.layer_surface().send_close();
         } else {
             tracing::info!(
                 component = "layer-shell",
@@ -60,36 +58,90 @@ impl WlrLayerShellHandler for MindeState {
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        let mut had_keyboard_focus = false;
-        if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
-            let map = layer_map_for_output(o);
+        let layer = self.space.outputs().find_map(|o| {
+            let mut map = layer_map_for_output(o);
             let layer = map
                 .layers()
                 .find(|&layer| layer.layer_surface() == &surface)
                 .cloned();
-            layer.map(|layer| (map, layer))
-        }) {
-            had_keyboard_focus = self.keyboard_focus().as_ref() == Some(layer.wl_surface());
-            map.unmap_layer(&layer);
-        }
+            if let Some(layer) = &layer {
+                map.unmap_layer(layer);
+            }
+            layer
+        });
         self.update_usable_area();
         self.schedule_redraw();
 
-        // The layer (e.g. fuzzel) held the keyboard: hand focus back to
-        // the frame tree's focused window.
-        if had_keyboard_focus && !self.locked {
-            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            let surface = self.exclusive_layer_focus().or_else(|| {
-                self.focused_window
-                    .as_ref()
-                    .and_then(|w| w.wl_surface().map(|s| s.into_owned()))
-            });
-            self.set_keyboard_focus(surface, serial);
+        if let Some(layer) = layer {
+            self.release_layer_focus(&layer);
+        } else if self.keyboard_focus().as_ref() == Some(surface.wl_surface()) {
+            // The output may already have left Space before this destructor.
+            self.restore_keyboard_focus();
         }
     }
 }
 
 impl MindeState {
+    /// Return to the eligible layer owner before the selected desktop window.
+    pub(crate) fn restore_keyboard_focus(&mut self) {
+        if self.locked {
+            self.enforce_lock_focus();
+            return;
+        }
+        let focus = self.exclusive_layer_focus().or_else(|| {
+            self.focused_window
+                .as_ref()
+                .and_then(|w| w.wl_surface().map(|s| s.into_owned()))
+        });
+        self.set_keyboard_focus(focus, smithay::utils::SERIAL_COUNTER.next_serial());
+    }
+
+    fn release_layer_focus(&mut self, layer: &LayerSurface) {
+        let mut surfaces = Vec::new();
+        layer.with_surfaces(|surface, _| surfaces.push(surface.clone()));
+        let focused = self
+            .keyboard_focus()
+            .as_ref()
+            .is_some_and(|s| surfaces.contains(s));
+        let keyboard = self.seat.get_keyboard();
+        let grabbed = keyboard
+            .as_ref()
+            .and_then(|k| k.grab_start_data())
+            .and_then(|grab| grab.focus)
+            .is_some_and(|focus| surfaces.contains(focus.surface()));
+        let root = layer.wl_surface();
+        for (popup, _) in PopupManager::popups_for_surface(root) {
+            let _ = PopupManager::dismiss_popup(root, &popup);
+        }
+        if focused || grabbed {
+            if let Some(keyboard) = keyboard {
+                keyboard.unset_grab(self);
+            }
+            self.restore_keyboard_focus();
+        }
+    }
+
+    /// Close layers only after an output is finally removed or disabled.
+    /// Configuration rollback must retain their roles and focus ownership.
+    pub(crate) fn close_output_layers(&mut self, output: &Output) {
+        let layers = {
+            let mut map = layer_map_for_output(output);
+            let layers: Vec<_> = map.layers().cloned().collect();
+            for layer in &layers {
+                map.unmap_layer(layer);
+            }
+            layers
+        };
+        if layers.is_empty() {
+            return;
+        }
+        for layer in layers {
+            layer.layer_surface().send_close();
+            self.release_layer_focus(&layer);
+        }
+        self.schedule_redraw();
+    }
+
     /// Mapped exclusive Overlay surfaces take priority over Top surfaces.
     /// Within one layer keep its current owner, otherwise choose the most
     /// recently mapped candidate on the first enabled output with one.

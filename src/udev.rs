@@ -1150,6 +1150,9 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     state.gamma_output_removed(&output);
     state.space.unmap_output(&output);
     state.capture_output_removed(&output);
+    if !state.applying_output_config {
+        state.close_output_layers(&output);
+    }
     output.leave_all();
     // Releases the CRTC (Drop for DrmOutput).
     drop(surface);

@@ -21,6 +21,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Layer surfaces on disabled or removed outputs receive `closed`, release
+  keyboard focus and cannot reappear when the output returns. Output tests
+  and failed configurations preserve their layers (#66).
+- New layer surfaces targeting a disabled output, or created with no enabled
+  output, receive `closed` instead of waiting indefinitely for configure (#67).
+- Exclusive layers retain keyboard ownership when an X11 window finishes
+  surface association and regain it before desktop windows on unlock (#57).
 - X11 keyboard focus uses Smithay's X11 target, honoring the client's input
   model and X11 focus notifications. Closing a focused layer restores real
   keyboard delivery to the selected X11 window (#65).

@@ -24,7 +24,7 @@ fn selected(id: u32) {
         &id.to_string(),
     );
 }
-fn keyboard(client: &mut Input, focused: bool) {
+pub(super) fn keyboard(client: &mut Input, focused: bool) {
     client.roundtrip();
     let event = client
         .events
@@ -57,19 +57,31 @@ fn center(client: &Input) -> (i32, i32) {
     let rect = numbers(&ipc(&format!("(wm-window-geometry {})", client.window_id)));
     (rect[0] + rect[2] / 2, rect[1] + rect[3] / 2)
 }
-struct Panel {
-    input: Input,
-    layer: u32,
+pub(super) struct Panel {
+    pub input: Input,
+    pub layer: u32,
 }
 impl Panel {
-    fn new(name: &str, layer: u32, mode: u32) -> Self {
-        let mut input = Input::new(name);
+    pub fn new(name: &str, layer: u32, mode: u32) -> Self {
+        let mut panel = Self::pending(Input::new(name), layer, mode, 0);
+        let configure = panel.input.event(panel.layer, 0);
+        panel
+            .input
+            .send(panel.layer, 6, &words(&[configure.word(0)]));
+        let surface = panel.input.surface;
+        panel
+            .input
+            .paint(surface, configure.word(1), configure.word(2), 0x00ff00);
+        panel.input.roundtrip();
+        panel
+    }
+    pub fn pending(mut input: Input, layer: u32, mode: u32, output: u32) -> Self {
         input.get_keyboard();
         input.surface = input.new_surface();
         let shell = input.bind("zwlr_layer_shell_v1", 4);
         let role = input.alloc();
-        let mut args = words(&[role, input.surface, 0, layer]);
-        args.extend(string(name));
+        let mut args = words(&[role, input.surface, output, layer]);
+        args.extend(string(&input.name));
         input.send(shell, 0, &args);
         input.send(role, 0, &words(&[280, 100]));
         input.send(role, 1, &words(&[5])); // top + left
@@ -77,18 +89,14 @@ impl Panel {
         input.send(role, 4, &words(&[mode]));
         let surface = input.surface;
         input.send(surface, 6, &[]);
-        let configure = input.event(role, 0);
-        input.send(role, 6, &words(&[configure.word(0)]));
-        input.paint(surface, configure.word(1), configure.word(2), 0x00ff00);
-        input.roundtrip();
         Self { input, layer: role }
     }
-    fn mode(&mut self, mode: u32) {
+    pub fn mode(&mut self, mode: u32) {
         self.input.send(self.layer, 4, &words(&[mode]));
         self.input.send(self.input.surface, 6, &[]);
         self.input.roundtrip();
     }
-    fn destroy(mut self) {
+    pub fn destroy(mut self) {
         self.input.send(self.layer, 7, &[]);
         self.input.send(self.input.surface, 0, &[]);
         self.input.roundtrip();
@@ -292,6 +300,11 @@ pub fn restore_x11() {
         },
         wrapper::ConnectionExt as _,
     };
+    let mut startup_panel = Panel::new("exclusive during X11 startup", 3, 1);
+    keyboard(&mut startup_panel.input, true);
+    let startup_events = startup_panel.input.events.len();
+    let host = command("xdotool", &["search", "--name", "Smithay"]);
+    let pixels = super::lock::HostPixels::for_window(host.trim().parse().unwrap());
     let display = std::env::var("MINDE_X11_DISPLAY").unwrap();
     let (connection, screen) = smithay::reexports::x11rb::connect(Some(&display)).unwrap();
     let root = connection.setup().roots[screen].root;
@@ -309,7 +322,7 @@ pub fn restore_x11() {
             WindowClass::INPUT_OUTPUT,
             0,
             &CreateWindowAux::new()
-                .background_pixel(0x204060)
+                .background_pixel(0x304050)
                 .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
         )
         .unwrap()
@@ -341,7 +354,22 @@ pub fn restore_x11() {
         "X11 focus target never mapped",
     );
     let id = id.unwrap();
-    evaluate(&format!("(focus-window-by-id! {id})"), "#t");
+    // Rendering proves the X11 window has its associated wl_surface. A
+    // registry/map roundtrip alone could precede the focus-stealing callback.
+    until(
+        || pixels.samples().contains(&0x304050),
+        "X11 target never rendered",
+    );
+    selected(id);
+    keyboard(&mut startup_panel.input, true);
+    assert!(
+        startup_panel
+            .input
+            .keyboard_events(startup_events, &[2])
+            .is_empty()
+    );
+    inject_key(&mut startup_panel.input.c, &mut []);
+    startup_panel.destroy();
     // Mapping precedes Xwayland's wl_surface association and keyboard enter.
     until(
         || connection.get_input_focus().unwrap().reply().unwrap().focus == window,

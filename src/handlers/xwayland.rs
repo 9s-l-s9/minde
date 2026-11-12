@@ -29,7 +29,7 @@ impl XWaylandShellHandler for MindeState {
     fn surface_associated(
         &mut self,
         _xwm: XwmId,
-        wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        _wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
         surface: X11Surface,
     ) {
         // Scheme may have focused this window at map time, before its
@@ -44,8 +44,7 @@ impl XWaylandShellHandler for MindeState {
             .map(|x| x == &surface)
             .unwrap_or(false);
         if !self.locked && is_focused {
-            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            self.set_keyboard_focus(Some(wl_surface), serial);
+            self.restore_keyboard_focus();
         }
         // The X11/Wayland association can arrive after the buffer commit.
         // Refresh the inspection mirror even if the client never repaints.

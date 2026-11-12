@@ -6,6 +6,7 @@ mod emergency;
 mod focus;
 mod input;
 mod keyboard;
+mod layer;
 mod lock;
 mod outputs;
 mod render;
@@ -28,6 +29,8 @@ fn main() {
         Some("pointer-constraints") => constraints::run(),
         Some("pointer-focus") => focus::run(),
         Some("x11-focus-restore") => focus::restore_x11(),
+        Some("layer-unlock") => layer::unlock(),
+        Some("layer-output") => layer::output_lifecycle(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

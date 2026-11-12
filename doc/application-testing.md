@@ -221,6 +221,12 @@ With an input method bound, text-input enter/leave must form one balanced pair;
 without one, neither event is sent. A Rust X11 client verifies initial key
 delivery and its restoration after an exclusive layer closes. Touch and stylus use the
 same target-selection helper; physical tap delivery remains a hardware check.
+It also checks that X11 surface association and session unlock never grant
+keyboard focus to the desktop underneath an exclusive layer. The output
+management gate closes layers on disable, rejects new roles on disabled or
+missing outputs, and accepts fresh layers after re-enable. Test-only and
+rejected configurations preserve layer ownership; physical unplug remains
+part of the hardware checklist.
 Tablet-awareness tests use real Wayland tool bindings over socket pairs,
 including multiple bindings, newly registered tools, surface destruction and
 client disconnects. Repeated queries across clients with large object tables

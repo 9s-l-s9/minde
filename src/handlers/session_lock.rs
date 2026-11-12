@@ -15,7 +15,6 @@ use smithay::{
     utils::SERIAL_COUNTER,
     wayland::{
         Dispatch2,
-        seat::WaylandFocus,
         session_lock::{
             LockSurface, LockSurfaceConfigure, SessionLockHandler,
             SessionLockManagerState, SessionLocker, SessionLockState,
@@ -165,15 +164,10 @@ impl SessionLockHandler for MindeState {
         self.schedule_redraw();
         crate::guile::set_session_locked(false);
         tracing::info!("session unlocked (ext-session-lock)");
-        let serial = SERIAL_COUNTER.next_serial();
-        let focus = self
-            .focused_window
-            .as_ref()
-            .and_then(|w| w.wl_surface().map(|s| s.into_owned()));
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.unset_grab(self);
         }
-        self.set_keyboard_focus(focus, serial);
+        self.restore_keyboard_focus();
         crate::guile::on_session_unlock();
     }
 
