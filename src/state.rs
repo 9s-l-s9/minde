@@ -210,6 +210,8 @@ pub struct MindeState {
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     /// The X11 window manager connection, once Xwayland is up.
     pub xwm: Option<smithay::xwayland::X11Wm>,
+    /// Wayland connection owned by the embedded X server, retired on failure.
+    pub(crate) xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     /// The X display number (":N") Xwayland serves, once ready.
     pub xdisplay: Option<u32>,
     pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
@@ -703,6 +705,7 @@ impl MindeState {
             xdg_activation_state,
             xwayland_shell_state,
             xwm: None,
+            xwayland_client: None,
             xdisplay: None,
             layer_shell_state,
             popups,
@@ -2256,7 +2259,7 @@ impl MindeState {
             self.focused_window = None;
         }
         let id = self.id_for_window(window)?;
-        self.windows.remove(&id);
+        self.windows.remove(&id)?;
         self.floating_ids.remove(&id);
         self.reported_titles.remove(&id);
         crate::automation_observe::set_window_geometry(id, None);
@@ -2395,6 +2398,7 @@ impl MindeState {
                 return;
             }
         };
+        self.xwayland_client = Some(client.clone());
 
         let display_handle = self.display_handle.clone();
         let ret = self
@@ -2426,7 +2430,7 @@ impl MindeState {
                             state.xwm = Some(wm);
                             state.xdisplay = Some(display_number);
                             guile::set_xwayland_status("ready", Some(display_number));
-                            // Children get DISPLAY via wm-spawn (X11_DISPLAY).
+                            // Children get DISPLAY via wm-spawn's runtime state.
                             // NEVER set it process-wide: in nested (winit)
                             // mode the compositor is itself an X client, and
                             // mesa/EGL lazily open X connections from
@@ -2434,26 +2438,22 @@ impl MindeState {
                             // deadlocks eglSwapBuffers against ourselves
                             // (same class as the WAYLAND_DISPLAY/winit
                             // startup deadlock).
-                            let _ = guile::X11_DISPLAY.set(format!(":{display_number}"));
                             guile::publish_status();
                         }
                         Err(err) => {
-                            guile::set_xwayland_status("failed", None);
                             tracing::warn!(%err, "failed to attach the X11 window manager");
-                            guile::publish_status();
+                            state.fail_xwayland();
                         }
                     }
                 }
                 XWaylandEvent::Error => {
-                    guile::set_xwayland_status("failed", None);
                     tracing::warn!("Xwayland crashed on startup; X11 apps unavailable");
-                    guile::publish_status();
+                    state.fail_xwayland();
                 }
             });
         if let Err(err) = ret {
-            guile::set_xwayland_status("failed", None);
             tracing::warn!(%err, "failed to insert the Xwayland event source");
-            guile::publish_status();
+            self.fail_xwayland();
         }
     }
 

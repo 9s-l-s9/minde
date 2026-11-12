@@ -17,7 +17,7 @@ incomplete release gate, **external** is deliberately delegated, and
 | Native prompt, menu, command/eval and contextual help | supported | Scheme unit suites and nested e2e |
 | Hooks and live Scheme configuration | supported | canonical API, atomic reload and serialized main-thread IPC |
 | Native Wayland xdg-shell clients | supported | required foot gate plus optional GTK, Qt, browser, Emacs and SDL structured scenarios |
-| Xwayland clients | experimental | required xterm mapping gate; post-crash Xwayland restart remains manual/missing |
+| Xwayland clients | experimental | X11 mapping, unmap during grabs and server-loss cleanup are tested in the nested fullscreen/pointer gate; failure removes X11 windows and reports a failed server while native clients continue. Automatic Xwayland restart remains missing |
 | Layer shell and exclusive zones | experimental | bounded eww/fuzzel/swaybg scenarios; owner visual/exclusive-zone check remains |
 | Session lock protocol | experimental | `ext-session-lock-v1` backs `logout!`/`lock-screen!`/`suspend!` ((minde session)); owner hardware verification that a locker actually blocks input/output remains |
 | Clipboard between Wayland and X11 | experimental | required Wayland MIME round trip and compositor e2e; primary selection (zwp_primary_selection, middle-click paste) now wired across Wayland and Xwayland; DnD remains |

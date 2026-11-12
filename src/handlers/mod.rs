@@ -15,6 +15,7 @@ pub mod screencopy;
 pub(crate) mod session_lock;
 pub mod tearing_control;
 pub mod virtual_pointer;
+mod window;
 pub mod wlr_screencopy;
 mod xdg_decoration;
 mod xdg_shell;

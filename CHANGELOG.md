@@ -10,6 +10,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- X11 unmaps cancel their move/resize grabs. Losing Xwayland removes its
+  managed windows, menus and foreign handles and reports a failed server;
+  native clients keep running. Spawned children receive only minde's live
+  Xwayland display, with `DISPLAY` removed before readiness or after failure
+  (#31, #40, #84).
+- X11 menus map at their requested position, and window geometry is
+  refreshed when the Wayland surface association arrives after its buffer.
 - Resize cancellation sends a configure that clears the resizing state and
   preserves the committed floating rectangle. Left/top-edge resizes keep
   their opposite edges anchored through delayed commits, and store the

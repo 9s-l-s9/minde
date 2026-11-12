@@ -61,6 +61,14 @@ at button release, then the actual committed rectangle if the client chose
 a different size. Cancelling a resize clears its positioning state, sends a
 configure without the resizing flag, and retains the committed rectangle.
 
+Native and X11 windows share unmap cleanup, including active move/resize
+grabs. On Xwayland connection loss, managed X11 windows and unmanaged menus
+are removed, its selections are cleared, and runtime status becomes
+`failed` with no X display. Native clients and their selections survive.
+Xwayland is not automatically restarted. Children launched by `wm-spawn`
+receive only the current embedded X display; while it is unavailable,
+their `DISPLAY` is removed without changing the compositor's environment.
+
 Runtime state is authoritative in the compositor thread. Status publication
 uses versioned JSON and atomic files. Layouts and placement rules use versioned
 Scheme datums and atomic replacement. Configuration reload validates a complete

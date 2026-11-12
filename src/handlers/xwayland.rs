@@ -50,6 +50,13 @@ impl XWaylandShellHandler for MindeState {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             keyboard.set_focus(self, Some(wl_surface), serial);
         }
+        // The X11/Wayland association can arrive after the buffer commit.
+        // Refresh the inspection mirror even if the client never repaints.
+        if let Some((id, window)) = self.window_for_x11(&surface) {
+            window.on_commit();
+            self.publish_window_geometry(id);
+        }
+        self.schedule_redraw();
     }
 }
 
@@ -61,11 +68,71 @@ impl MindeState {
             .find(|(_, w)| matches!(w.x11_surface(), Some(x) if x == surface))
             .map(|(id, w)| (*id, w.clone()))
     }
+
+    /// Retire a failed X server without disturbing native clients.
+    pub(crate) fn fail_xwayland(&mut self) {
+        use smithay::reexports::wayland_server::backend::DisconnectReason;
+        use smithay::wayland::selection::{
+            data_device::{clear_data_device_selection, current_data_device_selection_userdata},
+            primary_selection::{clear_primary_selection, current_primary_selection_userdata},
+        };
+
+        self.xdisplay = None;
+        guile::set_xwayland_status("failed", None);
+        // Include unmanaged menus and any registered window missing from
+        // Space. Keep the XWM alive until focus and grabs have been cleared:
+        // dropping it first destroys the surface associations we need here.
+        let mut windows: Vec<_> = self
+            .space
+            .elements()
+            .filter(|window| window.x11_surface().is_some())
+            .cloned()
+            .collect();
+        for window in self
+            .windows
+            .values()
+            .filter(|window| window.x11_surface().is_some())
+        {
+            if !windows.contains(window) {
+                windows.push(window.clone());
+            }
+        }
+        for window in windows {
+            self.unmap_window(&window);
+        }
+        // Prevent queued Wayland commits from consulting a retired XWM.
+        if let Some(client) = self.xwayland_client.take() {
+            self.display_handle
+                .backend_handle()
+                .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+        }
+        self.xwm = None;
+
+        let clipboard = current_data_device_selection_userdata(&self.seat)
+            .is_some_and(|owner| matches!(*owner, super::SelectionOwner::X11));
+        let primary = current_primary_selection_userdata(&self.seat)
+            .is_some_and(|owner| matches!(*owner, super::SelectionOwner::X11));
+        if clipboard {
+            clear_data_device_selection(&self.display_handle, &self.seat);
+        }
+        if primary {
+            clear_primary_selection(&self.display_handle, &self.seat);
+        }
+        self.schedule_redraw();
+        guile::publish_status();
+    }
 }
 
 impl XwmHandler for MindeState {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
         self.xwm.as_mut().unwrap()
+    }
+
+    fn disconnected(&mut self, xwm: XwmId) {
+        if self.xwm.as_ref().is_some_and(|wm| wm.id() == xwm) {
+            tracing::warn!("Xwayland connection lost; removing X11 windows");
+            self.fail_xwayland();
+        }
     }
 
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
@@ -99,23 +166,15 @@ impl XwmHandler for MindeState {
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         // Menus, tooltips, dnd feedback: render where the client asked,
         // unmanaged (not registered with Scheme).
-        let location = window.geometry().loc;
+        let location = window.last_configure().loc;
         let element = Window::new_x11_window(window);
         self.space.map_element(element, location, true);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         self.schedule_redraw();
-        if let Some((id, element)) = self.window_for_x11(&window) {
-            self.space.unmap_elem(&element);
-            self.unregister_window(&element);
-            guile::on_window_unmap(id);
-            tracing::info!(
-                component = "window",
-                protocol = "xwayland",
-                window_id = id,
-                "managed toplevel unmapped"
-            );
+        if let Some((_, element)) = self.window_for_x11(&window) {
+            self.unmap_window(&element);
         } else {
             // Unmanaged override-redirect window. (Bind before unmapping:
             // the scrutinee's space borrow lives through an if-let body.)
@@ -125,7 +184,7 @@ impl XwmHandler for MindeState {
                 .find(|e| matches!(e.x11_surface(), Some(x) if x == &window))
                 .cloned();
             if let Some(element) = unmanaged {
-                self.space.unmap_elem(&element);
+                self.unmap_window(&element);
             }
         }
         if !window.is_override_redirect() {

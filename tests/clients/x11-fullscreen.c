@@ -14,7 +14,7 @@ int main(int argc, char **argv) {
     Window w = XCreateSimpleWindow(d, root, 0, 0, 640, 480, 0, 0, 0x204060);
     Atom state = XInternAtom(d, "_NET_WM_STATE", False);
     Atom fs = XInternAtom(d, "_NET_WM_STATE_FULLSCREEN", False);
-    XStoreName(d, w, "minde-fullscreen-test");
+    XStoreName(d, w, argc > 2 ? argv[2] : "minde-fullscreen-test");
     XSelectInput(d, w, StructureNotifyMask | PointerMotionMask);
     if (argc > 1 && !strcmp(argv[1], "fullscreen")) XChangeProperty(d, w, state, XA_ATOM, 32, PropModeReplace, (unsigned char *)&fs, 1);
     XMapWindow(d, w); XFlush(d);
@@ -34,6 +34,14 @@ int main(int argc, char **argv) {
                     int status = XGrabPointer(d, w, True, PointerMotionMask | ButtonPressMask | ButtonReleaseMask, GrabModeAsync, GrabModeAsync, w, None, CurrentTime);
                     printf("grab %d\n", status);
                 } else if (!strcmp(cmd, "ungrab")) XUngrabPointer(d, CurrentTime);
+                else if (!strcmp(cmd, "unmap")) XUnmapWindow(d, w);
+                else if (!strcmp(cmd, "map")) XMapWindow(d, w);
+                else if (!strcmp(cmd, "menu")) {
+                    Window menu = XCreateSimpleWindow(d, root, 610, 370, 80, 60, 0, 0, 0x00ff00);
+                    XSetWindowAttributes attributes = {.override_redirect = True};
+                    XChangeWindowAttributes(d, menu, CWOverrideRedirect, &attributes);
+                    XMapWindow(d, menu);
+                }
                 else if (!strcmp(cmd, "resize")) XResizeWindow(d, w, 320, 240);
                 else if (!strcmp(cmd, "quit")) break;
                 else {

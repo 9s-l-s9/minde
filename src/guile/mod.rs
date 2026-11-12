@@ -622,11 +622,6 @@ pub fn to_string_lossy(v: Scm) -> Option<String> {
 /// "Failed to initialize GTK" on the TTY).
 pub static SOCKET_NAME: OnceLock<String> = OnceLock::new();
 
-/// Xwayland's ":N", set once it reports Ready -- same motivation as
-/// SOCKET_NAME: children spawned before/around the env export must still
-/// see the right DISPLAY.
-pub static X11_DISPLAY: OnceLock<String> = OnceLock::new();
-
 /// The thread that ran `scm_init_guile`, i.e. the compositor main thread.
 static GUILE_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
 
@@ -664,8 +659,9 @@ pub fn spawn_on_main_thread(cmd: &str) {
     if let Some(socket) = SOCKET_NAME.get() {
         command.env("WAYLAND_DISPLAY", socket);
     }
-    if let Some(display) = X11_DISPLAY.get() {
-        command.env("DISPLAY", display);
+    let display = XWAYLAND_DISPLAY.load(Ordering::SeqCst);
+    if display >= 0 {
+        command.env("DISPLAY", format!(":{display}"));
         // With DISPLAY set, dual-stack toolkits (Firefox/zen, GTK apps)
         // would default to X11 -- through Xwayland their CSD shadow
         // margins aren't compensated (the old zen gap bug). Prefer
@@ -673,6 +669,10 @@ pub fn spawn_on_main_thread(cmd: &str) {
         // override with its own VAR=... prefix.
         command.env("MOZ_ENABLE_WAYLAND", "1");
         command.env("GDK_BACKEND", "wayland,x11");
+    } else {
+        // Never launch an X11 client on the host display while our server
+        // is starting, disabled or failed. Keep the compositor's own env.
+        command.env_remove("DISPLAY");
     }
     match command.spawn() {
         Ok(child) => {

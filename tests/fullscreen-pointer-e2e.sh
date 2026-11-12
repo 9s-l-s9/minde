@@ -40,9 +40,23 @@ gcc -Wall -Wextra -Werror -I"$OUT" tests/clients/pointer-constraints.c \
 gcc -Wall -Wextra -Werror tests/clients/x11-fullscreen.c \
     $(pkg-config --cflags --libs x11) -o "$OUT/x11-client"
 
+# Autostart runs before Xwayland is ready. Probe the real child environment
+# while retaining the bundled policy used by the rest of this gate.
+cat >"$OUT/startup.scm" <<'EOF'
+(primitive-load-path "init.scm")
+(define lifecycle-original-startup handle-startup!)
+(define (handle-startup!)
+  (lifecycle-original-startup)
+  (wm-spawn "printf '%s' \"${DISPLAY-unset}\" > \"$XDG_RUNTIME_DIR/startup-display\""))
+EOF
+export MINDE_NESTED_INIT="$OUT/startup.scm"
 nested_start "$OUT" "${MINDE_FULLSCREEN_POINTER_E2E_DISPLAY:-:91}"
 eval_wm() { timeout 5 scripts/mindectl eval "$1"; }
-fail() { echo "FAIL: $* (logs in $OUT)" >&2; exit 1; }
+fail() {
+    echo "FAIL: $* (logs in $OUT)" >&2
+    eval_wm '(list (focused-window-id) (fullscreen-window) (map (lambda (id) (list id (wm-window-geometry id))) (all-window-ids)))' >&2 || true
+    exit 1
+}
 wait_log() {
     attempt=0
     until grep -q "$2" "$1"; do
@@ -260,5 +274,12 @@ fi
     assert_pixel "$kind-panel-restored" 10 10 A02020
     stop_client
 done
+MINDE_X11_TEST_CLIENT="$OUT/x11-client" MINDE_TEST_COMPOSITOR_PID="$NESTED_WM_PID" \
+    MINDE_X11_DISPLAY="$xdisplay" PYTHONDONTWRITEBYTECODE=1 \
+    timeout 45 python3 tests/clients/xwayland-lifecycle.py >"$OUT/xwayland-lifecycle.log" 2>&1 || {
+    cat "$OUT/xwayland-lifecycle.log" >&2
+    fail 'Xwayland lifecycle regression'
+}
+cat "$OUT/xwayland-lifecycle.log"
 ! nested_log_has 'protocol error' || fail 'protocol error'
 echo 'fullscreen-pointer-e2e: all checks passed'

@@ -123,9 +123,11 @@ group, changes the clipboard, simulates a two-output hotplug and restores the
 single output, then validates schema-v1 state. Results and RSS measurements
 are retained in `/tmp/minde-soak/results.json`.
 
-Java, Wine, games, touch/tablet, IME, drag-and-drop and multi-GPU remain
-manual/optional coverage. Modern swaylock requires `ext-session-lock-v1`,
-which is not implemented; normal runs record an explicit skip and strict runs
-fail. Actual Xwayland server crash/restart is also a manual limitation; client
-churn is automated, but the compositor does not yet restart a post-startup
-Xwayland process.
+Java, Wine, games, touch/tablet, IME, drag-and-drop and multi-GPU retain
+manual/optional application coverage. Session-lock ownership and input
+isolation are exercised by `tests/session-lock-e2e.sh` using
+`ext-session-lock-v1`. The fullscreen/pointer gate also unmaps X11 windows
+during move/resize grabs and terminates only its private Xwayland child.
+It verifies window and menu cleanup, foreign handles, failed runtime status,
+child `DISPLAY`, and continued native input. Automatic Xwayland restart
+remains unimplemented.
