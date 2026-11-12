@@ -33,6 +33,48 @@
        #:success? success?))
 (define (status result expected) (check (equal? (ref result "status") expected) result expected))
 (define (failure result expected) (check (equal? (ref (ref result "error") "code") expected) result expected))
+;; A personal command exists only in this session. Validation must use that
+;; registry without invoking it or publishing a candidate keymap.
+(cli '("eval" "(begin
+  (define config-test-invoked? #f)
+  (define config-test-bindings %prefix-bindings)
+  (define config-test-prefix (list %prefix-mods %prefix-key))
+  (define config-test-original (getenv \"MINDE_CONFIG\"))
+  (register-command! 'personal-config-test!
+    (lambda () (set! config-test-invoked? #t))
+    #:category 'test #:summary \"Configuration validation test.\")
+  #t)"))
+(let ((file (string-append out "/personal-config.scm")))
+  (define (save command)
+    (call-with-output-file file
+      (lambda (p)
+        (write `(minde-config (version 1) (prefix () "Print")
+                             (bindings ("F12" ,command))) p))))
+  (save 'personal-config-test!)
+  (failure (cli (list "check-config" file) #:success? #f) "invalid-configuration")
+  (cli (list "check-config" file "--live"))
+  (cli '("eval" "(begin
+    (unless (and (not config-test-invoked?) (eq? config-test-bindings %prefix-bindings)
+                 (equal? config-test-prefix (list %prefix-mods %prefix-key)))
+      (error \"validation applied configuration or invoked a command\")) #t)"))
+  (save 'focus-window!)
+  (cli (list "check-config" file "--live") #:success? #f)
+  (cli (list "eval" (format #f "(begin
+    (setenv \"MINDE_CONFIG\" ~s)
+    (when (reload-configuration!) (error \"reload accepted arguments\"))
+    (unless (and (eq? config-test-bindings %prefix-bindings)
+                 (equal? config-test-prefix (list %prefix-mods %prefix-key)))
+      (error \"invalid reload changed keymap\")) #t)" file)))
+  (save 'personal-config-test!)
+  (cli '("eval" "(begin
+    (unless (and (reload-configuration!) (string=? %prefix-key \"Print\")
+                 (eq? (hash-ref %prefix-bindings \"F12\")
+                      (command-procedure (command-ref 'personal-config-test!)))
+                 (not config-test-invoked?))
+      (error \"valid personal configuration did not reload\"))
+    (if config-test-original (setenv \"MINDE_CONFIG\" config-test-original)
+        (unsetenv \"MINDE_CONFIG\"))
+    (unless (reload-configuration!) (error \"original configuration did not reload\")) #t)")))
 (let ((names (map (lambda (a) (ref a "name")) (vector->list (ref (cli '("capabilities")) "actions")))))
   (for-each (lambda (operation)
               (check (member operation names) operation)

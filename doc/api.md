@@ -85,10 +85,8 @@ the same definitions.
 ```scheme
 (minde-config
  (version 1)
- (prefix () "Print")
- (bindings
-  ("g" switch-to-next-group!)
-  ("z" reload-configuration!)))
+ (prefix (ctrl) "t")
+ (bindings))
 ```
 
 The loader rejects unknown fields, versions, modifiers and commands, as well
@@ -102,6 +100,11 @@ Validate without a display using either:
 cargo run -- --check-config scheme/default-config.scm
 scripts/mindectl check-config scheme/default-config.scm
 ```
+
+These offline checks recognize bundled commands, including control commands,
+and reject bindings that require arguments. Use `mindectl check-config FILE
+--live` to validate against the running session's registry, including personal
+commands. Checking neither loads personal init files nor applies configuration.
 
 The public contract and registry metadata are checked with `make check-api`.
 

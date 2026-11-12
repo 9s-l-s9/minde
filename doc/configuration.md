@@ -13,8 +13,12 @@ The Scheme entry point is selected in this order:
 3. the packaged/repository `scheme/init.scm` fallback.
 
 `MINDE_SCHEME_DIR` selects the bundled module directory. The declarative
-configuration comes from `MINDE_CONFIG`, otherwise
-`scheme/default-config.scm` beside the selected entry point.
+configuration comes from `MINDE_CONFIG`, otherwise from
+`$MINDE_SCHEME_DIR/default-config.scm`. When `MINDE_SCHEME_DIR` is unset, it
+comes from the directory of the `init.scm` that defines
+`configuration-file-path` (normally the bundled file). Loading that file
+from a personal entry point does not select a configuration beside the
+personal file; set `MINDE_CONFIG` explicitly for a personal configuration.
 
 If a personal init raises an exception, Minde logs its path, the Scheme
 exception and source information, then restarts once with the bundled init
@@ -53,6 +57,19 @@ versions, modifiers, commands, and duplicate keys are errors.
 scripts/mindectl check-config path/to/config.scm
 scripts/mindectl eval '(reload-configuration!)'
 ```
+
+Offline checking knows the bundled commands, including the control commands
+`desktop-snapshot` and `windows`. It does not load personal init files. To
+validate against commands registered in the running session, use:
+
+```sh
+scripts/mindectl check-config path/to/config.scm --live
+```
+
+Both modes read the file as data and require commands with no arguments.
+Live checking sends the data to the session for validation; it does not apply
+the configuration or invoke the bound commands. It uses the normal IPC
+deadline, adjustable with `--timeout-ms`.
 
 Reload builds and validates a candidate table before publishing it. Failure
 leaves the active prefix and bindings unchanged.

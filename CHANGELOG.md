@@ -16,6 +16,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Offline configuration checks recognize bundled control commands and reject
+  bindings that require arguments. `mindectl check-config FILE --live` checks
+  personal commands against the running session without applying changes;
+  configuration readers disable read-time evaluation (#24).
+- Configuration documentation describes the actual default-file lookup and
+  shows the shipped `C-t` prefix with no declarative overrides (#105, #132).
 - Output mirror diagnostics compare raw usable rectangles, so head gaps
   and span layouts do not produce false drift reports; real geometry
   disagreements remain visible (#8).

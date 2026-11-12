@@ -29,4 +29,27 @@ set -e
 printf '%s\n' "$error" | grep -q 'unknown option: --definitely-invalid'
 printf '%s\n' "$error" | grep -q "Try 'minde --help'"
 
+config_dir=$(mktemp -d)
+trap 'rm -rf "$config_dir"' EXIT HUP INT TERM
+# A developer's installed session may export a different Scheme bundle.
+# This gate exercises the checkout's command schemas with the built binary.
+MINDE_SCHEME_DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")/../scheme" && pwd)
+GUILE_AUTO_COMPILE=0
+XDG_CACHE_HOME=$config_dir/cache
+export MINDE_SCHEME_DIR GUILE_AUTO_COMPILE XDG_CACHE_HOME
+cat >"$config_dir/control.scm" <<'EOF'
+(minde-config (version 1) (prefix (ctrl) "t")
+ (bindings ("d" desktop-snapshot) ("w" windows)))
+EOF
+"$binary" --check-config "$config_dir/control.scm"
+cat >"$config_dir/arguments.scm" <<'EOF'
+(minde-config (version 1) (prefix (ctrl) "t")
+ (bindings ("f" focus-window!)))
+EOF
+if "$binary" --check-config "$config_dir/arguments.scm" >"$config_dir/error" 2>&1; then
+    echo "CLI contract: accepted a key binding that requires arguments" >&2
+    exit 1
+fi
+grep -q 'key binding command requires arguments' "$config_dir/error"
+
 echo "CLI contract: ok ($version)"

@@ -1683,8 +1683,6 @@ reload baseline. Call once after adding imperative user bindings."
      (lambda (binding)
        (let* ((key (car binding))
               (command (command-ref (cadr binding))))
-         (unless (null? (command-arguments command))
-           (error "key binding command requires arguments" (command-name command)))
          (hash-set! candidate key (command-procedure command))
          (hash-set! candidate-docs key (command-summary command))))
      (configuration-bindings config))

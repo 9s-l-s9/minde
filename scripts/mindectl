@@ -33,7 +33,7 @@ usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
        mindectl events-since SEQUENCE [--session S] [--scheme|--json]
        mindectl watch [--scheme|--json] [--count N]
        mindectl repl
-       mindectl check-config FILE
+       mindectl check-config FILE [--live] [--scheme|--json]
        mindectl query state --json
        mindectl subscribe --json
        mindectl subscribe --events
@@ -210,43 +210,8 @@ write_report() {
 
 command=${1:-}
 case "$command" in
-    eval|capabilities|help|search|request|call|wait|events-since|watch|repl|--machine|--scheme|--json)
+    eval|capabilities|help|search|request|call|wait|events-since|watch|repl|check-config|--machine|--scheme|--json)
         control_client "$@"
-        ;;
-    check-config)
-        [ "$#" -eq 2 ] || { usage >&2; exit 2; }
-        script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
-        if [ -d "$script_dir/../scheme" ]; then
-            local_modules=$(unset CDPATH; cd -- "$script_dir/../scheme" && pwd)
-        else
-            local_modules=
-        fi
-        if [ -d "$script_dir/../share/minde/scheme" ]; then
-            installed_modules=$(unset CDPATH; cd -- "$script_dir/../share/minde/scheme" && pwd)
-        else
-            installed_modules=
-        fi
-        if [ -f "$local_modules/minde/config.scm" ]; then
-            modules=$local_modules
-        elif [ -n "$installed_modules" ] && [ -f "$installed_modules/minde/config.scm" ]; then
-            modules=$installed_modules
-        elif [ -n "${MINDE_SCHEME_DIR:-}" ]; then
-            modules=$MINDE_SCHEME_DIR
-        else
-            echo "mindectl: cannot locate Scheme modules" >&2
-            exit 1
-        fi
-        ccache=$script_dir/../lib/guile/3.0/site-ccache
-        if [ -d "$ccache" ]; then
-            GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
-            export GUILE_LOAD_COMPILED_PATH
-        fi
-        exec "$GUILE" --no-auto-compile -L "$modules" -c \
-            '(use-modules (minde command-catalog) (minde config))
-             (register-builtin-command-schemas!)
-             (validate-configuration-file (cadr (command-line)))
-             (format #t "configuration valid: ~a~%" (cadr (command-line)))' \
-            "$2"
         ;;
     query)
         if [ "${2:-}" = desktop ] || [ "${2:-}" = windows ]; then

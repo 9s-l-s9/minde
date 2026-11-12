@@ -24,7 +24,10 @@
                (string? (car binding)) (symbol? (cadr binding)))
     (error "binding must be (key command-name)" binding))
   (when (string-null? (car binding)) (error "binding key cannot be empty" binding))
-  (unless (command-ref (cadr binding)) (error "binding names unknown command" binding))
+  (let ((command (command-ref (cadr binding))))
+    (unless command (error "binding names unknown command" binding))
+    (unless (null? (command-arguments command))
+      (error "key binding command requires arguments" (command-name command))))
   (when (member (car binding) seen) (error "duplicate binding key" (car binding)))
   (car binding))
 
@@ -54,7 +57,8 @@
         (loop (cdr bindings) (cons (validate-binding (car bindings) seen) seen))))
     datum))
 
-(define (read-configuration path) (read-datum-file path))
+(define (read-configuration path)
+  (with-fluids ((read-eval? #f)) (read-datum-file path)))
 (define (validate-configuration-file path)
   (validate-configuration (read-configuration path)))
 (define (configuration-prefix-modifiers config) (cadr (field 'prefix config)))

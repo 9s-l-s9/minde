@@ -1721,8 +1721,9 @@ pub fn check_config(path: &std::path::Path) -> bool {
     boot();
     let code = format!(
         "(begin \
-           (use-modules (minde command-catalog) (minde config)) \
+           (use-modules (minde command-catalog) (minde config) (minde control)) \
            (register-builtin-command-schemas!) \
+           (register-control-commands!) \
            (catch #t \
              (lambda () (validate-configuration-file {}) #t) \
              (lambda (key . args) \

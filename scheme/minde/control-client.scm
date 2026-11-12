@@ -7,6 +7,7 @@
   #:use-module (srfi srfi-1)
   #:use-module (srfi srfi-13)
   #:use-module (minde control-json)
+  #:use-module (minde config)
   #:export (control-client-main ipc-request read-one-datum build-control-expression
             emit-reply wait-for-action watch-desktop))
 
@@ -183,6 +184,31 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
   (cond ((and (eq? (car reply) 'error) (> (length reply) 5)
               (eq? (assq-ref (list-ref reply 5) 'stage) 'transport)) 3)
         ((reply-failed? reply kind) 1) (else 0)))
+
+(define (check-configuration path file live? timeout-ms)
+  ;; Read locally so --live checks exactly the supplied data, even when the
+  ;; session has a different working directory. Never load the user's init.
+  (catch #t
+    (lambda ()
+      (let ((datum (read-configuration file)))
+        (if live?
+            (ipc-request path
+                         (scheme-string
+                          `(begin ((@ (minde config) validate-configuration)
+                                   ',datum)
+                                  #t))
+                         #:timeout-ms timeout-ms)
+            (begin
+              ((@ (minde command-catalog) register-builtin-command-schemas!))
+              ((@ (minde control) register-control-commands!))
+              (validate-configuration datum)
+              '(ok #t)))))
+    (lambda (key . args)
+      `(error invalid-configuration ()
+              ,(call-with-output-string
+                (lambda (port) (print-exception port #f key args)))
+              "" ((stage . validation) (execution-started? . #f)
+                  (execution-completed? . #f) (effects-may-have-occurred? . #f))))))
 (define* (wait-for-action path id #:key (session #f) (timeout-ms 10000))
   "Poll receipt state in the client. Expiry stops observation, never the action."
   (let ((deadline (+ (milliseconds) timeout-ms)))
@@ -236,7 +262,7 @@ reconnection always obtains a fresh snapshot, never retries an action."
   (let loop ((remaining arguments) (positionals '()) (options '()))
     (match remaining
       (() (values (reverse positionals) options))
-      (((or "--machine" "--scheme" "--json" "--backtrace") . rest)
+      (((or "--machine" "--scheme" "--json" "--backtrace" "--live") . rest)
        (loop rest positionals (acons (car remaining) #t options)))
       (((or "--session" "--revision" "--request-id" "--timeout-ms" "--count") value . rest)
        (let* ((name (car remaining))
@@ -267,6 +293,7 @@ reconnection always obtains a fresh snapshot, never retries an action."
                 ((member name '("--session")) (member command '("call" "wait" "events-since")))
                 ((member name '("--revision" "--request-id")) (string=? command "call"))
                 ((string=? name "--count") (string=? command "watch"))
+                ((string=? name "--live") (string=? command "check-config"))
                 ((string=? name "--timeout-ms") (not (member command '("watch" "repl"))))
                 (else (not (string=? command "repl"))))
          (throw 'client-error (string-append name " does not apply to " command)))))
@@ -361,6 +388,13 @@ reconnection always obtains a fresh snapshot, never retries an action."
                    (kind (command-kind command args)))
               (validate-options command options)
               (cond
+               ((string=? command "check-config")
+                (unless (= (length args) 1) (throw 'client-error "check-config requires a file"))
+                (let ((reply (check-configuration path (car args) (option options "--live" #f)
+                                                 (option options "--timeout-ms" 2000))))
+                  (if (and (eq? mode 'human) (eq? (car reply) 'ok))
+                      (begin (format #t "configuration valid: ~a~%" (car args)) 0)
+                      (emit-reply reply 'raw #:mode mode #:backtrace? (option options "--backtrace" #f)))))
                ((string=? command "watch")
                 (unless (null? args) (throw 'client-error "watch accepts no positional arguments"))
                 (watch-desktop path #:mode mode #:count (option options "--count" #f)))
