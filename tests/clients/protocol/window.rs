@@ -77,6 +77,8 @@ impl Observer {
 }
 pub fn run() {
     focus();
+    metadata();
+    placement_rules();
     let mut observer = Observer::new();
     let mut anchor = Client::new("anchor");
     let mut target = Client::new("pending");
@@ -239,6 +241,179 @@ pub fn run() {
     evaluate("(length lifecycle-unmaps)", "7");
     assert!(observer.live_handles().is_empty());
     println!("ok - mapped and unmapped role destruction emit unmap exactly once");
+}
+
+fn metadata() {
+    let mut client = Client::new("metadata rule candidate");
+    client.toplevel(true);
+    let id = window_id("metadata rule candidate");
+    evaluate(
+        "(begin (define metadata-events '()) \
+        (define (record-metadata id title app) \
+          (set! metadata-events (cons (list id title app) metadata-events))) \
+        (add-event-hook! 'window-title-changed record-metadata) \
+        (add-placement-rule! \"policy-PiP\" #:float? #t) #t)",
+        "#t",
+    );
+    for (index, title) in [
+        "policy other",
+        "policy-PiP",
+        "policy-PiP again",
+        "policy third",
+        "policy-PiP",
+    ]
+    .iter()
+    .enumerate()
+    {
+        if index == 2 {
+            evaluate(
+                &format!("(begin (unfloat-window! {id}) (rename-window! \"pinned\") #t)"),
+                "#t",
+            );
+        }
+        // Repeating a metadata request and committing again must not emit
+        // duplicate events or override a manual unfloat.
+        for _ in 0..2 {
+            client.send(client.toplevel_object, 2, &string(title));
+            client.send(client.surface, 6, &[]);
+            client.roundtrip();
+        }
+        evaluate("(length metadata-events)", &(index + 1).to_string());
+        evaluate("(car metadata-events)", &format!("({id} {title:?} \"\")"));
+        evaluate(
+            &format!("(window-floating? {id})"),
+            if index == 1 || index == 4 { "#t" } else { "#f" },
+        );
+        if index >= 2 {
+            evaluate(&format!("(window-title {id})"), "\"pinned\"");
+        }
+    }
+    drop(client);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "metadata client did not unmap",
+    );
+    let mut late = Client::new("late app-id candidate");
+    late.toplevel(true);
+    let late_id = window_id("late app-id candidate");
+    evaluate(
+        "(begin (add-placement-rule! \"org.minde.late-metadata\" #:group \"II\") #t)",
+        "#t",
+    );
+    late.send(late.toplevel_object, 3, &string("org.minde.late-metadata"));
+    late.send(late.surface, 6, &[]);
+    late.roundtrip();
+    evaluate(&format!("(group-has-window? \" II \" {late_id})"), "#t");
+    evaluate("(current-group-name)", "\" I \"");
+    drop(late);
+    until(
+        || ipc(&format!("(group-has-window? \" II \" {late_id})")) == "(ok #f)",
+        "late app-id client did not unmap",
+    );
+    evaluate(
+        "(begin (remove-event-hook! 'window-title-changed record-metadata) (clear-placement-rules!) #t)",
+        "#t",
+    );
+    println!("ok - real title edges emit events and apply rules beneath display renames");
+    println!("ok - late app-id placement uses previously reported client metadata");
+}
+
+fn placement_rules() {
+    let mut late = Client::new("same-group rule candidate");
+    late.toplevel(true);
+    let id = window_id("same-group rule candidate");
+    evaluate(
+        "(begin (split-frame-horizontal!) \
+        (add-placement-rule! \"org.minde.samegroup\" #:frame 1 #:follow? #t) #t)",
+        "#t",
+    );
+    late.send(late.toplevel_object, 3, &string("org.minde.samegroup"));
+    late.send(late.surface, 6, &[]);
+    late.roundtrip();
+    late.roundtrip();
+    evaluate(&format!("(wm-window-geometry {id})"), "(643 3 634 794)");
+    println!("ok - late follow rule places a client in another frame of the current group");
+
+    evaluate(
+        "(begin (create-floating-group-in-background! \"rule-floats\") \
+        (clear-placement-rules!) \
+        (add-placement-rule! \"org.minde.samegroup\" #:group \"rule-floats\" #:lock? #f) \
+        (place-existing-windows!) #t)",
+        "#t",
+    );
+    evaluate(&format!("(and (member {id} (wm-floating-ids)) #t)"), "#t");
+    evaluate("(current-group-name)", "\" I \"");
+    evaluate(
+        "(begin (switch-to-group! \"rule-floats\") \
+        (add-placement-rule! \"float rule candidate\" #:group \"rule-floats\") #t)",
+        "#t",
+    );
+    let mut mapped = Client::new("float rule candidate");
+    mapped.toplevel(true);
+    let mapped_id = window_id("float rule candidate");
+    evaluate(
+        &format!("(and (member {mapped_id} (wm-floating-ids)) #t)"),
+        "#t",
+    );
+    evaluate("(frame-tree-window-count)", "0");
+    inject_key(&mut mapped, &mut [&mut late]);
+    drop(mapped);
+    drop(late);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "floating rule clients did not unmap",
+    );
+    println!("ok - map and explicit placement into floating groups set actual floating state");
+
+    evaluate(
+        "(begin (clear-placement-rules!) (create-dynamic-group! \"rule-dynamic\") #t)",
+        "#t",
+    );
+    let mut one = Client::new("dynamic rule one");
+    one.toplevel(true);
+    let one_id = window_id("dynamic rule one");
+    let mut two = Client::new("dynamic rule two");
+    two.toplevel(true);
+    let two_id = window_id("dynamic rule two");
+    let mut three = Client::new("dynamic rule three");
+    three.toplevel(true);
+    evaluate(
+        "(begin (add-placement-rule! \"dynamic-PiP\" #:float? #t) \
+        (add-placement-rule! \"org.minde.dynamic-late\" #:group \"I\") #t)",
+        "#t",
+    );
+    two.send(two.toplevel_object, 2, &string("dynamic-PiP"));
+    two.send(two.surface, 6, &[]);
+    two.roundtrip();
+    one.roundtrip();
+    one.roundtrip();
+    evaluate("(length (frame-leaves (current-tree)))", "2");
+    evaluate(&format!("(wm-window-geometry {one_id})"), "(856 3 421 794)");
+    evaluate("(focused-window-id)", &two_id.to_string());
+    inject_key(&mut two, &mut [&mut one, &mut three]);
+    three.send(three.toplevel_object, 3, &string("org.minde.dynamic-late"));
+    three.send(three.surface, 6, &[]);
+    three.roundtrip();
+    one.roundtrip();
+    one.roundtrip();
+    evaluate(&format!("(wm-window-geometry {one_id})"), "(3 3 1274 794)");
+    evaluate("(focused-window-id)", &two_id.to_string());
+    drop(one);
+    drop(two);
+    drop(three);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "dynamic rule clients did not unmap",
+    );
+    evaluate(
+        "(begin (switch-to-group! \" I \") (clear-placement-rules!) (collapse-to-one-frame!) #t)",
+        "#t",
+    );
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "hidden rule client did not unmap",
+    );
+    println!("ok - title floating and late placement immediately refill the actual dynamic layout");
 }
 
 fn focus() {

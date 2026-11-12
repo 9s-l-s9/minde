@@ -135,14 +135,16 @@
 
 (track-window-map! 9 "" "")   ; Wayland clients map before set_title
 (check "map-time title empty" (window-title 9) "")
-(update-window-title! 9 "Page - zen" "zen")
+(check "title update returns the previous raw metadata"
+       (update-window-title! 9 "Page - zen" "zen") '("" . ""))
 (check "late title recorded" (window-title 9) "Page - zen")
 (check "late app-id recorded" (window-app-id 9) "zen")
 (update-window-title! 9 "Other page" "zen")
 (check "retitle follows the client" (window-title 9) "Other page")
 (focus-window-by-id! 9)
 (rename-window! "pinned")
-(update-window-title! 9 "Yet another page" "zen")
+(check "title update returns client metadata beneath a rename"
+       (update-window-title! 9 "Yet another page" "zen") '("Other page" . "zen"))
 (check "rename override sticks over client retitles" (window-title 9) "pinned")
 (check "app-id still updates under an override" (window-app-id 9) "zen")
 (forget-window-title! 9)

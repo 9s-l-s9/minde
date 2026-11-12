@@ -147,6 +147,9 @@
                       (append-map frame-leaves (group-all-trees g)))
           (group-floats g)))
 
+(define (window-group id)
+  (find (lambda (g) (member id (group-window-ids g))) %groups))
+
 (define (distinct-window-count ids)
   ;; Mirrored heads can contain the same ID. Count without constructing a
   ;; deduplicated list or repeatedly comparing each ID with the whole tail.
@@ -546,24 +549,30 @@ selected-leaf-index). Selects SELECTED when present, otherwise the master."
                 (or (and selected (list-index (lambda (ids) (member selected ids)) lists))
                     (if (memq layout '(left top)) 0 (- n 1))))))))
 
+(define (dynamic-frame-dump g hid dump)
+  (let* ((st (dynamic-state g hid))
+         (tiled (apply append (cadr dump)))
+         (kept (filter (lambda (id) (member id tiled)) (car st)))
+         (order (append (filter (lambda (id) (not (member id kept))) tiled) kept))
+         (layout (cadr st))
+         (ratio (caddr st)))
+    (set-dynamic-state! g hid order layout ratio)
+    (dynamic-dump order layout ratio (list-ref (caddr dump) (cadddr dump)))))
+
 (define (retile-dynamic!)
   "Recomputes the current head's master/stack tiling for the current
 group: windows that appeared since the last retile become the master
 (newest first), vanished ones drop out. Preserves the selected tiled
 window when it survives, otherwise selects the master. No-op in a manual group."
-  (let* ((g (current-group))
-         (hid (current-head-id))
-         (st (dynamic-state g hid)))
-    (when st
-      (let* ((tiled (apply append (cadr (dump-frames))))
-             (kept (filter (lambda (id) (member id tiled)) (car st)))
-             (order (append (filter (lambda (id) (not (member id kept)))
-                                    tiled)
-                            kept))
-             (layout (cadr st))
-             (ratio (caddr st)))
-        (set-dynamic-state! g hid order layout ratio)
-        (restore-frames! (dynamic-dump order layout ratio (current-frame-window)))))))
+  (when (dynamic-group?)
+    (restore-frames! (dynamic-frame-dump (current-group) (current-head-id) (dump-frames)))))
+
+(define (retile-group-heads! g)
+  ;; Window mutations can affect a head other than the focused one, even
+  ;; in a hidden group. Rebuild those trees without borrowing input focus.
+  (when (dynamic-group? g)
+    (map-group-frame-trees! g (lambda (hid dump) (dynamic-frame-dump g hid dump)))
+    (when (eq? g (current-group)) (sync-frames!))))
 
 (define (create-dynamic-group-in-background! name)
   "Creates a dynamic (auto-tiling) group in the background (StumpWM
@@ -827,27 +836,35 @@ app-id (or title) to its current group and frame (StumpWM remember)."
 (define (place-by-rule! rule id title app-id)
   (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
          (active? (eq? g (current-group)))
+         (float? (or (group-float? g) (rule-float? rule)))
          (tree (if active? (current-tree) (group-tree g)))
          (leaves (frame-leaves tree))
          (leaf (list-ref leaves (min (max 0 (caddr rule))
                                      (- (length leaves) 1)))))
     (remember-window-title! id title app-id)
     (assign-window-number! id (group-all-trees g))
-    (frame-add-window! leaf id)
+    (if float?
+        (add-float! g id (default-float-rect))
+        (frame-add-window! leaf id))
     (run-event-hook! 'new-window id title app-id)
     (if active?
-        (sync-frames!)
+        (if float? (focus-window-by-id! id) (sync-frames!))
         (begin
           ;; Park it: it belongs to a hidden group and must not linger
           ;; on-screen at whatever geometry it mapped with.
-          (hide-window! id)
+          (if float?
+              (rust-call-place-float-offscreen id (float-geometry id))
+              (hide-window! id))
           (when (cadddr rule)
-            (switch-to-group! (group-name g)))))))
+            (switch-to-group! (group-name g))
+            (when float? (focus-window-by-id! id)))))))
 
 (define (place-existing-windows!)
   "Re-applies the placement rules to every already-mapped window of the
 active group (StumpWM place-existing-windows). Floats keep floating and
-are left alone; a window already in its rule's target frame stays put."
+are left alone; a window already in its rule's target frame stays put.
+Float rules and floating target groups float matching tiled windows.
+Affected dynamic groups retile every head immediately."
   (let ((moved 0))
     (for-each
      (lambda (id)
@@ -866,21 +883,30 @@ are left alone; a window already in its rule's target frame stays put."
   "Moves an already-mapped window into RULE's group/frame (the shared
 core of place-existing-windows! and late app-id arrival). Returns #t if
 the window actually moved; the caller re-syncs."
-  (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
+  (let* ((source (window-group id))
+         (g (or (find-group-loose (cadr rule)) (current-group)))
          (active? (eq? g (current-group)))
+         (float? (or (group-float? g) (rule-float? rule)))
          (tree (if active? (current-tree) (group-tree g)))
          (leaves (frame-leaves tree))
          (leaf (list-ref leaves (min (max 0 (caddr rule))
                                      (- (length leaves) 1)))))
-    (and (not (member id (frame-window-ids leaf)))
+    (and source (or float? (not (member id (frame-window-ids leaf))))
          (begin
-           (find (lambda (gg)
-                   (any (lambda (t) (remove-window-from-tree-in! t id))
-                        (group-all-trees gg)))
-                 %groups)
+           (any (lambda (t) (remove-window-from-tree-in! t id)) (group-all-trees source))
            (ensure-unique-window-number! id (group-all-trees g))
-           (frame-add-window! leaf id)
-           (unless active? (hide-window! id))
+           (if float?
+               (begin
+                 (clear-unmaximized! id)
+                 (add-float! g id (default-float-rect))
+                 (if active?
+                     (focus-window-by-id! id)
+                     (rust-call-place-float-offscreen id (float-geometry id))))
+               (begin
+                 (frame-add-window! leaf id)
+                 (unless active? (hide-window! id))))
+           (retile-group-heads! source)
+           (unless (eq? source g) (retile-group-heads! g))
            #t))))
 
 ;; ---------------------------------------------------------------------
@@ -980,25 +1006,26 @@ geometries re-applied. Groups not in the dump are left alone."
   (let ((rule (find (lambda (r) (and (rule-lock? r)
                                      (rule-matches? r title app-id)))
                     %placement-rules)))
-    (cond
-     ((and rule (rule-float? rule)) (track-float-map! id title app-id))
-     (rule (place-by-rule! rule id title app-id))
-     (else (track-window-map! id title app-id)))
+    (if rule
+        (place-by-rule! rule id title app-id)
+        (track-window-map! id title app-id))
     ;; New tiled window in a dynamic group: it becomes the master.
-    (when (and (dynamic-group?) (not (window-floating? id)))
-      (retile-dynamic!))))
+    (unless (window-floating? id)
+      (let ((g (window-group id))) (when g (retile-group-heads! g))))))
 
 (define (handle-window-title-change! id title app-id)
   "Rust: a mapped toplevel's title/app-id changed. Refreshes bookkeeping
 (windowlist, remapped keys, rules, status line). If the app-id was empty
 at the first buffer commit, apply any locked placement rule when it
 first becomes known."
-  (let ((old-title (window-title id))
-        (old-app-id (window-app-id id))
-        (first-app-id? (let ((old (window-app-id id)))
-                         (and (or (not old) (string-null? old))
-                              (not (string-null? app-id))))))
-    (update-window-title! id title app-id)
+  ;; Rust already exposes the new values when this notification arrives.
+  ;; Display titles can also be renamed or fall back to the app-id, so use
+  ;; the previous raw notification rather than querying display metadata.
+  (let* ((previous (update-window-title! id title app-id))
+         (old-title (and previous (car previous)))
+         (old-app-id (and previous (cdr previous)))
+         (first-app-id? (and (or (not old-app-id) (string-null? old-app-id))
+                             (not (string-null? app-id)))))
     ;; A client can set title/app-id after its first buffer commit, so a
     ;; Picture-in-Picture window may initially map with empty strings. Only
     ;; newly matching rules float it, so unfloating by hand isn't
@@ -1010,17 +1037,21 @@ first becomes known."
                                          (not (rule-matches? r old-title
                                                              old-app-id))))
                         %placement-rules)))
-        (when rule (float-window! id))))
+        (when rule
+          (float-window! id)
+          (retile-group-heads! (current-group)))))
     (when (and first-app-id? (not (window-floating? id)))
       (let ((rule (find (lambda (r) (and (rule-lock? r)
                                          (not (rule-float? r))
                                          (rule-matches? r title app-id)))
                         %placement-rules)))
         (when (and rule (apply-rule-to-mapped! id rule))
-          (if (cadddr rule)   ; follow? flag
-              (switch-to-group!
-               (group-name (or (find-group-loose (cadr rule)) (current-group))))
-              (sync-frames!)))))
+          (let ((target (or (find-group-loose (cadr rule)) (current-group))))
+            (if (and (cadddr rule) (not (eq? target (current-group))))
+                (begin
+                  (switch-to-group! (group-name target))
+                  (when (window-floating? id) (focus-window-by-id! id)))
+                (sync-frames!))))))
     ;; External bars show the focused window's title. A title-only update
     ;; does not otherwise require a frame synchronization.
     (refresh-external-status!)
@@ -1048,6 +1079,7 @@ its group if needed."
   "Removes ID from whichever group's tree currently holds it -- the active
 group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen)."
+  (define owner (window-group id))
   (clear-fullscreen-if-window! id)
   (clear-urgent! id)
   (clear-ontop! id)
@@ -1065,8 +1097,8 @@ a sync since nothing hidden is on-screen)."
             %groups))))
   (forget-window-title! id)
   (forget-window-number! id)
-  ;; A dynamic group refills the master/stack arrangement.
-  (when (dynamic-group?) (retile-dynamic!))
+  ;; Repair the owning group, including its unfocused and hidden heads.
+  (when owner (retile-group-heads! owner))
   (run-event-hook! 'destroy-window id)
   #t)
 

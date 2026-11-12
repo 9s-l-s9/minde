@@ -16,6 +16,15 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Title and app-ID changes compare previously reported client metadata,
+  so real retitles trigger placement rules and events even under a user
+  rename; repeated metadata does not retrigger float rules (#19).
+- Late placement rules synchronize when following the current group.
+  Rule moves and floats immediately rebuild affected dynamic layouts,
+  including other heads and hidden groups after a window closes
+  (#20, #21, #22).
+- Placement rules respect floating target groups on map, late app-ID
+  arrival and explicit placement, parking hidden floats until shown (#23).
 - Fullscreen keeps keyboard focus and close commands on the displayed
   window while newly mapped windows are laid out behind it (#12).
 - Failed sibling selection preserves floating focus. Focus hooks, urgency

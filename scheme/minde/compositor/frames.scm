@@ -131,6 +131,9 @@
             focus-last-head!
             head-of-window
             group-all-trees
+            map-group-frame-trees!
+            add-float!
+            default-float-rect
             track-window-map!
             track-float-map!
             track-window-unmap!
@@ -657,8 +660,8 @@ wm-message (or under the test stubs)."
 ;; Window <-> frame bookkeeping
 ;; ---------------------------------------------------------------------
 
-;; id -> (title . app-id), remembered from track-window-map! for the
-;; windowlist and `info`-style echoes. Survives moves between
+;; id -> raw (title . app-id), remembered from map/title notifications for
+;; transition detection and offline display. Survives moves between
 ;; frames/groups; dropped on unmap.
 (define %window-titles (make-hash-table))
 
@@ -671,16 +674,16 @@ the compositor (Rust owns that fact), or #f without a compositor."
 (define (window-title id)
   "Returns the display title for window ID: a rename-window! override if
 one exists, else the client's title as the compositor holds it right now,
-falling back to the remembered map-time title (tests, REPL thread)."
+falling back to remembered client metadata (tests, REPL thread)."
   (let ((e (hash-ref %window-titles id)))
     (cond
-     ((and e (hash-ref %renamed-windows id)) (car e))
+     ((hash-ref %renamed-windows id) => identity)
      ((client-title id)
       => (lambda (pair)
            (if (string-null? (car pair))
                (if (string-null? (cdr pair)) (format #f "window ~a" id) (cdr pair))
                (car pair))))
-     (e (car e))
+     (e (if (string-null? (car e)) (cdr e) (car e)))
      (else (format #f "window ~a" id)))))
 
 (define (window-app-id id)
@@ -697,8 +700,8 @@ as data instead of as a stale window list weeks later."
   (define drift '())
   (define (note! kind id expected actual)
     (set! drift (cons (list kind id expected actual) drift)))
-  ;; Titles: the map-time cache versus the client's current title, except
-  ;; for windows renamed by the user, whose override is expected to differ.
+  ;; Compare reported and live titles for windows without a user-supplied
+  ;; display override.
   (hash-for-each
    (lambda (id cached)
      (unless (hash-ref %renamed-windows id)
@@ -734,26 +737,21 @@ as data instead of as a stale window list weeks later."
   (hash-remove! %renamed-windows id))
 
 (define (remember-window-title! id title app-id)
-  "Stores TITLE and APP-ID metadata for window ID."
-  (let ((class (if (string? app-id) app-id "")))
-    (hash-set! %window-titles id
-               (cons (if (and (string? title) (not (string-null? title)))
-                         title
-                         class)
-                     class))))
+  "Stores raw client TITLE and APP-ID metadata for window ID."
+  (hash-set! %window-titles id
+             (cons (if (string? title) title "")
+                   (if (string? app-id) app-id ""))))
 
 ;; Windows renamed via rename-window!: their title override sticks over
 ;; client-driven title changes (StumpWM title behavior).
 (define %renamed-windows (make-hash-table))
 
 (define (update-window-title! id title app-id)
-  "Client-driven title/app-id change after map (handle-window-title-change!):
-refreshes the bookkeeping, keeping a rename-window! title override."
-  (let ((kept (if (and (hash-ref %renamed-windows id)
-                       (hash-ref %window-titles id))
-                  (car (hash-ref %window-titles id))
-                  title)))
-    (remember-window-title! id kept app-id)))
+  "Stores client metadata without changing a rename-window! override.
+Returns the previously reported raw (title . app-id) pair, or #f."
+  (let ((previous (hash-ref %window-titles id)))
+    (remember-window-title! id title app-id)
+    previous))
 
 (define (window-ids-with-titles)
   "All windows of the active group, as (id . title) pairs in frame order."
@@ -1169,13 +1167,10 @@ authoritative and treat the dragged float as focused/topmost."
 ;; ---------------------------------------------------------------------
 
 (define (rename-window! name)
-  "Overrides the focused window's remembered title (StumpWM title)."
+  "Overrides the focused window's display title (StumpWM title)."
   (let ((id (focused-window-id)))
     (when (and id (not (string-null? name)))
-      (hash-set! %window-titles id
-                 (cons name (let ((e (hash-ref %window-titles id)))
-                              (if e (cdr e) ""))))
-      (hash-set! %renamed-windows id #t)
+      (hash-set! %renamed-windows id name)
       (sync-frames!)   ; status line shows the title
       (echo (format #f "renamed to ~a" name)))))
 
@@ -1622,6 +1617,30 @@ and synced on activation)."
         (lambda (tree cur)
           (set-group-tree! g tree)
           (set-group-current-frame! g cur)))))
+
+(define (map-group-frame-trees! g proc)
+  "Rebuilds every head tree of G from (PROC head-id frame-dump), keeping
+each head's geometry. Does not switch groups, change heads or synchronize."
+  (define (rebuild hid tree cur)
+    (call-with-values
+        (lambda () (build-tree-from-dump (proc hid (dump-tree tree cur))
+                                        (tree-window-ids tree)))
+      (lambda (rebuilt selected)
+        (apply resize-subtree! rebuilt (subtree-rect tree))
+        (cons rebuilt selected))))
+  (let* ((active? (eq? g %active-group))
+         (loaded (rebuild (if active? %current-head-id (group-loaded-head g))
+                          (if active? %frame-tree (group-tree g))
+                          (if active? %current-frame (group-current-frame g))))
+         (saved (hash-map->list
+                 (lambda (hid pair) (cons hid (rebuild hid (car pair) (cdr pair))))
+                 (group-heads g))))
+    (for-each (lambda (entry) (hash-set! (group-heads g) (car entry) (cdr entry))) saved)
+    (set-group-tree! g (car loaded))
+    (set-group-current-frame! g (cdr loaded))
+    (when active?
+      (set! %frame-tree (car loaded))
+      (set! %current-frame (cdr loaded)))))
 
 ;; ---------------------------------------------------------------------
 ;; Frame-number overlays (fselect / expose) + sibling

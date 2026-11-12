@@ -36,7 +36,7 @@
 
 ;; Now it's safe to load the modules under test.
 (use-modules (minde compositor frames))
-(use-modules (minde groups))
+(use-modules (minde groups) (minde compositor model))
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -209,6 +209,65 @@
 (rotate-windows! 'forward)
 (check-true "rotate refuses in a manual group"
             (string-contains (car %messages) "not a dynamic group"))
+
+;; Rule-driven changes must repair the source tiling immediately.
+(create-dynamic-group! "rule-dynamic")
+(for-each (lambda (id) (handle-window-map! id "rule candidate" "")) '(201 202 203))
+(add-placement-rule! "dynamic-PiP" #:float? #t)
+(handle-window-title-change! 202 "dynamic-PiP" "")
+(check "title float removes the empty dynamic leaf" (length (frame-leaves (current-tree))) 2)
+(check "title float fills the remaining stack" (rect 201) '(856 3 421 714))
+(check "retiling preserves the new float's input focus" %focused 202)
+(create-group-in-background! "rule-destination")
+(add-placement-rule! "late-dynamic" #:group "rule-destination")
+(handle-window-map! 204 "late" "")
+(handle-window-title-change! 204 "late" "late-dynamic")
+(check "late placement repairs its dynamic source" (length (frame-leaves (current-tree))) 2)
+(add-placement-rule! "move-existing" #:group "rule-destination" #:lock? #f)
+(handle-window-title-change! 203 "move-existing" "")
+(place-existing-windows!)
+(check "explicit placement repairs the dynamic source" (rect 201) '(3 3 1274 714))
+(add-placement-rule! "float-existing" #:float? #t #:lock? #f)
+(handle-window-title-change! 201 "float-existing" "")
+(place-existing-windows!)
+(check-true "explicit float rule removes its window from tiling" (window-floating? 201))
+(check "all-float dynamic group has no tiled residents" (frame-tree-window-count) 0)
+(clear-placement-rules!)
+
+;; Closing on another head (including in a hidden group) must rebuild
+;; that head without borrowing focus from the current window/head.
+(handle-heads-change! '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
+(define multi (create-dynamic-group! "multi-dynamic"))
+(handle-window-map! 301 "head ten" "test")
+(focus-next-head!)
+(for-each (lambda (id) (handle-window-map! id "head eleven" "test")) '(302 303 304))
+(focus-last-head!)
+(handle-window-unmap! 303)
+(check "unmap repairs the unfocused head immediately" (rect 302) '(2776 3 421 1018))
+(check "other-head unmap keeps current head and keyboard focus"
+       (list (current-head-id) (focused-window-id) %focused) '(10 301 301))
+(check "unfocused head has no empty stack leaf"
+       (length (frame-leaves (car (hash-ref (group-heads multi) 11)))) 2)
+(switch-to-group! " I ")
+(define before-hidden-unmap %focused)
+(handle-window-unmap! 304)
+(check "hidden group's other head is retiled"
+       (length (frame-leaves (car (hash-ref (group-heads multi) 11)))) 1)
+(check "hidden unmap leaves visible input focus alone" %focused before-hidden-unmap)
+(switch-to-group! "multi-dynamic")
+(focus-next-head!)
+(check "returning shows the surviving window across its whole head" (rect 302) '(1923 3 1274 1018))
+(for-each (lambda (id) (handle-window-map! id "hidden loaded head" "test")) '(305 306))
+(switch-to-group! " I ")
+(focus-previous-head!)
+(handle-window-unmap! 305)
+(check "hidden loaded head is rebuilt without changing the active head" (current-head-id) 10)
+(check "hidden loaded head retains its own dimensions"
+       (map (lambda (f) (list (frame-y f) (frame-h f))) (frame-leaves (group-tree multi)))
+       '((0 1024) (0 1024)))
+(switch-to-group! "multi-dynamic")
+(focus-next-head!)
+(check "hidden loaded-head repair is visible on return" (rect 302) '(2776 3 421 1018))
 
 ;; ---------------------------------------------------------------------
 

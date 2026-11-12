@@ -15,6 +15,8 @@
 (define %float-places (make-hash-table)) ; id -> (x y w h), wm-place-float
 (define %focused #f)
 (define %overlays '())
+(define %client-titles (make-hash-table))
+(define (wm-window-title id) (hash-ref %client-titles id))
 
 (define (wm-place-window id x y w h)
   (hash-set! %placements id (list x y w h))
@@ -42,7 +44,7 @@
 
 ;; Now it's safe to load the modules under test.
 (use-modules (minde compositor frames))
-(use-modules (minde groups))
+(use-modules (minde groups) (minde hooks) (minde compositor model))
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -202,6 +204,46 @@
 (track-window-unmap! 12)
 (track-window-unmap! 13)
 
+;; Rust exposes the new metadata before delivering its notification.
+;; Rules and events must compare against the previously reported raw pair,
+;; even when a user rename overrides the title displayed in window lists.
+(define title-events '())
+(define (record-title id title app-id)
+  (set! title-events (append title-events (list (list id title app-id)))))
+(add-event-hook! 'window-title-changed record-title)
+(define (retitle! id title app-id)
+  (hash-set! %client-titles id (cons title app-id))
+  (handle-window-title-change! id title app-id))
+(handle-window-map! 120 "" "")
+(retitle! 120 "Other" "")
+(retitle! 120 "Other" "")
+(check "retitle events detect changes despite live metadata" title-events '((120 "Other" "")))
+(retitle! 120 "Picture-in-Picture" "")
+(check-true "live title transition triggers the float rule" (window-floating? 120))
+(unfloat-window! 120)
+(focus-window-by-id! 120)
+(rename-window! "pinned")
+(retitle! 120 "Picture-in-Picture again" "")
+(check "rename does not retrigger an already matching rule" (window-floating? 120) #f)
+(retitle! 120 "Third" "")
+(retitle! 120 "Picture-in-Picture" "")
+(check-true "new title edge still triggers beneath a rename" (window-floating? 120))
+(check "client changes preserve the display override" (window-title 120) "pinned")
+(check "each real title edge emits its raw client metadata" title-events
+       '((120 "Other" "") (120 "Picture-in-Picture" "")
+         (120 "Picture-in-Picture again" "") (120 "Third" "")
+         (120 "Picture-in-Picture" "")))
+(handle-window-map! 121 "" "")
+(retitle! 121 "browser" "zen")
+(check-true "live late app-id applies the placement rule" (group-has-window? " III " 121))
+(handle-window-map! 122 "" "test")
+(retitle! 122 "test" "test")
+(check "display-title fallback is not previous client metadata"
+       (last title-events) '(122 "test" "test"))
+(remove-event-hook! 'window-title-changed record-title)
+(for-each handle-window-unmap! '(120 121 122))
+(hash-clear! %client-titles)
+
 ;; ---------------------------------------------------------------------
 ;; remember! / forget! + persistence round-trip
 ;; ---------------------------------------------------------------------
@@ -266,6 +308,68 @@
 
 (delete-file %rules-path)
 (delete-file %desktop-path)
+
+;; A late follow rule targeting the current group must still place the
+;; window in its new frame, whether the group is named or implicit.
+(create-group! "late-placement")
+(split-frame-horizontal!)
+(for-each
+ (lambda (options)
+   (clear-placement-rules!)
+   (focus-frame-by-index! 0)
+   (handle-window-map! 130 "late" "")
+   (add-placement-rule! "late-same-group" #:group (car options)
+                        #:frame 1 #:follow? (cadr options))
+   (hash-clear! %placements)
+   (handle-window-title-change! 130 "late" "late-same-group")
+   (check "late rule moves the window into the selected target frame"
+          (cadr (cadr (dump-frames))) '(130))
+   (check-true "late rule immediately places the window in its new frame"
+               (let ((r (hash-ref %placements 130))) (and r (> (car r) 600))))
+   (handle-window-unmap! 130))
+ '((#f #t) ("late-placement" #t) (#f #f)))
+
+;; A floating target group determines window kind for map-time, late and
+;; explicit placement, including parking before a hidden group is shown.
+(clear-placement-rules!)
+(create-floating-group! "rule-floats")
+(for-each
+ (lambda (target id)
+   (clear-placement-rules!)
+   (add-placement-rule! "float-group-app" #:group target)
+   (handle-window-map! id "float candidate" "float-group-app")
+   (check-true "rule mapping into a float group floats" (window-floating? id))
+   (check "float group keeps its unused frame empty" (frame-tree-window-count) 0)
+   (check "new float in the active group receives input focus" %focused id)
+   (check-true "new float is placed with floating geometry" (hash-ref %float-places id)))
+ '(#f "rule-floats") '(140 141))
+(define hidden-floats (create-floating-group-in-background! "hidden-rule-floats"))
+(switch-to-group! "late-placement")
+(clear-placement-rules!)
+(add-placement-rule! "hidden-float" #:group "hidden-rule-floats")
+(handle-window-map! 143 "hidden" "hidden-float")
+(handle-window-map! 144 "late hidden" "")
+(handle-window-title-change! 144 "late hidden" "hidden-float")
+(handle-window-map! 145 "explicit hidden" "explicit-float")
+(add-placement-rule! "explicit-float" #:group "hidden-rule-floats" #:lock? #f)
+(place-existing-windows!)
+(for-each
+ (lambda (id)
+   (check-true "each placement path floats in the hidden target" (window-floating? id))
+   (check-true "hidden float is owned by the target group" (member id (group-floats hidden-floats)))
+   (check-true "hidden floats are parked with their floating state"
+               (let ((r (hash-ref %float-places id))) (and r (< (car r) 0)))))
+ '(143 144 145))
+(check "hidden floating group keeps all frame trees empty"
+       (append-map (lambda (tree) (append-map frame-window-ids (frame-leaves tree)))
+                   (group-all-trees hidden-floats)) '())
+(check "rules without follow preserve the active group" (current-group-name) "late-placement")
+(add-placement-rule! "follow-float" #:group "hidden-rule-floats" #:follow? #t)
+(handle-window-map! 146 "follow" "follow-float")
+(check "follow switches to the floating group" (current-group-name) "hidden-rule-floats")
+(check-true "follow places the new float visibly"
+            (let ((r (hash-ref %float-places 146))) (and r (>= (car r) 0))))
+(check "follow focuses the new float" %focused 146)
 
 ;; ---------------------------------------------------------------------
 
