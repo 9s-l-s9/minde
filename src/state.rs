@@ -7,7 +7,7 @@ use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{
         Seat, SeatState,
-        keyboard::{Error as KeyboardError, XkbConfig, xkb},
+        keyboard::{XkbConfig, xkb},
     },
     reexports::{
         calloop::{
@@ -475,10 +475,10 @@ impl MindeState {
     pub fn new(
         event_loop: &mut EventLoop<'static, Self>,
         display: Display<Self>,
-    ) -> Result<Self, KeyboardError> {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let start_time = std::time::Instant::now();
         let transfers = crate::transfer::Transfers::new(&event_loop.handle())
-            .expect("Failed to initialize selection transfers");
+            .map_err(|error| format!("failed to initialize selection transfers: {error}"))?;
 
         let dh = display.handle();
 
@@ -675,11 +675,11 @@ impl MindeState {
 
         let space = Space::default();
 
-        let socket_name = Self::init_wayland_listener(display, event_loop);
+        let socket_name = Self::init_wayland_listener(display, event_loop)?;
         let loop_signal = event_loop.get_signal();
         let handle = event_loop.handle();
 
-        Self::init_command_channel(event_loop);
+        Self::init_command_channel(event_loop)?;
 
         Ok(Self {
             start_time,
@@ -790,9 +790,10 @@ impl MindeState {
     /// (running on the main Guile thread, or the REPL's own thread) into the
     /// compositor's event loop, where they're applied against
     /// `&mut MindeState`.
-    fn init_command_channel(event_loop: &mut EventLoop<Self>) {
+    fn init_command_channel(
+        event_loop: &mut EventLoop<Self>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let (sender, channel) = smithay::reexports::calloop::channel::channel::<WmCommand>();
-        guile::set_command_sender(sender);
 
         event_loop
             .handle()
@@ -803,7 +804,9 @@ impl MindeState {
                     crate::timing::record(crate::timing::Probe::ApplyCommand, started);
                 }
             })
-            .expect("Failed to init the wm command channel source.");
+            .map_err(|error| format!("failed to register the wm command channel: {error}"))?;
+        guile::set_command_sender(sender);
+        Ok(())
     }
 
     /// Applies a single `WmCommand` enqueued from Scheme. Anything that
@@ -2327,8 +2330,13 @@ impl MindeState {
         }
     }
 
-    fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {
-        let listening_socket = ListeningSocketSource::new_auto().unwrap();
+    fn init_wayland_listener(
+        display: Display<Self>,
+        event_loop: &mut EventLoop<Self>,
+    ) -> Result<OsString, Box<dyn std::error::Error>> {
+        let listening_socket = ListeningSocketSource::new_auto().map_err(|error| {
+            format!("cannot bind a Wayland socket (wayland-1 through wayland-32): {error}")
+        })?;
         let socket_name = listening_socket.socket_name().to_os_string();
         let loop_handle = event_loop.handle();
 
@@ -2341,7 +2349,7 @@ impl MindeState {
                     tracing::warn!(%error, "failed to register Wayland client");
                 }
             })
-            .expect("Failed to init the wayland event source.");
+            .map_err(|error| format!("failed to register the Wayland listener: {error}"))?;
 
         loop_handle
             .insert_source(
@@ -2356,9 +2364,9 @@ impl MindeState {
                     Ok(PostAction::Continue)
                 },
             )
-            .unwrap();
+            .map_err(|error| format!("failed to register the Wayland display: {error}"))?;
 
-        socket_name
+        Ok(socket_name)
     }
 
     /// Spawns the embedded Xwayland server (anvil's `start_xwayland`,

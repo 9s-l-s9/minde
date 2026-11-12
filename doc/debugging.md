@@ -104,6 +104,11 @@ preference:
 
 ## Rust-side debugging
 
+- `cannot bind a Wayland socket` is a startup error. Check that
+  `XDG_RUNTIME_DIR` names the session's runtime directory and that an unused
+  name exists between `wayland-1` and `wayland-32`. Minde exits with status 1
+  without a panic or crash log when it cannot create the listener. It does
+  not remove another compositor's active socket.
 - A `falling back to the US keymap` warning means the requested keyboard
   configuration could not be compiled. The warning includes every
   `XKB_DEFAULT_*` value; correct the failing layout, variant, rules, model or

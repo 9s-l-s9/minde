@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Missing runtime directories or exhausted Wayland socket names now report
+  startup errors instead of panicking and writing crash logs (#32).
 - Failed personal Scheme init files report the exception and source location,
   then restart once with clean bundled policy and display the error. A broken
   bundled init aborts startup. Ctrl+Alt+Backspace exits independently of

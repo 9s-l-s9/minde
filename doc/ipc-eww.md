@@ -159,8 +159,10 @@ the [snapshot/journal handoff](agent-control.md#watch-changes-and-recover-from-g
 - `$XDG_RUNTIME_DIR/minde-ipc.sock`: main-thread request socket;
 - `$XDG_RUNTIME_DIR/minde-events.sock`: read-only event push socket.
 
-If `XDG_RUNTIME_DIR` is unavailable, both sockets use the private fallback
-directory `/tmp/minde-UID` (mode `0700`). Startup refuses a runtime
+The IPC path helpers also support the private fallback directory
+`/tmp/minde-UID` (mode `0700`) when `XDG_RUNTIME_DIR` is unavailable.
+Compositor startup itself requires `XDG_RUNTIME_DIR` for its Wayland
+listener and exits with an error when it is unset. Startup refuses a runtime
 directory owned by another user or accessible to group/other users, and never
 unlinks a non-socket entry or an active compositor's socket found at a socket
 path.
