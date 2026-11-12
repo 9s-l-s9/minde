@@ -115,6 +115,28 @@
      (unless (and (= (length (all-window-ids)) 2) (every exact-integer? (all-window-ids)))
        (error \"cleared source corrupted frame membership\"))
      #t)" first first first second first second)))
+;; Reject new name collisions, then simulate legacy duplicate names through
+;; private state to verify that focusing a real client uses owner identity.
+(cli '("eval" "(begin
+  (define identity-a (create-group-in-background! \"identity-a\"))
+  (define identity-b (create-group-in-background! \"identity-b\"))
+  (let ((before (group-names)))
+    (unless (catch #t (lambda () (create-group! \" identity-a \") #f) (lambda args #t))
+      (error \"duplicate group name accepted\"))
+    (unless (equal? before (group-names)) (error \"rejected creation changed groups\")))
+  #t)"))
+(call "move-window-to-group!" (format #f "((window . ~a) (group . \"identity-b\"))" first))
+(cli '("eval" "(begin
+  ((@@ (minde compositor model) set-group-name!) identity-b \"identity-a\")
+  (switch-to-group! \"identity-a\") #t)"))
+(status (call "focus-window!" (target first)) "applied")
+(check (= (ref (snapshot) "focused-window") first) "duplicate-name owner focus")
+(cli '("eval" "(begin
+  (unless (eq? identity-b (current-group)) (error \"focused wrong duplicate-name group\"))
+  (delete-current-group!)
+  (unless (string=? (current-group-name) \" I \") (error \"last-group deletion did not wrap\"))
+  #t)"))
+(check (ref (window (snapshot) first) "visible") "deleted group's client stayed hidden")
 (cli '("eval" "(begin (create-dynamic-group! \"frame-regression\") #t)"))
 (for-each (lambda (id)
             (call "move-window-to-group!" (format #f "((window . ~a) (group . \"frame-regression\"))" id)))

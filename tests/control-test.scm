@@ -477,5 +477,18 @@
 (check-true "geometry stays in desktop coordinates on second output"
             (>= (vector-ref (assq-ref (window 11) 'geometry) 0) 1280))
 
+;; A window's owner is already resolved by ID; focus must not resolve its
+;; display name again when legacy/private state contains duplicate names.
+(use-modules (minde compositor model))
+(define identity-a (create-group! "control-identity-a"))
+(define identity-b (create-group! "control-identity-b"))
+(handle-window-map! 20 "identity target" "identity-test")
+(set-group-name! identity-b (group-name identity-a))
+(switch-to-group! "control-identity-a")
+(check "typed focus uses the owning group record"
+       (status (act 'focus-window! '((window . 20)))) 'applied)
+(check-true "typed focus activates the intended duplicate-name group" (eq? identity-b (current-group)))
+(check "typed focus delivers keyboard focus to the target" %focused 20)
+
 (format #t "control-test: ~a checks, ~a failures~%" checks failures)
 (unless (zero? failures) (exit 1))

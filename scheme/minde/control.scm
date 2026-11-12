@@ -187,7 +187,7 @@ Null denotes unavailable information. Locking forces content redaction."
 
 (define (focus-target! id)
   (let ((g (require-window id)))
-    (switch-to-group! (group-name g))
+    (switch-to-group! g)
     ;; Switching runs user hooks; they may remove or move the target.
     (unless (eq? (require-window id) (current-group))
       (fail 'target-changed `((window . ,id))))
@@ -232,7 +232,7 @@ Null denotes unavailable information. Locking forces content redaction."
     (unless (and entry (< index (length (frame-leaves (cdr entry)))))
       (fail 'unknown-frame `((group . ,name) (head . ,head) (frame . ,index))))
     (when (dynamic-group? g) (fail 'dynamic-layout `((group . ,name))))
-    (switch-to-group! name)
+    (switch-to-group! g)
     (focus-head! head)
     (unless (and (eq? g (current-group)) (= head (current-head-id)))
       (fail 'target-changed))
@@ -336,7 +336,7 @@ Loading this module has no compositor side effects; call after legacy setup."
   (register 'switch-group!
             (lambda (name)
               (let ((g (require-group name)))
-                (switch-to-group! name)
+                (switch-to-group! g)
                 (unless (eq? g (current-group)) (fail 'postcondition-failed))
                 `((group . ,name))))
             (list group) 'group '(focus group) 'immediate "Switch to an existing group by its exact name."

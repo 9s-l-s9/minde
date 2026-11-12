@@ -129,8 +129,9 @@
 
 (define (resolve-target name-or-index)
   (cond
+   ((group? name-or-index) (and (memq name-or-index %groups) name-or-index))
    ((string? name-or-index) (find-group-by-name name-or-index))
-   ((integer? name-or-index)
+   ((exact-integer? name-or-index)
     (and (>= name-or-index 0) (< name-or-index (length %groups))
          (list-ref %groups name-or-index)))
    (else #f)))
@@ -177,8 +178,9 @@ Each tuple is (NAME FOCUSED? WINDOW-COUNT FLOATING? DYNAMIC?)."
 ;; ---------------------------------------------------------------------
 
 (define (switch-to-group! name-or-index)
-  "Switches to the group named NAME-OR-INDEX (a string) or at index
-NAME-OR-INDEX (0-based). No-op if it doesn't exist or is already
+  "Switches to the group named NAME-OR-INDEX (a string), at that index
+(0-based), or supplied as a live group record. No-op for an unknown name,
+out-of-range index or deleted group record, or when the group is already
 current. Parks every window of the outgoing group off-screen, then
 activates the target group and syncs it (placing its windows, restoring
 or clearing focus)."
@@ -209,7 +211,7 @@ or clearing focus)."
 (define (switch-to-last-group!)
   "Toggles back to the previously current group."
   (when (and %last-group (memq %last-group %groups))
-    (switch-to-group! (group-name %last-group))))
+    (switch-to-group! %last-group)))
 
 (define (group-list-string)
   "The group list with the current one bracketed, StumpWM message style:
@@ -238,10 +240,22 @@ or clearing focus)."
 ;; Creating groups
 ;; ---------------------------------------------------------------------
 
+(define (validate-group-name name except)
+  (unless (and (string? name) (not (string-null? (string-trim-both name))))
+    (error "group name must be a nonempty string" name))
+  (when (any (lambda (g)
+               (and (not (eq? g except))
+                    (string=? (string-trim-both name)
+                              (string-trim-both (group-name g)))))
+             %groups)
+    (error "group name already exists" (string-trim-both name))))
+
 (define (create-group-in-background! name)
   "Creates a new empty group named NAME (a string), appended to the end of
 %groups, sized to the last known output geometry. Does not switch to it
-(StumpWM gnewbg)."
+(StumpWM gnewbg). Rejects blank or duplicate names before changing state;
+surrounding whitespace is ignored when checking uniqueness."
+  (validate-group-name name #f)
   (let* ((size (current-output-size))
          (g (make-empty-group name (car size) (cadr size))))
     (set! %groups (append %groups (list g)))
@@ -251,7 +265,7 @@ or clearing focus)."
   "Creates a new empty group named NAME and switches to it (StumpWM
 gnew)."
   (let ((g (create-group-in-background! name)))
-    (switch-to-group! (group-name g))
+    (switch-to-group! g)
     g))
 
 ;; Roman numerals for auto-generated group names (I, II, III already
@@ -271,9 +285,13 @@ gnew)."
      (else (loop n (cdr table) acc)))))
 
 (define (create-auto-named-group!)
-  "Creates a new group with an auto-generated roman-numeral name (\" IV \",
-\" V \", ... continuing the default groups' naming) and switches to it."
-  (create-group! (string-append " " (integer->roman (+ 1 (length %groups))) " ")))
+  "Creates and switches to a group with the first unused roman-numeral
+name, starting at I. With the default groups present, starts at IV."
+  (let loop ((n 1))
+    (let ((name (string-append " " (integer->roman n) " ")))
+      (if (find-group-loose name)
+          (loop (+ n 1))
+          (create-group! name)))))
 
 (define (create-floating-group-in-background! name)
   "Creates a new float group in the background (StumpWM gnewbg-float):
@@ -286,19 +304,22 @@ switch to it."
 (define (create-floating-group! name)
   "Creates a new float group and switches to it (StumpWM gnew-float)."
   (let ((g (create-floating-group-in-background! name)))
-    (switch-to-group! (group-name g))
+    (switch-to-group! g)
     g))
 
 (define (rename-current-group! name)
   "Renames the current group (StumpWM grename). Group names are stored
-padded (\" I \"); NAME is padded the same way."
-  (unless (string-null? name)
+padded (\" I \"); NAME is padded the same way. Rejects another group's name,
+ignoring surrounding whitespace. Blank input leaves the name unchanged."
+  (unless (and (string? name) (string-null? (string-trim-both name)))
+    (validate-group-name name (current-group))
     (set-group-name! (current-group) (string-append " " (string-trim-both name) " "))
     (echo (group-list-string))))
 
 (define (delete-current-group!)
-  "Deletes the current group; its windows move to the previous (or next)
-group, which becomes current (StumpWM gkill). A no-op with one group."
+  "Deletes the current group; its windows move to the next group, which
+becomes current, wrapping from the last group to the first (StumpWM gkill).
+A no-op with one group."
   (let ((g (current-group)) (n (length %groups)))
     (when (> n 1)
       (let* ((idx (current-group-index))
@@ -318,7 +339,7 @@ group, which becomes current (StumpWM gkill). A no-op with one group."
            (ensure-unique-window-number! id (group-all-trees fallback))
            (frame-add-window! (group-current-frame fallback) id))
          ids)
-        (switch-to-group! (group-name fallback))
+        (switch-to-group! fallback)
         (set! %groups (delq g %groups))
         (unmark-dynamic! g)
         (when (eq? %last-group g) (set! %last-group #f))
@@ -347,7 +368,7 @@ group or the current frame has no window."
     (when (and idx (> n 1) id)
       (let ((target (list-ref %groups (modulo (+ idx dir) n))))
         (move-window-between-groups! id (current-group) target)
-        (switch-to-group! (group-name target))
+        (switch-to-group! target)
         (focus-window-by-id! id)))))
 
 (define (shift-current-window-to-next-group!)
@@ -585,7 +606,7 @@ gnewbg-dynamic)."
   "Creates a dynamic (auto-tiling) group and switches to it (StumpWM
 gnew-dynamic)."
   (let ((g (create-dynamic-group-in-background! name)))
-    (switch-to-group! (group-name g))
+    (switch-to-group! g)
     g))
 
 (define (reorder-dynamic! f)
@@ -856,7 +877,7 @@ app-id (or title) to its current group and frame (StumpWM remember)."
               (rust-call-place-float-offscreen id (float-geometry id))
               (hide-window! id))
           (when (cadddr rule)
-            (switch-to-group! (group-name g))
+            (switch-to-group! g)
             (when float? (focus-window-by-id! id)))))))
 
 (define (place-existing-windows!)
@@ -953,7 +974,7 @@ geometries re-applied. Groups not in the dump are left alone."
               (for-each
                (lambda (entry)
                  (let* ((name (car entry))
-                        (g (or (find-group-by-name name) (create-group-in-background! name))))
+                        (g (or (find-group-loose name) (create-group-in-background! name))))
                    (set-group-float?! g (cadr entry))
                    (restore-group-frames! g (caddr entry))
                    (for-each
@@ -992,7 +1013,7 @@ geometries re-applied. Groups not in the dump are left alone."
     (when (and idx (> n 1) id)
       (let ((next (list-ref %groups (modulo (+ idx 1) n))))
         (move-window-to-next-group!)
-        (switch-to-group! (group-name next))
+        (switch-to-group! next)
         (focus-window-by-id! id)))))
 
 ;; ---------------------------------------------------------------------
@@ -1049,7 +1070,7 @@ first becomes known."
           (let ((target (or (find-group-loose (cadr rule)) (current-group))))
             (if (and (cadddr rule) (not (eq? target (current-group))))
                 (begin
-                  (switch-to-group! (group-name target))
+                  (switch-to-group! target)
                   (when (window-floating? id) (focus-window-by-id! id)))
                 (sync-frames!))))))
     ;; External bars show the focused window's title. A title-only update
@@ -1065,14 +1086,13 @@ its group if needed."
     (if (null? urgent)
         (echo "No urgent windows")
         (let* ((id (car urgent))
-               (g (find (lambda (g) (group-has-window? (group-name g) id))
-                        %groups)))
+               (g (window-group id)))
           (clear-urgent! id)
           (cond
            ((not g) (next-urgent!)) ; window vanished meanwhile: try the next
            (else
             (unless (eq? g (current-group))
-              (switch-to-group! (group-name g)))
+              (switch-to-group! g))
             (focus-window-by-id! id)))))))
 
 (define (handle-window-unmap! id)

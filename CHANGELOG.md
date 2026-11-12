@@ -16,6 +16,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Group transitions retain the selected group record, so legacy duplicate
+  names cannot redirect focus, window moves or deletion. New blank and
+  duplicate names are rejected before mutation, and automatic names choose
+  the first unused numeral (#15).
+- Group deletion documentation now states its actual next-group fallback,
+  wrapping from the last group to the first (#18).
 - Title and app-ID changes compare previously reported client metadata,
   so real retitles trigger placement rules and events even under a user
   rename; repeated metadata does not retrigger float rules (#19).
