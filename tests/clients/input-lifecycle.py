@@ -274,6 +274,129 @@ def lock(first, second, client):
     print("ok - disappearing drag targets release the automation button", flush=True)
 
 
+def drag(first, second, client):
+    producer = client("drag button producer")
+    virtual = producer.virtual_pointer()
+    payload = Path(protocol.RUNTIME) / "drop-payload.txt"
+    payload.write_text("file drop regression\n")
+
+    def reject_drops(label):
+        position = ipc("(wm-pointer-position)")
+        focus = ipc("(focused-window-id)")
+        first.roundtrip()
+        start = len(first.events)
+        for operation, argument in (("drop-text", '"must not arrive"'),
+                                    ("drop-files", f'(list "{payload}")')):
+            result = ipc(f'(wm-{operation} {second.x} 180 {argument})')
+            token = re.fullmatch(r"\(ok (\d+)\)", result)
+            check(token, f"{label}: missing request token: {result}")
+            evaluate(f"(wm-automation-status {token[1]})", f"({operation} cancelled)")
+            check(ipc("(wm-pointer-position)") == position, f"{label}: rejected drop moved pointer")
+            check(ipc("(focused-window-id)") == focus, f"{label}: rejected drop changed focus")
+        first.roundtrip()
+        check(not first.buttons(start), f"{label}: rejected drop injected a button event")
+
+    for button in (272, 273):
+        first.point()
+        start = len(first.events)
+        producer.send(virtual, 2, uints(0, button, 1))
+        first.button(button, 1, start)
+        reject_drops("held click")
+        producer.send(virtual, 2, uints(0, button, 0))
+        first.button(button, 0, start)
+        check(first.buttons(start) == [(button, 1), (button, 0)], "held click became unbalanced")
+        second.point()
+    print("ok - automation drops preserve held left and right clicks", flush=True)
+
+    def geometry():
+        result = ipc(f"(wm-window-geometry {first.window_id})")
+        match = re.fullmatch(r"\(ok \((-?\d+) (-?\d+) (\d+) (\d+)\)\)", result)
+        check(match, f"window geometry: {result}")
+        return tuple(map(int, match.groups()))
+
+    for button in (272, 273):
+        first.point()
+        first.focus()
+        before = geometry()
+        start = len(first.events)
+        host("keydown", "Super_L")
+        first.key(125, 1, start)
+        producer.send(virtual, 2, uints(0, button, 1))
+        producer.roundtrip()
+        host("keyup", "Super_L")
+        first.key(125, 0, start)
+        reject_drops("move/resize grab")
+        evaluate(f"(wm-warp-pointer {first.x + 20} 200)")
+        expected = (before[0] + 20, before[1] + 20, *before[2:]) if button == 272 else \
+            (*before[:2], before[2] + 20, before[3] + 20)
+        deadline = time.monotonic() + protocol.TIMEOUT
+        while geometry() != expected:
+            check(time.monotonic() < deadline, f"move/resize grab stopped working: {geometry()}")
+            first.roundtrip()  # Ack resize configures and commit the new size.
+        producer.send(virtual, 2, uints(0, button, 0))
+        producer.roundtrip()
+        second.point()
+    print("ok - automation drops preserve working compositor move/resize grabs", flush=True)
+
+    devices = []
+    for target in (first, second):
+        manager = target.bind("wl_data_device_manager", 3)
+        seat, device = target.bind("wl_seat", 5), target.alloc()
+        target.send(manager, 1, uints(device, seat))
+        target.roundtrip()
+        devices.append((manager, device))
+    manager, origin_device = devices[0]
+    target_device = devices[1][1]
+    first.point()
+    start = len(first.events)
+    producer.send(virtual, 2, uints(0, 272, 1))
+    event = first.wait(lambda e: e[:2] == (first.pointer, 3)
+                       and struct.unpack("=IIII", e[2])[2:] == (272, 1), "drag press", start)
+    serial = struct.unpack_from("=I", event[2])[0]
+    source = first.alloc()
+    first.send(manager, 0, uints(source))
+    first.send(source, 0, protocol.string("text/plain;charset=utf-8"))
+    first.send(source, 2, uints(1))  # Offer the copy action.
+    first.send(origin_device, 0, uints(source, first.surface, 0, serial))
+    first.roundtrip()
+    evaluate(f"(wm-warp-pointer {first.x + 1} 180)")
+    first.wait(lambda e: e[:2] == (origin_device, 1), "client drag enter", start)
+    reject_drops("client drag")
+    first.roundtrip()
+    check(not any(e[:2] == (source, 2) for e in first.events), "client drag was cancelled")
+
+    start = len(second.events)
+    evaluate(f"(wm-warp-pointer {second.x} 180)")
+    event = second.wait(lambda e: e[:2] == (target_device, 1), "client drag target enter", start)
+    serial, surface, _, _, offer = struct.unpack("=IIiiI", event[2])
+    check(surface == second.surface and offer, "client drag entered wrong target")
+    second.send(offer, 0, uints(serial) + protocol.string("text/plain;charset=utf-8"))
+    second.send(offer, 4, uints(1, 1))
+    second.roundtrip()
+    producer.send(virtual, 2, uints(0, 272, 0))
+    second.wait(lambda e: e[:2] == (target_device, 4), "client drop", start)
+    first.wait(lambda e: e[:2] == (source, 3), "client drop performed")
+    second.send(offer, 3)  # finish
+    first.wait(lambda e: e[:2] == (source, 4), "client drag finished")
+    check(not any(e[:2] == (source, 2) for e in first.events), "finished client drag was cancelled")
+    print("ok - rejected automation leaves client drag negotiation and completion intact", flush=True)
+
+    second.point()
+    start = len(second.events)
+    result = ipc(f'(wm-drop-text {second.x} 180 "idle drop")')
+    token = re.fullmatch(r"\(ok (\d+)\)", result)
+    check(token, f"idle drag token: {result}")
+    event = second.wait(lambda e: e[:2] == (target_device, 1), "automation enter", start)
+    serial, _, _, _, offer = struct.unpack("=IIiiI", event[2])
+    second.send(offer, 0, uints(serial) + protocol.string("text/plain;charset=utf-8"))
+    second.send(offer, 4, uints(1, 1))
+    second.wait(lambda e: e[:2] == (target_device, 4), "automation drop", start)
+    second.send(offer, 3)
+    second.roundtrip()
+    evaluate(f"(wm-automation-status {token[1]})", "(drop-text accepted)")
+    print("ok - automation drops succeed once the pointer is idle", flush=True)
+
+
 def main():
     clients = []
 
@@ -287,12 +410,12 @@ def main():
         first, second = client("first input target"), client("second input target")
         first.mapped(100)
         second.mapped(700)
-        cases = {"typing": typing, "pointer": pointer, "lock": lock}
-        for name in os.environ.get("MINDE_INPUT_LIFECYCLE_CASES", "typing pointer lock").split():
+        cases = {"typing": typing, "pointer": pointer, "lock": lock, "drag": drag}
+        for name in os.environ.get("MINDE_INPUT_LIFECYCLE_CASES", "typing pointer lock drag").split():
             cases[name](first, second, client)
         print("input-lifecycle: all checks passed", flush=True)
     finally:
-        host("keyup", "Shift_L", "Control_L")
+        host("keyup", "Shift_L", "Control_L", "Super_L")
         for connection in clients:
             connection.close()
 

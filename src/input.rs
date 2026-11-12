@@ -37,6 +37,10 @@ pub(crate) enum PointerButtonSource {
 pub(crate) struct PointerButtons(Vec<(PointerButtonSource, u32)>);
 
 impl PointerButtons {
+    pub(crate) fn any_pressed(&self) -> bool {
+        !self.0.is_empty()
+    }
+
     /// Forward only the first press and the last release of a shared button.
     fn update(&mut self, source: PointerButtonSource, button: u32, state: ButtonState) -> bool {
         let owner = self

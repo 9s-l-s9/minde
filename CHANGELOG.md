@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Automation drops refuse active pointer grabs and held buttons before
+  moving the pointer or injecting input, preserving client drags and
+  compositor move/resize operations and reporting cancellation correctly (#49).
 - Invalid saved layouts and placement rules are preserved and block saves
   until reloaded successfully or moved aside. Startup failures are logged and
   shown when an output appears; failed saves leave memory unchanged (#102).

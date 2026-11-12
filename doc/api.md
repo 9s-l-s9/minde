@@ -135,6 +135,9 @@ or subscribe to `(automation-result token operation status)`. Terminal statuses
 are `accepted`, `rejected`, `no-target`, `cancelled`, and
 `unsupported-target`. Drops are native Wayland only; XWayland requires XDND and
 currently reports `unsupported-target`.
+Requests made while a pointer grab or button press is active report
+`cancelled` before moving the pointer or injecting input. Existing clicks,
+client drags and compositor move/resize grabs continue normally.
 
 ## Status
 

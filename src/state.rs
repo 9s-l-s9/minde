@@ -1358,7 +1358,15 @@ impl MindeState {
         let source = source.with_transfers(self.transfers.clone());
         let token = source.token();
         let operation = source.operation();
-        if self.locked || self.active_automation_dnd.is_some() {
+        let pointer = self.seat.get_pointer();
+        // Replacing a client drag synchronously calls its cancellation hook.
+        // Do not arm our token, warp, or press a button while another producer
+        // owns a grab or press (including one left over after grab teardown).
+        if self.locked
+            || self.active_automation_dnd.is_some()
+            || self.pointer_buttons.any_pressed()
+            || pointer.as_ref().is_some_and(|pointer| pointer.is_grabbed())
+        {
             self.finish_automation_dnd(
                 token,
                 operation,
@@ -1366,6 +1374,14 @@ impl MindeState {
             );
             return;
         }
+        let Some(pointer) = pointer else {
+            self.finish_automation_dnd(
+                token,
+                operation,
+                crate::automation_dnd::AutomationStatus::NoTarget,
+            );
+            return;
+        };
         self.warp_pointer((x as f64, y as f64).into());
         let Some((target, _)) = self.surface_under(self.pointer_location) else {
             self.finish_automation_dnd(
@@ -1393,14 +1409,6 @@ impl MindeState {
             );
             return;
         }
-        let Some(pointer) = self.seat.get_pointer() else {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::NoTarget,
-            );
-            return;
-        };
         let time = self.start_time.elapsed().as_millis() as u32;
         self.pointer_button_event(
             PointerButtonSource::Automation(token),
