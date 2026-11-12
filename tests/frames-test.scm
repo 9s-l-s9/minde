@@ -28,6 +28,10 @@
   (set! %focused id)
   #t)
 
+(define (wm-clear-focus)
+  (set! %focused #f)
+  #t)
+
 (define (wm-close-window id)
   (set! %closed (cons id %closed))
   #t)
@@ -41,6 +45,7 @@
 
 ;; Now it's safe to load the module under test.
 (use-modules (minde compositor frames))
+(use-modules (minde compositor model))
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -112,7 +117,10 @@
 
 ;; Cycle to the other (bottom, still-empty) frame.
 (focus-next-frame!)
-(check "focus-next-frame! moved focus off window 2" %focused 2) ; unchanged: bottom frame has no window yet
+(check "focus-next-frame! selected the empty bottom frame"
+       (current-frame-rect) '(0 360 1280 360))
+(check "empty bottom frame has no current window" (current-frame-window) #f)
+(check "focus-next-frame! cleared keyboard focus" %focused #f)
 
 ;; Cycle back.
 (focus-next-frame!)
@@ -135,10 +143,11 @@
 ;; rectangles must tile the output exactly (no gap, no overlap).
 ;; ---------------------------------------------------------------------
 
-;; (We don't have direct access to the frame list from outside the module,
-;; but window 1's and window 2's on-screen geometries when each is current
-;; already demonstrated top=[0,0,1280,360]; the bottom frame's rectangle is
-;; verified indirectly below via remove-split! restoring frame-filling.)
+(check "vertical split covers the output with two adjacent frames"
+       (map (lambda (frame)
+              (list (frame-x frame) (frame-y frame) (frame-w frame) (frame-h frame)))
+            (frame-leaves (current-tree)))
+       '((0 0 1280 360) (0 360 1280 360)))
 
 ;; ---------------------------------------------------------------------
 ;; remove-split! restores full screen.
@@ -146,7 +155,7 @@
 
 (remove-split!)
 (check "frame count back to one after remove-split!"
-       (length (list 1)) ; trivial sanity that check machinery works
+       (length (frame-leaves (current-tree)))
        1)
 (let ((cur (current-frame-window)))
   (check-true "some window is current after remove-split!" cur))
@@ -294,8 +303,21 @@
 (check "clear-current-frame! keeps the windows tracked" (frame-tree-window-count) 3)
 
 (hsplit-equally! 3)
-(check "hsplit-equally! made three columns; first column current"
-       (car (list (frame-tree-window-count))) 3)
+(let ((columns (frame-leaves (current-tree))))
+  (check "hsplit-equally! made three columns" (length columns) 3)
+  (check-true "hsplit-equally! selected the first column"
+              (eq? (current-frame) (car columns)))
+  (check-true "columns span the full height"
+              (every (lambda (f) (and (= (frame-y f) 0) (= (frame-h f) 720)))
+                     columns))
+  (check "columns cover the full width" (apply + (map frame-w columns)) 1280)
+  (check "columns start at the left edge" (frame-x (car columns)) 0)
+  (check-true "columns are adjacent without gaps or overlap"
+              (every (lambda (a b) (= (+ (frame-x a) (frame-w a)) (frame-x b)))
+                     (drop-right columns 1) (cdr columns)))
+  (check-true "column widths differ by at most one pixel"
+              (<= (- (apply max (map frame-w columns))
+                     (apply min (map frame-w columns))) 1)))
 (focus-next-window-in-frame!) ; show something in column 1 again
 (let ((cur (current-frame-window)))
   (check-true "a window is visible again in column 1" cur)

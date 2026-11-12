@@ -209,15 +209,26 @@
 (focus-window-by-id! 1)
 (remember!)
 (check-true "remember! wrote the rules file" (file-exists? %rules-path))
+(define %saved-rules
+  (read-versioned-datum-file %rules-path 'minde-placement-rules 1))
+(check "remembered rule pins foot to the original group and frame"
+       (find (lambda (rule) (string=? (car rule) "foot")) %saved-rules)
+       '("foot" "I" 0 #f #t #f))
 (clear-placement-rules!)
+(check "rules cleared before reload" (@@ (minde groups) %placement-rules) '())
 (load-placement-rules!)
-(check-true "rules survived a save/load round-trip"
-            (>= (length (begin (place-existing-windows!) '(x))) 0)) ; smoke
-;; The reloaded rule must match window 1 (matcher = its app-id "foot").
-(check-true "reloaded rule matches the remembered window"
-            (let ((path %rules-path))
-              (and (file-exists? path)
-                   (pair? (call-with-input-file path read)))))
+(check "all rules survived a save/load round-trip"
+       (@@ (minde groups) %placement-rules) %saved-rules)
+;; New matching windows must be placed by the restored rule, even when the
+;; selected frame would normally receive them elsewhere.
+(focus-frame-by-index! 1)
+(handle-window-map! 14 "new terminal" "foot")
+(check-true "reloaded rule places a matching window in the remembered frame"
+            (member 14 (frame-window-ids (car (frame-leaves (current-tree))))))
+(check-true "matching window did not go to the selected second frame"
+            (not (member 14 (frame-window-ids (cadr (frame-leaves (current-tree)))))))
+(handle-window-unmap! 14)
+(focus-window-by-id! 1)
 (forget!)
 (check-true "forget! removed the remembered rule, keeping the others"
             (let ((rules (read-versioned-datum-file

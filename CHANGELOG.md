@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Frame and placement tests now check actual focus, geometry and restored
+  rule behavior; nested protocol checks catch errors without unrelated log
+  markers, and the input smoke test reports its no-device scope (#170).
 - Repeated modifier names and aliases now keep the intended key binding
   instead of adding their bits into a different modifier mask (#5).
 - CI, `./check`, and `make check-rust` now share Rust build, unit-test and

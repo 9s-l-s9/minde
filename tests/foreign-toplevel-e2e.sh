@@ -58,8 +58,8 @@ kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died while serving foreign-toplevel events" >&2
     exit 1
 }
-if nested_log_has "foreign" && nested_log_has "protocol error"; then
-    echo "error: compositor logged a foreign-toplevel protocol error" >&2
+if nested_log_has "protocol error"; then
+    echo "error: compositor logged a protocol error during the foreign-toplevel scenario" >&2
     exit 1
 fi
 echo "ok - compositor served foreign-toplevel events cleanly"
