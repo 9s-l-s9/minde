@@ -58,8 +58,9 @@ unsafe extern "C" {
     /// Applies `proc` to `nargs` arguments read from `argv`.
     pub fn scm_call_n(proc: Scm, argv: *const Scm, nargs: usize) -> Scm;
 
-    pub fn scm_from_utf8_string(s: *const c_char) -> Scm;
-    /// Returns a malloc'd, NUL-terminated UTF-8 buffer; caller must free() it.
+    pub fn scm_from_utf8_stringn(s: *const c_char, len: usize) -> Scm;
+    /// Returns a malloc'd UTF-8 buffer; caller must free() it. With non-NULL
+    /// lenp the buffer contains exactly *lenp bytes, without a guaranteed NUL.
     pub fn scm_to_utf8_stringn(str_: Scm, lenp: *mut usize) -> *mut c_char;
 
     pub fn scm_to_bool(x: Scm) -> c_int;

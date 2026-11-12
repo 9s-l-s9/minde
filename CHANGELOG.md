@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Guile string conversion uses explicit byte lengths, preserving Unicode and
+  embedded NULs without reading past the allocated buffer. Non-string inputs
+  return failure without raising through Rust (#6).
 - The opt-in unsafe REPL now requires a private, owned runtime directory,
   creates its socket with mode `0600`, and preserves existing socket-path
   entries instead of deleting them (#172).

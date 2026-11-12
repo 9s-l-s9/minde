@@ -21,7 +21,7 @@ pub use paths::scheme_dir;
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
 use smithay::reexports::calloop::channel::Sender;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_void;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
@@ -542,8 +542,7 @@ pub fn from_i64(v: i64) -> Scm {
 }
 
 pub fn from_str(s: &str) -> Scm {
-    let c = to_cstring(s);
-    unsafe { ffi::scm_from_utf8_string(c.as_ptr()) }
+    unsafe { ffi::scm_from_utf8_stringn(s.as_ptr().cast(), s.len()) }
 }
 
 fn from_symbol(s: &str) -> Scm {
@@ -551,18 +550,20 @@ fn from_symbol(s: &str) -> Scm {
     unsafe { ffi::scm_from_utf8_symbol(c.as_ptr()) }
 }
 
-/// Converts a Scheme string SCM to a Rust `String`. Returns `None` if `v`
-/// isn't a string (Guile will raise inside `scm_to_utf8_stringn`, which we
-/// don't want to crash on, so callers should only pass values known to be
-/// strings, e.g. from `(symbol->string ...)`).
+/// Converts a Scheme string SCM to a Rust `String`, preserving embedded NULs.
+/// Returns `None` for non-strings without raising through a Rust frame.
 pub fn to_string_lossy(v: Scm) -> Option<String> {
     unsafe {
+        if ffi::scm_string_p(v) == ffi::SCM_BOOL_F {
+            return None;
+        }
         let mut len: usize = 0;
         let ptr = ffi::scm_to_utf8_stringn(v, &mut len as *mut usize);
         if ptr.is_null() {
             return None;
         }
-        let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        let bytes = std::slice::from_raw_parts(ptr.cast::<u8>(), len);
+        let s = String::from_utf8_lossy(bytes).into_owned();
         ffi::free(ptr as *mut c_void);
         Some(s)
     }
@@ -1985,5 +1986,22 @@ mod tests {
     fn scheme_string_escapes_only_quotes_and_backslashes() {
         assert_eq!(scheme_string("/a/b"), "\"/a/b\"");
         assert_eq!(scheme_string("q\"x\\y"), "\"q\\\"x\\\\y\"");
+    }
+
+    #[test]
+    fn string_conversions_preserve_length_and_reject_non_strings() {
+        // Keep all libguile calls in this test on its initializing thread.
+        unsafe { super::ffi::scm_init_guile() };
+        for text in ["", "plain text", "Grüße", "€日本語🦀", "a\0b", "\0€\0"] {
+            let value = super::from_str(text);
+            assert_eq!(super::to_string_lossy(value).as_deref(), Some(text));
+        }
+        for value in [
+            super::from_bool(false),
+            super::from_i64(42),
+            super::ffi::SCM_EOL,
+        ] {
+            assert_eq!(super::to_string_lossy(value), None);
+        }
     }
 }
