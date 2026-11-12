@@ -11,6 +11,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_CLIPBOARD_E2E_OUT:-/tmp/swm-clip-e2e}
 trap nested_stop EXIT HUP INT TERM
@@ -80,8 +81,8 @@ got=$(nested_wayland timeout 10 wl-paste --primary --no-newline 2>"$OUT/paste-pr
 }
 echo "ok - primary selection round trip via wl-clipboard"
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 MINDE_TRANSFER_TEST_PID="$NESTED_WM_PID" \
-    timeout 40 python3 tests/clients/selection-transfer.py >"$OUT/selection-transfer.log" 2>&1 || {
+nested_wayland env MINDE_TRANSFER_TEST_PID="$NESTED_WM_PID" \
+    timeout 40 "$NESTED_PROTOCOL_CLIENT" selection-transfer >"$OUT/selection-transfer.log" 2>&1 || {
     cat "$OUT/selection-transfer.log" >&2
     exit 1
 }

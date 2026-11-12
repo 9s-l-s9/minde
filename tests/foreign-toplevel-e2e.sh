@@ -6,11 +6,12 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-/tmp/swm-ft-e2e}
 trap nested_stop EXIT HUP INT TERM
 
-for tool in python3 wayland-info foot; do
+for tool in wayland-info foot; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "error: $tool is required for foreign-toplevel-e2e" >&2
         exit 127
@@ -22,7 +23,7 @@ nested_start "$OUT" "${MINDE_FOREIGN_TOPLEVEL_E2E_DISPLAY:-:98}" || {
     exit 1
 }
 
-PYTHONDONTWRITEBYTECODE=1 timeout 40 python3 tests/clients/window-lifecycle.py \
+timeout 40 "$NESTED_PROTOCOL_CLIENT" window-lifecycle \
     >"$OUT/window-lifecycle.log" 2>&1 || {
     cat "$OUT/window-lifecycle.log" >&2
     exit 1

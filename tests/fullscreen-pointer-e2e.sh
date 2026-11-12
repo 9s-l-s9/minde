@@ -5,6 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_FULLSCREEN_POINTER_E2E_OUT:-/tmp/minde-fullscreen-pointer-e2e}
 CLIENT_PID=
 PANEL_PID=
@@ -275,8 +276,8 @@ fi
     stop_client
 done
 MINDE_X11_TEST_CLIENT="$OUT/x11-client" MINDE_TEST_COMPOSITOR_PID="$NESTED_WM_PID" \
-    MINDE_X11_DISPLAY="$xdisplay" PYTHONDONTWRITEBYTECODE=1 \
-    timeout 45 python3 tests/clients/xwayland-lifecycle.py >"$OUT/xwayland-lifecycle.log" 2>&1 || {
+    MINDE_X11_DISPLAY="$xdisplay" \
+    timeout 45 "$NESTED_PROTOCOL_CLIENT" xwayland-lifecycle >"$OUT/xwayland-lifecycle.log" 2>&1 || {
     cat "$OUT/xwayland-lifecycle.log" >&2
     fail 'Xwayland lifecycle regression'
 }

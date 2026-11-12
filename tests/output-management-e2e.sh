@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 OUT=${MINDE_OUTPUT_MGMT_E2E_OUT:-/tmp/swm-outmgmt-e2e}
 ALLOW_ENV=MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
+export MINDE_TEST_PROTOCOLS=1
 # The nested compositor inherits our environment; make sure the override is
 # off for the first (normal) run.
 unset MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
@@ -33,8 +34,7 @@ nested_start "$OUT" "${MINDE_OUTPUT_MGMT_E2E_DISPLAY:-:99}" || {
     exit 1
 }
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 60 \
-    python3 tests/clients/output-management.py >"$OUT/protocol.log" 2>&1 || {
+nested_wayland timeout 60 "$NESTED_PROTOCOL_CLIENT" output-management >"$OUT/protocol.log" 2>&1 || {
     cat "$OUT/protocol.log" >&2
     exit 1
 }
@@ -177,8 +177,7 @@ printf '%s' "$q3" | grep -q 'Enabled: no' || {
 }
 echo "ok - the disabled head stays advertised with Enabled: no"
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
-    python3 tests/clients/output-management.py omitted-test omitted-apply \
+nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" output-management omitted-test omitted-apply \
     >"$OUT/disabled-protocol.log" 2>&1 || {
     cat "$OUT/disabled-protocol.log" >&2
     exit 1

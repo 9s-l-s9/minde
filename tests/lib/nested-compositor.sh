@@ -29,7 +29,7 @@ nested_start() {
     chmod 700 "$NESTED_RT"
     : >"$NESTED_LOG"
 
-    if [ -z "${MINDE_NESTED_PACKAGE:-}" ]; then
+    if [ -z "${MINDE_NESTED_PACKAGE:-}" ] || [ "${MINDE_TEST_PROTOCOLS:-0}" = 1 ]; then
         command -v cargo >/dev/null 2>&1 || {
             echo "error: cargo is required; enter the project Guix shell" >&2
             return 127
@@ -85,6 +85,11 @@ nested_start() {
         cargo build >"$NESTED_OUT/build.log" 2>&1 || return 1
         NESTED_BINARY="$PWD/target/debug/minde"
         NESTED_SCHEME="$PWD/scheme"
+    fi
+    if [ "${MINDE_TEST_PROTOCOLS:-0}" = 1 ]; then
+        cargo build --example protocol-client >"$NESTED_OUT/protocol-build.log" 2>&1 || return 1
+        NESTED_PROTOCOL_CLIENT="$PWD/target/debug/examples/protocol-client"
+        export NESTED_PROTOCOL_CLIENT
     fi
     (
         if [ -n "${MINDE_NESTED_PACKAGE:-}" ]; then

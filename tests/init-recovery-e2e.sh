@@ -4,6 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_INIT_RECOVERY_E2E_OUT:-/tmp/minde-init-recovery}
 trap nested_stop EXIT HUP INT TERM
 mkdir -p "$OUT/fixtures"
@@ -78,23 +79,7 @@ for case in syntax unbound module partial; do
     seval '#t' >/dev/null
     if [ "$case" = partial ]; then
         # Also cover a focused lock surface and XKB's Terminate_Server symbol.
-        PYTHONDONTWRITEBYTECODE=1 timeout 15 python3 - <<'PY'
-import runpy
-import subprocess
-
-api = runpy.run_path("tests/clients/session-lock.py")
-owner = api["Client"]("emergency exit while locked")
-try:
-    lock = owner.accepted_lock()
-    owner.lock_surface(lock)
-    owner.wait(lambda event: event[:2] == (owner.keyboard, 1), "lock keyboard enter")
-    api["locked"]()
-    subprocess.run(["xdotool", "key", "ctrl+alt+BackSpace"], check=True, timeout=5)
-    while owner.sock.recv(65536):
-        pass
-finally:
-    owner.close()
-PY
+        timeout 15 "$NESTED_PROTOCOL_CLIENT" emergency-exit
     else
         xdotool key ctrl+alt+BackSpace
     fi

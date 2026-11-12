@@ -3,6 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_WINIT_ERRORS_E2E_OUT:-/tmp/minde-winit-errors}
 trap nested_stop EXIT HUP INT TERM
 mkdir -p "$OUT/lib"
@@ -26,7 +27,7 @@ for stage in ${MINDE_WINIT_ERROR_STAGES:-render swap}; do
     export MINDE_SESSION_LOCK_TEST_WINDOW="$window"
     export MINDE_TEST_COMPOSITOR_LOG="$NESTED_LOG"
     export MINDE_TEST_TARGET_PID="$NESTED_WM_PID"
-    PYTHONDONTWRITEBYTECODE=1 timeout 60 python3 tests/clients/winit-errors.py "$stage"
+    timeout 60 "$NESTED_PROTOCOL_CLIENT" winit-errors "$stage"
     attempt=0
     while kill -0 "$NESTED_WM_PID" 2>/dev/null; do
         attempt=$((attempt + 1))

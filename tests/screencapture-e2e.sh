@@ -8,6 +8,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_SCREENCAPTURE_E2E_OUT:-/tmp/swm-e2e}
 trap nested_stop EXIT HUP INT TERM
@@ -27,15 +28,14 @@ nested_start "$OUT" "${MINDE_SCREENCAPTURE_E2E_DISPLAY:-:96}" || {
     exit 1
 }
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
-    python3 tests/clients/capture-clock.py >"$OUT/capture-clock.log" 2>&1 || {
+nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" capture-clock >"$OUT/capture-clock.log" 2>&1 || {
     cat "$OUT/capture-clock.log" >&2
     exit 1
 }
 cat "$OUT/capture-clock.log"
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 MINDE_CAPTURE_HOST_DISPLAY="$DISPLAY" timeout 60 \
-    python3 tests/clients/capture-lifecycle.py >"$OUT/capture-lifecycle.log" 2>&1 || {
+nested_wayland env MINDE_CAPTURE_HOST_DISPLAY="$DISPLAY" timeout 60 \
+    "$NESTED_PROTOCOL_CLIENT" capture-lifecycle >"$OUT/capture-lifecycle.log" 2>&1 || {
     cat "$OUT/capture-lifecycle.log" >&2
     exit 1
 }

@@ -5,6 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_GUILE_BOUNDARY_E2E_OUT:-/tmp/minde-guile-boundary-e2e}
 FOOT_PID=""
 cleanup() {
@@ -88,8 +89,7 @@ check 'invalid mode values leave the output configuration unchanged' '
            "1280x800@-0.0001" "1280x800@2147483.648")))
   #t)'
 
-nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
-    python3 tests/clients/output-mode.py >"$OUT/output-mode.log" 2>&1 || {
+nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" output-mode >"$OUT/output-mode.log" 2>&1 || {
     cat "$OUT/output-mode.log" >&2
     exit 1
 }

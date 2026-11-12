@@ -5,10 +5,11 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_SESSION_LOCK_E2E_OUT:-/tmp/minde-session-lock-e2e}
 trap nested_stop EXIT HUP INT TERM
-for tool in python3 xdotool timeout; do
+for tool in xdotool timeout; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "error: $tool is required for session-lock-e2e" >&2
         exit 127
@@ -45,7 +46,7 @@ timeout 5 xdotool windowfocus "$window"
 export MINDE_SESSION_LOCK_TEST_WINDOW="$window"
 
 for scenario in session-lock input-lifecycle; do
-    if ! PYTHONDONTWRITEBYTECODE=1 timeout 75 python3 "tests/clients/$scenario.py" >"$OUT/$scenario.log" 2>&1; then
+    if ! timeout 75 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1; then
         cat "$OUT/$scenario.log" >&2
         echo "error: $scenario regression failed; inspect $OUT" >&2
         tail -n 40 "$NESTED_LOG" >&2
