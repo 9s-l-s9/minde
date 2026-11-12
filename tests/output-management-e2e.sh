@@ -33,6 +33,13 @@ nested_start "$OUT" "${MINDE_OUTPUT_MGMT_E2E_DISPLAY:-:99}" || {
     exit 1
 }
 
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 60 \
+    python3 tests/clients/output-management.py >"$OUT/protocol.log" 2>&1 || {
+    cat "$OUT/protocol.log" >&2
+    exit 1
+}
+cat "$OUT/protocol.log"
+
 # --- query ----------------------------------------------------------------
 q=$(nested_wayland timeout 15 wlr-randr 2>"$OUT/wlr-randr.err") || {
     echo "error: wlr-randr query failed" >&2
@@ -169,6 +176,14 @@ printf '%s' "$q3" | grep -q 'Enabled: no' || {
     exit 1
 }
 echo "ok - the disabled head stays advertised with Enabled: no"
+
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
+    python3 tests/clients/output-management.py omitted-test omitted-apply \
+    >"$OUT/disabled-protocol.log" 2>&1 || {
+    cat "$OUT/disabled-protocol.log" >&2
+    exit 1
+}
+cat "$OUT/disabled-protocol.log"
 
 nested_wayland timeout 15 wlr-randr --output winit --on \
     >"$OUT/on.log" 2>&1 || {

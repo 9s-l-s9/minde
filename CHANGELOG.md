@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Output-manager binds preserve other clients' configuration serials. Invalid
+  configuration requests now raise the specified protocol errors, and
+  destroying a configuration also destroys its head objects (#28, #29).
 - Screen captures fail promptly on session lock, DPMS off and output removal
   instead of lingering until the desktop returns. Removed outputs stop ext
   capture sessions; rotation, scale and mode changes refresh constraints and

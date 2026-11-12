@@ -61,8 +61,8 @@ use smithay::reexports::{
         zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
     },
     wayland_server::{
-        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-        backend::{ClientId, GlobalId},
+        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
+        backend::{ClientId, GlobalId, ObjectId},
         protocol::wl_output::Transform as WlTransform,
     },
 };
@@ -85,6 +85,7 @@ pub struct HeadData {
 /// `set_mode` referencing this resource can be resolved back to a [`Mode`].
 pub struct ModeData {
     mode: Mode,
+    head: ZwlrOutputHeadV1,
 }
 
 /// A single head's requested changes inside a configuration. Built by the
@@ -283,6 +284,21 @@ struct ConfigInner {
     heads: Vec<HeadChange>,
     /// Set once apply/test has been sent (further requests are errors).
     finished: bool,
+    children: Vec<ObjectId>,
+}
+
+impl ConfigInner {
+    fn check_pending(&self, config: &ZwlrOutputConfigurationV1) -> bool {
+        if self.finished {
+            config.post_error(
+                zwlr_output_configuration_v1::Error::AlreadyUsed,
+                "configuration already applied or tested",
+            );
+            false
+        } else {
+            true
+        }
+    }
 }
 
 /// User data on a `ZwlrOutputConfigurationV1`.
@@ -294,6 +310,8 @@ pub struct ConfigData {
 pub struct ConfigHeadData {
     inner: Arc<Mutex<ConfigInner>>,
     output: Output,
+    head: ZwlrOutputHeadV1,
+    config: Weak<ZwlrOutputConfigurationV1>,
 }
 
 /// The identity properties last advertised for a head, so a refresh can
@@ -689,7 +707,10 @@ impl MindeState {
             let Ok(mode_res) = client.create_resource::<ZwlrOutputModeV1, _, MindeState>(
                 dh,
                 version,
-                ModeData { mode },
+                ModeData {
+                    mode,
+                    head: head.clone(),
+                },
             ) else {
                 continue;
             };
@@ -902,7 +923,8 @@ impl GlobalDispatch<ZwlrOutputManagerV1, ()> for MindeState {
                 heads.push(head);
             }
         }
-        state.output_management.serial = state.output_management.serial.wrapping_add(1);
+        // Binding only observes the layout. Only refresh may advance the
+        // serial, because it sends the new value to every existing manager.
         let serial = state.output_management.serial;
         manager.done(serial);
         state
@@ -990,7 +1012,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
         config: &ZwlrOutputConfigurationV1,
         request: zwlr_output_configuration_v1::Request,
         data: &ConfigData,
-        _dhandle: &DisplayHandle,
+        dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
         use zwlr_output_configuration_v1::Request;
@@ -1000,7 +1022,21 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     return;
                 };
                 let output = head_data.output.clone();
+                // Initialize even when the request is rejected: leaving a
+                // client-created resource uninitialized can panic dispatch.
+                let child = data_init.init(
+                    id,
+                    ConfigHeadData {
+                        inner: data.inner.clone(),
+                        output: output.clone(),
+                        head,
+                        config: config.downgrade(),
+                    },
+                );
                 let mut inner = data.inner.lock().unwrap();
+                if !inner.check_pending(config) {
+                    return;
+                }
                 if inner.heads.iter().any(|h| h.output == output) {
                     config.post_error(
                         zwlr_output_configuration_v1::Error::AlreadyConfiguredHead,
@@ -1009,13 +1045,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     return;
                 }
                 inner.heads.push(HeadChange::new(output.clone(), true));
-                data_init.init(
-                    id,
-                    ConfigHeadData {
-                        inner: data.inner.clone(),
-                        output,
-                    },
-                );
+                inner.children.push(child.id());
             }
             Request::DisableHead { head } => {
                 let Some(head_data) = head.data::<HeadData>() else {
@@ -1023,6 +1053,9 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                 };
                 let output = head_data.output.clone();
                 let mut inner = data.inner.lock().unwrap();
+                if !inner.check_pending(config) {
+                    return;
+                }
                 if inner.heads.iter().any(|h| h.output == output) {
                     config.post_error(
                         zwlr_output_configuration_v1::Error::AlreadyConfiguredHead,
@@ -1036,17 +1069,28 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                 let test_only = matches!(request, Request::Test);
                 let changes = {
                     let mut inner = data.inner.lock().unwrap();
-                    if inner.finished {
-                        config.post_error(
-                            zwlr_output_configuration_v1::Error::AlreadyUsed,
-                            "configuration already applied or tested",
-                        );
+                    if !inner.check_pending(config) {
                         return;
                     }
                     inner.finished = true;
                     // Serial mismatch: the client's view is stale.
                     if inner.serial != state.output_management.serial {
                         config.cancelled();
+                        return;
+                    }
+                    // This protocol describes a complete layout. Keep this
+                    // check out of the shared validator, whose Scheme callers
+                    // intentionally configure only selected heads.
+                    if state
+                        .output_management
+                        .heads_all
+                        .iter()
+                        .any(|output| !inner.heads.iter().any(|head| &head.output == output))
+                    {
+                        config.post_error(
+                            zwlr_output_configuration_v1::Error::UnconfiguredHead,
+                            "configuration omits an output head",
+                        );
                         return;
                     }
                     inner.heads.clone()
@@ -1075,7 +1119,16 @@ impl Dispatch<ZwlrOutputConfigurationV1, ConfigData> for MindeState {
                     }
                 }
             }
-            Request::Destroy => {}
+            Request::Destroy => {
+                let children = {
+                    let mut inner = data.inner.lock().unwrap();
+                    inner.finished = true;
+                    std::mem::take(&mut inner.children)
+                };
+                for child in children {
+                    let _ = dhandle.backend_handle().destroy_object::<Self>(&child);
+                }
+            }
             _ => {}
         }
     }
@@ -1093,18 +1146,42 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData> for MindeState {
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
     ) {
+        use zwlr_output_configuration_head_v1::Error;
         use zwlr_output_configuration_head_v1::Request;
         let mut inner = data.inner.lock().unwrap();
+        let Ok(config) = data.config.upgrade() else {
+            return;
+        };
+        if !inner.check_pending(&config) {
+            return;
+        }
         let Some(ph) = inner.heads.iter_mut().find(|h| h.output == data.output) else {
             return;
         };
-        // Setting the same property twice is a protocol error; we take the
-        // lenient path (last write wins) to keep the state machine small.
+        let already_set = match &request {
+            Request::SetMode { .. } | Request::SetCustomMode { .. } => {
+                ph.mode.is_some() || ph.custom_mode.is_some()
+            }
+            Request::SetPosition { .. } => ph.position.is_some(),
+            Request::SetTransform { .. } => ph.transform.is_some(),
+            Request::SetScale { .. } => ph.scale.is_some(),
+            Request::SetAdaptiveSync { .. } => ph.adaptive_sync.is_some(),
+            _ => false,
+        };
+        if already_set {
+            config_head.post_error(Error::AlreadySet, "head property already set");
+            return;
+        }
         match request {
             Request::SetMode { mode } => {
-                if let Some(mode_data) = mode.data::<ModeData>() {
-                    ph.mode = Some(mode_data.mode);
-                }
+                let Some(mode_data) = mode
+                    .data::<ModeData>()
+                    .filter(|mode| mode.head == data.head)
+                else {
+                    config_head.post_error(Error::InvalidMode, "mode does not belong to this head");
+                    return;
+                };
+                ph.mode = Some(mode_data.mode);
             }
             Request::SetCustomMode {
                 width,
@@ -1122,14 +1199,18 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData> for MindeState {
             }
             Request::SetPosition { x, y } => ph.position = Some((x, y)),
             Request::SetTransform { transform } => {
-                if let Ok(t) = transform.into_result() {
-                    ph.transform = Some(t);
-                }
+                let Ok(transform) = transform.into_result() else {
+                    config_head.post_error(Error::InvalidTransform, "invalid output transform");
+                    return;
+                };
+                ph.transform = Some(transform);
             }
             Request::SetScale { scale } => {
-                if scale > 0.0 {
-                    ph.scale = Some(scale);
+                if scale <= 0.0 {
+                    config_head.post_error(Error::InvalidScale, "scale must be positive");
+                    return;
                 }
+                ph.scale = Some(scale);
             }
             Request::SetAdaptiveSync { state } => match state.into_result() {
                 Ok(AdaptiveSyncState::Enabled) => ph.adaptive_sync = Some(true),

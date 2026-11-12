@@ -107,6 +107,22 @@ the desktop, lock surfaces, lock confirmation, output disable and DPMS off,
 and verifies clean shutdown after context loss during rendering or swapping.
 It runs in `make check-e2e`; no fault-injection code is built into Minde.
 
+## Output configuration protocol
+
+`sh tests/output-management-e2e.sh` combines normal `wlr-randr` requests with
+raw protocol clients. Binding a second manager must preserve the first
+client's serial and pending configuration; a real layout change must notify
+both clients and cancel configurations using the old serial.
+
+Malformed requests are checked for the exact error object and code: invalid
+scale, transform, custom mode and adaptive-sync values; repeated properties;
+mixed advertised/custom modes; a mode advertised for a different head
+resource; omitted heads; duplicate enable/disable; and every setter after
+apply or test. A healthy client must still work after each rejection. Valid
+properties and nonfatal backend refusals are checked separately, along with
+destruction of the configuration's child objects. Scheme's single-head API
+continues to accept partial changes; completeness is a protocol requirement.
+
 ## Screen capture lifecycle
 
 `sh tests/screencapture-e2e.sh` checks both capture protocols and file captures
