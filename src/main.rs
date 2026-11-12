@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let display: Display<MindeState> = Display::new()?;
 
-    let mut state = MindeState::new(&mut event_loop, display);
+    let mut state = MindeState::new(&mut event_loop, display)?;
     // Publish the XKB layout groups for (wm-keyboard-layouts) before the
     // config loads, so init.scm can already inspect them.
     state.refresh_keyboard_layouts();

@@ -5,7 +5,10 @@ use std::{collections::VecDeque, ffi::OsString, sync::Arc, time::Duration};
 
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
-    input::{Seat, SeatState},
+    input::{
+        Seat, SeatState,
+        keyboard::{Error as KeyboardError, XkbConfig, xkb},
+    },
     reexports::{
         calloop::{
             EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
@@ -467,7 +470,10 @@ pub struct MindeState {
 }
 
 impl MindeState {
-    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
+    pub fn new(
+        event_loop: &mut EventLoop<'static, Self>,
+        display: Display<Self>,
+    ) -> Result<Self, KeyboardError> {
         let start_time = std::time::Instant::now();
         let transfers = crate::transfer::Transfers::new(&event_loop.handle())
             .expect("Failed to initialize selection transfers");
@@ -614,8 +620,7 @@ impl MindeState {
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
         // Keymap from the standard XKB_DEFAULT_* environment variables
-        // (e.g. XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone); empty
-        // strings mean xkbcommon defaults ("us").
+        // (e.g. XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone).
         let env = |k: &str| std::env::var(k).unwrap_or_default();
         let (rules, model, layout, variant) = (
             env("XKB_DEFAULT_RULES"),
@@ -623,14 +628,42 @@ impl MindeState {
             env("XKB_DEFAULT_LAYOUT"),
             env("XKB_DEFAULT_VARIANT"),
         );
-        let xkb_config = smithay::input::keyboard::XkbConfig {
+        let xkb_config = XkbConfig {
             rules: &rules,
             model: &model,
             layout: &layout,
             variant: &variant,
             options: std::env::var("XKB_DEFAULT_OPTIONS").ok(),
         };
-        seat.add_keyboard(xkb_config, 200, 25).unwrap();
+        if let Err(error) = seat.add_keyboard(xkb_config.clone(), 200, 25) {
+            tracing::warn!(
+                %error,
+                XKB_DEFAULT_RULES = %rules,
+                XKB_DEFAULT_MODEL = %model,
+                XKB_DEFAULT_LAYOUT = %layout,
+                XKB_DEFAULT_VARIANT = %variant,
+                XKB_DEFAULT_OPTIONS = ?xkb_config.options,
+                "could not initialize the requested keymap; falling back to the US keymap"
+            );
+            // XkbConfig::default() would reuse the failing environment. Even
+            // an empty variant can inherit XKB_DEFAULT_VARIANT, so disable
+            // environment-name lookup as well as selecting explicit defaults.
+            seat.add_keyboard_with_context_flags(
+                XkbConfig {
+                    rules: "evdev",
+                    model: "pc105",
+                    layout: "us",
+                    variant: "",
+                    options: Some(String::new()),
+                },
+                200,
+                25,
+                xkb::CONTEXT_NO_ENVIRONMENT_NAMES,
+            )
+            .inspect_err(|error| {
+                tracing::error!(%error, "could not initialize the fallback US keymap; aborting startup");
+            })?;
+        }
         seat.add_pointer();
         // (Layout snapshot is published by refresh_keyboard_layouts once
         // the state exists; see the end of MindeState::new.)
@@ -646,7 +679,7 @@ impl MindeState {
 
         Self::init_command_channel(event_loop);
 
-        Self {
+        Ok(Self {
             start_time,
             transfers,
             owned_selections: [None, None],
@@ -735,7 +768,7 @@ impl MindeState {
             keyboard_shortcuts_inhibit_state,
             active_shortcuts_inhibitor: None,
             tablet_manager_state,
-        }
+        })
     }
 
     /// Clamps `pos` to the union of all mapped outputs' geometry, mirroring

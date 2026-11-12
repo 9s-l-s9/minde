@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Invalid `XKB_DEFAULT_*` keymaps log their requested settings and fall back
+  to a plain US keymap without reusing the failing environment. If the
+  fallback cannot compile either, startup exits cleanly instead of panicking
+  on `BadKeymap` (#60).
 - Automation drops refuse active pointer grabs and held buttons before
   moving the pointer or injecting input, preserving client drags and
   compositor move/resize operations and reporting cancellation correctly (#49).

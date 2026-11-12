@@ -175,6 +175,12 @@ list gives several *layout groups* that share the keymap:
 XKB_DEFAULT_LAYOUT=de,us XKB_DEFAULT_VARIANT=bone, minde
 ```
 
+If xkbcommon cannot compile the requested keymap, minde logs all five
+`XKB_DEFAULT_*` values and tries `evdev` rules, the `pc105` model and the `us`
+layout with no variant or options. This fallback ignores the requested names
+without changing the process environment. If the fallback also fails, startup
+exits with an error before opening the desktop.
+
 xkbcommon's own toggle options work unchanged
 (`XKB_DEFAULT_OPTIONS=grp:win_space_toggle`, `grp:caps_toggle`, ...); the
 compositor also exposes the groups to Scheme so a switch can sit under the

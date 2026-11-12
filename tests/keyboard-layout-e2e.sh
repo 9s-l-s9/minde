@@ -65,4 +65,66 @@ sleep 0.5
 [ "$(active)" = '"German (Bone)"' ] || fail "out-of-range index changed the group"
 echo "ok - out-of-range index is ignored"
 
+nested_stop
+
+# Invalid requested names must not be reused by the fallback. In particular,
+# an empty fallback variant normally inherits XKB_DEFAULT_VARIANT again.
+for bad in layout variant rules; do
+    export NESTED_XKB_LAYOUT=us NESTED_XKB_VARIANT='' NESTED_XKB_RULES=''
+    export NESTED_XKB_MODEL=pc105 NESTED_XKB_OPTIONS=caps:swapescape
+    case "$bad" in
+        layout) export NESTED_XKB_LAYOUT=minde-invalid-layout ;;
+        variant) export NESTED_XKB_VARIANT=minde-invalid-variant ;;
+        rules)
+            export NESTED_XKB_RULES=minde-invalid-rules
+            export NESTED_XKB_MODEL=minde-invalid-model
+            ;;
+    esac
+    nested_start "$OUT/bad-$bad" "${MINDE_KEYBOARD_LAYOUT_E2E_DISPLAY:-:99}" ||
+        fail "invalid $bad prevented startup" "$NESTED_LOG"
+    [ "$(active)" = '"English (US)"' ] || fail "fallback is not US: $(active)"
+    [ "$(seval '(length (keyboard-layouts))')" = 1 ] || fail "fallback has extra groups"
+    nested_log_has 'falling back to the US keymap' || fail "fallback diagnostic missing"
+    for name in RULES MODEL LAYOUT VARIANT OPTIONS; do
+        nested_log_has "XKB_DEFAULT_$name=" || fail "diagnostic omits XKB_DEFAULT_$name"
+    done
+    nested_log_has "minde-invalid-$bad" || fail "diagnostic omits invalid $bad value"
+    if nested_log_has "panicked at"; then fail "invalid $bad caused a panic"; fi
+
+    # Drive actual host key events through the recovered compositor keymap.
+    # Caps_Lock must retain its default meaning despite caps:swapescape above.
+    seval '(begin (define %fallback-keys (quote ()))
+                  (define (wm-handle-key mods sym name text)
+                    (set! %fallback-keys (cons name %fallback-keys)) #t) #t)' >/dev/null
+    window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
+    timeout 5 xdotool windowfocus "$window"
+    timeout 5 xdotool key y Caps_Lock Caps_Lock
+    attempt=0
+    until [ "$(seval '%fallback-keys')" = '("Caps_Lock" "Caps_Lock" "y")' ]; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -le 30 ] || fail "fallback keys/options are incorrect: $(seval '%fallback-keys')"
+        sleep 0.1
+    done
+    echo "ok - invalid $bad logs requested values and recovers with working US input"
+    nested_stop
+done
+
+# Corrupt installed keymap data can defeat both attempts. Fail before starting
+# a desktop, with a useful error rather than an unwrap panic. The invalid
+# evdev rules take precedence over any host/user include directories.
+bad_root="$OUT/bad-data"
+mkdir -p "$bad_root/xkb/rules" "$bad_root/runtime"
+chmod 700 "$bad_root/runtime"
+printf '%s\n' 'not a valid rules file' >"$bad_root/xkb/rules/evdev"
+status=0
+timeout 10 env XDG_CONFIG_HOME="$bad_root" XDG_RUNTIME_DIR="$bad_root/runtime" \
+    XDG_STATE_HOME="$bad_root/state" \
+    XKB_CONFIG_ROOT="$bad_root/xkb" XKB_DEFAULT_RULES=evdev \
+    XKB_DEFAULT_LAYOUT=us XKB_DEFAULT_VARIANT='' XKB_DEFAULT_MODEL=pc105 \
+    XKB_DEFAULT_OPTIONS='' "$NESTED_BINARY" --winit >"$bad_root/compositor.log" 2>&1 || status=$?
+[ "$status" -eq 1 ] || fail "unavailable fallback exited with $status" "$bad_root/compositor.log"
+NESTED_LOG="$bad_root/compositor.log"
+nested_log_has 'could not initialize the fallback US keymap' || fail "fallback failure diagnostic missing"
+if nested_log_has 'panicked at'; then fail "fallback failure panicked"; fi
+echo "ok - unavailable fallback produces a clean startup error"
 echo "keyboard layout e2e: all checks passed"

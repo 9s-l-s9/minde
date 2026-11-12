@@ -90,6 +90,13 @@ preference:
 
 ## Rust-side debugging
 
+- A `falling back to the US keymap` warning means the requested keyboard
+  configuration could not be compiled. The warning includes every
+  `XKB_DEFAULT_*` value; correct the failing layout, variant, rules, model or
+  options in the session environment and restart. The temporary US fallback
+  has no variant or options. If that also fails, check the installed
+  xkeyboard-config data and any `XKB_CONFIG_ROOT`/include-path overrides.
+  Minde then exits with an error instead of starting without a keyboard.
 - Set `RUST_BACKTRACE=1` (or `full`) before `cargo run`/`cargo build` output
   to get symbolized backtraces on panic.
 - The nested (winit) backend is a normal userspace window and can be run
