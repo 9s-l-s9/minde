@@ -669,6 +669,15 @@ unsafe extern "C" fn wm_quit() -> Scm {
     from_bool(true)
 }
 
+unsafe extern "C" fn wm_set_emergency_exit(mods: Scm, key: Scm) -> Scm {
+    if mods == ffi::SCM_BOOL_F && key == ffi::SCM_BOOL_F {
+        return from_bool(crate::input::configure_emergency_exit(None));
+    }
+    let mods = checked_arg!(to_i64(mods).and_then(|v| u32::try_from(v).ok()));
+    let key = checked_arg!(to_string_lossy(key));
+    from_bool(crate::input::configure_emergency_exit(Some((mods, &key))))
+}
+
 unsafe extern "C" fn wm_log(msg: Scm) -> Scm {
     if let Some(msg) = to_string_lossy(msg) {
         tracing::info!(target: "scheme", "{msg}");
@@ -1610,6 +1619,12 @@ fn register_primitives() {
     unsafe {
         register_gsubr("wm-spawn", 1, 0, gsubr!(wm_spawn, 1));
         register_gsubr("wm-quit", 0, 0, gsubr!(wm_quit, 0));
+        register_gsubr(
+            "wm-set-emergency-exit",
+            2,
+            0,
+            gsubr!(wm_set_emergency_exit, 2),
+        );
         register_gsubr("wm-log", 1, 0, gsubr!(wm_log, 1));
         register_gsubr("wm-place-window", 5, 0, gsubr!(wm_place_window, 5));
         register_gsubr("wm-place-windows", 1, 0, gsubr!(wm_place_windows, 1));

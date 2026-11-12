@@ -271,6 +271,7 @@
   (gsubrs
    ((name . wm-spawn) (signature . "(wm-spawn command)") (documentation . "Spawn a child process on the main thread with WAYLAND_DISPLAY set."))
    ((name . wm-quit) (signature . "(wm-quit)") (documentation . "Quit the compositor and stop the event loop."))
+   ((name . wm-set-emergency-exit) (signature . "(wm-set-emergency-exit mods keysym-name)") (documentation . "Set the native emergency exit chord with modifier mask MODS (shift=1, ctrl=4, alt=8, super=64) and an XKB key name; #f #f disables it. Returns #f without changes on invalid input. Works before startup and bypasses Scheme, lock and shortcut-inhibit policy."))
    ((name . wm-log) (signature . "(wm-log message)") (documentation . "Append MESSAGE to the compositor log."))
    ((name . wm-place-window) (signature . "(wm-place-window id x y w h)") (documentation . "Move and size the tiled window ID to the given rectangle."))
    ((name . wm-focus-window) (signature . "(wm-focus-window id)") (documentation . "Give keyboard focus to the window ID."))

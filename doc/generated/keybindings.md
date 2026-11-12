@@ -8,12 +8,14 @@ The repository default prefix is `C-t`. Personal Guix Home configuration may del
 
 | Sequence | Description |
 |---|---|
+| `C-M-BackSpace` | emergency exit: immediately ends the entire session without a save prompt |
 | `XF86AudioLowerVolume` | decrease volume 5% |
 | `XF86AudioMute` | toggle audio mute |
 | `XF86AudioRaiseVolume` | increase volume 5% |
 | `XF86MonBrightnessDown` | decrease brightness 5% |
 | `XF86MonBrightnessUp` | increase brightness 5% |
-| `s-q` | emergency compositor quit |
+
+**Warning:** the native emergency exit bypasses Scheme keybindings, shortcut inhibitors and session locks. Unsaved work may be lost. Rebind it with `(emergency-exit (ctrl alt shift) "Escape")` or disable it with `(emergency-exit #f)` in the declarative configuration.
 
 ## Prefix bindings
 

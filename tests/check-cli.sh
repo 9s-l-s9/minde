@@ -79,4 +79,19 @@ if "$binary" --check-config "$config_dir/prefix.scm" >"$config_dir/error" 2>&1; 
 fi
 grep -q 'unknown XKB key name' "$config_dir/error"
 
+for setting in '#f' '(ctrl alt) "BackSpace"' '(ctrl alt shift) "Escape"'; do
+    printf '(minde-config (version 1) (prefix (ctrl) "t") (emergency-exit %s) (bindings))\n' \
+        "$setting" >"$config_dir/emergency.scm"
+    "$binary" --check-config "$config_dir/emergency.scm"
+done
+cat >"$config_dir/emergency.scm" <<'EOF'
+(minde-config (version 1) (prefix (ctrl) "t")
+ (emergency-exit (ctrl alt) "Backspace") (bindings))
+EOF
+if "$binary" --check-config "$config_dir/emergency.scm" >"$config_dir/error" 2>&1; then
+    echo "CLI contract: accepted invalid emergency exit key" >&2
+    exit 1
+fi
+grep -q 'unknown XKB key name' "$config_dir/error"
+
 echo "CLI contract: ok ($version)"

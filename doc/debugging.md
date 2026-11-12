@@ -48,9 +48,11 @@ desktop shows the error for 30 seconds. Fix the personal init before the next
 login. A failure in the bundled init aborts startup instead of leaving a
 session without policy; there is no retry loop.
 
-If a running policy stops handling keys, **Ctrl+Alt+Backspace** exits directly
+If a running policy stops handling keys, the default **Ctrl+Alt+Backspace** exits directly
 through Rust. It also works while locked or while an application inhibits
 shortcuts. It terminates the session without an application save prompt.
+The declarative `emergency-exit` setting can rebind or disable it; see
+[`configuration.md`](configuration.md#declarative-configuration).
 On the DRM backend, the usual VT-switch keys remain available too.
 
 The report command conservatively redacts home paths and focused-window data,

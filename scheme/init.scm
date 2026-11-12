@@ -465,12 +465,6 @@ focused client), #f otherwise."
 ;; Default bindings
 ;; ---------------------------------------------------------------------
 
-;; Global: super+q quits outright (kept as an escape hatch outside the
-;; prefix, mirroring many StumpWM configs' emergency exit).
-(bind-key! '(super) "q"
-           (lambda () (wm-quit))
-           "emergency compositor quit")
-
 ;; The terminal is the only application launcher in the portable default.
 (define (terminal-command)
   "Return the configured terminal command, with dependency-light fallbacks."
@@ -1699,6 +1693,15 @@ reload baseline. Call once after adding imperative user bindings."
          (hash-set! candidate-docs key (command-summary command))))
      (configuration-bindings config))
     (copy-binding-submaps! %configuration-base-bindings candidate)
+    ;; This native setting also works before the compositor state exists.
+    ;; Tests without Rust may omit the primitive; a real rejection must leave
+    ;; the rest of the active configuration untouched.
+    (when (rust-bound? 'wm-set-emergency-exit)
+      (let ((chord (configuration-emergency-exit config)))
+        (unless (rust-call 'wm-set-emergency-exit
+                           (and chord (key:modifiers->bitmask (car chord)))
+                           (and chord (cadr chord)))
+          (error "native emergency exit configuration rejected" chord))))
     ;; No validation or allocation that can reasonably fail remains after
     ;; this point: publish the complete candidate as one short commit step.
     (set! %prefix-bindings candidate)

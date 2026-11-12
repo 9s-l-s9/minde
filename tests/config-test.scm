@@ -24,6 +24,32 @@
                  (bindings ,@(map (lambda (key) (list key 'personal-noop!)) keys))))
 (define (rejected? datum)
   (catch #t (lambda () (validate-configuration datum) #f) (lambda _ #t)))
+(define (with-emergency . fields)
+  `(minde-config (version 1) (prefix (ctrl) "t") (bindings) ,@fields))
+(check "omitted emergency exit uses the native default"
+       (configuration-emergency-exit (validate-configuration (with-emergency)))
+       '((ctrl alt) "BackSpace"))
+(check "emergency exit can be disabled"
+       (configuration-emergency-exit
+        (validate-configuration (with-emergency '(emergency-exit #f)))) #f)
+(let* ((datum (with-emergency '(emergency-exit (control meta shift) "Page_Up")))
+       (normalized (validate-configuration datum)))
+  (check "emergency exit normalizes XKB aliases"
+         (configuration-emergency-exit normalized) '((control meta shift) "Prior"))
+  (check "emergency normalization is idempotent" (validate-configuration normalized) normalized)
+  (check "emergency normalization preserves input"
+         (configuration-emergency-exit datum) '((control meta shift) "Page_Up")))
+(for-each
+ (lambda (entry)
+   (check (format #f "invalid emergency exit ~s" entry)
+          (rejected? (with-emergency entry)) #t))
+ '((emergency-exit) (emergency-exit #t) (emergency-exit #f "BackSpace")
+   (emergency-exit (hyper) "F12") (emergency-exit (ctrl) F12)
+   (emergency-exit (ctrl) "Retrun") (emergency-exit (ctrl) "NoSymbol")
+   (emergency-exit (ctrl) "F12" extra) (emergency-exit . #f)))
+(check "duplicate emergency settings rejected"
+       (rejected? (with-emergency '(emergency-exit #f)
+                                 '(emergency-exit (ctrl alt) "BackSpace"))) #t)
 (for-each
  (lambda (pair)
    (let* ((datum (with-keys (list (car pair))))
@@ -76,6 +102,8 @@
 (let ((config (validate-configuration-file "scheme/default-config.scm")))
   (check "prefix modifiers" (configuration-prefix-modifiers config) '(ctrl))
   (check "prefix key" (configuration-prefix-key config) "t")
+  (check "explicit default emergency exit" (configuration-emergency-exit config)
+         '((ctrl alt) "BackSpace"))
   (check "binding count" (length (configuration-bindings config)) 0))
 (check "unknown command rejected"
        (catch #t

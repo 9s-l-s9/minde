@@ -12,13 +12,26 @@
             validate-configuration-file
             configuration-prefix-modifiers
             configuration-prefix-key
+            configuration-emergency-exit
             configuration-bindings))
 
-(define (field name datum)
+(define* (field name datum #:optional default)
   (let ((matches (filter (lambda (entry) (and (pair? entry) (eq? name (car entry))))
                          (cdr datum))))
-    (unless (= (length matches) 1) (error "configuration field must occur once" name))
-    (car matches)))
+    (cond ((and (null? matches) default) default)
+          ((= (length matches) 1) (car matches))
+          (else (error "configuration field must occur once" name)))))
+
+(define %default-emergency-exit '(emergency-exit (ctrl alt) "BackSpace"))
+
+(define (validate-emergency-exit entry)
+  (if (equal? entry '(emergency-exit #f)) entry
+      (begin
+        (unless (and (= (length entry) 3) (list? (cadr entry))
+                     (every symbol? (cadr entry)) (string? (caddr entry)))
+          (error "emergency-exit must be (emergency-exit (modifiers ...) key) or (emergency-exit #f)" entry))
+        (modifiers->bitmask (cadr entry))
+        (list 'emergency-exit (cadr entry) (canonical-keysym-name (caddr entry))))))
 
 (define (canonical-binding-key notation)
   (let loop ((key notation) (modifiers '()))
@@ -50,7 +63,8 @@
   (let* ((version-field (field 'version datum))
          (prefix-field (field 'prefix datum))
          (bindings-field (field 'bindings datum))
-         (allowed '(version prefix bindings)))
+         (emergency-field (field 'emergency-exit datum %default-emergency-exit))
+         (allowed '(version prefix bindings emergency-exit)))
     (for-each (lambda (entry)
                 (unless (and (list? entry) (pair? entry) (memq (car entry) allowed))
                   (error "unknown configuration field" entry)))
@@ -65,6 +79,7 @@
     ;; Force modifier validation now rather than when the candidate is applied.
     (modifiers->bitmask (cadr prefix-field))
     (let ((prefix-key (canonical-keysym-name (caddr prefix-field)))
+          (emergency-exit (validate-emergency-exit emergency-field))
           (bindings
            (let loop ((remaining (cdr bindings-field)) (seen '()) (result '()))
              (if (null? remaining) (reverse result)
@@ -76,6 +91,7 @@
                    (case (car entry)
                      ((prefix) (list 'prefix (cadr prefix-field) prefix-key))
                      ((bindings) (cons 'bindings bindings))
+                     ((emergency-exit) emergency-exit)
                      (else entry)))
                  (cdr datum))))))
 
@@ -85,4 +101,7 @@
   (validate-configuration (read-configuration path)))
 (define (configuration-prefix-modifiers config) (cadr (field 'prefix config)))
 (define (configuration-prefix-key config) (caddr (field 'prefix config)))
+(define (configuration-emergency-exit config)
+  (let ((entry (field 'emergency-exit config %default-emergency-exit)))
+    (and (cadr entry) (cdr entry))))
 (define (configuration-bindings config) (cdr (field 'bindings config)))

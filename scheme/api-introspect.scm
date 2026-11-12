@@ -34,6 +34,8 @@
      "Spawn a child process on the main thread with WAYLAND_DISPLAY set.")
     (wm-quit "(wm-quit)"
      "Quit the compositor and stop the event loop.")
+    (wm-set-emergency-exit "(wm-set-emergency-exit mods keysym-name)"
+     "Set the native emergency exit chord with modifier mask MODS (shift=1, ctrl=4, alt=8, super=64) and an XKB key name; #f #f disables it. Returns #f without changes on invalid input. Works before startup and bypasses Scheme, lock and shortcut-inhibit policy.")
     (wm-log "(wm-log message)"
      "Append MESSAGE to the compositor log.")
     (wm-place-window "(wm-place-window id x y w h)"

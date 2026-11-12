@@ -30,7 +30,12 @@ the same configuration.
 ## Direct keys
 
 Brightness and audio keys spawn `brightnessctl` and `wpctl` commands when
-those programs are installed. `super+q` is an emergency compositor exit.
+those programs are installed. **Ctrl+Alt+BackSpace** is the native emergency
+exit: it immediately ends the entire session without asking applications to
+save. It works through broken Scheme, shortcut inhibitors and session locks.
+Use `C-t s q` for a normal, confirmed logout. The declarative
+`emergency-exit` setting can rebind or disable the emergency chord; Super+Q
+has no repository-default action.
 These direct bindings are included in the generated table instead of being
 maintained in a second list.
 

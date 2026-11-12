@@ -17,6 +17,7 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
     wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// BTN_LEFT/BTN_RIGHT in the libinput/evdev button namespace. Emulated as the tool's
 /// tip-down/up "click" for tablet-unaware clients.
@@ -147,6 +148,43 @@ fn mods_bitmask(mods: &smithay::input::keyboard::ModifiersState) -> u32 {
     modifier_bitmask(mods.shift, mods.ctrl, mods.alt, mods.logo)
 }
 
+// Available before Guile starts, including when policy fails to load. Store the
+// whole chord together so a REPL update cannot expose half of a new binding.
+const DEFAULT_EMERGENCY_EXIT: u64 = (12_u64 << 32) | xkb::KEY_BackSpace as u64;
+static EMERGENCY_EXIT: AtomicU64 = AtomicU64::new(DEFAULT_EMERGENCY_EXIT);
+
+fn emergency_exit_binding(mods: u32, name: &str) -> Option<u64> {
+    if mods & !(1 | 4 | 8 | 64) != 0 || name.is_empty() || name.contains('\0') {
+        return None;
+    }
+    let sym = smithay::input::keyboard::xkb::keysym_from_name(
+        name,
+        smithay::input::keyboard::xkb::KEYSYM_NO_FLAGS,
+    );
+    (sym.raw() != xkb::KEY_NoSymbol).then_some((u64::from(mods) << 32) | u64::from(sym.raw()))
+}
+
+pub(crate) fn configure_emergency_exit(binding: Option<(u32, &str)>) -> bool {
+    let value = match binding {
+        Some((mods, name)) => match emergency_exit_binding(mods, name) {
+            Some(value) => value,
+            None => return false,
+        },
+        None => 0,
+    };
+    EMERGENCY_EXIT.store(value, Ordering::Relaxed);
+    true
+}
+
+fn emergency_exit_matches(binding: u64, mods: u32, sym: u32) -> bool {
+    binding != 0
+        && (binding >> 32) as u32 == mods
+        && (binding as u32 == sym
+            // XKB's terminate:ctrl_alt_bksp option translates the default
+            // chord. It must not revive the exit after disabling/rebinding it.
+            || (binding == DEFAULT_EMERGENCY_EXIT && sym == xkb::KEY_Terminate_Server))
+}
+
 /// Whether `event` counts as user activity that should wake DPMS-off
 /// outputs: key presses, pointer button presses and pointer motion
 /// (relative or absolute). Releases and axis/touch/tablet events do not.
@@ -218,11 +256,12 @@ impl MindeState {
                             // Always available, even with broken Scheme policy,
                             // a session lock or a shortcuts inhibitor. Some XKB
                             // options translate this chord to Terminate_Server.
-                            if mods.ctrl
-                                && mods.alt
-                                && matches!(keysym.raw(), xkb::KEY_BackSpace | xkb::KEY_Terminate_Server)
-                            {
-                                tracing::warn!("emergency exit: Ctrl+Alt+Backspace");
+                            if emergency_exit_matches(
+                                EMERGENCY_EXIT.load(Ordering::Relaxed),
+                                mods_bitmask(mods),
+                                keysym.raw(),
+                            ) {
+                                tracing::warn!(mods = mods_bitmask(mods), keysym = keysym.raw(), "emergency exit");
                                 data.loop_signal.stop();
                                 return FilterResult::Intercept(());
                             }
@@ -1045,10 +1084,44 @@ fn map_absolute_to_global(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsolutePointerMotion, AbsolutePointerSource, ToolRoute, map_absolute_to_global,
-        modifier_bitmask, tool_route,
+        AbsolutePointerMotion, AbsolutePointerSource, DEFAULT_EMERGENCY_EXIT, ToolRoute,
+        emergency_exit_binding, emergency_exit_matches, map_absolute_to_global, modifier_bitmask,
+        tool_route, xkb,
     };
     use smithay::utils::Point;
+
+    #[test]
+    fn emergency_exit_requires_the_configured_chord() {
+        for sym in [xkb::KEY_BackSpace, xkb::KEY_Terminate_Server] {
+            assert!(emergency_exit_matches(DEFAULT_EMERGENCY_EXIT, 12, sym));
+            for mods in [0, 4, 8, 13, 76] {
+                assert!(!emergency_exit_matches(DEFAULT_EMERGENCY_EXIT, mods, sym));
+            }
+            assert!(!emergency_exit_matches(0, 12, sym));
+        }
+        let binding = emergency_exit_binding(4 | 8 | 1, "F12").unwrap();
+        assert!(emergency_exit_matches(binding, 13, xkb::KEY_F12));
+        assert!(!emergency_exit_matches(binding, 12, xkb::KEY_F12));
+        assert!(!emergency_exit_matches(binding, 13, xkb::KEY_BackSpace));
+        assert!(!emergency_exit_matches(
+            binding,
+            13,
+            xkb::KEY_Terminate_Server
+        ));
+        assert_eq!(
+            emergency_exit_binding(12, "BackSpace"),
+            Some(DEFAULT_EMERGENCY_EXIT)
+        );
+        assert_eq!(
+            emergency_exit_binding(0, "Page_Up"),
+            emergency_exit_binding(0, "Prior")
+        );
+        for name in ["", "NoSymbol", "backspace", "Retrun", "F12\0ignored"] {
+            assert_eq!(emergency_exit_binding(12, name), None);
+        }
+        assert_eq!(emergency_exit_binding(2, "F12"), None);
+        assert_eq!(emergency_exit_binding(u32::MAX, "F12"), None);
+    }
 
     #[test]
     fn absolute_deltas_follow_samples_while_cursor_is_parked() {

@@ -16,6 +16,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Super+Q no longer quits the compositor. The native Ctrl+Alt+BackSpace
+  emergency exit can be rebound or disabled in declarative configuration;
+  invalid reloads preserve it. The keymap reference and tutorial warn that
+  this chord ends the entire session without a save prompt (#158).
 - Nested bindings for the prefix keysym no longer re-arm the top-level map,
   and the literal-prefix escape fully leaves command mode (#95, #96).
 - Frame-flash timers restore only the border color, preserving prompt/menu

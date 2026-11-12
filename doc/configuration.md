@@ -36,6 +36,8 @@ after policy has loaded successfully.
 **Ctrl+Alt+Backspace** immediately exits Minde through Rust, even if Scheme
 keybindings fail, shortcuts are inhibited, or the session is locked. This is
 an emergency exit and does not prompt applications to save their work.
+Unsaved work may be lost. The declarative `emergency-exit` setting below can
+rebind or disable it; Super+Q has no repository-default action.
 
 ## Declarative configuration
 
@@ -45,6 +47,7 @@ The configuration is one data expression, not evaluated code:
 (minde-config
  (version 1)
  (prefix () "Print")
+ (emergency-exit (ctrl alt) "BackSpace")
  (bindings
   ("n" focus-next-window!)
   ("z" reload-configuration!)))
@@ -58,6 +61,15 @@ and `s-` (Super). Their order is normalized: `M-C-g` becomes `C-M-g`.
 XKB aliases are normalized too: `Page_Up` becomes `Prior`. Bindings that become
 identical after normalization are duplicates. Prefix keys use the same XKB
 names, with modifiers supplied separately in the prefix's list.
+
+`emergency-exit` accepts a modifier list and an XKB key name in the same form
+as `prefix`. For example, `(emergency-exit (ctrl alt shift) "Escape")` changes
+the native exit to Ctrl+Alt+Shift+Escape. `(emergency-exit #f)` disables it.
+Omitting the field selects Ctrl+Alt+BackSpace, including on reload. The
+modifier combination must match exactly; Caps Lock and Num Lock do not count
+as chord modifiers. XKB's `terminate:ctrl_alt_bksp` option also works with the
+default, but does not bypass a disabled or rebound setting. Disabling the
+chord removes the policy-independent keyboard escape hatch.
 
 ```sh
 scripts/mindectl check-config path/to/config.scm
@@ -79,7 +91,7 @@ the configuration or invoke the bound commands. It uses the normal IPC
 deadline, adjustable with `--timeout-ms`.
 
 Reload builds and validates a candidate table before publishing it. Failure
-leaves the active prefix and bindings unchanged.
+leaves the active prefix, bindings and native emergency exit unchanged.
 
 ## Imperative personal layer
 

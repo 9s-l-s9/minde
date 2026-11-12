@@ -10,6 +10,10 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 
 (define (wm-spawn command) #t)
 (define (wm-quit) #t)
+(define %native-emergency-exit #f)
+(define (wm-set-emergency-exit mods key)
+  (set! %native-emergency-exit (and key (cons mods key)))
+  #t)
 (define (wm-log message) #t)
 (define (wm-place-window . arguments) #t)
 (define (wm-focus-window . arguments) #t)
@@ -65,6 +69,9 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 
 (display "## Direct bindings\n\n")
 (display "| Sequence | Description |\n|---|---|\n")
+(when %native-emergency-exit
+  (format #t "| `~a` | emergency exit: immediately ends the entire session without a save prompt |\n"
+          (key-spec (car %native-emergency-exit) (cdr %native-emergency-exit))))
 (for-each
  (lambda (binding)
    (let ((spec (car binding)))
@@ -76,6 +83,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
          (string<? (key-spec (caar left) (cdar left))
                    (key-spec (caar right) (cdar right))))))
 
+(display "\n**Warning:** the native emergency exit bypasses Scheme keybindings, shortcut inhibitors and session locks. Unsaved work may be lost. Rebind it with `(emergency-exit (ctrl alt shift) \"Escape\")` or disable it with `(emergency-exit #f)` in the declarative configuration.\n")
 (display "\n## Prefix bindings\n\n")
 (display "| Sequence after prefix | Description | Kind |\n|---|---|---|\n")
 (display "| `?` | show contextual help and keep the current map armed | action |\n")

@@ -28,7 +28,11 @@ Inside the nested compositor:
 5. Press `C-t f`; numbered frame overlays appear. Select one with `0`–`9`.
 6. Press `C-t w`; numbered windows appear. `w 0`–`w 9` pull one into the
    current frame.
-7. Exit with `C-t s q`, or use the emergency direct binding `super+q`.
+7. Exit with `C-t s q` and confirm the logout prompt. For a stuck session,
+   **Ctrl+Alt+BackSpace immediately ends the entire session without a save
+   prompt; unsaved work may be lost.** This native emergency chord works even
+   when Scheme fails, shortcuts are inhibited, or the session is locked.
+   The declarative `emergency-exit` setting can rebind or disable it.
 
 The complete table is generated from the loaded keymaps in
 [`generated/keybindings.md`](generated/keybindings.md).

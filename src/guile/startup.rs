@@ -134,7 +134,7 @@ pub(super) fn show_recovery_message() {
         tracing::warn!(%error, "recovered policy using bundled init");
         send_command(WmCommand::Message {
             text: format!(
-                "Init failed; using bundled defaults.\n{error}\nSee session.log. Ctrl+Alt+Backspace exits."
+                "Init failed; using bundled defaults.\n{error}\nSee session.log for details."
             ),
             timeout_ms: 30_000,
         });

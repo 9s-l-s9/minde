@@ -90,10 +90,37 @@ for case in syntax unbound module partial; do
         sleep 0.1
     done
     wait "$NESTED_WM_PID" || fail 'emergency exit was not clean'
-    nested_log_has 'emergency exit: Ctrl+Alt+Backspace' || fail 'missing exit diagnostic'
+    nested_log_has 'emergency exit' || fail 'missing exit diagnostic'
     echo "ok - $case recovers clean policy, working keys and emergency exit"
     nested_stop
 done
+
+# Declarative emergency settings also apply before the backend exists. Keep
+# XKB's terminate alias enabled while testing disable/rebind and failed reloads.
+unset MINDE_NESTED_INIT
+export NESTED_XKB_OPTIONS=terminate:ctrl_alt_bksp
+export MINDE_EMERGENCY_CONFIG="$OUT/fixtures/emergency.scm"
+export MINDE_NESTED_CONFIG="$MINDE_EMERGENCY_CONFIG"
+for case in inhibited locked; do
+    cat > "$MINDE_EMERGENCY_CONFIG" <<'SCM'
+(minde-config (version 1) (prefix (ctrl) "t") (emergency-exit #f) (bindings))
+SCM
+    nested_start "$OUT/$case" "${MINDE_INIT_RECOVERY_E2E_DISPLAY:-:94}" ||
+        fail "$case configuration did not start"
+    window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
+    xdotool windowfocus "$window"
+    timeout 30 "$NESTED_PROTOCOL_CLIENT" emergency-config "$case"
+    attempt=0
+    while kill -0 "$NESTED_WM_PID" 2>/dev/null; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -le 50 ] || fail 'configured emergency exit did not stop the compositor'
+        sleep 0.1
+    done
+    wait "$NESTED_WM_PID" || fail 'configured emergency exit was not clean'
+    nested_log_has 'emergency exit' || fail 'missing configured exit diagnostic'
+    nested_stop
+done
+unset MINDE_NESTED_CONFIG MINDE_EMERGENCY_CONFIG NESTED_XKB_OPTIONS
 
 # A broken bundle is fatal before backend setup. Aliases of the same file must
 # not trigger even one retry; distinct user+bundle failures stop after one.

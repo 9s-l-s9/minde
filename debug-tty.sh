@@ -6,7 +6,8 @@
 #   ./debug-tty.sh
 #
 # Then wiggle the mouse, press some keys, wait ~15s. To get out:
-# super+q, or Ctrl+Alt+F7 back to X, or from elsewhere: pkill minde.
+# Ctrl+Alt+BackSpace (unless rebound/disabled), or switch to another VT.
+# Emergency exit ends the session without asking applications to save.
 cd "$(dirname "$0")" || exit 1
 # The single-quoted program is intentionally evaluated by the inner Guix
 # shell, where HOME/XDG_STATE_HOME have their final session values.

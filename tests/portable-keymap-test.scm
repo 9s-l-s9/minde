@@ -3,6 +3,11 @@
 
 (define (wm-spawn command) #t)
 (define (wm-quit) #t)
+(define %test-emergency-exit #f)
+(define %test-emergency-reject? #f)
+(define (wm-set-emergency-exit mods key)
+  (and (not %test-emergency-reject?)
+       (begin (set! %test-emergency-exit (list mods key)) #t)))
 (define (wm-session-locked?) #f)
 (define (wm-session-lock-confirmed?) #f)
 (define (wm-log message) #t)
@@ -38,6 +43,23 @@
   (unless value
     (set! failures (+ failures 1))
     (format #t "FAIL - ~a~%" description)))
+
+(check "Super+Q has no compositor binding" (not (hash-ref %keybindings (cons 64 "q"))))
+(check "default emergency exit reaches Rust" (equal? %test-emergency-exit '(12 "BackSpace")))
+(let ((disabled '(minde-config (version 1) (prefix (ctrl) "g")
+                                (emergency-exit #f) (bindings))))
+  (set! %test-emergency-reject? #t)
+  (let ((before %prefix-bindings))
+    (check "native rejection fails the apply"
+           (catch #t (lambda () (apply-configuration! (validate-configuration disabled)) #f)
+                     (lambda _ #t)))
+    (check "native rejection preserves prefix and bindings"
+           (and (eq? before %prefix-bindings) (= %prefix-mods 4) (equal? %prefix-key "t"))))
+  (set! %test-emergency-reject? #f)
+  (apply-configuration! (validate-configuration disabled))
+  (check "disabled exit reaches Rust" (equal? %test-emergency-exit '(#f #f)))
+  (apply-configuration! (validate-configuration-file "scheme/default-config.scm"))
+  (check "reload restores default emergency exit" (equal? %test-emergency-exit '(12 "BackSpace"))))
 
 (define (entered-submap key)
   (let ((value (hash-ref %prefix-bindings key)))
