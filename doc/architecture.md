@@ -54,6 +54,13 @@ and associated grabs and popups end. A subsequent map receives a fresh window
 ID, so stale selectors cannot address it. Initial title/app-id and fullscreen
 requests are applied when the first buffer maps.
 
+Interactive resize completion follows the final configure's acknowledgement
+on a surface commit. Older commits keep their opposite edges anchored until
+that acknowledgement arrives. Policy receives the requested final rectangle
+at button release, then the actual committed rectangle if the client chose
+a different size. Cancelling a resize clears its positioning state, sends a
+configure without the resizing flag, and retains the committed rectangle.
+
 Runtime state is authoritative in the compositor thread. Status publication
 uses versioned JSON and atomic files. Layouts and placement rules use versioned
 Scheme datums and atomic replacement. Configuration reload validates a complete

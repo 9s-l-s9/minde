@@ -88,6 +88,135 @@ class Client(protocol.Client):
         return pointer
 
 
+class ResizeClient(Client):
+    """Keep configure acknowledgements and buffer commits under test control."""
+    def prepare(self):
+        self.mapped(100)
+        self.roundtrip()
+        self.seat = self.bind("wl_seat", 5)
+        self.virtual = self.virtual_pointer()
+        self.configures = []
+        self.configure_states = ()
+
+        def toplevel(opcode, data):
+            if opcode == 0:
+                width, height, length = struct.unpack_from("=iiI", data)
+                self.configured_size[:] = [width, height]
+                self.configure_states = struct.unpack_from(f"={length // 4}I", data, 12)
+
+        def configure(opcode, data):
+            if opcode == 0:
+                self.configures.append((struct.unpack("=I", data)[0],
+                                        tuple(self.configured_size), self.configure_states))
+
+        self.handlers[self.toplevel_object] = toplevel
+        self.handlers[self.xdg_surface] = configure
+
+    def configured(self, resizing, start):
+        self.wait(lambda e: e[:2] == (self.xdg_surface, 0)
+                  and any((3 in c[2]) == resizing for c in self.configures[start:]),
+                  f"configure with resizing={resizing}", len(self.events))
+        return next(c for c in self.configures[start:] if (3 in c[2]) == resizing)
+
+    def commit_configure(self, configure, size=None):
+        self.send(self.xdg_surface, 4, uints(configure[0]))
+        self.paint(self.surface, *(size or configure[1]), 0x0000FFFF)
+        self.roundtrip()
+
+    def start_resize(self, edge):
+        self.point()
+        start = len(self.events)
+        self.send(self.virtual, 2, uints(0, 272, 1))
+        self.button(272, 1, start)
+        event = next(e for e in self.events[start:] if e[:2] == (self.pointer, 3))
+        serial = struct.unpack_from("=I", event[2])[0]
+        self.send(self.toplevel_object, 6, uints(self.seat, serial, edge))
+        self.roundtrip()
+
+
+def resize(first, second, client):
+    def rectangle(edge, size):
+        width, height = size
+        return (100 + (300 - width if edge & 4 else 0),
+                100 + (250 - height if edge & 1 else 0), width, height)
+
+    def check_rectangle(target, rect):
+        expected = "(" + " ".join(map(str, rect)) + ")"
+        for query in ("wm-window-geometry", "float-geometry"):
+            evaluate(f"({query} {target.window_id})", expected)
+
+    for edge in (4, 1, 5, 6, 9, 10):  # left, top, and all four corners
+        target = client(f"delayed resize edge {edge}", ResizeClient)
+        target.prepare()
+        target.start_resize(edge)
+        start = len(target.configures)
+        evaluate("(wm-warp-pointer 220 190)")
+        earlier = target.configured(True, start)
+        start = len(target.configures)
+        evaluate("(wm-warp-pointer 240 210)")
+        latest = target.configured(True, start)
+        start = len(target.configures)
+        target.send(target.virtual, 2, uints(0, 272, 0))
+        final = target.configured(False, start)
+        check(final[1] == latest[1], "release lost the last requested size")
+        expected = "(" + " ".join(map(str, rectangle(edge, final[1]))) + ")"
+        evaluate(f"(float-geometry {target.window_id})", expected)
+
+        # Commits for older configures and content-only commits must not
+        # consume the final reposition. Keep the final configure unacked.
+        target.commit_configure(earlier)
+        target.paint(target.surface, *earlier[1], 0x00FF0000)
+        target.roundtrip()
+        expected = "(" + " ".join(map(str, rectangle(edge, earlier[1]))) + ")"
+        evaluate(f"(wm-window-geometry {target.window_id})", expected)
+
+        # Floating clients may choose another size (e.g. terminal cell
+        # increments). The final acknowledged commit is authoritative.
+        size = (final[1][0] - 7, final[1][1] + 9) if edge == 9 else final[1]
+        target.commit_configure(final, size)
+        check_rectangle(target, rectangle(edge, size))
+        evaluate("(begin (sync-frames!) #t)")
+        target.roundtrip()
+        check_rectangle(target, rectangle(edge, size))
+
+        evaluate(f"(begin (set-float-geometry! {target.window_id} '(160 120 220 180))"
+                 " (sync-frames!) #t)")
+        target.roundtrip()
+        target.commit_configure(target.configures[-1])
+        check_rectangle(target, (160, 120, 220, 180))
+        target.close()
+    print("ok - delayed resize commits preserve the anchored edges and final policy geometry", flush=True)
+    print("ok - client-chosen resize sizes survive relayout without stale positioning", flush=True)
+
+
+def resize_lock(first, second, client):
+    target = client("resize interrupted by lock", ResizeClient)
+    target.prepare()
+    target.start_resize(5)
+    start = len(target.configures)
+    evaluate("(wm-warp-pointer 220 190)")
+    target.commit_configure(target.configured(True, start))
+    start = len(target.configures)
+    owner = client("resize cancellation lock owner")
+    lock_object = owner.accepted_lock()
+    owner.lock_surface(lock_object)
+    final = target.configured(False, start)
+    target.commit_configure(final)
+    target.send(target.virtual, 2, uints(0, 272, 0))
+    target.roundtrip()
+    owner.send(lock_object, 2)
+    owner.roundtrip()
+    protocol.locked(False)
+    evaluate("(begin (sync-frames!) #t)")
+    target.roundtrip()
+    evaluate(f"(wm-window-geometry {target.window_id})", "(120 110 280 240)")
+    evaluate(f"(float-geometry {target.window_id})", "(120 110 280 240)")
+    check(all(3 not in c[2] for c in target.configures if c[0] >= final[0]),
+          "resize state returned after unlocking")
+    target.close()
+    print("ok - lock cancellation sends a final resize configure and preserves committed geometry", flush=True)
+
+
 def typing(first, second, client):
     # A send starts synchronously; change focus in the SAME IPC evaluation,
     # before its 8 ms key-up timer can run. This is deterministic cancellation.
@@ -400,8 +529,8 @@ def drag(first, second, client):
 def main():
     clients = []
 
-    def client(name):
-        result = Client(name)
+    def client(name, kind=Client):
+        result = kind(name)
         clients.append(result)
         return result
 
@@ -410,8 +539,10 @@ def main():
         first, second = client("first input target"), client("second input target")
         first.mapped(100)
         second.mapped(700)
-        cases = {"typing": typing, "pointer": pointer, "lock": lock, "drag": drag}
-        for name in os.environ.get("MINDE_INPUT_LIFECYCLE_CASES", "typing pointer lock drag").split():
+        cases = {"typing": typing, "pointer": pointer, "lock": lock, "drag": drag,
+                 "resize": resize, "resize-lock": resize_lock}
+        for name in os.environ.get("MINDE_INPUT_LIFECYCLE_CASES",
+                                   "typing pointer lock drag resize resize-lock").split():
             cases[name](first, second, client)
         print("input-lifecycle: all checks passed", flush=True)
     finally:

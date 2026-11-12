@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Resize cancellation sends a configure that clears the resizing state and
+  preserves the committed floating rectangle. Left/top-edge resizes keep
+  their opposite edges anchored through delayed commits, and store the
+  client's final geometry for later layout syncs (#81, #82).
 - Native Wayland toplevels enter the layout only after their first buffer
   commit. Null-buffer commits remove hidden windows, focus, fullscreen and
   foreign-toplevel handles, and end their grabs and popups. Remapping uses

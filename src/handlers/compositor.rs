@@ -70,7 +70,7 @@ impl CompositorHandler for MindeState {
         };
 
         xdg_shell::handle_popup_commit(&mut self.popups, surface);
-        resize_grab::handle_commit(&mut self.space, surface);
+        resize_grab::handle_commit(self, surface);
         // Resizing can also move the origin during commit. Publish after that
         // adjustment and after Window::on_commit refreshed the committed size.
         // `committed_window` owns a clone, not a borrow into compositor state

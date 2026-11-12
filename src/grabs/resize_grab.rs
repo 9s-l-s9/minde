@@ -7,7 +7,7 @@
 
 use crate::MindeState;
 use smithay::{
-    desktop::{Space, Window},
+    desktop::Window,
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
         GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
@@ -18,7 +18,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{Logical, Point, Rectangle, Size},
+    utils::{Logical, Point, Rectangle, Serial, Size},
     wayland::{compositor, shell::xdg::SurfaceCachedState},
 };
 use std::{
@@ -58,6 +58,7 @@ pub struct ResizeSurfaceGrab {
     initial_rect: Rectangle<i32, Logical>,
     last_window_size: Size<i32, Logical>,
     configures: Arc<Mutex<ResizeConfigureQueue>>,
+    released: bool,
 }
 
 /// One latest size per event-loop dispatch. Clearing the pending size also
@@ -126,7 +127,45 @@ impl ResizeSurfaceGrab {
             initial_rect,
             last_window_size: initial_rect.size,
             configures: Arc::new(Mutex::new(ResizeConfigureQueue::new(initial_rect.size))),
+            released: false,
         }
+    }
+
+    fn report_geometry(
+        &self,
+        data: &mut MindeState,
+        rect: Rectangle<i32, Logical>,
+        final_serial: Option<Serial>,
+    ) {
+        let Some(id) = data.id_for_window(&self.window) else {
+            return;
+        };
+        data.publish_window_geometry(id);
+        let window = self.window.clone();
+        // Pointer dispatch holds a non-reentrant lock. Policy may touch the
+        // pointer, so notify it only once dispatch has returned.
+        data.handle.insert_idle(move |data| {
+            if data.windows.get(&id) != Some(&window) {
+                return;
+            }
+            let awaiting_commit = final_serial.is_some_and(|serial| {
+                window.toplevel().is_some_and(|xdg| {
+                    ResizeSurfaceState::with(xdg.wl_surface(), |state| {
+                        matches!(*state, ResizeSurfaceState::WaitingForLastCommit {
+                            serial: pending, ..
+                        } if pending == serial)
+                    })
+                })
+            });
+            // A final commit may already have supplied the client's chosen
+            // size. Never overwrite that with the earlier requested size.
+            let rect = if final_serial.is_some() && !awaiting_commit {
+                data.space.element_geometry(&window).unwrap_or(rect)
+            } else {
+                rect
+            };
+            crate::guile::on_window_moved(id, rect.loc.x, rect.loc.y, rect.size.w, rect.size.h);
+        });
     }
 }
 
@@ -233,41 +272,39 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         // Release once no buttons are held (client-side resizes start on
         // left, super+drag resize on right).
         if handle.current_pressed().is_empty() {
+            self.released = true;
             handle.unset_grab(self, data, event.serial, event.time, true);
 
-            if let Some(xdg) = self.window.toplevel() {
+            let final_serial = self.window.toplevel().map(|xdg| {
                 xdg.with_pending_state(|state| {
                     state.states.unset(xdg_toplevel::State::Resizing);
                     state.size = Some(self.last_window_size);
                 });
 
-                xdg.send_pending_configure();
+                // Always send a final configure, even without motion, so the
+                // commit router has an unambiguous end-of-resize serial.
+                let serial = xdg.send_configure();
 
                 ResizeSurfaceState::with(xdg.wl_surface(), |state| {
                     *state = ResizeSurfaceState::WaitingForLastCommit {
                         edges: self.edges,
                         initial_rect: self.initial_rect,
+                        serial,
                     };
                 });
-            }
+                serial
+            });
 
-            // Report the final geometry so Scheme's `%floating` table
-            // stays authoritative (same as move_grab).
-            if let Some(id) = data.id_for_window(&self.window) {
-                let loc = data
-                    .space
-                    .element_location(&self.window)
-                    .unwrap_or(self.initial_rect.loc);
-                // The inspection mirror reports the committed size; the
-                // configure below can still be awaiting its final commit.
-                data.publish_window_geometry(id);
-                // Deferred to an idle callback: see move_grab.rs for why this
-                // can't run inline from PointerHandle::button's dispatch.
-                let size = self.last_window_size;
-                data.handle.insert_idle(move |_state| {
-                    crate::guile::on_window_moved(id, loc.x, loc.y, size.w, size.h);
-                });
-            }
+            let loc = data
+                .space
+                .element_location(&self.window)
+                .unwrap_or(self.initial_rect.loc);
+            let loc = resize_location(self.edges, self.initial_rect, loc, self.last_window_size);
+            self.report_geometry(
+                data,
+                Rectangle::new(loc, self.last_window_size),
+                final_serial,
+            );
         }
     }
 
@@ -277,16 +314,26 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut MindeState) {
+    fn unset(&mut self, data: &mut MindeState) {
         self.configures.lock().unwrap().cancel();
+        if self.released {
+            return;
+        }
         if let Some(xdg) = self.window.toplevel() {
-            // Cancellation can leave the surface alive for a later mapping.
-            // Normal button release sets WaitingForLastCommit after unsetting
-            // the grab; forced cancellation must not retain the old anchor.
+            // Cancellation keeps the last committed geometry and drops the
+            // old anchor, including when the live surface is being unmapped.
             ResizeSurfaceState::with(xdg.wl_surface(), |state| {
                 *state = ResizeSurfaceState::Idle;
             });
             xdg.with_pending_state(|state| state.states.unset(xdg_toplevel::State::Resizing));
+            if xdg.alive()
+                && xdg.is_initial_configure_sent()
+                && let Some(rect) = data.space.element_geometry(&self.window)
+            {
+                xdg.with_pending_state(|state| state.size = Some(rect.size));
+                xdg.send_pending_configure();
+                self.report_geometry(data, rect, None);
+            }
         }
     }
 }
@@ -309,6 +356,8 @@ enum ResizeSurfaceState {
         edges: ResizeEdge,
         /// The initial window size and location.
         initial_rect: Rectangle<i32, Logical>,
+        /// Final configure; older acknowledgements cannot finish the resize.
+        serial: Serial,
     },
 }
 
@@ -325,20 +374,29 @@ impl ResizeSurfaceState {
         })
     }
 
-    fn commit(&mut self) -> Option<(ResizeEdge, Rectangle<i32, Logical>)> {
+    fn commit(
+        &mut self,
+        committed: Option<Serial>,
+    ) -> Option<(ResizeEdge, Rectangle<i32, Logical>, bool)> {
+        let Some(committed) = committed else {
+            *self = Self::Idle;
+            return None;
+        };
         match *self {
             Self::Resizing {
                 edges,
                 initial_rect,
-            } => Some((edges, initial_rect)),
+            } => Some((edges, initial_rect, false)),
             Self::WaitingForLastCommit {
                 edges,
                 initial_rect,
+                serial,
             } => {
-                // The resize is done, let's go back to idle
-                *self = Self::Idle;
-
-                Some((edges, initial_rect))
+                let finished = committed.is_no_older_than(&serial);
+                if finished {
+                    *self = Self::Idle;
+                }
+                Some((edges, initial_rect, finished))
             }
             Self::Idle => None,
         }
@@ -346,49 +404,124 @@ impl ResizeSurfaceState {
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
+pub fn handle_commit(data: &mut MindeState, surface: &WlSurface) -> Option<()> {
     // Cheap per-surface state check (no `Space` scan) first: almost every
     // commit is not part of an active resize, so bail before paying for
     // `window_for_surface`'s linear walk over `space.elements()` (3.9).
-    let (edges, initial_rect) = ResizeSurfaceState::with(surface, ResizeSurfaceState::commit)?;
-
-    let window = crate::state::window_for_surface(space, surface)?;
-
-    let mut window_loc = space.element_location(&window)?;
-    let geometry = window.geometry();
-
-    let new_loc: Point<Option<i32>, Logical> = if edges.intersects(ResizeEdge::TOP_LEFT) {
-        let new_x = edges
-            .intersects(ResizeEdge::LEFT)
-            .then_some(initial_rect.loc.x + (initial_rect.size.w - geometry.size.w));
-
-        let new_y = edges
-            .intersects(ResizeEdge::TOP)
-            .then_some(initial_rect.loc.y + (initial_rect.size.h - geometry.size.h));
-
-        (new_x, new_y).into()
-    } else {
-        Default::default()
+    if ResizeSurfaceState::with(surface, |state| *state == ResizeSurfaceState::Idle) {
+        return None;
+    }
+    let Some(window) = crate::state::window_for_surface(&data.space, surface) else {
+        ResizeSurfaceState::with(surface, |state| *state = ResizeSurfaceState::Idle);
+        return None;
     };
-
-    if let Some(new_x) = new_loc.x {
-        window_loc.x = new_x;
+    let committed = window
+        .toplevel()?
+        .with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial));
+    let (edges, initial_rect, finished) =
+        ResizeSurfaceState::with(surface, |state| state.commit(committed))?;
+    let loc = data.space.element_location(&window)?;
+    let size = window.geometry().size;
+    let new_loc = resize_location(edges, initial_rect, loc, size);
+    if new_loc != loc {
+        data.space.map_element(window.clone(), new_loc, false);
     }
-    if let Some(new_y) = new_loc.y {
-        window_loc.y = new_y;
-    }
-
-    if new_loc.x.is_some() || new_loc.y.is_some() {
-        // If TOP or LEFT side of the window got resized, we have to move it
-        space.map_element(window, window_loc, false);
+    if finished && let Some(id) = data.id_for_window(&window) {
+        // The client may choose a different size (e.g. terminal increments).
+        // The acknowledged final commit, rather than a size comparison, ends
+        // the resize and supplies the authoritative floating rectangle.
+        crate::guile::on_window_moved(id, new_loc.x, new_loc.y, size.w, size.h);
     }
 
     Some(())
 }
 
+fn resize_location(
+    edges: ResizeEdge,
+    initial: Rectangle<i32, Logical>,
+    mut current: Point<i32, Logical>,
+    size: Size<i32, Logical>,
+) -> Point<i32, Logical> {
+    let anchored = |origin: i32, old: i32, new: i32| {
+        (i64::from(origin) + i64::from(old) - i64::from(new))
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    };
+    if edges.contains(ResizeEdge::LEFT) {
+        current.x = anchored(initial.loc.x, initial.size.w, size.w);
+    }
+    if edges.contains(ResizeEdge::TOP) {
+        current.y = anchored(initial.loc.y, initial.size.h, size.h);
+    }
+    current
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ResizeConfigureQueue;
+    use super::{ResizeConfigureQueue, ResizeEdge, ResizeSurfaceState, resize_location};
+    use smithay::utils::Rectangle;
+
+    #[test]
+    fn final_resize_commit_tracks_configure_serial_including_wrap() {
+        let initial_rect = Rectangle::new((100, 100).into(), (300, 250).into());
+        for (final_serial, older, accepted) in [(20, 19, 20), (20, 19, 21), (1, u32::MAX, 2)] {
+            let mut state = ResizeSurfaceState::WaitingForLastCommit {
+                edges: ResizeEdge::TOP_LEFT,
+                initial_rect,
+                serial: final_serial.into(),
+            };
+            for _ in 0..2 {
+                assert_eq!(
+                    state.commit(Some(older.into())),
+                    Some((ResizeEdge::TOP_LEFT, initial_rect, false))
+                );
+            }
+            assert_eq!(
+                state.commit(Some(accepted.into())),
+                Some((ResizeEdge::TOP_LEFT, initial_rect, true))
+            );
+            assert_eq!(state, ResizeSurfaceState::Idle);
+            assert_eq!(state.commit(Some(accepted.into())), None);
+        }
+    }
+
+    #[test]
+    fn unmapping_discards_a_pending_resize_commit() {
+        let mut state = ResizeSurfaceState::WaitingForLastCommit {
+            edges: ResizeEdge::LEFT,
+            initial_rect: Rectangle::new((100, 100).into(), (300, 250).into()),
+            serial: 20.into(),
+        };
+        assert_eq!(state.commit(None), None);
+        assert_eq!(state, ResizeSurfaceState::Idle);
+    }
+
+    #[test]
+    fn resize_anchor_preserves_opposite_edges_and_bounds_large_coordinates() {
+        let initial = Rectangle::new((100, 100).into(), (300, 250).into());
+        let current = (160, 120).into();
+        let size = (260, 220).into();
+        assert_eq!(
+            resize_location(ResizeEdge::LEFT, initial, current, size),
+            (140, 120).into()
+        );
+        assert_eq!(
+            resize_location(ResizeEdge::TOP, initial, current, size),
+            (160, 130).into()
+        );
+        assert_eq!(
+            resize_location(ResizeEdge::TOP_LEFT, initial, current, size),
+            (140, 130).into()
+        );
+        assert_eq!(
+            resize_location(ResizeEdge::BOTTOM_RIGHT, initial, current, size),
+            current
+        );
+        let huge = Rectangle::new((i32::MAX, i32::MIN).into(), (i32::MAX, 1).into());
+        assert_eq!(
+            resize_location(ResizeEdge::TOP_LEFT, huge, current, (1, i32::MAX).into()),
+            (i32::MAX, i32::MIN).into()
+        );
+    }
 
     #[test]
     fn resize_burst_sends_only_latest_size() {
