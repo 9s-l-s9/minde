@@ -337,6 +337,48 @@
 (check "unfloating after only adds the window once"
        (sort (append-map frame-window-ids (frame-leaves (current-tree))) <) '(601 602 606))
 
+;; An output bounding box can contain no-output regions. Removing a head
+;; must recover floats from those holes in both frame-layout modes.
+(create-group! "float-hotplug")
+(handle-window-map! 700 "recover float" "test")
+(float-window! 700)
+(for-each
+ (lambda (mode)
+   (set-head-mode! mode)
+   (handle-heads-change! '((10 0 0 1920 1080) (11 1920 0 1280 720) (12 1920 720 1280 360)))
+   (set-float-geometry! 700 '(2500 800 600 200))
+   (handle-heads-change! '((10 0 0 1920 1080) (11 1920 0 1280 720)))
+   (check "unplug recovers a float from an uncovered corner" (float-geometry 700) '(2500 520 600 200))
+   (check "recovered float is actually placed on the surviving head" (placement 700) '(2500 520 600 200))
+   (check "recovery retains keyboard focus" %focused 700))
+ '(per-head span))
+(set-head-mode! 'per-head)
+(handle-heads-change! '((10 -1600 -200 800 600) (11 200 100 800 600)))
+(set-float-geometry! 700 '(-500 100 200 100))
+(create-group! "float-hotplug-other")
+(handle-heads-change! '((10 -1600 -200 800 600) (11 200 100 800 600)))
+(check "hidden float moves onto the nearest negative-origin output" (float-geometry 700) '(-1000 100 200 100))
+(check-true "hidden float remains parked during recovery" (offscreen? 700))
+(check "hidden recovery does not steal input focus" %focused #f)
+(switch-to-group! "float-hotplug")
+(check "hidden float uses its recovered position when shown" (placement 700) '(-1000 100 200 100))
+(handle-heads-change! '((10 0 0 800 600) (11 800 0 800 600)))
+(set-float-geometry! 700 '(700 50 200 100))
+(handle-heads-change! '((10 0 0 800 600) (11 800 0 800 600)))
+(check "visible floats can still span adjacent outputs" (float-geometry 700) '(700 50 200 100))
+(handle-heads-change! '((10 0 0 100 1000) (11 1000 0 100 1000)))
+(set-float-geometry! 700 '(200 0 800 2000))
+(handle-heads-change! '((10 0 0 100 1000) (11 1000 0 100 1000)))
+(check "stranded oversized float shrinks to fit the nearest output" (float-geometry 700) '(0 0 100 1000))
+(for-each
+ (lambda (outputs)
+   (set-float-geometry! 700 '(400 0 200 100))
+   (handle-heads-change! outputs)
+   (check "equal-distance recovery is stable across output enumeration order"
+          (float-geometry 700) '(200 0 200 100)))
+ '(((10 0 0 400 600) (11 600 0 400 600))
+   ((11 600 0 400 600) (10 0 0 400 600))))
+
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))
     (begin (format #t "~a test(s) FAILED~%" %failures) (exit 1)))

@@ -132,3 +132,5 @@ of command application, key dispatch and rendering (counts at or below
 100 us, 1 ms, 4 ms, 16.6 ms, and above), and `drift.txt`, the
 `(mirror-drift)` list of facts whose policy-side mirror disagrees with the
 compositor. An empty list `()` is the healthy state.
+Output comparisons use raw usable rectangles, before layout gaps or span
+mode combine and inset them. Those layout settings do not constitute drift.

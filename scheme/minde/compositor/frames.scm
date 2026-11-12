@@ -458,7 +458,9 @@ and 'span (one tree over the union of all monitors)."
                          groups
                          (cons %active-group groups))))
     (set! %heads new)
-    (when clamp-floats? (clamp-floats-to-heads! new))
+    ;; Float visibility follows real usable outputs even when tiling spans
+    ;; their bounding box or reserves additional head gaps.
+    (when clamp-floats? (clamp-floats-to-heads! %raw-heads))
     (unless (memv %current-head-id new-ids)
       (set! %current-head-id (car new-ids)))
     (unless (memv %last-head-id new-ids)
@@ -696,7 +698,8 @@ falling back to remembered client metadata (tests, REPL thread)."
 the compositor's own answer and returns the discrepancies as a list of
 (kind id expected actual) entries; () means the mirrors are in sync. Run
 from the diagnostics report and the e2e suite, so a dropped hook shows up
-as data instead of as a stale window list weeks later."
+as data instead of as a stale window list weeks later. Output comparisons
+use raw usable rectangles, before layout gaps or spanning."
   (define drift '())
   (define (note! kind id expected actual)
     (set! drift (cons (list kind id expected actual) drift)))
@@ -717,18 +720,14 @@ as data instead of as a stale window list weeks later."
       (let ((ours (sort (hash-map->list (lambda (id _) id) %floating) <)))
         (unless (equal? ours (sort rust-ids <))
           (note! 'floating #f ours rust-ids)))))
-  ;; Heads: in per-head mode the frame layer's heads are the outputs; span
-  ;; mode legitimately collapses them, so only the output ids are compared.
+  ;; Output facts are mirrored before any layout-only gap/span transform.
   (let ((outputs (rust-call-if-bound 'wm-outputs)))
     (when (list? outputs)
       (let ((theirs (map (lambda (o) (list-head o 5)) outputs))
-            (ours %heads))
-        (if (eq? %head-mode 'per-head)
-            (unless (equal? (sort ours (lambda (a b) (< (car a) (car b))))
-                            (sort theirs (lambda (a b) (< (car a) (car b)))))
-              (note! 'heads #f ours theirs))
-            (when (and (pair? theirs) (null? ours))
-              (note! 'heads #f ours theirs))))))
+            (ours (map (lambda (h) (list-head h 5)) %raw-heads)))
+        (unless (equal? (sort ours (lambda (a b) (< (car a) (car b))))
+                        (sort theirs (lambda (a b) (< (car a) (car b)))))
+          (note! 'heads #f ours theirs)))))
   (reverse drift))
 
 (define (forget-window-title! id)
@@ -1283,22 +1282,38 @@ source, and flags."
                       (if (member id %ontop-windows) ", on top" "")
                       (if (member id %sticky-windows) ", always shown" ""))))))
 
-;; Clamps every float rect to the union of the given head rects (called
-;; from apply-effective-heads! so unplugging a monitor doesn't strand
-;; floats off-screen).
+(define (clamp-float-rect rect bounds)
+  (let* ((w (min (caddr rect) (caddr bounds)))
+         (h (min (cadddr rect) (cadddr bounds)))
+         (x (max (car bounds) (min (car rect) (- (rect-right bounds) w))))
+         (y (max (cadr bounds) (min (cadr rect) (- (rect-bottom bounds) h)))))
+    (list x y w h)))
+
+;; Preserve bounding-box clamping for floats spanning adjacent monitors.
+;; If the result is invisible in a layout hole, fit it onto the real output
+;; requiring the smallest movement; output ID breaks equal-distance ties.
 (define (clamp-floats-to-heads! heads)
   (unless (null? heads)
-    (let* ((x1 (apply min (map cadr heads)))
-           (y1 (apply min (map caddr heads)))
-           (x2 (apply max (map (lambda (r) (+ (cadr r) (cadddr r))) heads)))
-           (y2 (apply max (map (lambda (r) (+ (caddr r) (car (cddddr r)))) heads))))
+    (let* ((bounds (map cdr (sort heads (lambda (a b) (< (car a) (car b))))))
+           (union (rect-union bounds)))
       (hash-for-each
        (lambda (id r)
-         (let* ((w (min (caddr r) (- x2 x1)))
-                (h (min (cadddr r) (- y2 y1)))
-                (x (max x1 (min (car r) (- x2 w))))
-                (y (max y1 (min (cadr r) (- y2 h)))))
-           (hash-set! %floating id (list x y w h))))
+         (define (distance rect)
+           (+ (expt (- (car rect) (car r)) 2) (expt (- (cadr rect) (cadr r)) 2)))
+         (let ((candidate (clamp-float-rect r union)))
+           (hash-set!
+            %floating id
+            (if (any (lambda (head)
+                       (and (> (rect-overlap (car candidate) (rect-right candidate)
+                                             (car head) (rect-right head)) 0)
+                            (> (rect-overlap (cadr candidate) (rect-bottom candidate)
+                                             (cadr head) (rect-bottom head)) 0)))
+                     bounds)
+                candidate
+                (fold (lambda (head best)
+                        (let ((rect (clamp-float-rect r head)))
+                          (if (< (distance rect) (distance best)) rect best)))
+                      (clamp-float-rect r (car bounds)) (cdr bounds))))))
        %floating))))
 
 ;; ---------------------------------------------------------------------

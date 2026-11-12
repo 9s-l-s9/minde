@@ -16,6 +16,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Output mirror diagnostics compare raw usable rectangles, so head gaps
+  and span layouts do not produce false drift reports; real geometry
+  disagreements remain visible (#8).
+- Floating windows stranded in gaps between surviving outputs move onto
+  the nearest output after geometry changes. Recovery also covers hidden
+  groups and span layouts while preserving visible floats across adjacent
+  monitors (#10).
 - Group transitions retain the selected group record, so legacy duplicate
   names cannot redirect focus, window moves or deletion. New blank and
   duplicate names are rejected before mutation, and automatic names choose

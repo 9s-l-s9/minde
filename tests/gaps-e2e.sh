@@ -22,6 +22,7 @@ nested_wayland env WAYLAND_DEBUG=1 foot -o resize-by-cells=no -o resize-keep-gri
 FOOT_PID=$!
 nested_wait_for_window_after "$before" 15
 scripts/mindectl eval '(begin (configure-gaps! #:inner 5 #:outer 10 #:head 20) (gaps-on!) (wm-border-color "#00ff00"))' >/dev/null
+scripts/mindectl eval '(when (assq (quote heads) (mirror-drift)) (error "head gaps caused false output drift"))' >/dev/null
 # Poll pixels to wait for the client configure/commit and the background map.
 assert_pixel() {
     label=$1 x=$2 y=$3 expected=$4
@@ -61,4 +62,5 @@ grep -Eq "xdg_toplevel.*configure\\($client_width, $client_height," "$OUT/foot.l
 nested_wayland timeout 10 wlr-randr --output winit --scale 1.5
 assert_pixel scaled-focus-border 53 60 00FF00
 assert_pixel scaled-outer-gap 30 30 FF0000
+scripts/mindectl eval '(when (assq (quote heads) (mirror-drift)) (error "scaled head gaps caused false output drift"))' >/dev/null
 echo 'gaps e2e: all checks passed'
