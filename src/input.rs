@@ -871,6 +871,10 @@ impl MindeState {
                 time: time_msec,
             },
         );
+        if button_state == ButtonState::Released {
+            let under = self.surface_under(self.pointer_location);
+            self.activate_pointer_constraint_if_entered(&under);
+        }
         pointer.frame(self);
     }
 

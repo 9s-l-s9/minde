@@ -52,6 +52,11 @@ cat >"$OUT/startup.scm" <<'EOF'
 EOF
 export MINDE_NESTED_INIT="$OUT/startup.scm"
 nested_start "$OUT" "${MINDE_FULLSCREEN_POINTER_E2E_DISPLAY:-:91}"
+timeout 75 "$NESTED_PROTOCOL_CLIENT" pointer-constraints >"$OUT/constraints.log" 2>&1 || {
+    cat "$OUT/constraints.log" >&2
+    exit 1
+}
+cat "$OUT/constraints.log"
 eval_wm() { timeout 5 scripts/mindectl eval "$1"; }
 fail() {
     echo "FAIL: $* (logs in $OUT)" >&2

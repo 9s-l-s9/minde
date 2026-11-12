@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Pointer locks and confinement activate only for the surface holding pointer
+  focus, including during implicit, move/resize and drag-and-drop grabs (#80).
+- Unlock hints belong to individual constraint resources and must be committed
+  while active and lie inside the surface's current input region. Inactive or
+  retired locks cannot reuse hints or remove a replacement constraint (#83).
 - Touch cancellation clears every held contact and client focus, including
   stationary fingers from completed frames. Locking, window unmapping and
   VT suspension use the same cleanup; late motion/up events cannot revive

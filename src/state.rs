@@ -401,10 +401,8 @@ pub struct MindeState {
     /// surface render elements honor the destination size automatically.
     pub viewporter_state: ViewporterState,
 
-    /// Last cursor-position hint committed by a locked-pointer client
-    /// (surface-local), honored by warping the cursor there on unlock. See
-    /// `PointerConstraintsHandler` in `handlers::pointer_constraints`.
-    pub pointer_lock_hint: Option<(WlSurface, Point<f64, Logical>)>,
+    /// Constraint resource identities, activation origins and committed hints.
+    pub(crate) pointer_constraint_records: crate::handlers::pointer_constraints::ConstraintRecords,
 
     /// Whether the current stylus tip-down was delivered as an emulated
     /// BTN_LEFT press (tablet-unaware client under the tool). Tip-up releases
@@ -760,7 +758,7 @@ impl MindeState {
             relative_pointer_manager_state,
             fractional_scale_manager_state,
             viewporter_state,
-            pointer_lock_hint: None,
+            pointer_constraint_records: Default::default(),
             stylus_tip_emulated: false,
             idle_notifier_state,
             idle_inhibit_state,
@@ -1377,13 +1375,14 @@ impl MindeState {
             let time = self.start_time.elapsed().as_millis() as u32;
             pointer.motion(
                 self,
-                under,
+                under.clone(),
                 &smithay::input::pointer::MotionEvent {
                     location: pos,
                     serial,
                     time,
                 },
             );
+            self.activate_pointer_constraint_if_entered(&under);
             pointer.frame(self);
         }
     }

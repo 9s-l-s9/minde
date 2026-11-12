@@ -92,15 +92,19 @@ guix shell -m manifest.scm xorg-server imagemagick jq util-linux \
 
 ## Fullscreen and pointer constraints
 
-`sh tests/fullscreen-pointer-e2e.sh` runs small C protocol clients in a hidden
+`sh tests/fullscreen-pointer-e2e.sh` runs Rust and C protocol clients in a hidden
 Xvfb/winit session. It checks native and X11 fullscreen (including a pre-map
 EWMH hint), client self-resize against tiling, fullscreen panel/border pixels
 and input routing, null and explicit pointer confinement, input regions,
 subtracted holes, Xwayland pointer grabs, relative motion during a lock and
-cursor-position hints on unlock. It also checks consecutive absolute-input
-lock deltas, warp resets, keyboard focus across fullscreen group switches and
-fullscreen resizing when output scaling changes. It is part of `make check-e2e` and uses the
-normal development manifest; all client lifetimes are bounded. This does not
+cursor-position hints on unlock. Rust clients check focus through implicit,
+move/resize and drag-and-drop grabs; committed hints inside current input
+regions; inactive hints; independent clients; and retired one-shot resources
+whose later requests must not affect a replacement lock. It also checks
+consecutive absolute-input lock deltas, warp resets, keyboard focus across
+fullscreen group switches and fullscreen resizing when output scaling changes.
+It is part of `make check-e2e` and uses the normal development manifest; all
+client lifetimes are bounded. This does not
 replace testing an actual game on the DRM/libinput backend.
 
 ## Nested rendering failures

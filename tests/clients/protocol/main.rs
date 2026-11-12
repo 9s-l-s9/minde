@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Bounded raw Wayland clients for the private nested test compositor.
 mod capture;
+mod constraints;
 mod emergency;
 mod input;
 mod keyboard;
@@ -22,6 +23,7 @@ fn main() {
         Some("emergency-config") => emergency::run(args.get(1).expect("locked or inhibited")),
         Some("input-lifecycle") => input::run(),
         Some("keyboard-filter") => keyboard::run(),
+        Some("pointer-constraints") => constraints::run(),
         Some("capture-clock") => capture::clock(),
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),

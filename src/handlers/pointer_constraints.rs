@@ -6,8 +6,9 @@
 //! The protocol state and dispatch live in Smithay's
 //! `wayland::pointer_constraints` and `wayland::relative_pointer` modules;
 //! the globals are registered in [`MindeState::new`] and dispatched
-//! through the crate-wide `delegate_dispatch2!` blanket. This file supplies
-//! the one handler trait Smithay requires plus the input-path integration:
+//! through `handlers::dispatch`, which also tracks constraint resource
+//! ownership before delegating their requests and destruction. This file
+//! supplies Smithay's handler trait plus the input-path integration:
 //! activating a constraint when the pointer enters its surface, keeping a
 //! locked pointer parked (while still forwarding relative motion so games
 //! read deltas), clamping a confined pointer to its region, and warping to
@@ -30,6 +31,9 @@ use smithay::wayland::pointer_constraints::{
 
 use crate::state::MindeState;
 
+mod ownership;
+pub(crate) use ownership::ConstraintRecords;
+
 impl PointerConstraintsHandler for MindeState {
     fn new_constraint(&mut self, surface: &WlSurface, _pointer: &PointerHandle<Self>) {
         // Per the protocol the constraint takes effect once the surface has
@@ -43,27 +47,27 @@ impl PointerConstraintsHandler for MindeState {
         )));
     }
 
-    fn remove_constraint(&mut self, surface: &WlSurface, _pointer: &PointerHandle<Self>) {
-        // Honor the locked position hint: on unlock, move the cursor to
-        // wherever the client was rendering it (defaulting to leaving it
-        // parked if no hint was committed for this surface).
-        if let Some((hint_surface, hint)) = self.pointer_lock_hint.take()
-            && &hint_surface == surface
-            && let Some((s, origin)) = self.surface_under(self.pointer_location)
-            && &s == surface
-        {
-            self.warp_pointer(origin + hint);
-        }
-    }
+    // Resource dispatch snapshots an active, valid hint before this callback:
+    // Smithay has already removed the surface/seat entry when it runs.
+    fn remove_constraint(&mut self, _: &WlSurface, _: &PointerHandle<Self>) {}
 
     fn cursor_position_hint(
         &mut self,
         surface: &WlSurface,
-        _pointer: &PointerHandle<Self>,
+        pointer: &PointerHandle<Self>,
         location: Point<f64, Logical>,
     ) {
-        // Surface-local hint; resolved to global coordinates on unlock.
-        self.pointer_lock_hint = Some((surface.clone(), location));
+        let active = with_pointer_constraint(surface, pointer, |constraint| {
+            constraint.is_some_and(|constraint| {
+                constraint.is_active() && matches!(&*constraint, PointerConstraint::Locked(_))
+            })
+        });
+        if let Some(record) = self
+            .pointer_constraint_records
+            .current_mut(surface, pointer)
+        {
+            record.hint = active.then_some(location);
+        }
     }
 }
 
@@ -72,27 +76,39 @@ impl MindeState {
     /// pointer focus to a proposed new pointer location. Returns the
     /// (possibly clamped) location and whether the pointer is *locked* in
     /// place -- in which case the caller must suppress the absolute motion
-    /// but still forward relative motion. `under` is the surface (and its
-    /// global origin) under the pointer *before* the move -- the constraint
-    /// follows pointer focus; the caller already has it for relative motion.
+    /// but still forward relative motion. `under` supplies a fresh origin
+    /// when the hit-test agrees with pointer focus. An occluded focused lock
+    /// keeps the origin recorded on activation instead of constraining the
+    /// unrelated surface now under the cursor.
     pub fn constrain_pointer(
-        &self,
+        &mut self,
         under: Option<&(WlSurface, Point<f64, Logical>)>,
         proposed: Point<f64, Logical>,
     ) -> (Point<f64, Logical>, bool) {
         let Some(pointer) = self.seat.get_pointer() else {
             return (proposed, false);
         };
-        let Some((surface, origin)) = under else {
+        let Some(surface) = pointer.current_focus() else {
             return (proposed, false);
         };
-        let origin = *origin;
+        let origin = under
+            .filter(|(under, _)| under == &surface)
+            .map(|(_, origin)| *origin)
+            .or_else(|| {
+                self.pointer_constraint_records
+                    .current(&surface, &pointer)
+                    .and_then(|record| record.origin)
+            });
+        let Some(origin) = origin else {
+            return (proposed, false);
+        };
         let current = self.pointer_location;
         let mut out = (proposed, false);
+        let mut deactivated = false;
         // Smithay holds the surface-state lock inside with_pointer_constraint;
         // collect input geometry first, never re-enter with_states there.
-        let input_region = surface_input_region(surface);
-        with_pointer_constraint(surface, &pointer, |constraint| {
+        let input_region = surface_input_region(&surface);
+        with_pointer_constraint(&surface, &pointer, |constraint| {
             let Some(constraint) = constraint else {
                 return;
             };
@@ -105,6 +121,7 @@ impl MindeState {
             // pointer. Release it instead of retaining an impossible grab.
             if !region.iter().any(|r| r.to_f64().contains(local)) {
                 constraint.deactivate();
+                deactivated = true;
                 return;
             }
             match &*constraint {
@@ -117,6 +134,13 @@ impl MindeState {
                 }
             }
         });
+        if deactivated
+            && let Some(record) = self
+                .pointer_constraint_records
+                .current_mut(&surface, &pointer)
+        {
+            record.hint = None;
+        }
         out
     }
 
@@ -133,11 +157,14 @@ impl MindeState {
         let Some((surface, origin)) = under else {
             return;
         };
+        if pointer.current_focus().as_ref() != Some(surface) {
+            return;
+        }
         let loc = self.pointer_location;
         // Smithay holds the surface-state lock inside with_pointer_constraint;
         // collect input geometry first, never re-enter with_states there.
         let input_region = surface_input_region(surface);
-        with_pointer_constraint(surface, &pointer, |constraint| {
+        let activated = with_pointer_constraint(surface, &pointer, |constraint| {
             if let Some(constraint) = constraint
                 && !constraint.is_active()
             {
@@ -147,9 +174,20 @@ impl MindeState {
                     .any(|r| r.to_f64().contains(local));
                 if inside {
                     constraint.activate();
+                    return true;
                 }
             }
+            false
         });
+        if let Some(record) = self
+            .pointer_constraint_records
+            .current_mut(surface, &pointer)
+        {
+            record.origin = Some(*origin);
+            if activated {
+                record.hint = None;
+            }
+        }
     }
 }
 
