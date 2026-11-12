@@ -210,5 +210,185 @@ pub fn run() {
         "focus clients remained mapped",
     );
     evaluate("(begin (collapse-to-one-frame!) #t)", "#t");
+    for with_ime in [false, true] {
+        clear_layer_focus(with_ime);
+    }
     println!("pointer-focus: all checks passed");
+}
+
+pub(super) fn inhibitor(client: &mut Client) -> u32 {
+    let manager = client.bind("zwp_keyboard_shortcuts_inhibit_manager_v1", 1);
+    let seat = client.bind("wl_seat", 1);
+    let id = client.alloc();
+    client.send(manager, 1, &words(&[id, client.surface, seat]));
+    id
+}
+
+fn clear_layer_focus(with_ime: bool) {
+    evaluate("(focused-window-id)", "#f");
+    let mut panel = Panel::new("layer clearing focus", 3, 0);
+    let manager = panel.input.bind("zwp_text_input_manager_v3", 1);
+    let seat = panel.input.bind("wl_seat", 1);
+    let text_input = panel.input.alloc();
+    panel.input.send(manager, 1, &words(&[text_input, seat]));
+    if with_ime {
+        let manager = panel.input.bind("zwp_input_method_manager_v2", 1);
+        let method = panel.input.alloc();
+        panel.input.send(manager, 0, &words(&[seat, method]));
+        panel.input.roundtrip();
+        assert!(!panel.input.events.iter().any(|e| e.is(method, 6)));
+    }
+    let inhibitor = inhibitor(&mut panel.input.c);
+    panel.mode(1);
+    if with_ime {
+        panel.input.event(text_input, 0); // enter
+    }
+    panel.input.event(inhibitor, 0); // active
+    keyboard(&mut panel.input, true);
+
+    let start = panel.input.events.len();
+    // Keep the wl_surface, text input and inhibitor alive. Destroying the
+    // entire client would hide a missing focus-clear notification.
+    panel.input.send(panel.layer, 7, &[]);
+    panel.input.roundtrip();
+    keyboard(&mut panel.input, false);
+    if with_ime {
+        panel.input.wait(start, |e| e.is(text_input, 1)); // leave
+    }
+    panel.input.wait(start, |e| e.is(inhibitor, 1));
+    let text_events: Vec<_> = panel
+        .input
+        .events
+        .iter()
+        .filter(|e| e.object == text_input && e.opcode <= 1)
+        .map(|e| e.opcode)
+        .collect();
+    assert_eq!(text_events, if with_ime { vec![0, 1] } else { vec![] });
+    evaluate(
+        "(begin (define focus-clear-handler wm-handle-key) (define focus-clear-keys 0)
+         (set! wm-handle-key (lambda args (set! focus-clear-keys (+ focus-clear-keys 1)) #t)) #t)",
+        "#t",
+    );
+    command("xdotool", &["key", "F8"]);
+    until(
+        || ipc("focus-clear-keys") == "(ok 1)",
+        "shortcut stayed inhibited after layer close",
+    );
+    evaluate("(begin (set! wm-handle-key focus-clear-handler) #t)", "#t");
+    panel.input.send(panel.input.surface, 0, &[]);
+    panel.input.roundtrip();
+    println!(
+        "ok - layer role destruction clears focus and inhibition (IME={with_ime}); shortcuts recover"
+    );
+}
+
+pub fn restore_x11() {
+    use smithay::reexports::x11rb::{
+        COPY_DEPTH_FROM_PARENT,
+        connection::Connection,
+        protocol::{
+            Event as XEvent,
+            xproto::{AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode, WindowClass},
+        },
+        wrapper::ConnectionExt as _,
+    };
+    let display = std::env::var("MINDE_X11_DISPLAY").unwrap();
+    let (connection, screen) = smithay::reexports::x11rb::connect(Some(&display)).unwrap();
+    let root = connection.setup().roots[screen].root;
+    let window = connection.generate_id().unwrap();
+    connection
+        .create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            300,
+            200,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .background_pixel(0x204060)
+                .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    connection
+        .change_property8(
+            PropMode::REPLACE,
+            window,
+            AtomEnum::WM_NAME,
+            AtomEnum::STRING,
+            b"layer restore X11",
+        )
+        .unwrap();
+    connection.map_window(window).unwrap();
+    connection.flush().unwrap();
+    let mut id = None;
+    until(
+        || {
+            let reply = ipc(
+                "(find (lambda (id) (equal? (window-title id) \"layer restore X11\")) (all-window-ids))",
+            );
+            id = reply
+                .strip_prefix("(ok ")
+                .and_then(|s| s.strip_suffix(')'))
+                .and_then(|s| s.parse::<u32>().ok());
+            id.is_some()
+        },
+        "X11 focus target never mapped",
+    );
+    let id = id.unwrap();
+    evaluate(&format!("(focus-window-by-id! {id})"), "#t");
+    // Mapping precedes Xwayland's wl_surface association and keyboard enter.
+    until(
+        || connection.get_input_focus().unwrap().reply().unwrap().focus == window,
+        "X11 focus target was not ready",
+    );
+
+    let drain = || {
+        let mut keys = Vec::new();
+        while let Some(event) = connection.poll_for_event().unwrap() {
+            match event {
+                XEvent::KeyPress(e) => keys.push((e.detail, true)),
+                XEvent::KeyRelease(e) => keys.push((e.detail, false)),
+                _ => {}
+            }
+        }
+        keys
+    };
+    let receive_key = |failure: &str| {
+        let mut keys = Vec::new();
+        command("xdotool", &["key", "--clearmodifiers", "a"]);
+        until(
+            || {
+                keys.extend(drain());
+                keys.iter()
+                    .any(|(key, pressed)| *pressed && keys.contains(&(*key, false)))
+            },
+            failure,
+        );
+    };
+    receive_key("X11 target did not receive initial keyboard input");
+    drain();
+    let mut panel = Panel::new("exclusive over X11", 3, 1);
+    keyboard(&mut panel.input, true);
+    inject_key(&mut panel.input.c, &mut []);
+    // An X11 roundtrip orders server-side delivery before the negative check.
+    connection.get_input_focus().unwrap().reply().unwrap();
+    assert!(
+        drain().is_empty(),
+        "X11 received keys while a layer owned focus"
+    );
+    panel.destroy();
+    selected(id);
+    receive_key("X11 keyboard input was not restored");
+    drop(connection);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "X11 focus client remained mapped",
+    );
+    println!("ok - exclusive layer close restores real X11 keyboard delivery");
 }

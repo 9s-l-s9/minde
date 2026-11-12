@@ -6,6 +6,7 @@ pub mod foreign_toplevel;
 pub mod gamma_control;
 mod idle;
 pub mod input_method;
+mod keyboard_focus;
 pub mod keyboard_shortcuts_inhibit;
 mod layer_shell;
 pub mod output_management;
@@ -23,6 +24,7 @@ mod xdg_shell;
 mod xwayland;
 
 use crate::MindeState;
+use keyboard_focus::KeyboardFocusTarget;
 
 //
 // Wl Seat
@@ -40,8 +42,33 @@ use smithay::wayland::selection::data_device::{
     DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
 };
 
+impl MindeState {
+    /// Keep selections, text input and shortcut inhibition in sync when focus
+    /// is cleared: the pinned Smithay only calls `focus_changed` for Some.
+    pub(crate) fn set_keyboard_focus(&mut self, focus: Option<WlSurface>, serial: Serial) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let focus = focus.map(|surface| {
+            let x11 = self
+                .windows
+                .values()
+                .filter_map(|window| window.x11_surface())
+                .find(|window| window.wl_surface().as_ref() == Some(&surface))
+                .cloned();
+            KeyboardFocusTarget { surface, x11 }
+        });
+        keyboard.set_focus(self, focus, serial);
+        // A grab may retain or redirect the requested focus. Reconcile the
+        // resulting focus, rather than assuming the request was applied.
+        if keyboard.current_focus().is_none() {
+            self.focus_changed(&self.seat.clone(), None);
+        }
+    }
+}
+
 impl SeatHandler for MindeState {
-    type KeyboardFocus = WlSurface;
+    type KeyboardFocus = KeyboardFocusTarget;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
 
@@ -58,7 +85,8 @@ impl SeatHandler for MindeState {
         self.schedule_redraw_at(&[self.pointer_location]);
     }
 
-    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&KeyboardFocusTarget>) {
+        let focused = focused.map(KeyboardFocusTarget::surface);
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client.clone());
@@ -66,8 +94,8 @@ impl SeatHandler for MindeState {
         // focused client can read the middle-click selection.
         smithay::wayland::selection::primary_selection::set_primary_focus(dh, seat, client);
         // Text-input focus must follow keyboard focus so a running IME
-        // (fcitx5/ibus) services the right surface. `focus_changed` only
-        // fires for a Some(focus); focus-clear paths call this directly.
+        // (fcitx5/ibus) services the right surface. `set_keyboard_focus`
+        // also invokes this callback when Smithay clears focus.
         self.set_text_input_focus(focused.cloned());
         // A keyboard-shortcuts inhibitor is live only while its surface has
         // keyboard focus; reconcile on every focus change (see

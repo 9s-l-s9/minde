@@ -172,9 +172,8 @@ impl SessionLockHandler for MindeState {
             .and_then(|w| w.wl_surface().map(|s| s.into_owned()));
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.unset_grab(self);
-            keyboard.set_focus(self, focus.clone(), serial);
         }
-        self.set_text_input_focus(focus);
+        self.set_keyboard_focus(focus, serial);
         crate::guile::on_session_unlock();
     }
 
@@ -241,7 +240,7 @@ impl MindeState {
             return;
         };
         keyboard.unset_grab(self);
-        let current = keyboard.current_focus();
+        let current = self.keyboard_focus();
         let valid = |surface: &WlSurface| {
             self.session_lock
                 .owner
@@ -259,8 +258,8 @@ impl MindeState {
                 .find(|surface| valid(surface))
                 .cloned()
         });
-        if keyboard.current_focus() != focus {
-            keyboard.set_focus(self, focus, SERIAL_COUNTER.next_serial());
+        if self.keyboard_focus() != focus {
+            self.set_keyboard_focus(focus, SERIAL_COUNTER.next_serial());
         }
     }
 

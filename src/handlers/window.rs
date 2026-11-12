@@ -71,14 +71,12 @@ impl MindeState {
                 .grab_start_data()
                 .and_then(|start| start.focus)
                 .as_ref()
-                .is_some_and(owns)
+                .is_some_and(|focus| owns(focus.surface()))
             {
                 keyboard.unset_grab(self);
             }
-            if keyboard.current_focus().as_ref().is_some_and(owns) {
-                keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
-                self.set_text_input_focus(None);
-                self.update_keyboard_shortcuts_inhibitors(None);
+            if self.keyboard_focus().as_ref().is_some_and(owns) {
+                self.set_keyboard_focus(None, SERIAL_COUNTER.next_serial());
             }
         }
         if let Some(touch) = self.seat.get_touch()

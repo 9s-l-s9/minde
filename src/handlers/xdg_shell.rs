@@ -167,7 +167,7 @@ impl XdgShellHandler for MindeState {
         let Ok(root) = find_popup_root_surface(&kind) else {
             return;
         };
-        match self.popups.grab_popup(root, kind, &seat, serial) {
+        match self.popups.grab_popup(root.into(), kind, &seat, serial) {
             Ok(mut grab) => {
                 if let Some(keyboard) = seat.get_keyboard() {
                     if keyboard.is_grabbed()
@@ -177,7 +177,7 @@ impl XdgShellHandler for MindeState {
                         grab.ungrab(PopupUngrabStrategy::All);
                         return;
                     }
-                    keyboard.set_focus(self, grab.current_grab(), serial);
+                    self.set_keyboard_focus(grab.current_grab().map(Into::into), serial);
                     keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
                 }
                 if let Some(pointer) = seat.get_pointer() {

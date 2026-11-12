@@ -1111,9 +1111,7 @@ impl MindeState {
                 .or_else(|| window.wl_surface().map(|s| s.into_owned()))
         {
             let serial = SERIAL_COUNTER.next_serial();
-            if let Some(keyboard) = self.seat.get_keyboard() {
-                keyboard.set_focus(self, Some(surface), serial);
-            }
+            self.set_keyboard_focus(Some(surface), serial);
         }
         self.space.raise_element(&window, true);
         self.activate_only(Some(&window));
@@ -1133,16 +1131,7 @@ impl MindeState {
         }
         let serial = SERIAL_COUNTER.next_serial();
         let layer = self.exclusive_layer_focus();
-        if let Some(keyboard) = self.seat.get_keyboard() {
-            keyboard.set_focus(self, layer.clone(), serial);
-        }
-        // Clearing keyboard focus doesn't invoke `focus_changed`, so drop
-        // text-input focus and deactivate any shortcuts inhibitor explicitly
-        // (IME leaves the surface; the inhibitor must not survive focus loss).
-        if layer.is_none() {
-            self.set_text_input_focus(None);
-            self.update_keyboard_shortcuts_inhibitors(None);
-        }
+        self.set_keyboard_focus(layer, serial);
         self.activate_only(None);
         self.focused_window = None;
         self.foreign_toplevel_focus(None);
@@ -1668,11 +1657,7 @@ impl MindeState {
         }
         self.next_synthetic_sequence = self.next_synthetic_sequence.wrapping_add(1);
         let sequence = self.next_synthetic_sequence;
-        let keyboard_focus = pin_keyboard_focus.then(|| {
-            self.seat
-                .get_keyboard()
-                .and_then(|keyboard| keyboard.current_focus())
-        });
+        let keyboard_focus = pin_keyboard_focus.then(|| self.keyboard_focus());
         self.synthetic_actions
             .extend(
                 actions
@@ -1700,10 +1685,7 @@ impl MindeState {
         };
 
         if let Some(expected) = queued.keyboard_focus.as_ref() {
-            let current = self
-                .seat
-                .get_keyboard()
-                .and_then(|keyboard| keyboard.current_focus());
+            let current = self.keyboard_focus();
             if current.as_ref() != expected.as_ref() {
                 self.synthetic_actions
                     .retain(|item| item.sequence != queued.sequence);

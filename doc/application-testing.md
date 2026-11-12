@@ -214,9 +214,13 @@ multiple clients, pending releases and fresh gestures after cancellation.
 The fullscreen/pointer gate also checks click focus against actual keyboard
 events, toplevel activation, Scheme frame/float selection, control snapshots
 and commands. It covers disabling the window-focus hook, empty space, and
-noninteractive, on-demand and exclusive layer surfaces. Touch and stylus use
-the same target-selection helper; physical tap delivery remains a hardware
-check.
+noninteractive, on-demand and exclusive layer surfaces. Destroying only a
+focused layer role, with no desktop window, must send inhibitor inactive and
+restore compositor shortcuts while the client and its resources stay alive.
+With an input method bound, text-input enter/leave must form one balanced pair;
+without one, neither event is sent. A Rust X11 client verifies initial key
+delivery and its restoration after an exclusive layer closes. Touch and stylus use the
+same target-selection helper; physical tap delivery remains a hardware check.
 Tablet-awareness tests use real Wayland tool bindings over socket pairs,
 including multiple bindings, newly registered tools, surface destruction and
 client disconnects. Repeated queries across clients with large object tables
@@ -225,7 +229,8 @@ Clients with foreign userdata exercise the same cache path used by Xwayland.
 Physical touch/tablet events, Java, Wine, games, IME, drag-and-drop and multi-GPU retain
 manual/optional application coverage. Session-lock ownership and input
 isolation are exercised by `tests/session-lock-e2e.sh` using
-`ext-session-lock-v1`. Its keyboard filter scenario checks press/release pairs
+`ext-session-lock-v1`, including inhibitor inactivation when the focused lock
+surface is destroyed. Its keyboard filter scenario checks press/release pairs
 through prompts, menus, focus changes, shortcut inhibition and locking, plus
 held modifiers, keypad Enter and compositor repeat. VT suspension balances held
 physical keys and cancels repeat; actual VT switching still needs a hardware

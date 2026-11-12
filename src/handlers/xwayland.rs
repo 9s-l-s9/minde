@@ -43,12 +43,9 @@ impl XWaylandShellHandler for MindeState {
             .and_then(|w| w.x11_surface())
             .map(|x| x == &surface)
             .unwrap_or(false);
-        if !self.locked
-            && is_focused
-            && let Some(keyboard) = self.seat.get_keyboard()
-        {
+        if !self.locked && is_focused {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            keyboard.set_focus(self, Some(wl_surface), serial);
+            self.set_keyboard_focus(Some(wl_surface), serial);
         }
         // The X11/Wayland association can arrive after the buffer commit.
         // Refresh the inspection mirror even if the client never repaints.

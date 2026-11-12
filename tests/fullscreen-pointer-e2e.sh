@@ -285,6 +285,12 @@ fi
     assert_pixel "$kind-panel-restored" 10 10 A02020
     stop_client
 done
+MINDE_X11_DISPLAY="$xdisplay" \
+    timeout 45 "$NESTED_PROTOCOL_CLIENT" x11-focus-restore >"$OUT/x11-focus.log" 2>&1 || {
+    cat "$OUT/x11-focus.log" >&2
+    fail 'X11 keyboard focus restoration'
+}
+cat "$OUT/x11-focus.log"
 MINDE_X11_TEST_CLIENT="$OUT/x11-client" MINDE_TEST_COMPOSITOR_PID="$NESTED_WM_PID" \
     MINDE_X11_DISPLAY="$xdisplay" \
     timeout 45 "$NESTED_PROTOCOL_CLIENT" xwayland-lifecycle >"$OUT/xwayland-lifecycle.log" 2>&1 || {

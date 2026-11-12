@@ -72,9 +72,9 @@ impl KeyboardShortcutsInhibitHandler for MindeState {
 
 impl MindeState {
     /// Current keyboard-focus surface, if any.
-    fn keyboard_focus(&self) -> Option<WlSurface> {
+    pub(crate) fn keyboard_focus(&self) -> Option<WlSurface> {
         let keyboard: KeyboardHandle<Self> = self.seat.get_keyboard()?;
-        keyboard.current_focus()
+        keyboard.current_focus().map(Into::into)
     }
 
     /// Reconcile the active keyboard-shortcuts inhibitor with a new keyboard

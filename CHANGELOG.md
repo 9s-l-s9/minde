@@ -21,6 +21,15 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- X11 keyboard focus uses Smithay's X11 target, honoring the client's input
+  model and X11 focus notifications. Closing a focused layer restores real
+  keyboard delivery to the selected X11 window (#65).
+- Clearing keyboard focus synchronizes text input, shortcut inhibition and
+  selection access. Destroying a focused layer role without a desktop window
+  restores compositor shortcuts; destroying a lock surface also inactivates
+  its retained inhibitor (#91).
+- Text-input focus preserves Smithay's notifications instead of duplicating
+  them or sending an unmatched enter when no input method is bound.
 - Click and tap focus use an overridable Scheme hook, keeping frame and
   floating-window selection, activation, borders and control state aligned
   with keyboard focus (#137).

@@ -69,9 +69,7 @@ impl WlrLayerShellHandler for MindeState {
                 .cloned();
             layer.map(|layer| (map, layer))
         }) {
-            if let Some(keyboard) = self.seat.get_keyboard() {
-                had_keyboard_focus = keyboard.current_focus().as_ref() == Some(layer.wl_surface());
-            }
+            had_keyboard_focus = self.keyboard_focus().as_ref() == Some(layer.wl_surface());
             map.unmap_layer(&layer);
         }
         self.update_usable_area();
@@ -86,14 +84,7 @@ impl WlrLayerShellHandler for MindeState {
                     .as_ref()
                     .and_then(|w| w.wl_surface().map(|s| s.into_owned()))
             });
-            let clear = surface.is_none();
-            if let Some(keyboard) = self.seat.get_keyboard() {
-                keyboard.set_focus(self, surface, serial);
-            }
-            if clear {
-                self.set_text_input_focus(None);
-                self.update_keyboard_shortcuts_inhibitors(None);
-            }
+            self.set_keyboard_focus(surface, serial);
         }
     }
 }
@@ -103,7 +94,7 @@ impl MindeState {
     /// Within one layer keep its current owner, otherwise choose the most
     /// recently mapped candidate on the first enabled output with one.
     pub(crate) fn exclusive_layer_focus(&self) -> Option<WlSurface> {
-        let current = self.seat.get_keyboard().and_then(|k| k.current_focus());
+        let current = self.keyboard_focus();
         for kind in [Layer::Overlay, Layer::Top] {
             let mut candidate = None;
             for output in self.space.outputs() {

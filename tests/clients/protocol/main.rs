@@ -27,6 +27,7 @@ fn main() {
         Some("keyboard-filter") => keyboard::run(),
         Some("pointer-constraints") => constraints::run(),
         Some("pointer-focus") => focus::run(),
+        Some("x11-focus-restore") => focus::restore_x11(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

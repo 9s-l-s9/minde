@@ -899,9 +899,9 @@ impl MindeState {
         if self.locked {
             return None;
         }
-        let keyboard = self.seat.get_keyboard()?;
+        self.seat.get_keyboard()?;
         if let Some(surface) = self.exclusive_layer_focus() {
-            keyboard.set_focus(self, Some(surface), serial);
+            self.set_keyboard_focus(Some(surface), serial);
             return None;
         }
         let (surface, _) = self.surface_under(location)?;
@@ -916,7 +916,7 @@ impl MindeState {
                 || (state.keyboard_interactivity == KeyboardInteractivity::Exclusive
                     && matches!(state.layer, Layer::Top | Layer::Overlay))
             {
-                keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+                self.set_keyboard_focus(Some(layer.wl_surface().clone()), serial);
             }
             return None;
         }

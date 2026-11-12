@@ -220,11 +220,10 @@ impl MindeState {
         // surface only -- never let a layer client (a regular client) grab it.
         if !self.locked
             && let Some(focus) = self.exclusive_layer_focus()
-            && let Some(keyboard) = self.seat.get_keyboard()
-            && keyboard.current_focus().as_ref() != Some(&focus)
+            && self.keyboard_focus().as_ref() != Some(&focus)
         {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-            keyboard.set_focus(self, Some(focus), serial);
+            self.set_keyboard_focus(Some(focus), serial);
         }
     }
 }

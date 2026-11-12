@@ -88,17 +88,19 @@ impl InputMethodHandler for MindeState {
 }
 
 impl MindeState {
-    /// Retarget text-input focus to `focus`, so a running IME (fcitx5/ibus)
-    /// services the surface that just gained keyboard focus. Text-input focus
-    /// must follow keyboard focus (the protocol requires it); we send `leave`
-    /// to the old client, move the focus, then `enter` the new one. Both
-    /// sends are no-ops unless an input method is actually bound, so this is
-    /// cheap to call on every focus change.
+    /// Reconcile text input only when compositor policy differs from Smithay's
+    /// keyboard focus (notably while locked). Smithay already sends enter/leave
+    /// when an IME is bound; repeating them would reset active text input and
+    /// send unmatched events to clients without an IME.
     pub fn set_text_input_focus(&mut self, focus: Option<WlSurface>) {
         use smithay::wayland::text_input::TextInputSeat;
         let text_input = self.seat.text_input();
+        let focus = if self.locked { None } else { focus };
+        if text_input.focus() == focus {
+            return;
+        }
         text_input.leave();
-        text_input.set_focus(if self.locked { None } else { focus });
+        text_input.set_focus(focus);
         text_input.enter();
     }
 }

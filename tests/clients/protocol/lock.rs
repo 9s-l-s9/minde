@@ -242,12 +242,15 @@ pub fn run() {
     let mut surface_owner = Client::new("owner destroying focused wl_surface");
     let surface_lock = surface_owner.lock(true);
     surface_owner.lock_surface(surface_lock, true);
+    let inhibitor = super::focus::inhibitor(&mut surface_owner);
+    surface_owner.event(inhibitor, 0);
     inject_key(
         &mut surface_owner,
         &mut [&mut desktop, &mut ordinary, &mut attacker],
     );
     surface_owner.send(surface_owner.surface, 0, &[]);
     surface_owner.roundtrip();
+    surface_owner.event(inhibitor, 1);
     locked(true);
     pixels.wait_black();
     let start = surface_owner.events.len();

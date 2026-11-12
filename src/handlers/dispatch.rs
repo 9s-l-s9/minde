@@ -57,10 +57,10 @@ where
                 .lock_surfaces
                 .retain(|(_, lock)| lock.wl_surface() != surface);
             if let Some(keyboard) = state.seat.get_keyboard()
-                && keyboard.current_focus().as_ref() == Some(surface)
+                && state.keyboard_focus().as_ref() == Some(surface)
             {
                 keyboard.unset_grab(state);
-                keyboard.set_focus(state, None, SERIAL_COUNTER.next_serial());
+                state.set_keyboard_focus(None, SERIAL_COUNTER.next_serial());
             }
             state.schedule_redraw();
         }
