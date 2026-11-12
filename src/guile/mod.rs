@@ -11,10 +11,12 @@
 mod command;
 pub mod ffi;
 pub mod output_config;
+mod paths;
 
 pub use command::{KeyboardLayoutSpec, WmCommand};
 pub use output_config::OutputHeadInfo;
 use output_config::{SpecValue, parse_output_change_spec, transform_name};
+pub use paths::scheme_dir;
 
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
@@ -1553,28 +1555,6 @@ unsafe extern "C" fn wm_runtime_info() -> Scm {
         from_i64(display),
         from_i64(uptime),
     ])
-}
-
-/// Where the bundled Scheme modules ((minde frames) &c.) live.
-///
-/// `MINDE_SCHEME_DIR` wins when set (packages and the nested test harness
-/// point it at the installed or checked-out tree); then the repository's
-/// `scheme/` directory when this binary was built from a checkout that is
-/// still around; otherwise `share/minde/scheme` relative to the executable's
-/// installation prefix. `scripts/mindectl` resolves the same three sources.
-pub fn scheme_dir() -> std::path::PathBuf {
-    if let Some(dir) = std::env::var_os("MINDE_SCHEME_DIR") {
-        return dir.into();
-    }
-    let repository_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scheme");
-    if repository_dir.is_dir() {
-        return repository_dir;
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent()?.parent().map(std::path::Path::to_path_buf))
-        .map(|prefix| prefix.join("share/minde/scheme"))
-        .unwrap_or(repository_dir)
 }
 
 /// Boots libguile on the calling thread and makes the bundled modules

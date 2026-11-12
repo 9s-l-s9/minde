@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Installed Scheme policy takes precedence over development checkouts, and
+  release binaries never load policy from their former build directory (#171).
 - Fullscreen state is now local to each group. Switching away leaves other
   groups free to tile and receive keyboard focus; returning restores the
   original fullscreen window without shrinking it in between. Closing hidden
