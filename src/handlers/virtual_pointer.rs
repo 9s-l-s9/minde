@@ -275,10 +275,10 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                     frame = frame.value(Axis::Vertical, pending.vertical);
                 }
                 if let Some(d) = pending.horizontal_discrete {
-                    frame = frame.v120(Axis::Horizontal, d * 120);
+                    frame = frame.v120(Axis::Horizontal, discrete_v120(d));
                 }
                 if let Some(d) = pending.vertical_discrete {
-                    frame = frame.v120(Axis::Vertical, d * 120);
+                    frame = frame.v120(Axis::Vertical, discrete_v120(d));
                 }
                 if pending.horizontal_stop {
                     frame = frame.stop(Axis::Horizontal);
@@ -309,6 +309,13 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
     }
 }
 
+/// Keep whole wheel steps representable, including the partial step Smithay
+/// retains for pre-v8 pointers. Its accumulator adds up to 119 before `abs()`.
+fn discrete_v120(steps: i32) -> i32 {
+    const MAX_STEPS: i32 = (i32::MAX - 119) / 120;
+    steps.clamp(-MAX_STEPS, MAX_STEPS) * 120
+}
+
 /// Translate a `wl_pointer.axis` enum value into Smithay's [`Axis`].
 fn wl_axis(axis: WEnum<wl_pointer::Axis>) -> Option<Axis> {
     match axis {
@@ -327,5 +334,29 @@ impl MindeState {
         crate::guile::note_activity();
         self.notify_idle_activity();
         !self.locked
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_steps_leave_room_for_legacy_fractional_accumulation() {
+        for steps in [i32::MIN, -17_895_697, -2, 0, 1, 17_895_697, i32::MAX] {
+            let value = discrete_v120(steps);
+            assert_eq!(value % 120, 0);
+            for remainder in -119..=119 {
+                assert!(
+                    value
+                        .checked_add(remainder)
+                        .unwrap()
+                        .checked_abs()
+                        .is_some()
+                );
+            }
+        }
+        assert_eq!(discrete_v120(-2), -240);
+        assert_eq!(discrete_v120(1), 120);
     }
 }

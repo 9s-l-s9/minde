@@ -161,6 +161,29 @@ def pointer(first, second, client):
     second.point()
     print("ok - shared virtual buttons release only when the last owner is gone", flush=True)
 
+    # Observe both legacy axis_discrete and v8 axis_value120 delivery. Sending
+    # repeated extremes also exercises the legacy accumulator after each step.
+    seat = first.bind("wl_seat", 8)
+    modern = first.alloc()
+    first.send(seat, 0, uints(modern))
+    first.roundtrip()
+    first.point()
+    producer = client("extreme scroll producer")
+    virtual = producer.virtual_pointer()
+    limit = (2**31 - 1 - 119) // 120
+    for axis in (0, 1):
+        for steps in (2**31 - 1, 2**31 - 1, -2**31, -2**31, -2, 1):
+            start = len(first.events)
+            producer.send(virtual, 7, struct.pack("=IIii", 0, axis, 256, steps))
+            producer.send(virtual, 4)  # frame
+            bounded = max(-limit, min(limit, steps))
+            for obj, opcode, expected in ((first.pointer, 8, bounded),
+                                          (modern, 9, bounded * 120)):
+                first.wait(lambda e: e[:2] == (obj, opcode)
+                           and struct.unpack("=Ii", e[2]) == (axis, expected),
+                           f"scroll {steps} on pointer {obj}", start)
+    print("ok - extreme scroll stays bounded for legacy and v8 pointers", flush=True)
+
 
 def lock(first, second, client):
     second.point()

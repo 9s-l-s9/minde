@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Extreme virtual-pointer wheel steps are bounded before conversion, keeping
+  both legacy discrete scrolling and v8 wheel values free of overflow (#89).
 - NUL-padded EDID monitor names and serials are sanitized before Wayland
   advertisement, preventing malformed display metadata from aborting the
   compositor. Empty descriptors retain the existing identity fallbacks (#75).
