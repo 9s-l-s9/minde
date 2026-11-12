@@ -88,6 +88,18 @@ Personal Scheme can add launchers, hooks, layouts, placement rules and
 `(register-configuration-layer!)` once so later declarative reloads retain that
 baseline.
 
+`bind-prefix-key!` and `bind-key!` replace the binding's help text along with
+its action. Omitting the optional description makes the new binding
+undocumented. Replacing a nested keymap with an ordinary command also removes
+the old submap from help traversal. Removing a declarative override restores
+the personal layer's binding, description, and submap relationship.
+
+In command mode, the prefix map remains armed until Return, Escape, or `C-g`.
+The literal-prefix escape (for example `C-t t` when `t` has no explicit
+top-level binding) also leaves command mode completely. Outside command mode,
+a prefix keysym bound inside a nested map behaves as an ordinary nested
+binding and returns to normal input after the command finishes.
+
 The startup callback runs once after the first output becomes ready:
 
 ```scheme

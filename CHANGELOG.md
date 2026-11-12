@@ -16,6 +16,13 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Nested bindings for the prefix keysym no longer re-arm the top-level map,
+  and the literal-prefix escape fully leaves command mode (#95, #96).
+- Frame-flash timers restore only the border color, preserving prompt/menu
+  key repeat and pending which-key help (#97).
+- Rebinding keys removes stale descriptions and submap metadata. Declarative
+  overrides and their removal preserve the personal layer's matching help
+  and nested-map relationships (#98).
 - Configuration validation checks case-sensitive XKB names in bindings and
   prefix keys, normalizes modifier order and keysym aliases, and rejects
   duplicates after normalization. Offline checks and live reload use the

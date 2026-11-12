@@ -183,6 +183,37 @@
 (check "IPC evaluator rejects multiple datums"
        (string-prefix? "(error " (minde-ipc-eval "1 2")))
 
+(bind-prefix-key! "k" (lambda () #f))
+(check "undocumented rebind removes default help" (not (binding-doc %prefix-bindings "k")))
+(check "which-key no longer shows the old description"
+       (not (string-contains (keymap-help-string %prefix-bindings) "k  focus frame")))
+(bind-key! '(super) "F21" (lambda () #f) "old global description")
+(bind-key! '(super) "F21" (lambda () #f))
+(check "undocumented global rebind removes help"
+       (not (hash-ref %global-binding-docs (cons 64 "F21"))))
+(let ((child (make-documented-keymap "x" (lambda () #f) "child action")))
+  (bind-prefix-key! "F20" child "old submap")
+  (bind-prefix-key! "F20" (lambda () #f))
+  (check "plain rebind removes child-map relationship" (not (binding-submap %prefix-bindings "F20")))
+  (check "plain rebind removes child-map description" (not (binding-doc %prefix-bindings "F20")))
+  ;; Wrapped submaps need explicit metadata. Capture it with the personal
+  ;; layer so a temporary declarative override can later be removed.
+  (bind-prefix-key! "F20" (lambda () child) "wrapped submap")
+  (set-binding-submap! %prefix-bindings "F20" child)
+  (register-configuration-layer!)
+  (apply-configuration!
+   (validate-configuration '(minde-config (version 1) (prefix (ctrl) "t")
+                                         (bindings ("F20" windows)))))
+  (check "declarative command override removes submap relationship"
+         (not (binding-submap %prefix-bindings "F20")))
+  (check "declarative command override shows its own help"
+         (equal? (binding-doc %prefix-bindings "F20") (command-summary (command-ref 'windows))))
+  (apply-configuration!
+   (validate-configuration '(minde-config (version 1) (prefix (ctrl) "t") (bindings))))
+  (check "removing override restores baseline child map" (eq? child (binding-submap %prefix-bindings "F20")))
+  (check "removing override restores baseline description"
+         (equal? (binding-doc %prefix-bindings "F20") "wrapped submap")))
+
 (if (zero? failures)
     (format #t "all portable keymap tests passed~%")
     (exit 1))

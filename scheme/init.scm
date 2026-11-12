@@ -102,7 +102,8 @@ modifier list MODS (e.g. '(super)) to THUNK, a zero-argument procedure run
 when the binding fires. Global binding, always active."
   (let ((binding (cons (mods->bitmask mods) key)))
     (hash-set! %keybindings binding thunk)
-    (when doc (hash-set! %global-binding-docs binding doc))))
+    (if doc (hash-set! %global-binding-docs binding doc)
+        (hash-remove! %global-binding-docs binding))))
 
 ;; keymap object -> (key -> one-line doc), fed by the optional doc
 ;; argument of bind-prefix-key!; the ? which-key echo and describe-key
@@ -117,11 +118,12 @@ when the binding fires. Global binding, always active."
 
 (define (set-binding-submap! parent key child)
   (set! %binding-submaps
-        (cons (list parent key child)
-              (filter (lambda (entry)
-                        (not (and (eq? parent (car entry))
-                                  (string=? key (cadr entry)))))
-                      %binding-submaps))))
+        (filter (lambda (entry)
+                  (not (and (eq? parent (car entry))
+                            (string=? key (cadr entry)))))
+                %binding-submaps))
+  (when child
+    (set! %binding-submaps (cons (list parent key child) %binding-submaps))))
 
 (define (binding-submap parent key)
   (let ((entry (find (lambda (entry)
@@ -132,16 +134,21 @@ when the binding fires. Global binding, always active."
 
 (define (copy-binding-submaps! source target)
   (for-each (lambda (entry)
-              (when (eq? source (car entry))
+              (when (and (eq? source (car entry))
+                         (hash-ref source (cadr entry))
+                         (eq? (hash-ref source (cadr entry)) (hash-ref target (cadr entry))))
                 (set-binding-submap! target (cadr entry) (caddr entry))))
             (list-copy %binding-submaps)))
 
 (define (set-binding-doc! keymap key doc)
-  (let ((tbl (or (hash-ref %binding-docs keymap)
-                 (let ((t (make-hash-table)))
-                   (hash-set! %binding-docs keymap t)
-                   t))))
-    (hash-set! tbl key doc)))
+  (if doc
+      (let ((tbl (or (hash-ref %binding-docs keymap)
+                     (let ((t (make-hash-table)))
+                       (hash-set! %binding-docs keymap t)
+                       t))))
+        (hash-set! tbl key doc))
+      (let ((tbl (hash-ref %binding-docs keymap)))
+        (when tbl (hash-remove! tbl key)))))
 
 (define (binding-doc keymap key)
   (let ((tbl (hash-ref %binding-docs keymap)))
@@ -152,11 +159,10 @@ when the binding fires. Global binding, always active."
 right after the prefix key (C-t). THUNK may also be a keymap made with
 `make-keymap` (StumpWM-style nested map): the next keypress is then looked
 up in it. DOC, when given, is a one-line description shown by the ?
-which-key echo and describe-key."
+which-key echo and describe-key. Omitting DOC removes any previous description."
   (hash-set! %prefix-bindings key thunk)
-  (when (hash-table? thunk)
-    (set-binding-submap! %prefix-bindings key thunk))
-  (when doc (set-binding-doc! %prefix-bindings key doc)))
+  (set-binding-submap! %prefix-bindings key (and (hash-table? thunk) thunk))
+  (set-binding-doc! %prefix-bindings key doc))
 
 (define (keymap-help-string km)
   "The which-key text for KM: one 'key  doc' line per documented binding,
@@ -240,6 +246,12 @@ MODS (possibly '())."
   ;; Tolerate a binary older than this config (subr not registered yet).
   (rust-call-if-bound 'wm-set-key-repeat on))
 
+(define (refresh-key-border!)
+  (set-border-color! (cond
+                      ((eq? %key-state 'normal) %border-color-normal)
+                      ((eq? %key-state %resize-map) %border-color-resize)
+                      (else %border-color-prefix))))
+
 (define (set-key-state! s)
   (set! %key-state s)
   (set! %keymap-generation (+ %keymap-generation 1))
@@ -254,10 +266,7 @@ MODS (possibly '())."
                       (when (and (= gen %keymap-generation)
                                  (eq? %key-state km))
                         (echo (keymap-help-string km)))))))
-  (set-border-color! (cond
-                      ((eq? s 'normal) %border-color-normal)
-                      ((eq? s %resize-map) %border-color-resize)
-                      (else %border-color-prefix))))
+  (refresh-key-border!))
 
 ;; Last error a keybinding raised, for copy-unhandled-error (StumpWM):
 ;; grab it onto the clipboard instead of retyping it from the log.
@@ -380,7 +389,7 @@ focused client), #f otherwise."
        ((and (eq? %key-state %prefix-bindings)
              (string=? keysym-name %prefix-key)
              (not (hash-ref %prefix-bindings keysym-name)))
-        (set-key-state! 'normal)
+        (if %command-mode (leave-command-mode!) (set-key-state! 'normal))
         #f)
        ((modifier-keysym? keysym-name)
         #f) ; stay put; let the client see the modifier
@@ -397,7 +406,8 @@ focused client), #f otherwise."
         ;; letters arrive as their uppercase keysym, so a binding like
         ;; "M-G" is physically alt+shift+g: retry without the "S-"
         ;; prefix before falling back to the bare name.
-        (let ((binding (or (and (positive? mods-bitmask)
+        (let ((top-level? (eq? %key-state %prefix-bindings))
+              (binding (or (and (positive? mods-bitmask)
                                 (hash-ref %key-state (key-spec mods-bitmask keysym-name)))
                            (and (logtest mods-bitmask 1)
                                 (positive? (logand mods-bitmask (lognot 1)))
@@ -418,11 +428,11 @@ focused client), #f otherwise."
                ;; accepting arrow presses without re-hitting the prefix.
                ((hash-table? result)
                 (set-key-state! result))
-               ;; The prefix keysym's own binding keeps the prefix
+               ;; A top-level binding for the prefix keysym keeps the prefix
                ;; armed, so hammering Print cycles window after window
                ;; (Print Print Print ... = repeated Print-o). Any other
                ;; key resolves the prefix as usual.
-               ((string=? keysym-name %prefix-key)
+               ((and top-level? (string=? keysym-name %prefix-key))
                 (set-key-state! %prefix-bindings)))))
            (else
             ;; Unbound key: swallow it and echo, like StumpWM.
@@ -753,9 +763,9 @@ winit it is stored but configures nothing. Returns #t when stored."
     (echo (format #f "current frame: ~ax~a at ~a,~a"
                   (caddr r) (cadddr r) (car r) (cadr r))))
   (set-border-color! "#fabd2f")
-  ;; set-key-state! re-derives the correct color for whatever state the
-  ;; key machine is in by then.
-  (wm-run-after 400 (lambda () (set-key-state! %key-state))))
+  ;; Restore the current state's color without changing keyboard ownership
+  ;; or invalidating a pending which-key timer.
+  (wm-run-after 400 refresh-key-border!))
 (bind-prefix-key! "C-c" (lambda () (flash-current-frame!)) "flash current frame")
 
 ;; Urgency: Rust calls (handle-urgent-window! id) on xdg-activation requests.
@@ -1662,6 +1672,7 @@ refresh)."
 (define (capture-configuration-base!)
   (unless %configuration-base-bindings
     (set! %configuration-base-bindings (copy-hash-table %prefix-bindings))
+    (copy-binding-submaps! %prefix-bindings %configuration-base-bindings)
     (set! %configuration-base-docs
           (let ((docs (hash-ref %binding-docs %prefix-bindings)))
             (if docs (copy-hash-table docs) (make-hash-table))))))
@@ -1670,6 +1681,7 @@ refresh)."
   "Makes the bindings currently installed by a user init layer the atomic
 reload baseline. Call once after adding imperative user bindings."
   (set! %configuration-base-bindings (copy-hash-table %prefix-bindings))
+  (copy-binding-submaps! %prefix-bindings %configuration-base-bindings)
   (set! %configuration-base-docs
         (let ((docs (hash-ref %binding-docs %prefix-bindings)))
           (if docs (copy-hash-table docs) (make-hash-table))))
@@ -1686,9 +1698,9 @@ reload baseline. Call once after adding imperative user bindings."
          (hash-set! candidate key (command-procedure command))
          (hash-set! candidate-docs key (command-summary command))))
      (configuration-bindings config))
+    (copy-binding-submaps! %configuration-base-bindings candidate)
     ;; No validation or allocation that can reasonably fail remains after
     ;; this point: publish the complete candidate as one short commit step.
-    (copy-binding-submaps! %prefix-bindings candidate)
     (set! %prefix-bindings candidate)
     (hash-set! %binding-docs candidate candidate-docs)
     (set-prefix-key! (configuration-prefix-modifiers config)
