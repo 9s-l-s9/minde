@@ -1292,7 +1292,8 @@ overlay; redefine it to update a bar or stay silent."
 
 (define (wm-on-session-lock)
   "Rust: the session-lock surface is up and the session is now locked.
-Runs the 'session-lock hook."
+Cancels frame selection and runs the 'session-lock hook."
+  (cancel-frame-selection!)
   (run-event-hook! 'session-lock))
 
 (define (wm-on-session-unlock)

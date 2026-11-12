@@ -112,6 +112,20 @@ top-level binding) also leaves command mode completely. Outside command mode,
 a prefix keysym bound inside a nested map behaves as an ordinary nested
 binding and returns to normal input after the command finishes.
 
+A modal keymap can declare a cleanup procedure with
+`(set-keymap-cancel! keymap cleanup)`. It runs when the map is left, including
+after an unbound key or a failed binding, and when the group, head, output
+geometry or session-lock state interrupts selection. Child maps that share
+the same cleanup procedure continue the operation without cancelling it.
+Cleanup errors are logged and leave the keyboard usable.
+
+`fselect!` and `expose-mode!` return such maps. Expose restores the original
+layout before leaving its group or head; entering it repeatedly cannot
+replace that snapshot with the temporary grid. Selection labels use `0`–`9`
+and then `a`–`z`. Above 36 choices, labels have equal width (`00`, `01`, …,
+`10`, …); type every character to select one. Escape, Return, `C-g`, or an
+unbound key cancels. Older overlay timers cannot erase a newer selection.
+
 The startup callback runs once after the first output becomes ready:
 
 ```scheme

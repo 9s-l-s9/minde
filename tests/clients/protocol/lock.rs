@@ -140,6 +140,12 @@ pub fn run() {
     desktop.event(desktop.keyboard, 1);
     inject_key(&mut desktop, &mut []);
     pixels.wait_desktop();
+    assert_eq!(
+        ipc("(begin (split-frame-horizontal!)
+          (define lock-selection-layout (dump-frames))
+          (set-key-state! (expose-mode!)) #t)"),
+        "(ok #t)"
+    );
     let mut owner = Client::new("active lock owner");
     let lock = owner.lock(true);
     assert!(
@@ -147,6 +153,12 @@ pub fn run() {
         "lock confirmed before black frame"
     );
     locked(true);
+    assert_eq!(
+        ipc("(and (eq? %key-state 'normal)
+                  (equal? lock-selection-layout (dump-frames)))"),
+        "(ok #t)",
+        "locking must cancel expose and restore its layout"
+    );
     desktop.roundtrip();
     println!("ok - lock confirmation observes a cleared nested framebuffer");
 

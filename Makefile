@@ -16,6 +16,7 @@ SCHEME_TESTS := \
 	tests/status-test.scm \
 	tests/portable-keymap-test.scm \
 	tests/input-test.scm \
+	tests/selection-test.scm \
 	tests/input-config-test.scm \
 	tests/frames-test.scm \
 	tests/placement-cache-test.scm \

@@ -16,6 +16,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Expose and frame selection clean up on unbound keys, failed bindings,
+  group/head changes and session locking. Expose snapshots belong to their
+  group and head and survive repeated entry. Digits, letters and multi-key
+  labels make every window or frame selectable (#162).
+- Frame-overlay timers clear only their own generation of labels, preserving
+  newer frame-selection and expose overlays.
 - Super+Q no longer quits the compositor. The native Ctrl+Alt+BackSpace
   emergency exit can be rebound or disabled in declarative configuration;
   invalid reloads preserve it. The keymap reference and tutorial warn that

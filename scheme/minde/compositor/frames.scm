@@ -87,6 +87,9 @@
             focus-sibling-frame!
             show-frame-overlays!
             clear-frame-overlays!
+            frame-selection-labels
+            set-frame-selection-cancel!
+            cancel-frame-selection!
             focus-frame-by-index!
             dump-frames
             restore-frames!
@@ -293,6 +296,7 @@
 (define (activate-group! g)
   "Loads G into the live frame state without parking or synchronizing windows."
   (unless (eq? g %active-group)
+    (cancel-frame-selection!)
     (flush-active-group!)
     (load-head-into-group! g %current-head-id)
     (set! %frame-tree (group-tree g))
@@ -358,6 +362,7 @@
   "Makes head HID the current one: the active group's tree on that head
 becomes the live tree (StumpWM screen focus)."
   (when (and (head-rect hid) (not (eqv? hid %current-head-id)))
+    (cancel-frame-selection!)
     (flush-active-group!)
     (set! %last-head-id %current-head-id)
     (set! %current-head-id hid)
@@ -449,6 +454,7 @@ and 'span (one tree over the union of all monitors)."
   (apply-effective-heads! (effective-heads %raw-heads) groups))
 
 (define* (apply-effective-heads! new groups #:key (clamp-floats? #t))
+  (unless (equal? new %heads) (cancel-frame-selection!))
   (flush-active-group!)
   (forget-all-placements!)
   (let* ((old-ids (map car %heads))
@@ -507,6 +513,9 @@ and 'span (one tree over the union of all monitors)."
 ;; touching focus. Used when a group is about to be hidden.
 (define (park-group-windows! g)
   "Moves every tiled and floating window in G off screen."
+  ;; Restore transient layouts before parking; restoring during activation
+  ;; would otherwise put the outgoing group's windows back on screen.
+  (when (eq? g %active-group) (cancel-frame-selection!))
   (prune-fullscreen-owners!)
   (let ((full (hashq-ref %group-fullscreens g)))
     (when full
@@ -1661,20 +1670,49 @@ each head's geometry. Does not switch groups, change heads or synchronize."
 ;; Frame-number overlays (fselect / expose) + sibling
 ;; ---------------------------------------------------------------------
 
-(define (show-frame-overlays!)
-  "Draws each leaf's index (frame-leaves order, the fselect numbering)
-near its top-left corner."
-  (rust-call 'wm-clear-overlays)
-  (let loop ((leaves (frame-leaves %frame-tree)) (n 0))
-    (unless (null? leaves)
-      (let ((r (frame-display-rect (car leaves))))
-        (rust-call 'wm-add-overlay (+ (car r) 8) (+ (cadr r) 8)
-                   (number->string n)))
-      (loop (cdr leaves) (+ n 1)))))
+(define %frame-overlay-generation 0)
+(define %frame-selection-cancel (lambda () #f))
 
-(define (clear-frame-overlays!)
-  "Removes all numbered frame overlays from the compositor."
-  (rust-call 'wm-clear-overlays))
+(define (set-frame-selection-cancel! proc)
+  "Installs the policy callback that cancels an armed selection keymap."
+  (set! %frame-selection-cancel proc))
+
+(define (cancel-frame-selection!)
+  "Cancels modal selection before a group, head, geometry or lock change."
+  (%frame-selection-cancel)
+  ;; Direct callers of expose-enter! need the same restoration even when no
+  ;; keymap was armed. The snapshot is always consumed in its owning context.
+  (expose-pick! #f)
+  (clear-frame-overlays!))
+
+(define (frame-selection-labels count)
+  "Returns COUNT unique, equal-width pick labels: 0-9, then a-z."
+  (let ((width (string-length (number->string (max 0 (- count 1)) 36))))
+    (map (lambda (n)
+           (let ((label (number->string n 36)))
+             (string-append (make-string (- width (string-length label)) #\0) label)))
+         (iota count))))
+
+(define* (show-frame-overlays! #:optional labels)
+  "Draws leaf indices, or supplied LABELS in leaf order, near the top-left
+corners. Returns a generation token for guarded clearing."
+  (set! %frame-overlay-generation (+ %frame-overlay-generation 1))
+  (rust-call 'wm-clear-overlays)
+  (let* ((leaves (frame-leaves %frame-tree))
+         (labels (or labels (map number->string (iota (length leaves))))))
+    (for-each
+     (lambda (leaf label)
+      (let ((r (frame-display-rect leaf)))
+        (rust-call 'wm-add-overlay (+ (car r) 8) (+ (cadr r) 8)
+                   label)))
+     (take leaves (length labels)) labels))
+  %frame-overlay-generation)
+
+(define* (clear-frame-overlays! #:optional generation)
+  "Removes frame overlays, unless GENERATION names an older set of labels."
+  (when (or (not generation) (= generation %frame-overlay-generation))
+    (set! %frame-overlay-generation (+ %frame-overlay-generation 1))
+    (rust-call 'wm-clear-overlays)))
 
 (define (focus-frame-by-index! n)
   "Focuses leaf N in frame-leaves order (fselect target)."
@@ -1703,7 +1741,13 @@ near its top-left corner."
 ;; one-per-frame in a numbered grid, pick one, restore the layout.
 ;; ---------------------------------------------------------------------
 
-(define %expose-saved #f)
+(define %expose-saved (make-weak-key-hash-table)) ; group -> head -> (dump . overlays)
+
+(define (expose-heads)
+  (or (hashq-ref %expose-saved %active-group)
+      (let ((table (make-hash-table)))
+        (hashq-set! %expose-saved %active-group table)
+        table)))
 
 (define (chain-spec orientation k)
   "Returns a layout spec containing K leaves split along ORIENTATION."
@@ -1724,14 +1768,18 @@ near its top-left corner."
 
 (define (expose-enter!)
   "Saves the live layout and tiles this head's windows one per frame in
-a numbered grid. Returns the window count, or #f with an echo when
-there is nothing to expose. Callers arm the pick keymap."
+a labeled grid. Returns the window count, or #f when there are no windows.
+Repeated entry restores the previous snapshot first. Saved layouts belong
+to their group and head. Callers arm the pick keymap."
+  (expose-pick! #f)
   (let ((ids (tree-window-ids %frame-tree)))
     (if (null? ids)
         (begin (echo "no windows") #f)
         (begin
-          (set! %expose-saved (dump-frames))
-          (let* ((tree (spec->tree (grid-spec (length ids))))
+          (let* ((saved (cons (dump-frames) #f))
+                 (table (expose-heads))
+                 (hid %current-head-id)
+                 (tree (spec->tree (grid-spec (length ids))))
                  (leaves (frame-leaves tree)))
             (resize-subtree! tree (head-rect-x) (head-rect-y)
                              (head-rect-w) (head-rect-h))
@@ -1742,21 +1790,29 @@ there is nothing to expose. Callers arm the pick keymap."
                 (loop (cdr ids) (cdr ls))))
             (set! %frame-tree tree)
             (set! %current-frame (car leaves))
+            ;; Sync runs user focus hooks. Publish the snapshot first so a
+            ;; hook that changes group/head can restore it before leaving.
+            (hashv-set! table hid saved)
             (sync-frames!)
-            (show-frame-overlays!)
-            (length ids))))))
+            (and (eq? saved (hashv-ref table hid))
+                 (begin
+                   (set-cdr! saved (show-frame-overlays! (frame-selection-labels (length ids))))
+                   (length ids))))))))
 
 (define (expose-pick! n)
   "Leaves expose mode: restores the saved layout, then focuses the
-window that was shown in grid cell N (#f = just restore)."
-  (let* ((leaves (frame-leaves %frame-tree))
-         (id (and n (< n (length leaves))
-                  (frame-current-window (list-ref leaves n)))))
-    (clear-frame-overlays!)
-    (when %expose-saved
-      (restore-frames! %expose-saved)
-      (set! %expose-saved #f))
-    (when id (focus-window-by-id! id))))
+window that was shown in grid cell N (#f = just restore). Does nothing
+without a snapshot for the current group and head."
+  (let* ((table (hashq-ref %expose-saved %active-group))
+         (saved (and table (hashv-ref table %current-head-id))))
+    (when saved
+      (let* ((leaves (frame-leaves %frame-tree))
+             (id (and (exact-integer? n) (<= 0 n) (< n (length leaves))
+                      (frame-current-window (list-ref leaves n)))))
+        (hashv-remove! table %current-head-id)
+        (clear-frame-overlays! (cdr saved))
+        (restore-frames! (car saved))
+        (when id (focus-window-by-id! id))))))
 
 ;; ---------------------------------------------------------------------
 ;; Unmaximize + gravity (StumpWM unmaximize / gravity): an unmaximized

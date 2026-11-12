@@ -220,6 +220,27 @@ MODS (possibly '())."
 ;; keymap currently awaiting a key -- %prefix-bindings right after the
 ;; prefix key, or a nested keymap (see make-keymap) after its parent key.
 (define %key-state 'normal)
+(define %keymap-cancel-actions (make-weak-key-hash-table))
+
+(define (set-keymap-cancel! keymap action)
+  "Declares ACTION to clean up when KEYMAP is left. Nested maps sharing the
+same action belong to one modal operation and may transition without cleanup."
+  (hashq-set! %keymap-cancel-actions keymap action))
+
+(define (keymap-cancel-action state)
+  (and (hash-table? state) (hashq-ref %keymap-cancel-actions state)))
+
+(define (finish-keymap-state! previous next)
+  (let ((cancel (keymap-cancel-action previous)))
+    (when (and cancel (not (eq? cancel (keymap-cancel-action next))))
+      (run-binding! cancel 0 "cancel"))))
+
+(define (cancel-keymap!)
+  (set! %command-mode #f)
+  (set! %describe-next-key #f)
+  (when (hash-table? %key-state) (set-key-state! 'normal)))
+
+(set-frame-selection-cancel! cancel-keymap!)
 
 ;; Prefix indicator (StumpWM's pointer-box equivalent): the focus border
 ;; turns red while a prefix/submap is armed, yellow when idle.
@@ -252,8 +273,10 @@ MODS (possibly '())."
                       ((eq? %key-state %resize-map) %border-color-resize)
                       (else %border-color-prefix))))
 
-(define (set-key-state! s)
-  (set! %key-state s)
+(define* (set-key-state! s #:key (cancel? #t))
+  (let ((previous %key-state))
+    (set! %key-state s)
+    (when cancel? (finish-keymap-state! previous s)))
   (set! %keymap-generation (+ %keymap-generation 1))
   ;; Keys an armed keymap consumes never repeat client-side; ask the
   ;; compositor to re-fire held keys (prompts toggle this themselves in
@@ -406,7 +429,8 @@ focused client), #f otherwise."
         ;; letters arrive as their uppercase keysym, so a binding like
         ;; "M-G" is physically alt+shift+g: retry without the "S-"
         ;; prefix before falling back to the bare name.
-        (let ((top-level? (eq? %key-state %prefix-bindings))
+        (let ((previous %key-state)
+              (top-level? (eq? %key-state %prefix-bindings))
               (binding (or (and (positive? mods-bitmask)
                                 (hash-ref %key-state (key-spec mods-bitmask keysym-name)))
                            (and (logtest mods-bitmask 1)
@@ -415,7 +439,9 @@ focused client), #f otherwise."
                                           (key-spec (logand mods-bitmask (lognot 1))
                                                     keysym-name)))
                            (hash-ref %key-state keysym-name))))
-          (set-key-state! 'normal)
+          ;; A pick must inspect its transient layout before cleanup. Run the
+          ;; old map's cancel action after dispatch, unless a child continues it.
+          (set-key-state! 'normal #:cancel? #f)
           (cond
            ;; A nested keymap: keep waiting, now in the submap.
            ((hash-table? binding)
@@ -441,6 +467,7 @@ focused client), #f otherwise."
           ;; map (unless the binding armed a submap/mode of its own).
           (when (and %command-mode (not (hash-table? %key-state)))
             (set-key-state! %prefix-bindings))
+          (finish-keymap-state! previous %key-state)
           #t)))
       (if (and (= mods-bitmask %prefix-mods) (string=? keysym-name %prefix-key))
           (begin
@@ -1258,40 +1285,42 @@ refresh)."
 ;; sibling, uniform splits, rules persistence, desktop dump/restore
 ;; ---------------------------------------------------------------------
 
-;; fselect: number labels appear in every frame; a digit jumps there.
-;; Works via the same return-a-keymap mechanism as iresize.
-(define %fselect-map
-  (let ((km (make-keymap)))
+;; Equal-width labels let large selections use a key trie without ambiguity
+;; between a complete pick and the start of a longer label.
+(define (make-selection-keymap labels pick cancel)
+  (define (new-map)
+    (let ((km (make-keymap)))
+      (set-keymap-cancel! km cancel)
+      (for-each (lambda (key) (hash-set! km key (lambda () #t)))
+                '("Escape" "Return" "C-g"))
+      km))
+  (let ((root (new-map)))
     (for-each
-     (lambda (n)
-       (hash-set! km (number->string n)
-                  (lambda ()
-                    (clear-frame-overlays!)
-                    (focus-frame-by-index! n))))
-     (iota 10))
-    (for-each
-     (lambda (k) (hash-set! km k (lambda () (clear-frame-overlays!) #t)))
-     '("Escape" "Return" "C-g"))
-    km))
+     (lambda (label n)
+       (let loop ((km root) (keys (string->list label)))
+         (let ((key (string (car keys))))
+           (if (null? (cdr keys))
+               (hash-set! km key (lambda () (pick n)))
+               (let ((child (or (hash-ref km key) (new-map))))
+                 (hash-set! km key child)
+                 (loop child (cdr keys)))))))
+     labels (iota (length labels)))
+    root))
 
 (define (fselect!)
-  (show-frame-overlays!)
-  %fselect-map)
-
-;; expose: grid of one window per frame, digit picks, layout restored.
-(define %expose-map
-  (let ((km (make-keymap)))
-    (for-each
-     (lambda (n)
-       (hash-set! km (number->string n) (lambda () (expose-pick! n))))
-     (iota 10))
-    (for-each
-     (lambda (k) (hash-set! km k (lambda () (expose-pick! #f) #t)))
-     '("Escape" "Return" "C-g"))
-    km))
+  (cancel-frame-selection!)
+  (let* ((labels (frame-selection-labels (length (frame-leaves (current-tree)))))
+         (generation (show-frame-overlays! labels)))
+    (make-selection-keymap labels focus-frame-by-index!
+                           (lambda () (clear-frame-overlays! generation)))))
 
 (define (expose-mode!)
-  (if (expose-enter!) %expose-map #t))
+  (cancel-frame-selection!)
+  (let ((count (expose-enter!)))
+    (if count
+        (make-selection-keymap (frame-selection-labels count) expose-pick!
+                               (lambda () (expose-pick! #f)))
+        #t)))
 
 (bind-prefix-key! "j" (lambda () (fselect!)) "fselect: jump to frame by number")
 (bind-prefix-key! "M-e" (lambda () (expose-mode!)) "expose: pick window from grid")
@@ -1603,8 +1632,8 @@ refresh)."
     (bind-prefix-key!
      "f"
      (lambda ()
-       (show-frame-overlays!)
-       (wm-run-after 2000 clear-frame-overlays!)
+       (let ((generation (show-frame-overlays!)))
+         (wm-run-after 2000 (lambda () (clear-frame-overlays! generation))))
        frame-map)
      "frame commands")
     (set-binding-submap! %prefix-bindings "f" frame-map))

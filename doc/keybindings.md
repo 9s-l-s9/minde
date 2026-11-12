@@ -46,6 +46,13 @@ registered as relationships even when entering one first shows a window list
 or frame-number overlay. This lets contextual help and generated documentation
 walk the same map without invoking arbitrary actions.
 
+Personal bindings and the historical map can use `fselect!` (select a frame)
+or `expose-mode!` (show windows in a temporary grid and select one). Their
+labels use digits followed by letters, with equal-width multi-key labels
+above 36 choices. An unbound key, Escape, Return, or `C-g` cancels selection
+and clears its overlays; expose also restores the saved layout. Group/head
+changes and session locking cancel these modes automatically.
+
 The historical full keymap remains available through
 `MINDE_FULL_KEYMAP=1` for established configurations. It is not the release
 default and is not a compatibility promise before 1.0.
