@@ -17,7 +17,7 @@ use smithay::{
         ping::make_ping,
         timer::{TimeoutAction, Timer},
     },
-    utils::{Rectangle, Transform},
+    utils::{Clock, Monotonic, Rectangle, Transform},
 };
 
 use crate::MindeState;
@@ -301,7 +301,7 @@ pub fn init_winit(
                     // Satisfy any queued screen-capture frames for this output
                     // by re-compositing the scene into their buffers (shm).
                     if !state.pending_captures.is_empty() {
-                        let time = state.start_time.elapsed();
+                        let time = Clock::<Monotonic>::new().now();
                         crate::handlers::screencopy::satisfy_output_captures(
                             backend.renderer(),
                             &output,

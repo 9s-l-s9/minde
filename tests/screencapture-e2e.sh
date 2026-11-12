@@ -26,6 +26,13 @@ nested_start "$OUT" "${MINDE_SCREENCAPTURE_E2E_DISPLAY:-:96}" || {
     exit 1
 }
 
+nested_wayland env PYTHONDONTWRITEBYTECODE=1 timeout 20 \
+    python3 tests/clients/capture-clock.py >"$OUT/capture-clock.log" 2>&1 || {
+    cat "$OUT/capture-clock.log" >&2
+    exit 1
+}
+cat "$OUT/capture-clock.log"
+
 # (wm-outputs) -> ((id x y w h name) ...); ask the running compositor for
 # the real mode instead of assuming the Xvfb geometry, so this gate cannot
 # silently pass against the wrong dimensions if that ever changes.

@@ -29,8 +29,6 @@
 //! Damage handling is conservative: every capture reports full-buffer damage.
 //! Correctness over efficiency for this first version.
 
-use std::time::Duration;
-
 use smithay::{
     backend::{
         allocator::{Fourcc, dmabuf::Dmabuf},
@@ -42,7 +40,10 @@ use smithay::{
     desktop::{Space, Window, layer_map_for_output},
     output::Output,
     reexports::wayland_server::protocol::wl_buffer::WlBuffer,
-    utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
+    utils::{
+        Buffer as BufferCoords, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size, Time,
+        Transform,
+    },
     wayland::{
         image_capture_source::{
             ImageCaptureSource, ImageCaptureSourceHandler, OutputCaptureSourceHandler,
@@ -503,7 +504,7 @@ pub fn satisfy_output_captures<R>(
     output: &Output,
     output_geo: Rectangle<i32, Logical>,
     scale: Scale<f64>,
-    time: Duration,
+    time: Time<Monotonic>,
     pending: &mut Vec<PendingCapture>,
     space: &Space<Window>,
     cursor_state: &mut CursorState,
@@ -561,7 +562,7 @@ pub fn satisfy_output_captures<R>(
             CaptureFrame::Wlr(pending) => {
                 let outcome =
                     fill_capture_buffer(renderer, &elements, &pending.buffer, capture.size, scale);
-                pending.complete(outcome, time);
+                pending.complete(outcome, time.into());
             }
             CaptureFrame::File { path, token } => {
                 use crate::automation_dnd::{

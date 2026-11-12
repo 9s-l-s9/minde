@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Capture and fallback presentation timestamps use system monotonic time.
+  Presentation feedback handles unknown refresh rates without dividing by
+  zero and reports active adaptive sync as variable refresh (#47, #152).
 - Output mode configuration rejects negative, non-finite and out-of-range
   refresh values before conversion or matching. Extreme refresh rates cannot
   overflow mode comparisons or abort the compositor (#55).

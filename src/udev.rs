@@ -88,7 +88,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::backend::GlobalId,
     },
-    utils::{DeviceFd, Logical, Monotonic, Point},
+    utils::{Clock, DeviceFd, Logical, Monotonic, Point},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState, supports_syncobj_eventfd},
@@ -190,6 +190,22 @@ fn refresh_interval(output: &Output) -> Duration {
         .filter(|refresh| *refresh > 0)
         .map(|refresh| Duration::from_secs_f64(1_000f64 / refresh as f64))
         .unwrap_or(Duration::from_millis(16))
+}
+
+/// Presentation feedback must distinguish unknown, fixed and variable refresh.
+/// The mode interval is the shortest interval when adaptive sync is active.
+fn presentation_refresh(mode: Option<WlMode>, vrr: bool) -> Refresh {
+    match mode.filter(|mode| mode.refresh > 0) {
+        Some(mode) => {
+            let interval = Duration::from_secs_f64(1_000.0 / mode.refresh as f64);
+            if vrr {
+                Refresh::variable(interval)
+            } else {
+                Refresh::fixed(interval)
+            }
+        }
+        None => Refresh::Unknown,
+    }
 }
 
 impl OutputSurface {
@@ -1204,9 +1220,8 @@ impl MindeState {
     ) {
         // Submit the flipped frame and reclaim the presentation feedback that
         // was attached when the frame was queued. Scoped so the udev/device/
-        // surface borrows are released before we touch `self.start_time` and
-        // deliver the feedback.
-        let (output, submitted, current_generation) = {
+        // surface borrows are released before we deliver the feedback.
+        let (output, submitted, current_generation, vrr) = {
             let Some(udev) = self.udev_data.as_mut() else {
                 return;
             };
@@ -1223,6 +1238,7 @@ impl MindeState {
                 entry.output.clone(),
                 surface.drm_output.frame_submitted(),
                 surface.flip_generation,
+                surface.drm_output.with_compositor(|c| c.vrr_enabled()),
             )
         };
 
@@ -1250,17 +1266,12 @@ impl MindeState {
                                 | wp_presentation_feedback::Kind::HwCompletion,
                         ),
                         _ => (
-                            self.start_time.elapsed(),
+                            Clock::<Monotonic>::new().now().into(),
                             wp_presentation_feedback::Kind::Vsync,
                         ),
                     };
                     let seq = metadata.as_ref().map(|m| m.sequence as u64).unwrap_or(0);
-                    let refresh = output
-                        .current_mode()
-                        .map(|mode| {
-                            Refresh::fixed(Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
-                        })
-                        .unwrap_or(Refresh::Unknown);
+                    let refresh = presentation_refresh(output.current_mode(), vrr);
                     feedback.presented::<_, Monotonic>(clock, refresh, seq, flags);
                 }
             }
@@ -2148,7 +2159,7 @@ impl MindeState {
         // callback NOTE above).
         drop(layer_map);
         if !self.pending_captures.is_empty() {
-            let time = self.start_time.elapsed();
+            let time = Clock::<Monotonic>::new().now();
             crate::handlers::screencopy::satisfy_output_captures(
                 &mut renderer,
                 &output,
@@ -2190,6 +2201,26 @@ mod tests {
             (wl(1920, 1080, 144_000), "1080p144"),
             (wl(2560, 1440, 60_000), "1440p60"),
         ]
+    }
+
+    #[test]
+    fn presentation_refresh_handles_unknown_fixed_and_variable_modes() {
+        for vrr in [false, true] {
+            assert_eq!(presentation_refresh(None, vrr), Refresh::Unknown);
+            for refresh in [i32::MIN, -1, 0] {
+                assert_eq!(
+                    presentation_refresh(Some(wl(1920, 1080, refresh)), vrr),
+                    Refresh::Unknown
+                );
+            }
+        }
+        let mode = Some(wl(1920, 1080, 60_000));
+        let interval = Duration::from_nanos(16_666_667);
+        assert_eq!(presentation_refresh(mode, false), Refresh::Fixed(interval));
+        assert_eq!(
+            presentation_refresh(mode, true),
+            Refresh::Variable(interval)
+        );
     }
 
     #[test]
