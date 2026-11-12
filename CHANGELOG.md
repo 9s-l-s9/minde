@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Cancelling synthetic typing releases its held keys without releasing an
+  already held physical modifier. Session locking cancels queued automation
+  and rejects new synthetic input. Virtual pointer destruction releases its
+  buttons without releasing presses owned by another device (#61, #149, #165).
 - Scheme numeric arguments are checked for exactness and range before
   applying commands or allocating automation tokens. Malformed placement
   batches return `#f` without partial changes; negative or overflowing

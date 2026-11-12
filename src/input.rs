@@ -23,6 +23,41 @@ use smithay::{
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
+/// Each input producer owns its presses until release or cancellation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PointerButtonSource {
+    Device(String),
+    Tablet(String),
+    Virtual(ObjectId),
+    Synthetic(u64),
+    Automation(u64),
+}
+
+#[derive(Default)]
+pub(crate) struct PointerButtons(Vec<(PointerButtonSource, u32)>);
+
+impl PointerButtons {
+    /// Forward only the first press and the last release of a shared button.
+    fn update(&mut self, source: PointerButtonSource, button: u32, state: ButtonState) -> bool {
+        let owner = self
+            .0
+            .iter()
+            .position(|(owner, code)| owner == &source && *code == button);
+        match (state, owner) {
+            (ButtonState::Pressed, None) => {
+                let already_pressed = self.0.iter().any(|(_, code)| *code == button);
+                self.0.push((source, button));
+                !already_pressed
+            }
+            (ButtonState::Released, Some(index)) => {
+                self.0.remove(index);
+                !self.0.iter().any(|(_, code)| *code == button)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Absolute samples belong to a device, not to the visible (possibly locked
 /// or confined) cursor. Switching devices establishes a new baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,7 +353,12 @@ impl MindeState {
                 );
             }
             InputEvent::PointerButton { event, .. } => {
-                self.pointer_button_event(event.button_code(), event.state(), event.time_msec());
+                self.pointer_button_event(
+                    PointerButtonSource::Device(event.device().id()),
+                    event.button_code(),
+                    event.state(),
+                    event.time_msec(),
+                );
             }
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();
@@ -582,7 +622,19 @@ impl MindeState {
     /// `zwlr_virtual_pointer_v1` button). Runs the same focus/raise and
     /// super+drag move/resize logic as a physical click so virtual clicks
     /// behave identically.
-    pub fn pointer_button_event(&mut self, button: u32, button_state: ButtonState, time_msec: u32) {
+    pub(crate) fn pointer_button_event(
+        &mut self,
+        source: PointerButtonSource,
+        button: u32,
+        button_state: ButtonState,
+        time_msec: u32,
+    ) {
+        if self.locked && button_state == ButtonState::Pressed {
+            return;
+        }
+        if !self.pointer_buttons.update(source, button, button_state) {
+            return;
+        }
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -694,6 +746,24 @@ impl MindeState {
             },
         );
         pointer.frame(self);
+    }
+
+    /// Release presses owned by vanished/cancelled producers. The ordinary
+    /// release path also ends implicit and compositor move/resize grabs.
+    pub(crate) fn release_pointer_buttons(
+        &mut self,
+        matches: impl Fn(&PointerButtonSource) -> bool,
+    ) {
+        let time = self.start_time.elapsed().as_millis() as u32;
+        while let Some((source, code)) = self
+            .pointer_buttons
+            .0
+            .iter()
+            .rfind(|(source, _)| matches(source))
+            .cloned()
+        {
+            self.pointer_button_event(source, code, ButtonState::Released, time);
+        }
     }
 
     /// Map an absolute touch event to a point in global compositor space.
@@ -880,7 +950,12 @@ impl MindeState {
                 }
                 self.stylus_tip_emulated = route == ToolRoute::Pointer;
                 if self.stylus_tip_emulated {
-                    self.pointer_button_event(BTN_LEFT, ButtonState::Pressed, event.time_msec());
+                    self.pointer_button_event(
+                        PointerButtonSource::Tablet(event.device().id()),
+                        BTN_LEFT,
+                        ButtonState::Pressed,
+                        event.time_msec(),
+                    );
                 }
             }
             TabletToolTipState::Up => {
@@ -889,7 +964,12 @@ impl MindeState {
                 }
                 if self.stylus_tip_emulated {
                     self.stylus_tip_emulated = false;
-                    self.pointer_button_event(BTN_LEFT, ButtonState::Released, event.time_msec());
+                    self.pointer_button_event(
+                        PointerButtonSource::Tablet(event.device().id()),
+                        BTN_LEFT,
+                        ButtonState::Released,
+                        event.time_msec(),
+                    );
                 }
             }
         }

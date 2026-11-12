@@ -34,6 +34,7 @@ use smithay::{
 };
 
 use crate::guile::{self, WmCommand};
+use crate::input::{PointerButtonSource, PointerButtons};
 
 #[derive(Debug)]
 enum SyntheticAction {
@@ -54,7 +55,8 @@ struct QueuedSyntheticAction {
     sequence: u64,
     action: SyntheticAction,
     delay_after_ms: u64,
-    keyboard_focus: Option<WlSurface>,
+    // Outer None means unpinned; Some(None) pins the absence of focus too.
+    keyboard_focus: Option<Option<WlSurface>>,
 }
 
 /// MIME types the compositor offers for the text it owns (clipboard,
@@ -300,6 +302,8 @@ pub struct MindeState {
     synthetic_actions: VecDeque<QueuedSyntheticAction>,
     synthetic_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     next_synthetic_sequence: u64,
+    synthetic_keys: Vec<(u64, u32)>,
+    pub(crate) pointer_buttons: PointerButtons,
     pub(crate) active_automation_dnd: Option<(
         crate::automation_dnd::AutomationToken,
         crate::automation_dnd::AutomationOperation,
@@ -688,6 +692,8 @@ impl MindeState {
             synthetic_actions: VecDeque::new(),
             synthetic_timer: None,
             next_synthetic_sequence: 0,
+            synthetic_keys: Vec::new(),
+            pointer_buttons: PointerButtons::default(),
             active_automation_dnd: None,
 
             pointer_location: (0.0, 0.0).into(),
@@ -765,6 +771,20 @@ impl MindeState {
     /// Returns `false` when the command named a window that does not exist,
     /// so a direct caller (see `guile::send_command`) can report it.
     pub(crate) fn apply_wm_command(&mut self, cmd: WmCommand) -> bool {
+        if self.locked
+            && matches!(
+                cmd,
+                WmCommand::SendString { .. }
+                    | WmCommand::SendKey { .. }
+                    | WmCommand::Click { .. }
+                    | WmCommand::PasteKey
+                    | WmCommand::Scroll { .. }
+                    | WmCommand::WarpPointer { .. }
+                    | WmCommand::WarpPointerRel { .. }
+            )
+        {
+            return false;
+        }
         match cmd {
             WmCommand::Place { id, x, y, w, h } => {
                 return self.place_window(id, Rectangle::new((x, y).into(), (w, h).into()), true);
@@ -1256,6 +1276,9 @@ impl MindeState {
     /// Warps the pointer to a global logical position (clamped to the
     /// outputs) and emits the matching motion event.
     pub(crate) fn warp_pointer(&mut self, pos: Point<f64, Logical>) {
+        if self.locked {
+            return;
+        }
         let pos = self.clamp_to_outputs(pos);
         let old_pos = self.pointer_location;
         if pos != old_pos {
@@ -1337,8 +1360,16 @@ impl MindeState {
             return;
         };
         let time = self.start_time.elapsed().as_millis() as u32;
-        self.pointer_button_event(0x110, ButtonState::Pressed, time);
+        self.pointer_button_event(
+            PointerButtonSource::Automation(token),
+            0x110,
+            ButtonState::Pressed,
+            time,
+        );
         let Some(start_data) = pointer.grab_start_data() else {
+            self.release_pointer_buttons(|source| {
+                *source == PointerButtonSource::Automation(token)
+            });
             self.finish_automation_dnd(
                 token,
                 operation,
@@ -1378,6 +1409,16 @@ impl MindeState {
         let _ = self
             .handle
             .insert_source(Timer::from_duration(DWELL), move |_, _, state| {
+                // A lock or another grab can cancel the drag between ticks.
+                // Its old timer must not move the pointer after unlocking.
+                if state.locked
+                    || state.active_automation_dnd.map(|(token, _)| token) != Some(source.token())
+                {
+                    state.release_pointer_buttons(|owner| {
+                        *owner == PointerButtonSource::Automation(source.token())
+                    });
+                    return TimeoutAction::Drop;
+                }
                 // Wiggle by one device pixel so the client sees a real
                 // coordinate change each turn -- browsers fire dragover per
                 // motion event and may coalesce same-position motions.
@@ -1390,7 +1431,12 @@ impl MindeState {
                 state.warp_pointer(pos);
                 if source.selected_action() == DndAction::Copy || motions_left <= 1 {
                     let time = state.start_time.elapsed().as_millis() as u32;
-                    state.pointer_button_event(0x110, ButtonState::Released, time);
+                    state.pointer_button_event(
+                        PointerButtonSource::Automation(source.token()),
+                        0x110,
+                        ButtonState::Released,
+                        time,
+                    );
                     TimeoutAction::Drop
                 } else {
                     motions_left -= 1;
@@ -1516,18 +1562,16 @@ impl MindeState {
         actions: Vec<(SyntheticAction, u64)>,
         pin_keyboard_focus: bool,
     ) {
-        if actions.is_empty() {
+        if self.locked || actions.is_empty() {
             return;
         }
         self.next_synthetic_sequence = self.next_synthetic_sequence.wrapping_add(1);
         let sequence = self.next_synthetic_sequence;
-        let keyboard_focus = pin_keyboard_focus
-            .then(|| {
-                self.seat
-                    .get_keyboard()
-                    .and_then(|keyboard| keyboard.current_focus())
-            })
-            .flatten();
+        let keyboard_focus = pin_keyboard_focus.then(|| {
+            self.seat
+                .get_keyboard()
+                .and_then(|keyboard| keyboard.current_focus())
+        });
         self.synthetic_actions
             .extend(
                 actions
@@ -1545,6 +1589,10 @@ impl MindeState {
     }
 
     fn advance_synthetic_input(&mut self) {
+        if self.locked {
+            self.cancel_synthetic_input();
+            return;
+        }
         let Some(queued) = self.synthetic_actions.pop_front() else {
             self.synthetic_timer = None;
             return;
@@ -1555,9 +1603,13 @@ impl MindeState {
                 .seat
                 .get_keyboard()
                 .and_then(|keyboard| keyboard.current_focus());
-            if current.as_ref() != Some(expected) {
+            if current.as_ref() != expected.as_ref() {
                 self.synthetic_actions
                     .retain(|item| item.sequence != queued.sequence);
+                self.release_synthetic_keys(Some(queued.sequence));
+                self.release_pointer_buttons(|source| {
+                    *source == PointerButtonSource::Synthetic(queued.sequence)
+                });
                 tracing::debug!(
                     sequence = queued.sequence,
                     "synthetic typing cancelled after focus change"
@@ -1570,23 +1622,10 @@ impl MindeState {
         let time = self.start_time.elapsed().as_millis() as u32;
         match queued.action {
             SyntheticAction::Key { code, pressed } => {
-                use smithay::{backend::input::KeyState, input::keyboard::xkb};
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    keyboard.input::<(), _>(
-                        self,
-                        xkb::Keycode::new(code),
-                        if pressed {
-                            KeyState::Pressed
-                        } else {
-                            KeyState::Released
-                        },
-                        SERIAL_COUNTER.next_serial(),
-                        time,
-                        |_, _, _| smithay::input::keyboard::FilterResult::Forward,
-                    );
-                }
+                self.synthetic_key(queued.sequence, code, pressed);
             }
             SyntheticAction::Button { code, pressed } => self.pointer_button_event(
+                PointerButtonSource::Synthetic(queued.sequence),
                 code,
                 if pressed {
                     smithay::backend::input::ButtonState::Pressed
@@ -1645,6 +1684,67 @@ impl MindeState {
                 }
             }
         }
+    }
+
+    fn synthetic_key(&mut self, sequence: u64, code: u32, pressed: bool) {
+        use smithay::{
+            backend::input::KeyState,
+            input::keyboard::{FilterResult, xkb},
+        };
+        if !pressed {
+            let Some(index) = self
+                .synthetic_keys
+                .iter()
+                .position(|entry| *entry == (sequence, code))
+            else {
+                return;
+            };
+            self.synthetic_keys.remove(index);
+        }
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let keycode = xkb::Keycode::new(code);
+        if pressed {
+            // A physically held modifier is borrowed, never owned/released.
+            if keyboard.pressed_keys().contains(&keycode) {
+                return;
+            }
+            self.synthetic_keys.push((sequence, code));
+        }
+        let time = self.start_time.elapsed().as_millis() as u32;
+        keyboard.input::<(), _>(
+            self,
+            keycode,
+            if pressed {
+                KeyState::Pressed
+            } else {
+                KeyState::Released
+            },
+            SERIAL_COUNTER.next_serial(),
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+    }
+
+    fn release_synthetic_keys(&mut self, sequence: Option<u64>) {
+        while let Some(&(owner, code)) = self
+            .synthetic_keys
+            .iter()
+            .rfind(|(owner, _)| sequence.is_none_or(|sequence| sequence == *owner))
+        {
+            self.synthetic_key(owner, code, false);
+        }
+    }
+
+    /// Cancel queued automation and balance only the presses it owns.
+    pub(crate) fn cancel_synthetic_input(&mut self) {
+        self.synthetic_actions.clear();
+        if let Some(timer) = self.synthetic_timer.take() {
+            self.handle.remove(timer);
+        }
+        self.release_synthetic_keys(None);
+        self.release_pointer_buttons(|source| matches!(source, PointerButtonSource::Synthetic(_)));
     }
 
     /// Shared preamble of `send_key`'s and `send_string`'s keymap scans:

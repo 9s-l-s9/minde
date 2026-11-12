@@ -135,6 +135,10 @@ impl SessionLockHandler for MindeState {
             );
             pointer.frame(self);
         }
+        // Clear focus/grabs first, then release held input without delivering
+        // cleanup events to a hidden desktop surface. Nothing resumes on unlock.
+        self.cancel_synthetic_input();
+        self.release_pointer_buttons(|_| true);
         if let Some(touch) = self.seat.get_touch() {
             touch.cancel(self);
             touch.unset_grab(self);

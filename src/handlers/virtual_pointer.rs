@@ -43,11 +43,13 @@ use smithay::reexports::{
     },
     wayland_server::{
         Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
-        backend::GlobalId, protocol::wl_pointer,
+        backend::{ClientId, GlobalId},
+        protocol::wl_pointer,
     },
 };
 use smithay::utils::Point;
 
+use crate::input::PointerButtonSource;
 use crate::state::MindeState;
 
 /// Registers the `zwlr_virtual_pointer_manager_v1` global (v2). The returned
@@ -186,7 +188,12 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 } else {
                     ButtonState::Released
                 };
-                state.pointer_button_event(button, button_state, time);
+                state.pointer_button_event(
+                    PointerButtonSource::Virtual(pointer.id()),
+                    button,
+                    button_state,
+                    time,
+                );
             }
             zwlr_virtual_pointer_v1::Request::Axis { time, axis, value } => {
                 if let Some(axis) = wl_axis(axis) {
@@ -281,9 +288,24 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 }
                 state.pointer_axis_frame(frame);
             }
-            zwlr_virtual_pointer_v1::Request::Destroy => {}
+            zwlr_virtual_pointer_v1::Request::Destroy => {
+                state.release_pointer_buttons(|source| {
+                    *source == PointerButtonSource::Virtual(pointer.id())
+                });
+            }
             _ => unreachable!(),
         }
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: ClientId,
+        pointer: &ZwlrVirtualPointerV1,
+        _data: &VirtualPointerData,
+    ) {
+        state.release_pointer_buttons(|source| {
+            *source == PointerButtonSource::Virtual(pointer.id())
+        });
     }
 }
 

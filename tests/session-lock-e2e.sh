@@ -44,13 +44,15 @@ window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
 timeout 5 xdotool windowfocus "$window"
 export MINDE_SESSION_LOCK_TEST_WINDOW="$window"
 
-if ! timeout 75 python3 tests/clients/session-lock.py >"$OUT/client.log" 2>&1; then
-    cat "$OUT/client.log" >&2
-    echo "error: session-lock regression failed; inspect $OUT" >&2
-    tail -n 40 "$NESTED_LOG" >&2
-    exit 1
-fi
-cat "$OUT/client.log"
+for scenario in session-lock input-lifecycle; do
+    if ! PYTHONDONTWRITEBYTECODE=1 timeout 75 python3 "tests/clients/$scenario.py" >"$OUT/$scenario.log" 2>&1; then
+        cat "$OUT/$scenario.log" >&2
+        echo "error: $scenario regression failed; inspect $OUT" >&2
+        tail -n 40 "$NESTED_LOG" >&2
+        exit 1
+    fi
+    cat "$OUT/$scenario.log"
+done
 kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died during session-lock checks" >&2
     exit 1
