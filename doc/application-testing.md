@@ -231,6 +231,11 @@ Popup regressions inspect real configure geometry for toplevel and layer-shell
 parents on an offset output, including nested menus, flip/slide adjustments,
 reposition requests and clients forbidding adjustments. Rust tests cover output
 selection for spanning windows, negative origins, fractional scale and rotation.
+The fractional-scale gate inspects preferred-scale events on toplevels, layers,
+nested popups and their subsurfaces while changing output scale in both
+directions. Late child bindings and unchanged-scale event counts are checked.
+Rust tests cover mixed-scale output selection after movement, resizing,
+disable and re-enable without relying on cached output membership.
 Tablet-awareness tests use real Wayland tool bindings over socket pairs,
 including multiple bindings, newly registered tools, surface destruction and
 client disconnects. Repeated queries across clients with large object tables

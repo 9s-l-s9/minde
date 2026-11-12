@@ -11,6 +11,38 @@ struct Popup {
     surface: u32,
     xdg: u32,
     role: u32,
+    scale: u32,
+}
+
+fn fractional(c: &mut Client, surface: u32) -> u32 {
+    let manager = c.bind("wp_fractional_scale_manager_v1", 1);
+    let scale = c.alloc();
+    c.send(manager, 1, &words(&[scale, surface]));
+    c.send(manager, 0, &[]);
+    scale
+}
+
+fn subsurface(c: &mut Client, parent: u32) -> u32 {
+    let surface = c.new_surface();
+    let scale = fractional(c, surface); // Bind before the surface acquires a parent.
+    let manager = c.bind("wl_subcompositor", 1);
+    let role = c.alloc();
+    c.send(manager, 1, &words(&[role, surface, parent]));
+    c.send(parent, 6, &[]);
+    c.roundtrip();
+    scale
+}
+
+fn scales(c: &mut Client, objects: &[u32], expected: u32) -> usize {
+    c.roundtrip();
+    for &object in objects {
+        let event = c.events.iter().rfind(|e| e.is(object, 0)).unwrap();
+        assert_eq!(event.word(0), expected, "{}: scale object {object}", c.name);
+    }
+    c.events
+        .iter()
+        .filter(|e| objects.contains(&e.object) && e.opcode == 0)
+        .count()
 }
 
 fn positioner(c: &mut Client, shell: u32, anchor: [i32; 4], adjustments: u32) -> u32 {
@@ -43,6 +75,7 @@ impl Popup {
         );
         let pos = positioner(c, shell, anchor, adjustments);
         let surface = c.new_surface();
+        let scale = fractional(c, surface);
         let xdg = c.alloc();
         let role = c.alloc();
         c.send(shell, 2, &words(&[xdg, surface]));
@@ -57,6 +90,7 @@ impl Popup {
             surface,
             xdg,
             role,
+            scale,
         };
         let geometry = popup.configure(c, 0);
         (popup, geometry)
@@ -89,10 +123,90 @@ impl Popup {
     fn destroy(self, c: &mut Client) {
         c.send(self.role, 0, &[]);
         c.send(self.xdg, 0, &[]);
+        c.send(self.scale, 0, &[]);
         c.send(self.surface, 0, &[]);
         c.send(self.shell, 0, &[]);
         c.roundtrip();
     }
+}
+
+pub fn fractional_scales() {
+    let mut output = Outputs::new("fractional popup output");
+    let mut desktop = Input::new("fractional popup parent");
+    desktop.mapped(100);
+    let root = desktop.surface;
+    let root_scale = fractional(&mut desktop.c, root);
+    let root_child = subsurface(&mut desktop.c, root);
+    let parent = desktop.xdg_surface;
+    let (popup, _) = Popup::new(&mut desktop.c, parent, None, [20, 20, 10, 10], 12);
+    let popup_child = subsurface(&mut desktop.c, popup.surface);
+    let (child, _) = Popup::new(&mut desktop.c, popup.xdg, None, [20, 20, 10, 10], 12);
+    let desktop_scales = [
+        root_scale,
+        root_child,
+        popup.scale,
+        popup_child,
+        child.scale,
+    ];
+
+    let mut panel = Panel::new("fractional layer parent", 3, 0);
+    let surface = panel.input.surface;
+    let panel_scale = fractional(&mut panel.input.c, surface);
+    let (menu, _) = Popup::new(
+        &mut panel.input.c,
+        0,
+        Some(panel.layer),
+        [20, 20, 10, 10],
+        12,
+    );
+    let menu_child = subsurface(&mut panel.input.c, menu.surface);
+    let (submenu, _) = Popup::new(&mut panel.input.c, menu.xdg, None, [20, 20, 10, 10], 12);
+    let panel_scales = [panel_scale, menu.scale, menu_child, submenu.scale];
+    scales(&mut desktop.c, &desktop_scales, 120);
+    scales(&mut panel.input.c, &panel_scales, 120);
+
+    for (fixed_scale, expected) in [(384, 180), (256, 120)] {
+        let (config, head) = output.configuration(Some(true));
+        output.c.send(head, 4, &words(&[fixed_scale]));
+        output.result(config, 2, 0);
+        let count = scales(&mut desktop.c, &desktop_scales, expected);
+        let panel_count = scales(&mut panel.input.c, &panel_scales, expected);
+        evaluate(
+            &format!(
+                "(begin (update-floating-window-geometry! {} 150 100 300 250) (sync-frames!) #t)",
+                desktop.window_id
+            ),
+            "#t",
+        );
+        let root = desktop.surface;
+        desktop.send(root, 6, &[]);
+        panel.input.send(surface, 6, &[]);
+        assert_eq!(
+            scales(&mut desktop.c, &desktop_scales, expected),
+            count,
+            "same-output movement repeats preferred_scale"
+        );
+        assert_eq!(
+            scales(&mut panel.input.c, &panel_scales, expected),
+            panel_count
+        );
+        let late = subsurface(&mut desktop.c, popup.surface);
+        scales(&mut desktop.c, &[late], expected);
+    }
+    child.destroy(&mut desktop.c);
+    popup.destroy(&mut desktop.c);
+    submenu.destroy(&mut panel.input.c);
+    menu.destroy(&mut panel.input.c);
+    panel.destroy();
+    drop(desktop);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "fractional parent remained mapped",
+    );
+    evaluate("(begin (collapse-to-one-frame!) #t)", "#t");
+    println!(
+        "ok - fractional scale follows toplevels, layers, nested popups and subsurfaces without duplicate events"
+    );
 }
 
 fn nested(c: &mut Client, parent: u32) {

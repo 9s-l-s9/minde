@@ -33,6 +33,7 @@ fn main() {
         Some("layer-unlock") => layer::unlock(),
         Some("layer-output") => layer::output_lifecycle(),
         Some("popup-placement") => popup::run(),
+        Some("fractional-popups") => popup::fractional_scales(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

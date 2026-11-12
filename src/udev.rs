@@ -1190,6 +1190,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     state.space.refresh();
     if !state.applying_output_config {
         state.update_usable_area();
+        state.update_fractional_scales();
         state.absolute_pointer_motion.reset();
         state.pointer_location = state.clamp_to_outputs(state.pointer_location);
     }

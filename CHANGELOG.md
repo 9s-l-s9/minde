@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Preferred fractional scale follows window placement and committed size
+  changes immediately. Xdg popups, nested menus and subsurfaces inherit their
+  owner's scale at creation and on output changes, without repeated events
+  for unchanged scales (#63, #64).
 - Popups use their parent window's output by largest overlap instead of the
   first output. Layer-shell menus apply positioner constraints after their
   parent is assigned, including nested popups and reposition requests (#37, #38).

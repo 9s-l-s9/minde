@@ -46,14 +46,15 @@ impl WlrLayerShellHandler for MindeState {
         if let Err(err) = layer_map_for_output(&output).map_layer(&mapped_layer) {
             tracing::warn!(?err, "failed to map layer surface");
             mapped_layer.layer_surface().send_close();
-        } else {
-            tracing::info!(
-                component = "layer-shell",
-                namespace,
-                ?layer,
-                "layer surface mapped"
-            );
+            return;
         }
+        self.update_surface_fractional_scale(mapped_layer.wl_surface());
+        tracing::info!(
+            component = "layer-shell",
+            namespace,
+            ?layer,
+            "layer surface mapped"
+        );
         self.update_usable_area();
         self.schedule_redraw();
     }
@@ -62,6 +63,7 @@ impl WlrLayerShellHandler for MindeState {
         // xdg_surface.get_popup had no parent. Layer-shell assigns it here,
         // before the popup's initial commit and configure handshake.
         self.unconstrain_popup(&popup);
+        self.update_surface_fractional_scale(popup.wl_surface());
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

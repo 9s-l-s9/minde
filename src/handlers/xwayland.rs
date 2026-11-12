@@ -50,6 +50,7 @@ impl XWaylandShellHandler for MindeState {
         // Refresh the inspection mirror even if the client never repaints.
         if let Some((id, window)) = self.window_for_x11(&surface) {
             window.on_commit();
+            self.update_window_fractional_scale(&window);
             self.publish_window_geometry(id);
         }
         self.schedule_redraw();
@@ -164,7 +165,8 @@ impl XwmHandler for MindeState {
         // unmanaged (not registered with Scheme).
         let location = window.last_configure().loc;
         let element = Window::new_x11_window(window);
-        self.space.map_element(element, location, true);
+        self.space.map_element(element.clone(), location, true);
+        self.update_window_fractional_scale(&element);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -241,7 +243,8 @@ impl XwmHandler for MindeState {
             .find(|e| matches!(e.x11_surface(), Some(x) if x == &window))
             .cloned();
         if let Some(element) = element {
-            self.space.map_element(element, geometry.loc, false);
+            self.space.map_element(element.clone(), geometry.loc, false);
+            self.update_window_fractional_scale(&element);
             self.schedule_redraw();
         }
     }

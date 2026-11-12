@@ -81,6 +81,23 @@ pub fn window_for_surface(space: &Space<Window>, surface: &WlSurface) -> Option<
         .cloned()
 }
 
+/// Prefer the largest overlap, keeping output order on ties or offscreen.
+pub(crate) fn largest_output_overlap<T>(
+    root: Rectangle<i32, Logical>,
+    outputs: impl IntoIterator<Item = (T, Rectangle<i32, Logical>)>,
+) -> Option<T> {
+    outputs
+        .into_iter()
+        .enumerate()
+        .max_by_key(|(index, (_, bounds))| {
+            let area = bounds.intersection(root).map_or(0, |intersection| {
+                i64::from(intersection.size.w) * i64::from(intersection.size.h)
+            });
+            (area, std::cmp::Reverse(*index))
+        })
+        .map(|(_, (output, _))| output)
+}
+
 /// Shared scene/input policy: fullscreen covers desktop panels and the
 /// tiling border, but Overlay-layer surfaces (notifications/OSD) stay above.
 /// Ignore fullscreen windows parked off this output by the layout.
@@ -392,9 +409,8 @@ pub struct MindeState {
         smithay::wayland::relative_pointer::RelativePointerManagerState,
     /// `wp-fractional-scale-v1` manager global: lets clients request a
     /// fractional buffer scale and learn each surface's preferred scale.
-    /// Advertised on both backends; the preferred scale is (re)sent from
-    /// `FractionalScaleHandler::new_fractional_scale` and whenever an
-    /// output's scale changes (`update_fractional_scales`).
+    /// Advertised on both backends; handlers::fractional_scale refreshes
+    /// preferences after binding, role assignment, placement and output changes.
     pub fractional_scale_manager_state: FractionalScaleManagerState,
     /// `wp-viewporter` global: lets clients crop/scale their buffer to a
     /// logical destination size. Registered unconditionally; Smithay's
@@ -1073,7 +1089,8 @@ impl MindeState {
             self.publish_window_geometry(id);
             return true;
         }
-        self.space.map_element(window, rect.loc, false);
+        self.space.map_element(window.clone(), rect.loc, false);
+        self.update_window_fractional_scale(&window);
         self.publish_window_geometry(id);
         if tiled {
             self.refresh_foreign_toplevel_outputs();
@@ -1203,6 +1220,7 @@ impl MindeState {
             if on {
                 let _ = x11.configure(geo);
                 self.space.map_element(window.clone(), geo.loc, false);
+                self.update_window_fractional_scale(&window);
                 self.space.raise_element(&window, true);
                 self.publish_window_geometry(id);
                 self.schedule_redraw();
@@ -1219,6 +1237,7 @@ impl MindeState {
             });
             toplevel.send_pending_configure();
             self.space.map_element(window.clone(), geo.loc, false);
+            self.update_window_fractional_scale(&window);
             self.space.raise_element(&window, true);
             self.publish_window_geometry(id);
         } else {
@@ -2741,56 +2760,6 @@ impl MindeState {
         }
     }
 
-    /// Preferred fractional scale for a surface: the scale of the output it
-    /// is mapped onto, falling back to the first output (or 1.0 with none).
-    /// Used to seed a freshly-created `wp_fractional_scale` object.
-    pub fn output_scale_for_surface(&self, surface: &WlSurface) -> f64 {
-        if let Some(window) = window_for_surface(&self.space, surface)
-            && let Some(output) = self.space.outputs_for_element(&window).first()
-        {
-            return output.current_scale().fractional_scale();
-        }
-        self.space
-            .outputs()
-            .next()
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(1.0)
-    }
-
-    /// Pushes each mapped surface's preferred fractional scale to match the
-    /// output it sits on. Call after any output-scale change (wlr-randr
-    /// `--scale`, hotplug) so `wp_fractional_scale` clients repaint at the
-    /// new density. A no-op for clients that never bound the protocol.
-    pub fn update_fractional_scales(&mut self) {
-        let default_scale = self
-            .space
-            .outputs()
-            .next()
-            .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(1.0);
-        let mut targets: Vec<(WlSurface, f64)> = Vec::new();
-        for window in self.space.elements() {
-            let scale = self
-                .space
-                .outputs_for_element(window)
-                .first()
-                .map(|o| o.current_scale().fractional_scale())
-                .unwrap_or(default_scale);
-            if let Some(surface) = window.wl_surface() {
-                targets.push((surface.into_owned(), scale));
-            }
-        }
-        for output in self.space.outputs() {
-            let scale = output.current_scale().fractional_scale();
-            for layer in smithay::desktop::layer_map_for_output(output).layers() {
-                targets.push((layer.wl_surface().clone(), scale));
-            }
-        }
-        for (surface, scale) in targets {
-            send_surface_preferred_scale(&surface, scale);
-        }
-    }
-
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -2842,25 +2811,6 @@ impl MindeState {
             })
             .or_else(|| layer_surface_under(&[Layer::Bottom, Layer::Background]))
     }
-}
-
-/// Sets the preferred fractional scale on a surface and its whole subsurface
-/// tree. Smithay sends the `preferred_scale` event only when the value
-/// actually changes, so this is cheap to call redundantly.
-fn send_surface_preferred_scale(surface: &WlSurface, scale: f64) {
-    use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
-    use smithay::wayland::fractional_scale::with_fractional_scale;
-    with_surface_tree_downward(
-        surface,
-        (),
-        |_, _, _| TraversalAction::DoChildren(()),
-        |_, states, _| {
-            with_fractional_scale(states, |fractional| {
-                fractional.set_preferred_scale(scale);
-            });
-        },
-        |_, _, _| true,
-    );
 }
 
 /// Stable per-output id handed to Scheme, stored in the `Output`'s user

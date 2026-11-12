@@ -45,15 +45,10 @@ fn popup_constraint_rect(
     parent_offset: Point<i32, Logical>,
     outputs: impl IntoIterator<Item = Rectangle<i32, Logical>>,
 ) -> Option<Rectangle<i32, Logical>> {
-    let (_, mut target) = outputs
-        .into_iter()
-        .enumerate()
-        .max_by_key(|(index, output)| {
-            let area = output.intersection(root).map_or(0, |intersection| {
-                i64::from(intersection.size.w) * i64::from(intersection.size.h)
-            });
-            (area, std::cmp::Reverse(*index))
-        })?;
+    let mut target = crate::state::largest_output_overlap(
+        root,
+        outputs.into_iter().map(|bounds| (bounds, bounds)),
+    )?;
     target.loc -= root.loc;
     target.loc -= parent_offset;
     Some(target)
@@ -82,7 +77,8 @@ impl XdgShellHandler for MindeState {
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         self.unconstrain_popup(&surface);
-        let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+        let _ = self.popups.track_popup(PopupKind::Xdg(surface.clone()));
+        self.update_surface_fractional_scale(surface.wl_surface());
     }
 
     fn reposition_request(

@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Bounded nested e2e gate for wp-fractional-scale-v1 and wp-viewporter.
 #
+# First inspect preferred-scale events on windows, layers, nested popups
+# and subsurfaces across scale changes, including unchanged-scale silence.
+# Then exercise standard clients:
 # 1. Asserts both globals are advertised via wayland-info.
 # 2. Sets a fractional output scale (1.5) with wlr-randr (the canonical
 #    wlr-output-management client) and confirms the compositor reflects it and
@@ -15,6 +18,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_FRACTIONAL_E2E_OUT:-/tmp/swm14c}
 trap nested_stop EXIT HUP INT TERM
@@ -30,6 +34,12 @@ nested_start "$OUT" "${MINDE_FRACTIONAL_E2E_DISPLAY:-:97}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
 }
+
+timeout 45 "$NESTED_PROTOCOL_CLIENT" fractional-popups >"$OUT/popups.log" 2>&1 || {
+    cat "$OUT/popups.log" >&2
+    exit 1
+}
+cat "$OUT/popups.log"
 
 # --- globals advertised ---------------------------------------------------
 info=$(nested_wayland timeout 15 wayland-info 2>"$OUT/wayland-info.err") || {

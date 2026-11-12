@@ -45,6 +45,10 @@ impl CompositorHandler for MindeState {
         });
     }
 
+    fn new_subsurface(&mut self, surface: &WlSurface, _parent: &WlSurface) {
+        self.update_surface_fractional_scale(surface);
+    }
+
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         let committed_window = if !is_sync_subsurface(surface) {
@@ -75,10 +79,11 @@ impl CompositorHandler for MindeState {
         // adjustment and after Window::on_commit refreshed the committed size.
         // `committed_window` owns a clone, not a borrow into compositor state
         // held across report_title_if_changed's possible Scheme callback.
-        if let Some(window) = committed_window
-            && let Some(id) = self.id_for_window(&window)
-        {
-            self.publish_window_geometry(id);
+        if let Some(window) = committed_window {
+            self.update_window_fractional_scale(&window);
+            if let Some(id) = self.id_for_window(&window) {
+                self.publish_window_geometry(id);
+            }
         }
         self.handle_layer_commit(surface);
         // Every commit may carry new content or a frame-callback request;
