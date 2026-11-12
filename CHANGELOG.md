@@ -16,6 +16,14 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Fullscreen keeps keyboard focus and close commands on the displayed
+  window while newly mapped windows are laid out behind it (#12).
+- Failed sibling selection preserves floating focus. Focus hooks, urgency
+  and `other-window!` history follow the effective focused window, including
+  floats (#9, #13).
+- Reverse window cycling from a cleared frame selects the last window
+  (#14), and dynamic retiling preserves the selected surviving tiled window
+  across group switches, layout changes and unrelated unmaps (#16).
 - Layout replacement and `only` keep floating windows and other heads'
   windows out of the current head's frame tree (#4).
 - Pulling a resident window no longer duplicates it. Pulling from a cleared

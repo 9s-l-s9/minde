@@ -38,7 +38,7 @@
 (define (wm-click button) (set! %clicks (cons button %clicks)) #t)
 (define (wm-idle-ms) 1234)
 
-(use-modules (minde compositor frames) (minde groups))
+(use-modules (minde compositor frames) (minde compositor model) (minde groups) (minde hooks))
 
 ;; ---------------------------------------------------------------------
 ;; Assertion helpers
@@ -79,6 +79,36 @@
 (check-true "float raised" (member 2 %raised))
 (check "float focus" (focused-window-id) 2)
 (check "keyboard focus followed" %focused 2)
+(focus-sibling-frame!)
+(check "no sibling preserves float focus in Scheme" (focused-window-id) 2)
+(check "no sibling preserves keyboard focus" %focused 2)
+(focus-window-by-id! 2)
+
+;; Urgency, history and notifications must use the actual float focus,
+;; including toggling back and forth with a tiled window.
+(focus-window-by-id! 1)
+(add-urgent-window! 2)
+(add-urgent-window! 1)
+(define focus-events '())
+(define (record-focus id) (set! focus-events (append focus-events (list id))))
+(add-event-hook! 'focus-window record-focus)
+(focus-window-by-id! 2)
+(check "float focus clears its own urgency only" (urgent-windows) '(1))
+(check "shown-window follows the float" (group-shown-window (current-group)) 2)
+(check "last-window records the tiled window" (group-last-window (current-group)) 1)
+(check "focus hook names the float" focus-events '(2))
+(sync-frames!)
+(check "unchanged float focus does not repeat the hook" focus-events '(2))
+(other-window!)
+(check "other-window returns from float to tile" (list (focused-window-id) %focused) '(1 1))
+(other-window!)
+(check "other-window returns from tile to float" (list (focused-window-id) %focused) '(2 2))
+(check "focus hooks track both toggles" focus-events '(2 1 2))
+(check "visiting both windows clears both urgencies" (urgent-windows) '())
+(remove-event-hook! 'focus-window record-focus)
+(clear-urgent! 1)
+(clear-urgent! 2)
+(focus-window-by-id! 2)
 (check-true "float still in all-window-ids" (member 2 (all-window-ids)))
 (check-true "default rect within head"
             (let ((r (float-geometry 2)))
@@ -102,6 +132,15 @@
 (check "cycle float -> tiled" (focused-window-id) 1)
 (focus-next-window!) ; -> back to float 2
 (check "cycle tiled -> float" (focused-window-id) 2)
+
+;; A real sibling does leave float focus and synchronizes the empty frame.
+(split-frame-horizontal!)
+(focus-window-by-id! 2)
+(focus-sibling-frame!)
+(check "real sibling updates Scheme and keyboard focus" (list (focused-window-id) %focused) '(#f #f))
+(focus-previous-frame!)
+(collapse-to-one-frame!)
+(focus-window-by-id! 2)
 
 ;; Unfloat puts it back into the current frame.
 (float-this!)

@@ -520,10 +520,10 @@ use. #f when G isn't dynamic."
 (define (set-dynamic-state! g hid order layout ratio)
   (hashv-set! (hashq-ref %dynamic-groups g) hid (list order layout ratio)))
 
-(define (dynamic-dump order layout ratio)
+(define* (dynamic-dump order layout ratio #:optional selected)
   "A dump-frames-shaped snapshot placing ORDER master-first in the
 master/stack layout: (spec leaf-window-lists leaf-currents
-master-leaf-index)."
+selected-leaf-index). Selects SELECTED when present, otherwise the master."
   (let ((n (length order)))
     (if (< n 2)
         (list 'leaf (list order)
@@ -543,12 +543,14 @@ master-leaf-index)."
                           (append (map list (cdr order))
                                   (list (list (car order)))))))
           (list spec lists (map car lists)
-                (if (memq layout '(left top)) 0 (- n 1)))))))
+                (or (and selected (list-index (lambda (ids) (member selected ids)) lists))
+                    (if (memq layout '(left top)) 0 (- n 1))))))))
 
 (define (retile-dynamic!)
   "Recomputes the current head's master/stack tiling for the current
 group: windows that appeared since the last retile become the master
-(newest first), vanished ones drop out. No-op in a manual group."
+(newest first), vanished ones drop out. Preserves the selected tiled
+window when it survives, otherwise selects the master. No-op in a manual group."
   (let* ((g (current-group))
          (hid (current-head-id))
          (st (dynamic-state g hid)))
@@ -561,7 +563,7 @@ group: windows that appeared since the last retile become the master
              (layout (cadr st))
              (ratio (caddr st)))
         (set-dynamic-state! g hid order layout ratio)
-        (restore-frames! (dynamic-dump order layout ratio))))))
+        (restore-frames! (dynamic-dump order layout ratio (current-frame-window)))))))
 
 (define (create-dynamic-group-in-background! name)
   "Creates a dynamic (auto-tiling) group in the background (StumpWM

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::{
     input::{evaluate, token},
+    lock::inject_key,
     wire::*,
 };
 pub fn window_id(name: &str) -> u32 {
@@ -75,6 +76,7 @@ impl Observer {
     }
 }
 pub fn run() {
+    focus();
     let mut observer = Observer::new();
     let mut anchor = Client::new("anchor");
     let mut target = Client::new("pending");
@@ -237,4 +239,90 @@ pub fn run() {
     evaluate("(length lifecycle-unmaps)", "7");
     assert!(observer.live_handles().is_empty());
     println!("ok - mapped and unmapped role destruction emit unmap exactly once");
+}
+
+fn focus() {
+    let mut full = Client::new("fullscreen focus owner");
+    full.toplevel(true);
+    let full_id = window_id("fullscreen focus owner");
+    evaluate("(begin (fullscreen!) #t)", "#t");
+    let mut background = Client::new("background focus candidate");
+    background.toplevel(true);
+    let background_id = window_id("background focus candidate");
+    evaluate("(focused-window-id)", &full_id.to_string());
+    full.roundtrip();
+    full.roundtrip();
+    evaluate(&format!("(wm-window-geometry {full_id})"), "(0 0 1280 800)");
+    evaluate(
+        &format!(
+            "(let ((r (wm-window-geometry {background_id}))) (and r (> (list-ref r 2) 0) (> (list-ref r 3) 0)))"
+        ),
+        "#t",
+    );
+    inject_key(&mut full, &mut [&mut background]);
+    evaluate(
+        "(begin (split-frame-horizontal!) (focus-next-frame!) #t)",
+        "#t",
+    );
+    evaluate("(focused-window-id)", &full_id.to_string());
+    inject_key(&mut full, &mut [&mut background]);
+    let full_start = full.events.len();
+    let background_start = background.events.len();
+    evaluate("(begin (close-current-window!) #t)", "#t");
+    let toplevel = full.toplevel_object;
+    full.wait(full_start, |e| e.is(toplevel, 1));
+    background.roundtrip();
+    assert!(
+        !background.events[background_start..]
+            .iter()
+            .any(|e| e.is(background.toplevel_object, 1))
+    );
+    // This raw client deliberately remains mapped after receiving close.
+    evaluate(
+        &format!("(begin (focus-window-by-id! {background_id}) (fullscreen!) #t)"),
+        "#t",
+    );
+    evaluate("(focused-window-id)", &background_id.to_string());
+    inject_key(&mut background, &mut [&mut full]);
+    println!(
+        "ok - fullscreen keeps actual keyboard input and close targeting while new windows are placed"
+    );
+
+    evaluate(
+        &format!(
+            "(begin (float-window! {background_id}) (collapse-to-one-frame!) (focus-sibling-frame!) #t)"
+        ),
+        "#t",
+    );
+    evaluate("(focused-window-id)", &background_id.to_string());
+    inject_key(&mut background, &mut [&mut full]);
+    evaluate("(begin (other-window!) #t)", "#t");
+    evaluate("(focused-window-id)", &full_id.to_string());
+    inject_key(&mut full, &mut [&mut background]);
+    evaluate("(begin (other-window!) #t)", "#t");
+    evaluate("(focused-window-id)", &background_id.to_string());
+    inject_key(&mut background, &mut [&mut full]);
+    println!("ok - missing siblings preserve float focus and other-window toggles actual input");
+
+    evaluate(
+        &format!(
+            "(begin (unfloat-window! {background_id}) (collapse-to-one-frame!) (clear-current-frame!) (focus-previous-window-in-frame!) #t)"
+        ),
+        "#t",
+    );
+    let last = token(&ipc("(last (current-frame-window-ids))"));
+    evaluate("(focused-window-id)", &last.to_string());
+    if last == background_id {
+        inject_key(&mut background, &mut [&mut full]);
+    } else {
+        assert_eq!(last, full_id);
+        inject_key(&mut full, &mut [&mut background]);
+    }
+    println!("ok - reverse cycling from a cleared frame focuses its last window");
+    drop(full);
+    drop(background);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "focus clients did not unmap",
+    );
 }

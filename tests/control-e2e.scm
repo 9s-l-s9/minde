@@ -121,6 +121,13 @@
           (list first second))
 (cli (list "eval" (format #f
   "(begin
+     (focus-window-by-id! ~a) (switch-to-group! \" I \")
+     (switch-to-group! \"frame-regression\")
+     (unless (equal? (focused-window-id) ~a)
+       (error \"returning to dynamic group lost stack focus\"))
+     #t)" first first)))
+(cli (list "eval" (format #f
+  "(begin
      (float-window! ~a) (retile-dynamic!) (focus-window-by-id! ~a)
      (let ((before (dump-frames)))
        (exchange-with-master!)

@@ -302,6 +302,19 @@
 (check "clear-current-frame! empties the frame's shown window" (current-frame-window) #f)
 (check "clear-current-frame! keeps the windows tracked" (frame-tree-window-count) 3)
 
+(let ((ids (current-frame-window-ids)))
+  (focus-previous-window-in-frame!)
+  (check "previous from a cleared frame selects the last member" (current-frame-window) (last ids))
+  (clear-current-frame!)
+  (focus-previous-window!)
+  (check "previous from no group focus selects the last member" %focused (last ids))
+  (clear-current-frame!)
+  (focus-next-window-in-frame!)
+  (check "next from a cleared frame selects the first member" (current-frame-window) (car ids))
+  (focus-previous-window-in-frame!)
+  (check "previous still wraps from first to last" (current-frame-window) (last ids))
+  (clear-current-frame!))
+
 (hsplit-equally! 3)
 (let ((columns (frame-leaves (current-tree))))
   (check "hsplit-equally! made three columns" (length columns) 3)
@@ -389,7 +402,7 @@
           (list 20 21 22))
 
 ;; ---------------------------------------------------------------------
-;; Fullscreen freeze, urgency bookkeeping
+;; Fullscreen focus and geometry, urgency bookkeeping
 ;; ---------------------------------------------------------------------
 
 (define %fullscreen-calls '())
@@ -401,14 +414,25 @@
 (fullscreen!)
 (check "fullscreen! set window 30 fullscreen" (car %fullscreen-calls) '(30 . #t))
 (check "fullscreen-window records the id" (fullscreen-window) 30)
-;; While fullscreen, sync is frozen: mapping another window must not
-;; issue placements.
+;; Fullscreen retains actual focus, but newly mapped windows still receive
+;; placements. The fullscreen client must not receive a tiled configure.
 (hash-clear! %placements)
 (track-window-map! 31 "editor" "lem")
-(check "sync-frames! is a no-op while fullscreen" (hash-count (const #t) %placements) 0)
+(check "new map preserves effective fullscreen focus" (focused-window-id) 30)
+(check "new map preserves keyboard focus" %focused 30)
+(check-true "new client is placed while fullscreen is shown" (hash-ref %placements 31))
+(check "fullscreen client is never tiled by sync" (hash-ref %placements 30) #f)
+(focus-next-frame!)
+(check "frame selection preserves effective fullscreen focus" (focused-window-id) 30)
+(check "frame selection preserves fullscreen keyboard focus" %focused 30)
+(close-current-window!)
+(check "close targets the keyboard-focused fullscreen window" (car %closed) 30)
+(focus-window-by-id! 31)
+(check "background selection does not change effective fullscreen focus" (focused-window-id) 30)
 (fullscreen!)
 (check "second fullscreen! unset it" (car %fullscreen-calls) '(30 . #f))
 (check "fullscreen flag cleared" (fullscreen-window) #f)
+(check "fullscreen exit focuses the selected background client" (list (focused-window-id) %focused) '(31 31))
 (check-true "leaving fullscreen re-synced placements"
             (> (hash-count (const #t) %placements) 0))
 ;; Unmapping the fullscreen window clears the flag too.

@@ -11,7 +11,7 @@ export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-/tmp/swm-ft-e2e}
 trap nested_stop EXIT HUP INT TERM
 
-for tool in wayland-info foot; do
+for tool in wayland-info foot xdotool; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "error: $tool is required for foreign-toplevel-e2e" >&2
         exit 127
@@ -22,6 +22,14 @@ nested_start "$OUT" "${MINDE_FOREIGN_TOPLEVEL_E2E_DISPLAY:-:98}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
 }
+
+# Direct synthetic keys only to the compositor on this private Xvfb display.
+window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
+[ -n "$window" ] || {
+    echo "error: private nested compositor window not found" >&2
+    exit 1
+}
+timeout 5 xdotool windowfocus "$window"
 
 timeout 40 "$NESTED_PROTOCOL_CLIENT" window-lifecycle \
     >"$OUT/window-lifecycle.log" 2>&1 || {

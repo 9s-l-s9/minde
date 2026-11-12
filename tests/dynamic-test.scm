@@ -99,10 +99,21 @@
 ;; Unmap: master vanishes, next window is promoted.
 ;; ---------------------------------------------------------------------
 
+(focus-window-by-id! 1)
+(switch-to-group! " I ")
+(switch-to-group! " dyn ")
+(check "returning to a dynamic group restores stack focus" (list (focused-window-id) %focused) '(1 1))
+(for-each
+ (lambda (layout)
+   (change-layout! layout)
+   (retile-dynamic!)
+   (check "layout changes and retiles preserve stack focus" (list (focused-window-id) %focused) '(1 1)))
+ '(right bottom top left))
 (handle-window-unmap! 3)
 (check "back to two frames" (length (frame-leaves (current-tree))) 2)
 (check-true "window 2 promoted to master" (< (car (rect 2)) 20))
 (check-true "window 1 still stacks" (> (car (rect 1)) 800))
+(check "removing another window preserves surviving stack focus" (list (focused-window-id) %focused) '(1 1))
 
 ;; ---------------------------------------------------------------------
 ;; rotate-windows! / rotate-stack! / exchange-with-master!
@@ -110,6 +121,7 @@
 
 (handle-window-map! 4 "four" "foot") ; order now (4 2 1)
 (check-true "4 is master" (< (car (rect 4)) 20))
+(check "newly mapped master still receives focus" (list (focused-window-id) %focused) '(4 4))
 (rotate-windows! 'forward) ; (1 4 2)
 (check-true "rotate: 1 became master" (< (car (rect 1)) 20))
 (rotate-windows! 'backward) ; (4 2 1)

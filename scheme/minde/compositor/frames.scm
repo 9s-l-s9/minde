@@ -988,11 +988,14 @@ sync."
     (hash-set! %floating id rect)))
 
 (define (focused-window-id)
-  "The window that effectively has focus: the focused float if there is
-one in the active group, else the current frame's current window."
-  (if (and %focused-float (member %focused-float (group-floats %active-group)))
-      %focused-float
-      (current-frame-window)))
+  "The effective focus: the displayed fullscreen window, otherwise the
+active group's focused float or the current frame's selected window."
+  (let ((full (hashq-ref %group-fullscreens %active-group)))
+    (cond
+     ((and full (fullscreen-shown? full)) (fullscreen-id full))
+     ((and %focused-float (member %focused-float (group-floats %active-group)))
+      %focused-float)
+     (else (current-frame-window)))))
 
 (define (clear-float-focus!)
   (set! %focused-float #f))
@@ -1651,13 +1654,13 @@ near its top-left corner."
 
 (define (focus-sibling-frame!)
   "Focuses the sibling of the current frame's split (StumpWM sibling)."
-  (clear-float-focus!)
   (let-values (((parent side) (find-parent %frame-tree %current-frame)))
     (if (not parent)
         (echo "no sibling")
         (let ((sib (if (eq? side 'a)
                        (split-child-b parent)
                        (split-child-a parent))))
+          (clear-float-focus!)
           (set! %current-frame (car (frame-leaves sib)))
           (sync-frames!)))))
 
@@ -1922,7 +1925,7 @@ hidden window, leaving the remaining windows hidden."
          (n (length ids)))
     (when (and (> n 0) (or (> n 1) (not (frame-current-window %current-frame))))
       (let* ((cur (frame-current-window %current-frame))
-             (idx (or (list-index (lambda (i) (equal? i cur)) ids) 1))) ; #f -> wrap to last
+             (idx (or (list-index (lambda (i) (equal? i cur)) ids) 0))) ; #f -> wrap to last
         (set-frame-current-window! %current-frame (list-ref ids (modulo (- idx 1) n))))))
   (sync-frames!))
 
@@ -1932,7 +1935,7 @@ hidden window, leaving the remaining windows hidden."
          (n (length ids))
          (cur (focused-window-id)))
     (when (> n 0)
-      (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 1))
+      (let* ((idx (or (and cur (list-index (lambda (i) (equal? i cur)) ids)) 0))
              (prev-id (list-ref ids (modulo (- idx 1) n))))
         ;; Same self-heal fallback as focus-next-window!.
         (unless (focus-window-by-id! prev-id)
@@ -2143,8 +2146,8 @@ the frame shows empty -- StumpWM fclear)."
   (split-equally! 'vertical n))
 
 (define (close-current-window!)
-  "Requests the focused window (float or current frame's window) be
-closed."
+  "Requests the effective focused window be closed, including fullscreen
+and floating windows."
   (let ((id (focused-window-id)))
     (when id
       (wm-close-window id))))
@@ -2368,8 +2371,8 @@ Rust reported as unknown, which are also dropped from the cache."
 (define (sync-frames-with-gap-state!)
   "Walks every head's frame tree of the active group, placing each
 frame's current window at its frame's pixel geometry, moving every other
-(hidden) window off-screen, and setting input focus to the current
-frame's current window.
+(hidden) window off-screen, and setting input focus to the effective
+focused window, including floats and fullscreen.
 
 Runs in three phases so a policy error cannot leave the desktop half
 applied: the whole placement plan is computed first (pure, so an error
@@ -2401,7 +2404,7 @@ then the focus/shown bookkeeping and hooks run."
   ;; toggles: whatever was shown at the end of the last sync becomes
   ;; "last" the moment something else is shown.
   (let ((g %active-group)
-        (cur (current-frame-window)))
+        (cur (focused-window-id)))
     (when cur (clear-urgent! cur))
     (let ((shown (group-shown-window g)))
       (unless (equal? shown cur)
@@ -2417,31 +2420,35 @@ then the focus/shown bookkeeping and hooks run."
     (set-group-shown-frame! g %current-frame))
   (when %sync-hook (%sync-hook)))
 
+(define %restoring-fullscreen? (make-parameter #f))
+
 (define (sync-frames!)
-  "Synchronizes the active group's frames unless its fullscreen window is
-already shown. A fullscreen window in another group does not suppress
-layout. Returning to a fullscreen group restores its window and focus."
-  (prune-fullscreen-owners!)
-  (let ((full (hashq-ref %group-fullscreens %active-group)))
-    (cond
-     ((not full) (sync-frames-now!))
-     ((not (fullscreen-shown? full))
-      ;; Focus helpers sync recursively. Mark shown before calling them so
-      ;; only this outer restore lays out the group and raises fullscreen.
-      (set-fullscreen-shown?! full #t)
-      (let ((id (fullscreen-id full)))
-        (focus-window-by-id! id)
-        (sync-frames-now!)
-        ;; Re-anchor on the saved head before asking Rust for that output's
-        ;; current full geometry. Otherwise an off-screen window defaults
-        ;; to the first output, even if it belonged to another monitor.
-        (let ((rect (or (fullscreen-geometry full)
-                        (and (window-floating? id) (float-geometry id))
-                        (frame-display-rect %current-frame))))
-          (apply (if (window-floating? id) rust-place-float! wm-place-window)
-                 id rect))
-        (rust-call 'wm-set-fullscreen id #t)
-        (forget-placement! id))))))
+  "Synchronizes the active group's layout, keeping a displayed fullscreen
+window's geometry and keyboard focus. New windows are placed behind it.
+Returning to a fullscreen group restores its window and focus."
+  ;; Focus helpers also sync. During restoration, select the saved window
+  ;; first and leave all placement/focus work to this outer call.
+  (unless (%restoring-fullscreen?)
+    (prune-fullscreen-owners!)
+    (let* ((full (hashq-ref %group-fullscreens %active-group))
+           (restore? (and full (not (fullscreen-shown? full)))))
+      (when restore?
+        (parameterize ((%restoring-fullscreen? #t))
+          (set-fullscreen-shown?! full #t)
+          (focus-window-by-id! (fullscreen-id full))))
+      (sync-frames-now!)
+      (when restore?
+        (let ((id (fullscreen-id full)))
+          ;; Re-anchor on the saved head before asking Rust for that output's
+          ;; current full geometry. Otherwise an off-screen window defaults
+          ;; to the first output, even if it belonged to another monitor.
+          (let ((rect (or (fullscreen-geometry full)
+                          (and (window-floating? id) (float-geometry id))
+                          (frame-display-rect %current-frame))))
+            (apply (if (window-floating? id) rust-place-float! wm-place-window)
+                   id rect))
+          (rust-call 'wm-set-fullscreen id #t)
+          (forget-placement! id))))))
 
 ;; ---------------------------------------------------------------------
 ;; Fullscreen, force kill, pointer control, urgency

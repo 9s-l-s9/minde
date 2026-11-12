@@ -66,7 +66,8 @@
 (fullscreen!)
 (hash-clear! placements)
 (configure-gaps! #:inner 6)
-(expect "gap changes do not configure fullscreen clients" (hash-count (const #t) placements) 0)
+(expect "gap changes do not configure fullscreen clients" (rect 2) #f)
+(expect "gap changes update windows behind fullscreen" (rect 1) '(39 39 452 722))
 (fullscreen!)
 (expect "fullscreen exit applies pending gap settings" (rect 2) '(509 39 452 722))
 ;; Switching away and back must keep hidden groups and every head sized.
