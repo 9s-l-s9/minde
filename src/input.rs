@@ -499,16 +499,14 @@ impl MindeState {
                 // PointerButton arm.
                 self.focus_toplevel_under(location, serial);
 
-                touch.down(
-                    self,
-                    under,
-                    &DownEvent {
-                        slot: event.slot(),
-                        location,
-                        serial,
-                        time: event.time_msec(),
-                    },
-                );
+                let event = DownEvent {
+                    slot: event.slot(),
+                    location,
+                    serial,
+                    time: event.time_msec(),
+                };
+                self.touch_contacts.down(&event);
+                touch.down(self, under, &event);
             }
             InputEvent::TouchMotion { event, .. } => {
                 let Some(touch) = self.seat.get_touch() else {
@@ -518,17 +516,19 @@ impl MindeState {
                     return;
                 };
                 let under = self.surface_under(location);
-                touch.motion(
-                    self,
-                    under,
-                    &TouchMotionEvent {
-                        slot: event.slot(),
-                        location,
-                        time: event.time_msec(),
-                    },
-                );
+                let event = TouchMotionEvent {
+                    slot: event.slot(),
+                    location,
+                    time: event.time_msec(),
+                };
+                if self.touch_contacts.motion(&event) {
+                    touch.motion(self, under, &event);
+                }
             }
             InputEvent::TouchUp { event, .. } => {
+                if !self.touch_contacts.up(event.slot()) {
+                    return;
+                }
                 let Some(touch) = self.seat.get_touch() else {
                     return;
                 };
@@ -543,10 +543,13 @@ impl MindeState {
                 );
             }
             InputEvent::TouchFrame { .. } => {
-                if let Some(touch) = self.seat.get_touch() {
+                if self.touch_contacts.take_frame()
+                    && let Some(touch) = self.seat.get_touch()
+                {
                     touch.frame(self);
                 }
             }
+            InputEvent::TouchCancel { .. } => self.cancel_touch_input(),
             InputEvent::TabletToolAxis { event, .. } => {
                 self.on_tablet_tool_axis(&event);
             }
@@ -567,6 +570,14 @@ impl MindeState {
                 tracing::info!(name = device.name(), "input device removed");
             }
             _ => {}
+        }
+    }
+
+    /// End every touch contact, including those in already completed frames.
+    pub(crate) fn cancel_touch_input(&mut self) {
+        let contacts = std::mem::take(&mut self.touch_contacts);
+        if let Some(touch) = self.seat.get_touch() {
+            contacts.cancel(&touch, self);
         }
     }
 

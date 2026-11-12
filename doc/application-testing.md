@@ -186,7 +186,10 @@ group, changes the clipboard, simulates a two-output hotplug and restores the
 single output, then validates schema-v1 state. Results and RSS measurements
 are retained in `/tmp/minde-soak/results.json`.
 
-Java, Wine, games, touch/tablet, IME, drag-and-drop and multi-GPU retain
+Touch cancellation has headless Rust coverage using real Wayland surfaces and
+`wl_touch` resources: completed and pending frames, stationary contacts,
+multiple clients, pending releases and fresh gestures after cancellation.
+Physical touch/tablet events, Java, Wine, games, IME, drag-and-drop and multi-GPU retain
 manual/optional application coverage. Session-lock ownership and input
 isolation are exercised by `tests/session-lock-e2e.sh` using
 `ext-session-lock-v1`. Its keyboard filter scenario checks press/release pairs

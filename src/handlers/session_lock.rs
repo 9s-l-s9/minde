@@ -145,10 +145,7 @@ impl SessionLockHandler for MindeState {
         // cleanup events to a hidden desktop surface. Nothing resumes on unlock.
         self.cancel_synthetic_input();
         self.release_pointer_buttons(|_| true);
-        if let Some(touch) = self.seat.get_touch() {
-            touch.cancel(self);
-            touch.unset_grab(self);
-        }
+        self.cancel_touch_input();
         // Repaint through the normal backend scheduler. A desktop flip may
         // still be pending; its completion must not acknowledge this lock.
         self.schedule_lock_redraw();

@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Touch cancellation clears every held contact and client focus, including
+  stationary fingers from completed frames. Locking, window unmapping and
+  VT suspension use the same cleanup; late motion/up events cannot revive
+  the cancelled gesture (#78).
 - Compositor-consumed keys also consume their matching releases, including
   across prompt, focus, shortcut-inhibitor and lock transitions. VT suspension
   releases forwarded physical keys and cancels compositor repeat (#77).

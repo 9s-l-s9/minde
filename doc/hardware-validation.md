@@ -53,6 +53,16 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+Touch cancellation (udev, requires a touchscreen):
+
+- Hold one or more fingers on a touch-capable client, including a stationary
+  finger while another moves. Trigger a device cancellation, such as palm
+  rejection or disabling the touch device, and confirm the client's
+  `WAYLAND_DEBUG=1` trace receives `wl_touch.cancel` and its gesture ends.
+- Repeat while locking, unmapping the touched window, and switching away
+  from the VT. After recovery, a new touch must start a new gesture on the
+  currently touched client; releasing an old contact must not revive it.
+
 Enabling and disabling heads (udev, needs two monitors):
 
 - `wlr-randr --output DP-1 --off`: the monitor goes to standby, `wlr-randr`

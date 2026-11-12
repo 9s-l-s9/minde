@@ -87,8 +87,7 @@ impl MindeState {
                 .and_then(|start| start.focus)
                 .is_some_and(|(surface, _)| owns(&surface))
         {
-            touch.cancel(self);
-            touch.unset_grab(self);
+            self.cancel_touch_input();
         }
         if let Some(toplevel) = window.toplevel() {
             let root = toplevel.wl_surface();

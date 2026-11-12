@@ -523,6 +523,7 @@ pub fn init_udev(
                 // going after resume. Balance forwarded physical keys and
                 // discard consumed ones together with the repeat timer.
                 state.reset_keyboard_input();
+                state.cancel_touch_input();
                 state.invalidate_lock_presentation();
                 let handle = state.handle.clone();
                 if let Some(udev) = state.udev_data.as_mut() {
