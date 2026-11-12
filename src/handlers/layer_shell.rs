@@ -16,6 +16,7 @@ use smithay::{
         KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler,
         WlrLayerShellState,
     },
+    wayland::shell::xdg::PopupSurface,
 };
 
 use crate::MindeState;
@@ -55,6 +56,12 @@ impl WlrLayerShellHandler for MindeState {
         }
         self.update_usable_area();
         self.schedule_redraw();
+    }
+
+    fn new_popup(&mut self, _parent: WlrLayerSurface, popup: PopupSurface) {
+        // xdg_surface.get_popup had no parent. Layer-shell assigns it here,
+        // before the popup's initial commit and configure handshake.
+        self.unconstrain_popup(&popup);
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

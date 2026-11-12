@@ -227,6 +227,10 @@ management gate closes layers on disable, rejects new roles on disabled or
 missing outputs, and accepts fresh layers after re-enable. Test-only and
 rejected configurations preserve layer ownership; physical unplug remains
 part of the hardware checklist.
+Popup regressions inspect real configure geometry for toplevel and layer-shell
+parents on an offset output, including nested menus, flip/slide adjustments,
+reposition requests and clients forbidding adjustments. Rust tests cover output
+selection for spanning windows, negative origins, fractional scale and rotation.
 Tablet-awareness tests use real Wayland tool bindings over socket pairs,
 including multiple bindings, newly registered tools, surface destruction and
 client disconnects. Repeated queries across clients with large object tables

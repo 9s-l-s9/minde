@@ -9,6 +9,7 @@ mod keyboard;
 mod layer;
 mod lock;
 mod outputs;
+mod popup;
 mod render;
 mod selection;
 mod virtual_pointer;
@@ -31,6 +32,7 @@ fn main() {
         Some("x11-focus-restore") => focus::restore_x11(),
         Some("layer-unlock") => layer::unlock(),
         Some("layer-output") => layer::output_lifecycle(),
+        Some("popup-placement") => popup::run(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

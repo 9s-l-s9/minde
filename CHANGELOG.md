@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Popups use their parent window's output by largest overlap instead of the
+  first output. Layer-shell menus apply positioner constraints after their
+  parent is assigned, including nested popups and reposition requests (#37, #38).
 - Layer surfaces on disabled or removed outputs receive `closed`, release
   keyboard focus and cannot reappear when the output returns. Output tests
   and failed configurations preserve their layers (#66).

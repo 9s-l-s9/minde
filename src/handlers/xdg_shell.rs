@@ -4,7 +4,8 @@ use smithay::{
     backend::renderer::utils::with_renderer_surface_state,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Window,
-        find_popup_root_surface, get_popup_toplevel_coords,
+        WindowSurfaceType, find_popup_root_surface, get_popup_toplevel_coords,
+        layer_map_for_output,
     },
     input::{
         Seat,
@@ -17,7 +18,7 @@ use smithay::{
             protocol::{wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{Rectangle, Serial},
+    utils::{Logical, Point, Rectangle, Serial},
     wayland::{
         compositor::with_states,
         shell::xdg::{
@@ -32,6 +33,31 @@ use crate::{
     grabs::{MoveSurfaceGrab, ResizeSurfaceGrab},
     guile,
 };
+
+#[cfg(test)]
+mod tests;
+
+/// Select the output with the largest overlap with the root's window geometry,
+/// then express its bounds relative to this popup's immediate parent. Ties and
+/// wholly offscreen roots retain output order; an absent output has no bounds.
+fn popup_constraint_rect(
+    root: Rectangle<i32, Logical>,
+    parent_offset: Point<i32, Logical>,
+    outputs: impl IntoIterator<Item = Rectangle<i32, Logical>>,
+) -> Option<Rectangle<i32, Logical>> {
+    let (_, mut target) = outputs
+        .into_iter()
+        .enumerate()
+        .max_by_key(|(index, output)| {
+            let area = output.intersection(root).map_or(0, |intersection| {
+                i64::from(intersection.size.w) * i64::from(intersection.size.h)
+            });
+            (area, std::cmp::Reverse(*index))
+        })?;
+    target.loc -= root.loc;
+    target.loc -= parent_offset;
+    Some(target)
+}
 
 impl XdgShellHandler for MindeState {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -367,30 +393,36 @@ impl MindeState {
         Some(window)
     }
 
-    fn unconstrain_popup(&self, popup: &PopupSurface) {
-        let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
+    pub(crate) fn unconstrain_popup(&self, popup: &PopupSurface) {
+        let kind = PopupKind::Xdg(popup.clone());
+        let Ok(root) = find_popup_root_surface(&kind) else {
             return;
         };
-        let Some(window) = crate::state::window_for_surface(&self.space, &root) else {
+        let parent_offset = get_popup_toplevel_coords(&kind);
+        let target = if let Some(window) = crate::state::window_for_surface(&self.space, &root) {
+            self.space.element_geometry(&window).and_then(|geometry| {
+                popup_constraint_rect(
+                    geometry,
+                    parent_offset,
+                    self.space
+                        .outputs()
+                        .filter_map(|o| self.space.output_geometry(o)),
+                )
+            })
+        } else {
+            self.space.outputs().find_map(|output| {
+                let bounds = self.space.output_geometry(output)?;
+                let map = layer_map_for_output(output);
+                let layer = map.layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)?;
+                let mut geometry = map.layer_geometry(layer)?;
+                // LayerMap positions are output-local, unlike Space windows.
+                geometry.loc += bounds.loc;
+                popup_constraint_rect(geometry, parent_offset, [bounds])
+            })
+        };
+        let Some(target) = target else {
             return;
         };
-
-        let Some(output) = self.space.outputs().next() else {
-            return;
-        };
-        let Some(output_geo) = self.space.output_geometry(output) else {
-            return;
-        };
-        let Some(window_geo) = self.space.element_geometry(&window) else {
-            return;
-        };
-
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
-        let mut target = output_geo;
-        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
-
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });

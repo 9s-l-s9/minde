@@ -52,6 +52,11 @@ cat >"$OUT/startup.scm" <<'EOF'
 EOF
 export MINDE_NESTED_INIT="$OUT/startup.scm"
 nested_start "$OUT" "${MINDE_FULLSCREEN_POINTER_E2E_DISPLAY:-:91}"
+timeout 45 "$NESTED_PROTOCOL_CLIENT" popup-placement >"$OUT/popup.log" 2>&1 || {
+    cat "$OUT/popup.log" >&2
+    exit 1
+}
+cat "$OUT/popup.log"
 timeout 75 "$NESTED_PROTOCOL_CLIENT" pointer-focus >"$OUT/focus.log" 2>&1 || {
     cat "$OUT/focus.log" >&2
     exit 1
