@@ -10,6 +10,8 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Keyboard and output-policy hooks accept ordinary Scheme truth values
+  without terminating the compositor on a non-boolean result (#27).
 - The portable prefix followed by the space bar opens the command palette
   using xkbcommon's canonical `space` keysym name (#100).
 - Frame and placement tests now check actual focus, geometry and restored

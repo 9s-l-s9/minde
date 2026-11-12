@@ -64,6 +64,7 @@ unsafe extern "C" {
     pub fn scm_to_utf8_stringn(str_: Scm, lenp: *mut usize) -> *mut c_char;
 
     pub fn scm_to_bool(x: Scm) -> c_int;
+    pub fn scm_not(x: Scm) -> Scm;
 
     pub fn scm_from_int64(x: i64) -> Scm;
     pub fn scm_to_int64(x: Scm) -> i64;

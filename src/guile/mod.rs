@@ -533,6 +533,12 @@ pub fn to_bool(v: Scm) -> bool {
     unsafe { ffi::scm_to_bool(v) != 0 }
 }
 
+/// Test Scheme truth without a throwing boolean conversion. Guile's `#nil`,
+/// like `#f`, is false; all other values (including the empty list) are true.
+fn scheme_truth(v: Scm) -> bool {
+    unsafe { ffi::scm_not(v) == ffi::SCM_BOOL_F }
+}
+
 pub fn from_bool(b: bool) -> Scm {
     ffi::scm_from_bool_inline(b)
 }
@@ -1786,7 +1792,7 @@ pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool
         from_str(utf8),
     ]);
     let consumed = match result {
-        Some(r) => to_bool(r),
+        Some(r) => scheme_truth(r),
         None => false,
     };
     tracing::debug!(
@@ -1920,7 +1926,10 @@ pub fn output_config_allowed() -> bool {
     if OUTPUT_CONFIG_ALLOWED.value().is_none() {
         return true;
     }
-    OUTPUT_CONFIG_ALLOWED.call(&[]).map(to_bool).unwrap_or(true)
+    OUTPUT_CONFIG_ALLOWED
+        .call(&[])
+        .map(scheme_truth)
+        .unwrap_or(true)
 }
 
 /// Notifies Scheme that the output layout was changed -- by an external
@@ -1989,7 +1998,7 @@ mod tests {
     }
 
     #[test]
-    fn string_conversions_preserve_length_and_reject_non_strings() {
+    fn guile_values_and_hooks() {
         // Keep all libguile calls in this test on its initializing thread.
         unsafe { super::ffi::scm_init_guile() };
         for text in ["", "plain text", "Grüße", "€日本語🦀", "a\0b", "\0€\0"] {
@@ -2003,5 +2012,32 @@ mod tests {
         ] {
             assert_eq!(super::to_string_lossy(value), None);
         }
+
+        assert!(super::output_config_allowed());
+        for (expression, expected) in [
+            ("#f", false),
+            ("#nil", false),
+            ("#t", true),
+            ("'()", true),
+            ("'(1)", true),
+            ("42", true),
+            ("\"\"", true),
+            ("(if #f #f)", true),
+        ] {
+            super::eval_string(&format!(
+                "(begin (define (wm-handle-key . args) {expression}) \
+                 (define (output-configuration-allowed?) {expression}))"
+            ))
+            .unwrap();
+            assert_eq!(super::handle_key(0, 0, "a", "a"), expected, "{expression}");
+            assert_eq!(super::output_config_allowed(), expected, "{expression}");
+        }
+        super::eval_string(
+            "(begin (define (wm-handle-key . args) (error \"test\")) \
+             (define (output-configuration-allowed?) (error \"test\")))",
+        )
+        .unwrap();
+        assert!(!super::handle_key(0, 0, "a", "a"));
+        assert!(super::output_config_allowed());
     }
 }
