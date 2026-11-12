@@ -28,6 +28,23 @@ scripts/mindectl eval '(reload-configuration!)'
 
 ## Running-session evidence
 
+Use the running compositor's build identity in bug reports:
+
+```sh
+mindectl eval '(wm-version)'
+```
+
+`(version!)` displays the same string and is available in the command palette.
+It includes the package version and compiled revision, matching `minde --version`
+for that binary. It does not read a version from a possibly newer source checkout.
+
+Development builds refresh their revision after commits, branch/tag changes,
+and tracked-file edits, including Scheme files and initialized submodules.
+Unstaged changes add `-dirty`. Linked Git worktrees are supported. Untracked
+build output is excluded, and unchanged builds reuse Cargo's cached stamp.
+`MINDE_BUILD_REVISION` overrides Git detection for release/archive builds;
+without that override or a usable Git checkout the revision is `unknown`.
+
 ```sh
 mindectl query state --json | jq .
 mindectl report --output /tmp/minde-report

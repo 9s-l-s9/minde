@@ -923,7 +923,7 @@ unbound-variable path."
   (echo (strftime "%a %d %b %Y %H:%M:%S" (localtime (current-time)))))
 
 (define (version!)
-  (echo "minde 0.1.0"))
+  (echo (rust-call 'wm-version)))
 
 (define (modifiers!)
   (echo (format #f "key spec prefixes: C- control, M- alt, S- shift, s- super~%prefix key: ~a" %prefix-key)))

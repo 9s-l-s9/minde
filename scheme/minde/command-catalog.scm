@@ -89,6 +89,7 @@
     (describe-variable! help "Describe a Scheme variable.")
     (where-is! help "Find a binding by its description.")
     (copy-unhandled-error! help "Copy the last keybinding error.")
+    (version! help "Show the running version and build revision.")
     (gnew-dynamic-prompt! group "Create and focus a dynamic group.")
     (gnewbg-dynamic-prompt! group "Create a dynamic group in the background.")
     (gnewbg-prompt! group "Create a group in the background.")

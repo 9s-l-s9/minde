@@ -21,6 +21,12 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Development builds refresh the compiled revision after Git changes and
+  tracked-file edits, including linked worktrees. Version detection leaves
+  the Git index untouched and preserves incremental builds (#36).
+- Scheme's `version!` displays the running binary's version and revision
+  through `wm-version`, sharing the CLI string instead of a stale literal
+  (#103).
 - Expose and frame selection clean up on unbound keys, failed bindings,
   group/head changes and session locking. Expose snapshots belong to their
   group and head and survive repeated entry. Digits, letters and multi-key

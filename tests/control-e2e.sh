@@ -31,4 +31,4 @@ nested_wayland timeout 90 foot --app-id=control-two --title='Same title' sh -c '
     >"$control_out/second.log" 2>&1 &
 control_second=$!
 nested_wait_for_window_after 1 20
-timeout 60 guile --no-auto-compile -L scheme tests/control-e2e.scm "$control_out"
+timeout 60 guile --no-auto-compile -L scheme tests/control-e2e.scm "$control_out" "$NESTED_BINARY"

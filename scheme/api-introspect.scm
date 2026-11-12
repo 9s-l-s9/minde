@@ -38,6 +38,8 @@
      "Set the native emergency exit chord with modifier mask MODS (shift=1, ctrl=4, alt=8, super=64) and an XKB key name; #f #f disables it. Returns #f without changes on invalid input. Works before startup and bypasses Scheme, lock and shortcut-inhibit policy.")
     (wm-log "(wm-log message)"
      "Append MESSAGE to the compositor log.")
+    (wm-version "(wm-version)"
+     "Return the running binary's version and build revision, exactly as minde --version prints it.")
     (wm-place-window "(wm-place-window id x y w h)"
      "Move and size the tiled window ID to the given rectangle.")
     (wm-focus-window "(wm-focus-window id)"

@@ -33,6 +33,16 @@
        #:success? success?))
 (define (status result expected) (check (equal? (ref result "status") expected) result expected))
 (define (failure result expected) (check (equal? (ref (ref result "error") "code") expected) result expected))
+;; Compare with the exact binary running this private session, including its
+;; build stamp. Scheme must not infer a version from installed source files.
+(let* ((port (open-pipe* OPEN_READ (caddr (command-line)) "--version"))
+       (version (read-line port)))
+  (check (zero? (close-pipe port)) "version command failed")
+  (cli (list "eval" (format #f "(begin
+    (unless (equal? (wm-version) ~s) (error \"native version disagrees with CLI\"))
+    (version!)
+    (unless (equal? (last-message) ~s) (error \"Scheme version disagrees with CLI\")) #t)"
+                            version version))))
 ;; A personal command exists only in this session. Validation must use that
 ;; registry without invoking it or publishing a candidate keymap.
 (cli '("eval" "(begin

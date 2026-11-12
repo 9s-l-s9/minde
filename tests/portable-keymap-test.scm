@@ -3,6 +3,7 @@
 
 (define (wm-spawn command) #t)
 (define (wm-quit) #t)
+(define (wm-version) "minde fixture-version (fixture-revision)")
 (define %test-emergency-exit #f)
 (define %test-emergency-reject? #f)
 (define (wm-set-emergency-exit mods key)
@@ -204,6 +205,9 @@
 
 (check "IPC evaluator returns a success envelope"
        (string=? (minde-ipc-eval "(+ 2 3)") "(ok 5)"))
+(version!)
+(check "version command echoes the running binary's version"
+       (equal? (last-message) (wm-version)))
 (check "IPC evaluator rejects multiple datums"
        (string-prefix? "(error " (minde-ipc-eval "1 2")))
 

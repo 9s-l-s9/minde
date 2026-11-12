@@ -31,6 +31,15 @@ mod winit;
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 pub use state::MindeState;
 
+/// The running binary's version, shared by the CLI and Scheme.
+const BUILD_VERSION: &str = concat!(
+    "minde ",
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("MINDE_BUILD_REVISION"),
+    ")"
+);
+
 /// Which backend to run: a nested Wayland/X11 window (winit) or a
 /// standalone DRM/udev/libinput session (tty).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,11 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         CliAction::Version => {
-            println!(
-                "minde {} ({})",
-                env!("CARGO_PKG_VERSION"),
-                env!("MINDE_BUILD_REVISION")
-            );
+            println!("{BUILD_VERSION}");
             return Ok(());
         }
         CliAction::CheckConfig(path) => {

@@ -70,6 +70,7 @@ Entered with `guix shell -m manifest.scm`:
 
 ### Native inputs (build-time only)
 
+- `git-minimal`
 - `guile-3.0`
 - `pkg-config`
 - `rust`

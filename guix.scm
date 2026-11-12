@@ -32,6 +32,7 @@
              ((guix licenses) #:prefix license:)
              (gnu packages base)
              (gnu packages rust)
+             (gnu packages version-control)
              (gnu packages pkg-config)
              (gnu packages guile)
              (gnu packages curl)
@@ -325,10 +326,12 @@ Comment=StumpWM-style Guile Scheme Wayland compositor
 Exec=minde-session
 Type=Application
 " port)))))))))
+  ;; Git is needed by the isolated build-stamp regression repositories.
   (native-inputs
    (list rust
          (list rust "cargo")
          (list rust "tools")
+         git-minimal
          pkg-config
          guile-3.0))
   (inputs

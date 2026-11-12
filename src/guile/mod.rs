@@ -1535,6 +1535,11 @@ unsafe extern "C" fn wm_configure_input_rule(
     from_bool(true)
 }
 
+/// `(wm-version)` -> the same version and build stamp as `minde --version`.
+unsafe extern "C" fn wm_version() -> Scm {
+    from_str(crate::BUILD_VERSION)
+}
+
 /// `(wm-runtime-info)` -> `(backend xwayland-status xdisplay uptime-ms)`.
 unsafe extern "C" fn wm_runtime_info() -> Scm {
     let backend = match RUNTIME_BACKEND.load(Ordering::SeqCst) {
@@ -1626,6 +1631,7 @@ fn register_primitives() {
             gsubr!(wm_set_emergency_exit, 2),
         );
         register_gsubr("wm-log", 1, 0, gsubr!(wm_log, 1));
+        register_gsubr("wm-version", 0, 0, gsubr!(wm_version, 0));
         register_gsubr("wm-place-window", 5, 0, gsubr!(wm_place_window, 5));
         register_gsubr("wm-place-windows", 1, 0, gsubr!(wm_place_windows, 1));
         register_gsubr("wm-window-title", 1, 0, gsubr!(wm_window_title, 1));

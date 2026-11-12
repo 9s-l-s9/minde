@@ -366,6 +366,7 @@ This inventory enumerates the live exports of the public modules. It currently c
 | `switch-to-next-group!` | `()` | `group` | Focus the next group. | `group-next` |
 | `switch-to-previous-group!` | `()` | `group` | Focus the previous group. | `group-previous` |
 | `toggle-gaps!` | `()` | `frame` | Toggle gaps. | `gaps-toggle` |
+| `version!` | `()` | `help` | Show the running version and build revision. | `non-visual` |
 | `where-is!` | `()` | `help` | Find a binding by its description. | `non-visual` |
 | `windowlist!` | `()` | `window` | Choose a window. | `non-visual` |
 | `windowlist-by-class!` | `()` | `window` | Choose a window by application. | `non-visual` |
