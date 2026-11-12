@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Tablet samples reuse cached client awareness instead of walking every
+  Wayland object on each event. Binding and destruction refresh the cache;
+  pointer emulation reuses the tablet target when constraints allow (#140).
 - Physical touchscreens, tablets and absolute pointers use their libinput
   output association, with internal-panel fallback, output rotation and
   logical scaling. `wm-configure-input!` accepts `#:map-to-output` overrides

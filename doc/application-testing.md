@@ -211,6 +211,11 @@ are retained in `/tmp/minde-soak/results.json`.
 Touch cancellation has headless Rust coverage using real Wayland surfaces and
 `wl_touch` resources: completed and pending frames, stationary contacts,
 multiple clients, pending releases and fresh gestures after cancellation.
+Tablet-awareness tests use real Wayland tool bindings over socket pairs,
+including multiple bindings, newly registered tools, surface destruction and
+client disconnects. Repeated queries across clients with large object tables
+assert that cached positive and negative results avoid further object scans.
+Clients with foreign userdata exercise the same cache path used by Xwayland.
 Physical touch/tablet events, Java, Wine, games, IME, drag-and-drop and multi-GPU retain
 manual/optional application coverage. Session-lock ownership and input
 isolation are exercised by `tests/session-lock-e2e.sh` using

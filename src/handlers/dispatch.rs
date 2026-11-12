@@ -5,7 +5,8 @@
 //! `InvalidUnlock`. Intercept lock requests here so rejected or stale objects
 //! cannot reach that callback. Track pointer-constraint resource ownership so
 //! retired objects cannot alter their replacements, and snapshot unlock hints
-//! before removal. Other protocols retain `delegate_dispatch2!` behavior;
+//! before removal. Tablet binding and surface lifetimes invalidate the input
+//! awareness cache. Other requests retain `delegate_dispatch2!` behavior;
 //! no changes to the untracked vendor tree are needed.
 
 use std::any::Any;
@@ -37,6 +38,7 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        state.tablet_clients.request(&client.id(), &request);
         state.track_pointer_constraint_request(client, &request, dhandle);
         if !state.pointer_constraint_request_allowed(&resource.id()) {
             return;
@@ -80,6 +82,7 @@ where
     }
 
     fn destroyed(state: &mut Self, client: ClientId, resource: &I, data: &UserData) {
+        state.tablet_clients.destroyed(&client, resource);
         let constraint = state.remove_pointer_constraint_record(&resource.id());
         if constraint.as_ref().is_none_or(|(current, _)| *current) {
             data.destroyed(state, client, resource);

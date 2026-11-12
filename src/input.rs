@@ -19,6 +19,8 @@ use smithay::{
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
+type SurfaceTarget = Option<(WlSurface, Point<f64, Logical>)>;
+
 /// The first physical press decides whether its matching release reaches a
 /// client. Keep this across focus, prompt, inhibitor and lock transitions.
 #[derive(Default)]
@@ -680,6 +682,19 @@ impl MindeState {
         time_msec: u32,
         utime: u64,
     ) {
+        self.pointer_absolute_motion_with_target(source, proposed, time_msec, utime, None);
+    }
+
+    /// Reuse a tablet's hit test when constraints leave its position intact.
+    /// Some(None) records a known empty target and avoids another hit test.
+    fn pointer_absolute_motion_with_target(
+        &mut self,
+        source: AbsolutePointerSource,
+        proposed: Point<f64, Logical>,
+        time_msec: u32,
+        utime: u64,
+        precomputed_target: Option<SurfaceTarget>,
+    ) {
         let under_current = self.surface_under(self.pointer_location);
         // Keep the cursor in the output layout while retaining the original
         // device samples below for relative motion under a lock/confinement.
@@ -716,7 +731,9 @@ impl MindeState {
         // The cursor moved: repaint the heads it left and entered.
         self.schedule_redraw_at(&[old_pos, new_pos]);
         let serial = SERIAL_COUNTER.next_serial();
-        let under = self.surface_under(new_pos);
+        let under = precomputed_target
+            .filter(|_| new_pos == proposed)
+            .unwrap_or_else(|| self.surface_under(new_pos));
         pointer.motion(
             self,
             under.clone(),
@@ -948,10 +965,12 @@ impl MindeState {
         let under = self.surface_under(location);
         // Decide against the surface's client *before* handing `under` to
         // motion() (which consumes it).
-        let aware = under
-            .as_ref()
-            .map(|(s, _)| self.client_is_tablet_aware(s))
-            .unwrap_or(false);
+        let aware = tablet.is_some()
+            && tool.is_some()
+            && under
+                .as_ref()
+                .map(|(s, _)| self.client_is_tablet_aware(s))
+                .unwrap_or(false);
 
         let route = if let (Some(tablet), Some(tool)) = (tablet, tool) {
             // Queue the axes so they ride the next motion frame (the tool
@@ -977,7 +996,7 @@ impl MindeState {
             let serial = SERIAL_COUNTER.next_serial();
             // motion() internally drives proximity_in/out; delivery to the
             // client is a no-op when it never bound the tool.
-            tool.motion(location, under, &tablet, serial, event.time_msec());
+            tool.motion(location, under.clone(), &tablet, serial, event.time_msec());
             tool_route(true, aware)
         } else {
             tool_route(false, false)
@@ -998,11 +1017,12 @@ impl MindeState {
                 // This reuses the shared pointer path, so the cursor follows and
                 // hover/enter-leave are delivered; constraints only ever apply
                 // to real pointer focus, which a stylus never grabs.
-                self.pointer_absolute_motion(
+                self.pointer_absolute_motion_with_target(
                     AbsolutePointerSource::Tablet(event.device().id()),
                     location,
                     event.time_msec(),
                     event.time(),
+                    Some(under),
                 );
             }
         }
@@ -1026,7 +1046,11 @@ impl MindeState {
 
         match event.state() {
             ProximityState::In => {
-                let tool = tablet_seat.add_tool::<Self>(self, &dh, &event.tool());
+                let tool = tablet_seat.get_tool(&event.tool()).unwrap_or_else(|| {
+                    let tool = tablet_seat.add_tool::<Self>(self, &dh, &event.tool());
+                    self.tablet_clients.tool_added();
+                    tool
+                });
                 // proximity_in requires a focused surface and an initial
                 // motion; drive it through motion() when a surface is under the
                 // tool so the client gets proximity_in + motion in one go.
@@ -1112,30 +1136,6 @@ impl MindeState {
                 event.time_msec(),
             );
         }
-    }
-
-    /// Whether the surface's client is tablet-aware, i.e. it bound
-    /// `zwp_tablet_manager_v2` and holds a `zwp_tablet_tool_v2` resource. Drives
-    /// the pointer-emulation fallback: unaware clients get emulated pointer
-    /// input so a stylus still points and clicks. Smithay exposes no per-client
-    /// tablet-binding query, so we inspect the client's live protocol objects.
-    fn client_is_tablet_aware(&self, surface: &WlSurface) -> bool {
-        use smithay::reexports::wayland_server::Resource;
-        let Ok(client) = self.display_handle.get_client(surface.id()) else {
-            return false;
-        };
-        let mut aware = false;
-        // `interface()` reads the object's own metadata (no backend lock), so it
-        // is safe to call inside the enumeration closure.
-        let _ = self
-            .display_handle
-            .backend_handle()
-            .with_all_objects_for(client.id(), |obj| {
-                if obj.interface().name == "zwp_tablet_tool_v2" {
-                    aware = true;
-                }
-            });
-        aware
     }
 }
 

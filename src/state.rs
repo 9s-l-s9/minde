@@ -467,6 +467,7 @@ pub struct MindeState {
     /// the pointer-emulation fallback live in `process_input_event`. See
     /// `handlers::mod`'s `TabletSeatHandler` for the tool cursor callback.
     pub tablet_manager_state: smithay::wayland::tablet_manager::TabletManagerState,
+    pub(crate) tablet_clients: crate::handlers::tablet::TabletClients,
 }
 
 impl MindeState {
@@ -772,6 +773,7 @@ impl MindeState {
             keyboard_shortcuts_inhibit_state,
             active_shortcuts_inhibitor: None,
             tablet_manager_state,
+            tablet_clients: Default::default(),
         })
     }
 

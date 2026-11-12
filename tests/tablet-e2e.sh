@@ -4,8 +4,10 @@
 #
 # The nested harness has no virtual tablet, so real TabletTool proximity/axis/
 # tip/button streams cannot be synthesized here -- the event routing and the
-# pointer-emulation fallback decision are covered by Rust unit tests
-# (tool_route and map_absolute_to_global in src/input.rs), and the lock-gating
+# pointer-emulation fallback decision are covered by Rust unit tests in
+# src/input.rs and src/absolute_input.rs. Real tablet-binding lifetimes and
+# cached awareness are covered by socket-pair tests in src/handlers/tablet/.
+# The lock-gating
 # reuses the pointer/touch Keyboard-only allowlist. What is assertable nested is
 # that the compositor advertises the zwp_tablet_manager_v2 global on both
 # backends (TabletManagerState::new runs unconditionally), so tablet-aware

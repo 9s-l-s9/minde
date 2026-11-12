@@ -13,6 +13,7 @@ pub mod output_power;
 pub mod pointer_constraints;
 pub mod screencopy;
 pub(crate) mod session_lock;
+pub(crate) mod tablet;
 pub mod tearing_control;
 pub mod virtual_pointer;
 mod window;
