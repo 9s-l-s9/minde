@@ -104,6 +104,12 @@ preference:
 
 ## Rust-side debugging
 
+- `temporary winit frame failure; retrying` identifies a failed bind, render
+  or submit operation in the nested backend. Minde schedules a full redraw
+  through its paced wakeup, including for lock screens and disabled outputs.
+  It withholds frame callbacks and lock confirmation until a frame succeeds.
+  `graphics context lost; stopping nested compositor` means the graphics
+  resources cannot be reused; the session ends cleanly instead of panicking.
 - `cannot bind a Wayland socket` is a startup error. Check that
   `XDG_RUNTIME_DIR` names the session's runtime directory and that an unused
   name exists between `wayland-1` and `wayland-32`. Minde exits with status 1

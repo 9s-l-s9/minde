@@ -8,8 +8,12 @@ use std::{
 
 use smithay::{
     backend::{
-        renderer::{damage::OutputDamageTracker, gles::GlesRenderer},
-        winit::{self, WinitEvent},
+        SwapBuffersError,
+        renderer::{
+            damage::{Error as DamageError, OutputDamageTracker},
+            gles::{GlesError, GlesRenderer},
+        },
+        winit::{self, WinitEvent, WinitGraphicsBackend},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::calloop::{
@@ -169,181 +173,25 @@ pub fn init_winit(
                     state.schedule_redraw();
                 }
                 WinitEvent::Input(event) => state.process_input_event(event),
-                WinitEvent::Redraw if state.locked => {
-                    // Locked: render ONLY this output's lock surface, or solid
-                    // black if it has not committed / the client died. Never
-                    // the desktop -- this is the ext-session-lock guarantee.
-                    let size = backend.window_size();
-                    let damage = Rectangle::from_size(size);
-                    {
-                        let (renderer, mut framebuffer) = backend.bind().unwrap();
-                        let mut elements: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
-                        if let Some(lock) = state.lock_surface_for(&output) {
-                            elements =
-                                smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
-                                    &mut *renderer,
-                                    lock.wl_surface(),
-                                    (0, 0),
-                                    output.current_scale().fractional_scale(),
-                                    1.0,
-                                    smithay::backend::renderer::element::Kind::Unspecified,
-                                );
-                        }
-                        damage_tracker
-                            .render_output(
-                                &mut *renderer,
-                                &mut framebuffer,
-                                0,
-                                &elements,
-                                [0.0, 0.0, 0.0, 1.0],
-                            )
-                            .unwrap();
-                    }
-                    // This output is the nested host window: a successful
-                    // swap replaces its content. The host compositor owns
-                    // physical presentation; winit exposes no presentation
-                    // feedback for it. Never acknowledge merely requesting a
-                    // redraw or an unsuccessful swap.
-                    backend.submit(Some(&[damage])).unwrap();
-                    state.lock_frame_presented(&output, state.lock_generation());
-
-                    // Frame callback so the lock client keeps drawing.
-                    if let Some(lock) = state.lock_surface_for(&output) {
-                        smithay::desktop::utils::send_frames_surface_tree(
-                            lock.wl_surface(),
-                            &output,
-                            state.start_time.elapsed(),
-                            Some(Duration::ZERO),
-                            |_, _| Some(output.clone()),
-                        );
-                    }
-
-                    let _ = state.display_handle.flush_clients();
-                }
-                WinitEvent::Redraw if !state.output_enabled(&output) || state.winit_powered_off => {
-                    // Disabled via wlr-output-management, or DPMS off via
-                    // wlr-output-power-management: the head stays
-                    // advertised but shows nothing -- paint black, no
-                    // elements, no frame callbacks. Power-on explicitly
-                    // schedules the next redraw.
-                    let size = backend.window_size();
-                    let damage = Rectangle::from_size(size);
-                    {
-                        let (renderer, mut framebuffer) = backend.bind().unwrap();
-                        let elements: Vec<MindeRenderElements<GlesRenderer>> = Vec::new();
-                        damage_tracker
-                            .render_output(
-                                &mut *renderer,
-                                &mut framebuffer,
-                                0,
-                                &elements,
-                                [0.0, 0.0, 0.0, 1.0],
-                            )
-                            .unwrap();
-                    }
-                    backend.submit(Some(&[damage])).unwrap();
-                    let _ = state.display_handle.flush_clients();
-                }
                 WinitEvent::Redraw => {
-                    // Honor the output's fractional scale (wlr-randr --scale,
-                    // via wlr-output-management) so the nested scene renders
-                    // at the same density fractional-scale clients paint at.
-                    let fscale = output.current_scale().fractional_scale();
-                    let scale = smithay::utils::Scale::from(fscale);
-                    let Some(output_geo) = state.space.output_geometry(&output) else {
-                        return;
-                    };
-                    let focus = state.focus_rect.or_else(|| {
-                        state
-                            .focused_window
-                            .as_ref()
-                            .and_then(|w| state.space.element_geometry(w))
-                    });
-
-                    // Same scene assembly as the udev backend and the capture
-                    // paths. No cursor: the host compositor draws the pointer
-                    // over the nested window.
-                    let damage = {
-                        let age = backend.buffer_age().unwrap_or(0);
-                        let (renderer, mut framebuffer) = backend.bind().unwrap();
-                        let elements = crate::handlers::screencopy::output_scene_elements(
-                            &mut *renderer,
-                            &output,
-                            output_geo,
-                            (0, 0).into(),
-                            scale,
-                            &state.space,
-                            None,
-                            state.message.as_ref(),
-                            &state.overlays,
-                            focus,
-                            state.border_color,
-                            &mut border_buffers,
-                        );
-                        damage_tracker
-                            .render_output(
-                                &mut *renderer,
-                                &mut framebuffer,
-                                age,
-                                &elements,
-                                [0.1, 0.1, 0.1, 1.0],
-                            )
-                            .unwrap()
-                            .damage
-                            .cloned()
-                    };
-                    // Submit only what changed (tracked against the buffer
-                    // age); an unchanged scene skips the swap entirely.
-                    if let Some(damage) = damage {
-                        backend.submit(Some(&damage)).unwrap();
+                    if let Err((stage, error)) = render_frame(
+                        &mut backend, state, &output, &mut damage_tracker, &mut border_buffers,
+                    ) {
+                        // Rendering can advance the damage history before a
+                        // failed swap. The replacement EGL surface needs a
+                        // complete redraw, even if clients commit nothing else.
+                        damage_tracker = OutputDamageTracker::from_output(&output);
+                        if matches!(error, SwapBuffersError::ContextLost(_)) {
+                            tracing::error!(stage, %error,
+                                "graphics context lost; stopping nested compositor");
+                            state.loop_signal.stop();
+                        } else {
+                            tracing::warn!(stage, %error, "temporary winit frame failure; retrying");
+                            // Use the existing paced wakeup, not an immediate
+                            // redraw loop when a driver keeps returning errors.
+                            state.schedule_redraw();
+                        }
                     }
-
-                    // Satisfy any queued screen-capture frames for this output
-                    // by re-compositing the scene into their buffers (shm).
-                    if !state.pending_captures.is_empty() {
-                        let time = Clock::<Monotonic>::new().now();
-                        crate::handlers::screencopy::satisfy_output_captures(
-                            backend.renderer(),
-                            &output,
-                            output_geo,
-                            scale,
-                            time,
-                            &mut state.pending_captures,
-                            &state.space,
-                            &mut state.cursor_state,
-                            state.pointer_location,
-                            state.message.as_ref(),
-                            &state.overlays,
-                            focus,
-                            state.border_color,
-                        );
-                        let _ = state.display_handle.flush_clients();
-                    }
-
-                    state.space.elements().for_each(|window| {
-                        window.send_frame(
-                            &output,
-                            state.start_time.elapsed(),
-                            Some(Duration::ZERO),
-                            |_, _| Some(output.clone()),
-                        )
-                    });
-
-                    // Layer surfaces need frame callbacks too, or clients
-                    // like fuzzel draw once and then never repaint.
-                    for layer in smithay::desktop::layer_map_for_output(&output).layers() {
-                        layer.send_frame(
-                            &output,
-                            state.start_time.elapsed(),
-                            Some(Duration::ZERO),
-                            |_, _| Some(output.clone()),
-                        )
-                    }
-
-                    state.space.refresh();
-                    state.popups.cleanup();
-                    let _ = state.display_handle.flush_clients();
-
                 }
                 WinitEvent::CloseRequested => {
                     state.loop_signal.stop();
@@ -351,6 +199,179 @@ pub fn init_winit(
                 _ => (),
             };
         })?;
+
+    Ok(())
+}
+
+fn render_error(error: DamageError<GlesError>) -> SwapBuffersError {
+    match error {
+        DamageError::Rendering(error) => error.into(),
+        DamageError::OutputNoMode(error) => SwapBuffersError::TemporaryFailure(Box::new(error)),
+    }
+}
+
+/// Draw and submit one frame. Never acknowledge presentation or send frame
+/// callbacks when binding, rendering or submission failed.
+fn render_frame(
+    backend: &mut WinitGraphicsBackend<GlesRenderer>,
+    state: &mut MindeState,
+    output: &Output,
+    damage_tracker: &mut OutputDamageTracker,
+    border_buffers: &mut BorderBuffers,
+) -> Result<(), (&'static str, SwapBuffersError)> {
+    if state.locked || !state.output_enabled(output) || state.winit_powered_off {
+        // Locks take precedence over disabled/DPMS-off outputs. Draw only the
+        // lock surface, or solid black until one exists. An unlocked disabled
+        // output likewise paints black, without sending client frame callbacks.
+        let damage = Rectangle::from_size(backend.window_size());
+        let lock = if state.locked {
+            state.lock_surface_for(output).cloned()
+        } else {
+            None
+        };
+        {
+            let (renderer, mut framebuffer) = backend.bind().map_err(|error| ("bind", error))?;
+            let elements: Vec<MindeRenderElements<GlesRenderer>> =
+                lock.as_ref().map_or_else(Vec::new, |lock| {
+                    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+                        &mut *renderer,
+                        lock.wl_surface(),
+                        (0, 0),
+                        output.current_scale().fractional_scale(),
+                        1.0,
+                        smithay::backend::renderer::element::Kind::Unspecified,
+                    )
+                });
+            damage_tracker
+                .render_output(
+                    &mut *renderer,
+                    &mut framebuffer,
+                    0,
+                    &elements,
+                    [0.0, 0.0, 0.0, 1.0],
+                )
+                .map_err(|error| ("render", render_error(error)))?;
+        }
+        backend
+            .submit(Some(&[damage]))
+            .map_err(|error| ("submit", error))?;
+        // The nested host owns physical presentation. A successful swap is
+        // our evidence that its window has replaced the previous desktop.
+        if state.locked {
+            state.lock_frame_presented(output, state.lock_generation());
+            if let Some(lock) = lock {
+                smithay::desktop::utils::send_frames_surface_tree(
+                    lock.wl_surface(),
+                    output,
+                    state.start_time.elapsed(),
+                    Some(Duration::ZERO),
+                    |_, _| Some(output.clone()),
+                );
+            }
+        }
+        let _ = state.display_handle.flush_clients();
+        return Ok(());
+    }
+    // Honor the output's fractional scale (wlr-randr --scale,
+    // via wlr-output-management) so the nested scene renders
+    // at the same density fractional-scale clients paint at.
+    let fscale = output.current_scale().fractional_scale();
+    let scale = smithay::utils::Scale::from(fscale);
+    let Some(output_geo) = state.space.output_geometry(output) else {
+        return Ok(());
+    };
+    let focus = state.focus_rect.or_else(|| {
+        state
+            .focused_window
+            .as_ref()
+            .and_then(|w| state.space.element_geometry(w))
+    });
+
+    // Same scene assembly as the udev backend and the capture
+    // paths. No cursor: the host compositor draws the pointer
+    // over the nested window.
+    let damage = {
+        let age = backend.buffer_age().unwrap_or(0);
+        let (renderer, mut framebuffer) = backend.bind().map_err(|error| ("bind", error))?;
+        let elements = crate::handlers::screencopy::output_scene_elements(
+            &mut *renderer,
+            output,
+            output_geo,
+            (0, 0).into(),
+            scale,
+            &state.space,
+            None,
+            state.message.as_ref(),
+            &state.overlays,
+            focus,
+            state.border_color,
+            border_buffers,
+        );
+        damage_tracker
+            .render_output(
+                &mut *renderer,
+                &mut framebuffer,
+                age,
+                &elements,
+                [0.1, 0.1, 0.1, 1.0],
+            )
+            .map_err(|error| ("render", render_error(error)))?
+            .damage
+            .cloned()
+    };
+    // Submit only what changed (tracked against the buffer
+    // age); an unchanged scene skips the swap entirely.
+    if let Some(damage) = damage {
+        backend
+            .submit(Some(&damage))
+            .map_err(|error| ("submit", error))?;
+    }
+
+    // Satisfy any queued screen-capture frames for this output
+    // by re-compositing the scene into their buffers (shm).
+    if !state.pending_captures.is_empty() {
+        let time = Clock::<Monotonic>::new().now();
+        crate::handlers::screencopy::satisfy_output_captures(
+            backend.renderer(),
+            output,
+            output_geo,
+            scale,
+            time,
+            &mut state.pending_captures,
+            &state.space,
+            &mut state.cursor_state,
+            state.pointer_location,
+            state.message.as_ref(),
+            &state.overlays,
+            focus,
+            state.border_color,
+        );
+        let _ = state.display_handle.flush_clients();
+    }
+
+    state.space.elements().for_each(|window| {
+        window.send_frame(
+            output,
+            state.start_time.elapsed(),
+            Some(Duration::ZERO),
+            |_, _| Some(output.clone()),
+        )
+    });
+
+    // Layer surfaces need frame callbacks too, or clients
+    // like fuzzel draw once and then never repaint.
+    for layer in smithay::desktop::layer_map_for_output(output).layers() {
+        layer.send_frame(
+            output,
+            state.start_time.elapsed(),
+            Some(Duration::ZERO),
+            |_, _| Some(output.clone()),
+        )
+    }
+
+    state.space.refresh();
+    state.popups.cleanup();
+    let _ = state.display_handle.flush_clients();
 
     Ok(())
 }

@@ -96,6 +96,17 @@ fullscreen resizing when output scaling changes. It is part of `make check-e2e` 
 normal development manifest; all client lifetimes are bounded. This does not
 replace testing an actual game on the DRM/libinput backend.
 
+## Nested rendering failures
+
+`sh tests/winit-errors-e2e.sh` loads a test EGL proxy only into a private
+nested compositor. It injects temporary context-activation failures and
+surface loss during swaps, then checks recovery through actual window pixels
+and Wayland frame callbacks. Repeated failures must retry without a new
+client commit and must not acknowledge an unpresented frame. The gate covers
+the desktop, lock surfaces, lock confirmation, output disable and DPMS off,
+and verifies clean shutdown after context loss during rendering or swapping.
+It runs in `make check-e2e`; no fault-injection code is built into Minde.
+
 ## Portable and historical keymaps
 
 `make check-e2e` runs two nested sessions. The broad behavior suite retains

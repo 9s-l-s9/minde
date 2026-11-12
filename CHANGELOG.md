@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- The nested backend retries temporary render and swap failures with a full
+  redraw, and stops cleanly on graphics-context loss. Failed frames do not
+  acknowledge a lock or send frame callbacks (#33).
 - Missing runtime directories or exhausted Wayland socket names now report
   startup errors instead of panicking and writing crash logs (#32).
 - Failed personal Scheme init files report the exception and source location,

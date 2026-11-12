@@ -101,6 +101,11 @@ nested_start() {
         export MINDE_CONFIG="${MINDE_NESTED_CONFIG:-$PWD/tests/e2e-config.scm}"
         export MINDE_RULES_FILE="$NESTED_OUT/rules.scm"
         export MINDE_LAYOUTS_FILE="$NESTED_OUT/layouts.scm"
+        # Fault-injection libraries belong only to the compositor process,
+        # never Cargo, Xvfb, clients or tools run by the test driver.
+        if [ -n "${MINDE_NESTED_LIBRARY_PATH:-}" ]; then
+            export LD_LIBRARY_PATH="$MINDE_NESTED_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        fi
         exec "$NESTED_BINARY" --winit
     ) >"$NESTED_LOG" 2>&1 &
     NESTED_WM_PID=$!
