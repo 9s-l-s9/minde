@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- NUL-padded EDID monitor names and serials are sanitized before Wayland
+  advertisement, preventing malformed display metadata from aborting the
+  compositor. Empty descriptors retain the existing identity fallbacks (#75).
 - Cancelling synthetic typing releases its held keys without releasing an
   already held physical modifier. Session locking cancels queued automation
   and rejects new synthetic input. Virtual pointer destruction releases its

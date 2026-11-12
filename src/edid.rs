@@ -110,13 +110,16 @@ fn pnp_id(raw: u16) -> String {
     [letter(10), letter(5), letter(0)].iter().collect()
 }
 
-/// Descriptor text: 13 bytes, terminated by `\n`, padded with spaces.
+/// Descriptor text: 13 bytes, terminated by `\n` or NUL, padded with spaces.
 fn descriptor_text(bytes: &[u8]) -> String {
     let end = bytes
         .iter()
-        .position(|&b| b == b'\n')
+        .position(|&b| b == b'\n' || b == 0)
         .unwrap_or(bytes.len());
     String::from_utf8_lossy(&bytes[..end])
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
         .trim_end_matches(' ')
         .to_string()
 }
@@ -183,6 +186,38 @@ mod tests {
         // Zero serial number -> "Unknown".
         e[12..16].fill(0);
         assert_eq!(parse_edid(&e).unwrap().serial, "Unknown");
+    }
+
+    #[test]
+    fn nul_padded_descriptors_are_safe_wayland_strings() {
+        let mut e = dell_fixture();
+        e[113..126].copy_from_slice(b"DELL U2412M\0\0");
+        e[77..90].copy_from_slice(b"SERIAL\0unused");
+        let info = parse_edid(&e).unwrap();
+        assert_eq!(info.model, "DELL U2412M");
+        assert_eq!(info.serial, "SERIAL");
+        for value in [&info.make, &info.model, &info.serial, &info.description()] {
+            assert!(std::ffi::CString::new(value.as_bytes()).is_ok());
+        }
+
+        // Keep the descriptor tags: empty text must still use the fallbacks.
+        e[113..126].fill(0);
+        e[77..90].fill(0);
+        let info = parse_edid(&e).unwrap();
+        assert_eq!(info.model, "0xA0F0");
+        assert_eq!(info.serial, "305419896");
+        e[12..16].fill(0);
+        assert_eq!(parse_edid(&e).unwrap().serial, "Unknown");
+    }
+
+    #[test]
+    fn descriptor_controls_are_removed_before_trimming_padding() {
+        assert_eq!(descriptor_text(b"A\tB\rC\x7f  \nignored"), "ABC");
+        assert_eq!(descriptor_text(b" \x01\x7f "), "");
+        assert_eq!(
+            descriptor_text(b"name without terminator"),
+            "name without terminator"
+        );
     }
 
     #[test]
