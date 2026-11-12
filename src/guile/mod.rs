@@ -164,7 +164,7 @@ pub fn set_keyboard_layouts(names: Vec<String>, active: usize) -> bool {
 /// and applies them to matching devices as they arrive (and re-applies to
 /// devices already present). Under winit there is no libinput context, so
 /// rules are stored and never applied.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InputRule {
     /// Substring matched against the device name; the empty string matches
     /// every device (`#t` in Scheme).
@@ -177,6 +177,9 @@ pub struct InputRule {
     pub accel_profile: Option<String>,
     /// click method: `"button-areas"` | `"clickfinger"`, or `None` to leave.
     pub click_method: Option<String>,
+    /// Output name; an empty string restores automatic association. None
+    /// leaves the output choice from earlier matching rules unchanged.
+    pub map_to_output: Option<String>,
 }
 
 /// All rules registered through `wm-configure-input!`, applied in order
@@ -1499,6 +1502,7 @@ unsafe extern "C" fn wm_input_devices() -> Scm {
 /// - `match_`: device-name substring; the empty string matches every device.
 /// - `tap`, `natural`: `1` = enable, `0` = disable, anything else = leave.
 /// - `accel`, `click`: the profile/method string, or `""` to leave unchanged.
+/// - `output`: an output name, `""` for automatic mapping, or `#f` to omit.
 ///
 /// Stores the rule (replacing any earlier rule with the same match) and
 /// asks the main thread to re-apply to devices already present.
@@ -1508,6 +1512,7 @@ unsafe extern "C" fn wm_configure_input_rule(
     natural: Scm,
     accel: Scm,
     click: Scm,
+    output: Scm,
 ) -> Scm {
     let tap = checked_arg!(to_i64(tap));
     let natural = checked_arg!(to_i64(natural));
@@ -1519,12 +1524,18 @@ unsafe extern "C" fn wm_configure_input_rule(
     let match_name = checked_arg!(to_string_lossy(match_));
     let accel = checked_arg!(to_string_lossy(accel));
     let click = checked_arg!(to_string_lossy(click));
+    let map_to_output = if output == ffi::SCM_BOOL_F {
+        None
+    } else {
+        Some(checked_arg!(to_string_lossy(output)))
+    };
     let rule = InputRule {
         match_name,
         tap: tri(tap),
         natural_scroll: tri(natural),
         accel_profile: (!accel.is_empty()).then_some(accel),
         click_method: (!click.is_empty()).then_some(click),
+        map_to_output,
     };
     {
         let mut rules = INPUT_RULES.lock().unwrap();
@@ -1606,6 +1617,9 @@ macro_rules! gsubr {
     };
     ($f:ident, 5) => {
         std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>($f)
+    };
+    ($f:ident, 6) => {
+        std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>($f)
     };
 }
 
@@ -1714,9 +1728,9 @@ fn register_primitives() {
         register_gsubr("wm-input-devices", 0, 0, gsubr!(wm_input_devices, 0));
         register_gsubr(
             "wm-configure-input-rule!",
-            5,
+            6,
             0,
-            gsubr!(wm_configure_input_rule, 5),
+            gsubr!(wm_configure_input_rule, 6),
         );
         register_gsubr("wm-session-locked?", 0, 0, gsubr!(wm_session_locked, 0));
         register_gsubr(
@@ -2046,7 +2060,7 @@ mod tests {
                 format!("(wm-send-string \"text\" {invalid})"),
                 format!("(wm-message \"text\" {invalid})"),
                 format!("(wm-screenshot \"/tmp/minde-boundary.png\" {invalid})"),
-                format!("(wm-configure-input-rule! \"test\" 1 {invalid} \"\" \"\")"),
+                format!("(wm-configure-input-rule! \"test\" 1 {invalid} \"\" \"\" #f)"),
                 format!("(wm-run-after-ms 1 {invalid})"),
                 format!("(wm-scroll 0 {invalid})"),
                 format!("(wm-warp-pointer-relative 0 {invalid})"),
@@ -2078,7 +2092,9 @@ mod tests {
             "(wm-send-key 4294967296 \"a\")",
             "(wm-drop-text 2147483648 0 \"payload\")",
             "(wm-drop-files 0 0 '(\"relative\"))",
-            "(wm-configure-input-rule! #f 1 1 \"\" \"\")",
+            "(wm-configure-input-rule! #f 1 1 \"\" \"\" #f)",
+            "(wm-configure-input-rule! \"test\" 1 1 \"\" \"\" #t)",
+            "(wm-configure-input-rule! \"test\" 1 1 \"\" \"\" '(\"eDP-1\"))",
         ] {
             assert_eq!(
                 eval_string(expression),

@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Physical touchscreens, tablets and absolute pointers use their libinput
+  output association, with internal-panel fallback, output rotation and
+  logical scaling. `wm-configure-input!` accepts `#:map-to-output` overrides
+  and `'auto`; mappings follow output reconfiguration and hotplug (#138).
 - Virtual pointers honor their requested output and clamp absolute extents
   inside its current logical geometry. Disabled or removed targets fall back
   to an enabled output; zero extents leave the pointer unchanged (#87).

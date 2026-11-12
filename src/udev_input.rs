@@ -108,7 +108,14 @@ impl MindeState {
         let name = device.name().to_string();
         let capabilities = device_capabilities(&device);
         info!(device = %name, ?capabilities, "input device added");
-        apply_input_rules(&mut device, &guile::input_rules());
+        let rules = guile::input_rules();
+        apply_input_rules(&mut device, &rules);
+        self.absolute_inputs.configure(
+            device.sysname().into(),
+            &name,
+            device.output_name().map(|name| name.into_owned()),
+            &rules,
+        );
         guile::register_input_device(name.clone(), capabilities.clone());
         // Tablet devices are advertised via zwp_tablet_manager_v2 so a stylus
         // (e.g. a laptop's built-in pencil) reaches tablet-aware clients. The
@@ -133,6 +140,7 @@ impl MindeState {
         let name = device.name().to_string();
         info!(device = %name, "input device removed");
         guile::unregister_input_device(&name);
+        self.absolute_inputs.remove(device.sysname().as_ref());
         // Drop the tablet from the seat so clients stop seeing it. Tools added
         // on proximity are left registered (a tool may outlive one tablet and
         // is cheap to keep; Smithay documents tool-removal as compositor policy).
@@ -156,6 +164,13 @@ impl MindeState {
         };
         for device in &mut udev.input_devices {
             apply_input_rules(device, &rules);
+            self.absolute_inputs.configure(
+                device.sysname().into(),
+                &device.name(),
+                device.output_name().map(|name| name.into_owned()),
+                &rules,
+            );
         }
+        self.absolute_pointer_motion.reset();
     }
 }

@@ -5,6 +5,7 @@
 //! adapted from Smithay's `smallvil` example; see README.md for credit and
 //! the exact upstream revision used.
 
+mod absolute_input;
 mod automation_dnd;
 mod automation_observe;
 mod edid;

@@ -423,15 +423,9 @@ impl MindeState {
                 );
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let Some(output) = self.space.outputs().next() else {
+                let Some(proposed) = self.absolute_input_position(&event) else {
                     return;
                 };
-                let Some(output_geo) = self.space.output_geometry(output) else {
-                    return;
-                };
-
-                let proposed =
-                    event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
                 self.pointer_absolute_motion(
                     AbsolutePointerSource::Device(event.device().id()),
                     proposed,
@@ -488,7 +482,7 @@ impl MindeState {
                 let Some(touch) = self.seat.get_touch() else {
                     return;
                 };
-                let Some(location) = self.touch_global_position(&event) else {
+                let Some(location) = self.absolute_input_position(&event) else {
                     return;
                 };
                 let serial = SERIAL_COUNTER.next_serial();
@@ -512,7 +506,7 @@ impl MindeState {
                 let Some(touch) = self.seat.get_touch() else {
                     return;
                 };
-                let Some(location) = self.touch_global_position(&event) else {
+                let Some(location) = self.absolute_input_position(&event) else {
                     return;
                 };
                 let under = self.surface_under(location);
@@ -898,20 +892,17 @@ impl MindeState {
         }
     }
 
-    /// Map an absolute touch event to a point in global compositor space.
-    /// Touchscreens report normalized absolute coordinates, so we transform
-    /// against the first output's geometry exactly like the
-    /// PointerMotionAbsolute arm does. Returns `None` if there is no output.
-    fn touch_global_position<I: InputBackend>(
+    /// Map touch, tablet and absolute-pointer events through the same device
+    /// association, output transform, logical scale and global output origin.
+    fn absolute_input_position<I: InputBackend>(
         &self,
         event: &impl AbsolutePositionEvent<I>,
     ) -> Option<Point<f64, Logical>> {
-        let output = self.space.outputs().next()?;
-        let output_geo = self.space.output_geometry(output)?;
-        Some(map_absolute_to_global(
-            event.position_transformed(output_geo.size),
-            output_geo.loc,
-        ))
+        self.absolute_inputs.position(
+            &self.space,
+            &event.device().id(),
+            event.position_transformed((1, 1).into()),
+        )
     }
 
     /// Tap-to-focus: raise and give keyboard focus to the toplevel under the
@@ -948,7 +939,7 @@ impl MindeState {
     /// DeviceAdded, tool from proximity) for the tablet path; otherwise this is
     /// pure pointer emulation.
     fn on_tablet_tool_axis<I: InputBackend>(&mut self, event: &impl TabletToolAxisEvent<I>) {
-        let Some(location) = self.touch_global_position(event) else {
+        let Some(location) = self.absolute_input_position(event) else {
             return;
         };
         let tablet_seat = self.seat.tablet_seat();
@@ -1039,7 +1030,7 @@ impl MindeState {
                 // proximity_in requires a focused surface and an initial
                 // motion; drive it through motion() when a surface is under the
                 // tool so the client gets proximity_in + motion in one go.
-                if let Some(location) = self.touch_global_position(event) {
+                if let Some(location) = self.absolute_input_position(event) {
                     let under = self.surface_under(location);
                     if let Some(tablet) = tablet_seat.get_tablet(&tablet_desc) {
                         let serial = SERIAL_COUNTER.next_serial();
@@ -1148,24 +1139,13 @@ impl MindeState {
     }
 }
 
-/// Add the output's origin to an output-relative transformed point to obtain a
-/// point in the global compositor coordinate space. Factored out so the
-/// absolute-coordinate mapping is unit-testable without a live backend.
-fn map_absolute_to_global(
-    transformed: Point<f64, Logical>,
-    output_loc: Point<i32, Logical>,
-) -> Point<f64, Logical> {
-    transformed + output_loc.to_f64()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         AbsolutePointerMotion, AbsolutePointerSource, DEFAULT_EMERGENCY_EXIT, KeyboardPresses,
-        ToolRoute, emergency_exit_binding, emergency_exit_matches, map_absolute_to_global,
-        modifier_bitmask, tool_route, xkb,
+        ToolRoute, emergency_exit_binding, emergency_exit_matches, modifier_bitmask, tool_route,
+        xkb,
     };
-    use smithay::utils::Point;
 
     #[test]
     fn physical_releases_keep_the_first_press_decision() {
@@ -1298,18 +1278,6 @@ mod tests {
         assert_eq!(modifier_bitmask(true, false, false, false), 1);
         assert_eq!(modifier_bitmask(false, true, true, false), 4 | 8);
         assert_eq!(modifier_bitmask(true, true, true, true), 1 | 4 | 8 | 64);
-    }
-
-    #[test]
-    fn absolute_touch_maps_into_the_output_global_space() {
-        // On the origin output the transformed point is already global.
-        let p = map_absolute_to_global(Point::from((10.0, 20.0)), Point::from((0, 0)));
-        assert_eq!(p, Point::from((10.0, 20.0)));
-
-        // A touch on a second output offset to the right lands in global
-        // space by adding the output origin.
-        let p = map_absolute_to_global(Point::from((5.5, 7.25)), Point::from((1920, 0)));
-        assert_eq!(p, Point::from((1925.5, 7.25)));
     }
 
     #[test]

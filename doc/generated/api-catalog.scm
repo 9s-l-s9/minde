@@ -375,7 +375,7 @@
    ((name . wm-set-key-repeat) (signature . "(wm-set-key-repeat spec)") (documentation . "Configure keyboard repeat rate and delay from SPEC."))
    ((name . wm-idle-ms) (signature . "(wm-idle-ms)") (documentation . "Return milliseconds elapsed since the last input event."))
    ((name . wm-input-devices) (signature . "(wm-input-devices)") (documentation . "Return ((name cap ...) ...): the present libinput devices."))
-   ((name . wm-configure-input-rule!) (signature . "(wm-configure-input-rule! match key value kind flag)") (documentation . "Low-level libinput rule primitive wrapped by wm-configure-input!."))
+   ((name . wm-configure-input-rule!) (signature . "(wm-configure-input-rule! match tap natural accel click output)") (documentation . "Low-level input rule primitive wrapped by wm-configure-input!. OUTPUT is a connector name, an empty string for automatic association, or #f to omit the output setting."))
    ((name . wm-session-lock-confirmed?) (signature . "(wm-session-lock-confirmed?)") (documentation . "Whether the locked session has passed its output presentation barrier; safe to suspend."))
    ((name . wm-session-locked?) (signature . "(wm-session-locked?)") (documentation . "Return whether the session is currently locked."))
    ((name . wm-publish-event) (signature . "(wm-publish-event line)") (documentation . "Mirror one serialized event LINE to every event-socket subscriber."))

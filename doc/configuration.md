@@ -254,7 +254,7 @@ before reading them on the compositor thread.
 
 ## Input device configuration
 
-On the DRM/libinput backend, per-device pointer and touchpad behavior is
+On the DRM/libinput backend, per-device pointer, touchpad, touchscreen and tablet behavior is
 configured from Scheme. Two Rust primitives back this surface (they are
 compositor primitives, not part of the versioned `(minde …)` module API):
 
@@ -265,7 +265,7 @@ compositor primitives, not part of the versioned `(minde …)` module API):
 returns `()`.
 
 `(wm-configure-input! match #:key tap-to-click natural-scroll accel-profile
-click-method)` stores a configuration rule and applies it to matching devices.
+click-method map-to-output)` stores a configuration rule and applies it to matching devices.
 `match` is `#t` (every device) or a substring of the device name. The keyword
 settings, each left unchanged when omitted:
 
@@ -275,11 +275,32 @@ settings, each left unchanged when omitted:
 | `#:natural-scroll` | `#t` / `#f` |
 | `#:accel-profile` | `'flat` / `'adaptive` |
 | `#:click-method` | `'button-areas` / `'clickfinger` |
+| `#:map-to-output` | connector name such as `"eDP-1"`, or `'auto` |
 
 A rule applies to every device already present and, since rules are stored, to
 matching devices as they hotplug. A later rule with the same `match` replaces
 the earlier one. Settings a device does not support are logged and skipped,
 never fatal. Under winit the rule is stored but configures nothing.
+
+Absolute pointers, touchscreens and tablets select the first available target
+in this order: the last matching `#:map-to-output` setting, libinput's output
+association (the udev `WL_OUTPUT` property), an internal panel (`eDP`, `LVDS`
+or `DSI`), then another enabled output. Automatic fallbacks use connector-name
+order so device/output discovery order does not choose the screen. `'auto`
+clears earlier matching output overrides and restores automatic association.
+Relative mouse motion is unaffected.
+
+Coordinates follow the selected output's rotation/reflection, logical scale
+and global position. The mapping resolves current geometry on every event,
+falls back when the target is disabled or removed, and returns to the target
+when it becomes available again. The device's existing libinput calibration
+still applies. For example:
+
+```scheme
+(wm-configure-input! "Touchscreen" #:map-to-output "eDP-1")
+(wm-configure-input! "Tablet" #:map-to-output "DP-1")
+(wm-configure-input! "Tablet" #:map-to-output 'auto)
+```
 
 ```scheme
 (define (handle-startup!)

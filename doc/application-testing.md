@@ -98,9 +98,15 @@ and v2 pointer creation, output-resource release, zero and oversized absolute
 extents, output position/scale/rotation changes, scroll frame boundaries and
 the exact protocol errors for invalid axes and sources. Rust unit tests map
 two Smithay outputs to check the requested-output association, shared edges,
-disabled-output fallback and restoration. Physical touchscreen and tablet
-mapping still selects the first output; device association and rotation
-remain tracked in #138.
+disabled-output fallback and restoration.
+
+`sh tests/input-config-e2e.sh` checks the Scheme input-rule API, including
+output overrides, automatic mapping and invalid values. Rust mapping tests
+use multiple Smithay outputs to cover device associations, ordered rules,
+internal-panel fallback, reconnects, all eight output transforms, fractional
+scale and exclusive output edges. Nested host input keeps its window-relative
+coordinates despite the framebuffer's flip. Physical libinput association and
+touch/stylus delivery are covered by the hardware checklist.
 
 ## Fullscreen and pointer constraints
 

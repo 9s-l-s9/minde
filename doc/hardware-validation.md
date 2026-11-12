@@ -53,6 +53,21 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+Absolute input mapping (udev, requires a touchscreen or tablet and two outputs):
+
+- Connect the external display before starting the compositor. Verify that
+  touches land on the internal panel, or on the connector named by the device's
+  `WL_OUTPUT` property, regardless of output discovery order.
+- Set `#:map-to-output` with `wm-configure-input!` for that device, then use
+  `'auto` to restore its automatic association. Check an already-present device
+  and a device connected after the rule was stored.
+- Rotate and scale the target output and move it to a negative layout origin.
+  Check corners and an asymmetric interior point with both touch and stylus;
+  confirm the visible cursor and the client's input agree.
+- Disable/remove the target and verify fallback to an available associated
+  output or internal panel. Re-enable/reconnect it and verify that mapping
+  returns to the requested connector without reloading the rule.
+
 Touch cancellation (udev, requires a touchscreen):
 
 - Hold one or more fingers on a touch-capable client, including a stationary

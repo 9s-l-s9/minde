@@ -590,10 +590,17 @@ focused client), #f otherwise."
     (wm-log (format #f "wm-configure-input!: unknown ~a ~s" setting v))
     "")))
 
+(define (%input-output v)
+  (cond ((eq? v 'unset) #f)
+        ((eq? v 'auto) "")
+        ((and (string? v) (not (string-null? v))) v)
+        (else (error "wm-configure-input!: map-to-output expects an output name or 'auto" v))))
+
 (define* (wm-configure-input! match #:key (tap-to-click 'unset)
                               (natural-scroll 'unset)
                               (accel-profile 'unset)
-                              (click-method 'unset))
+                              (click-method 'unset)
+                              (map-to-output 'unset))
   "Store a libinput configuration rule and apply it to matching devices.
 
 MATCH is #t (every device) or a string matched as a substring of the
@@ -603,6 +610,7 @@ left unchanged when omitted:
   #:natural-scroll #t or #f
   #:accel-profile  'flat or 'adaptive
   #:click-method   'button-areas or 'clickfinger
+  #:map-to-output  an output name or 'auto (restore automatic association)
 A later rule with the same MATCH replaces the earlier one. On the udev
 backend the rule applies to matching devices now and on hotplug; under
 winit it is stored but configures nothing. Returns #t when stored."
@@ -613,7 +621,8 @@ winit it is stored but configures nothing. Returns #t when stored."
           (%input-tristate tap-to-click)
           (%input-tristate natural-scroll)
           (%input-choice accel-profile '(flat adaptive) "accel-profile")
-          (%input-choice click-method '(button-areas clickfinger) "click-method")))))
+          (%input-choice click-method '(button-areas clickfinger) "click-method")
+          (%input-output map-to-output)))))
 
 ;; Frame indicator (StumpWM curframe): echo the frame geometry and pulse
 ;; the focus border bright for a moment.

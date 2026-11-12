@@ -13,8 +13,8 @@
 ;; the real Rust subr would receive; `wm-input-devices` mirrors the winit
 ;; path where no libinput context exists.
 (define %rules '())
-(define (wm-configure-input-rule! match tap natural accel click)
-  (set! %rules (cons (list match tap natural accel click) %rules))
+(define (wm-configure-input-rule! match tap natural accel click output)
+  (set! %rules (cons (list match tap natural accel click output) %rules))
   #t)
 (define (wm-input-devices) '())
 
@@ -62,7 +62,7 @@
 ;; ---------------------------------------------------------------------
 (check-true "configure returns #t" (wm-configure-input! #t))
 (check "match #t normalizes to the empty string" (last-rule)
-       (list "" -1 -1 "" ""))
+       (list "" -1 -1 "" "" #f))
 
 ;; ---------------------------------------------------------------------
 ;; A named match with every setting present, fully normalized.
@@ -71,23 +71,24 @@
                      #:tap-to-click #t
                      #:natural-scroll #f
                      #:accel-profile 'adaptive
-                     #:click-method 'clickfinger)
+                     #:click-method 'clickfinger
+                     #:map-to-output "eDP-1")
 (check "named rule normalizes all settings" (last-rule)
-       (list "Touchpad" 1 0 "adaptive" "clickfinger"))
+       (list "Touchpad" 1 0 "adaptive" "clickfinger" "eDP-1"))
 
 ;; ---------------------------------------------------------------------
 ;; tap/natural tristate: #f -> 0, #t -> 1.
 ;; ---------------------------------------------------------------------
 (wm-configure-input! "" #:tap-to-click #f #:natural-scroll #t)
 (check "tristate maps #f/#t to 0/1" (last-rule)
-       (list "" 0 1 "" ""))
+       (list "" 0 1 "" "" #f))
 
 ;; ---------------------------------------------------------------------
 ;; accel-profile 'flat / click-method 'button-areas normalize to strings.
 ;; ---------------------------------------------------------------------
 (wm-configure-input! "mouse" #:accel-profile 'flat #:click-method 'button-areas)
 (check "flat/button-areas normalize to strings" (last-rule)
-       (list "mouse" -1 -1 "flat" "button-areas"))
+       (list "mouse" -1 -1 "flat" "button-areas" #f))
 
 ;; ---------------------------------------------------------------------
 ;; Unknown enum values are reported (wm-log) and dropped to "" rather than
@@ -96,11 +97,24 @@
 (set! %logs '())
 (wm-configure-input! "bad" #:accel-profile 'turbo #:click-method 'wiggle)
 (check "unknown enum values become empty strings" (last-rule)
-       (list "bad" -1 -1 "" ""))
+       (list "bad" -1 -1 "" "" #f))
 (check-true "unknown accel-profile is logged"
             (find (lambda (m) (string-contains m "accel-profile")) %logs))
 (check-true "unknown click-method is logged"
             (find (lambda (m) (string-contains m "click-method")) %logs))
+
+(wm-configure-input! "tablet" #:map-to-output 'auto)
+(check "automatic mapping clears a preceding output override" (last-rule)
+       (list "tablet" -1 -1 "" "" ""))
+(for-each
+ (lambda (bad)
+   (let ((before %rules))
+     (check-true "invalid output mapping raises an error"
+                 (catch #t
+                   (lambda () (wm-configure-input! "tablet" #:map-to-output bad) #f)
+                   (lambda _ #t)))
+     (check "invalid output mapping leaves rules intact" %rules before)))
+ (list "" #t #f 1 'eDP-1 '("eDP-1")))
 
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))

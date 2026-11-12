@@ -134,8 +134,8 @@
      "Return milliseconds elapsed since the last input event.")
     (wm-input-devices "(wm-input-devices)"
      "Return ((name cap ...) ...): the present libinput devices.")
-    (wm-configure-input-rule! "(wm-configure-input-rule! match key value kind flag)"
-     "Low-level libinput rule primitive wrapped by wm-configure-input!.")
+    (wm-configure-input-rule! "(wm-configure-input-rule! match tap natural accel click output)"
+     "Low-level input rule primitive wrapped by wm-configure-input!. OUTPUT is a connector name, an empty string for automatic association, or #f to omit the output setting.")
     (wm-session-lock-confirmed? "(wm-session-lock-confirmed?)"
                               "Whether the locked session has passed its output presentation barrier; safe to suspend.")
     (wm-session-locked? "(wm-session-locked?)"

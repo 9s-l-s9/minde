@@ -323,6 +323,7 @@ pub struct MindeState {
     /// the udev/libinput backend) and used to render the cursor.
     pub pointer_location: Point<f64, Logical>,
     pub(crate) absolute_pointer_motion: crate::input::AbsolutePointerMotion,
+    pub(crate) absolute_inputs: crate::absolute_input::AbsoluteInputMappings,
     /// Current pointer cursor image (default fallback vs. client surface),
     /// set via `SeatHandler::cursor_image`; consulted by the udev render
     /// pass.
@@ -739,6 +740,7 @@ impl MindeState {
 
             pointer_location: (0.0, 0.0).into(),
             absolute_pointer_motion: Default::default(),
+            absolute_inputs: Default::default(),
             cursor_state: crate::render::CursorState::default(),
             session: None,
             udev_data: None,
