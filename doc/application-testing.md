@@ -90,6 +90,18 @@ guix shell -m manifest.scm xorg-server imagemagick jq util-linux \
   swaybg fuzzel swaylock eww -- make check-apps-layer
 ```
 
+## Virtual input
+
+`sh tests/virtual-input-e2e.sh` checks virtual keyboard typing and pointer
+protocol behavior in a private Xvfb/winit session. Rust clients exercise v1
+and v2 pointer creation, output-resource release, zero and oversized absolute
+extents, output position/scale/rotation changes, scroll frame boundaries and
+the exact protocol errors for invalid axes and sources. Rust unit tests map
+two Smithay outputs to check the requested-output association, shared edges,
+disabled-output fallback and restoration. Physical touchscreen and tablet
+mapping still selects the first output; device association and rotation
+remain tracked in #138.
+
 ## Fullscreen and pointer constraints
 
 `sh tests/fullscreen-pointer-e2e.sh` runs Rust and C protocol clients in a hidden

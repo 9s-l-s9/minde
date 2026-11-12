@@ -9,6 +9,7 @@ mod lock;
 mod outputs;
 mod render;
 mod selection;
+mod virtual_pointer;
 mod window;
 mod wire;
 mod xwayland;
@@ -24,6 +25,8 @@ fn main() {
         Some("input-lifecycle") => input::run(),
         Some("keyboard-filter") => keyboard::run(),
         Some("pointer-constraints") => constraints::run(),
+        Some("virtual-pointer") => virtual_pointer::run(),
+        Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),

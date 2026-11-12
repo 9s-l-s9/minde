@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Virtual pointers honor their requested output and clamp absolute extents
+  inside its current logical geometry. Disabled or removed targets fall back
+  to an enabled output; zero extents leave the pointer unchanged (#87).
+- Invalid virtual-pointer scroll axes and sources produce the protocol's
+  specified errors, including stop and discrete-scroll requests (#88).
 - Pointer locks and confinement activate only for the surface holding pointer
   focus, including during implicit, move/resize and drag-and-drop grabs (#80).
 - Unlock hints belong to individual constraint resources and must be committed

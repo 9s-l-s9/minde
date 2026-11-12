@@ -107,7 +107,7 @@ pub(crate) fn output_has_fullscreen(
 /// How far inside an output's far edge a clamped pointer lands.
 const EDGE_INSET: f64 = 1e-3;
 
-fn clamp_point_to_rectangles(
+pub(crate) fn clamp_point_to_rectangles(
     pos: Point<f64, Logical>,
     rectangles: impl IntoIterator<Item = Rectangle<i32, Logical>>,
 ) -> Point<f64, Logical> {
@@ -774,8 +774,8 @@ impl MindeState {
     }
 
     /// Clamps `pos` to the union of all mapped outputs' geometry, mirroring
-    /// anvil's `clamp_coords`. Used by the udev backend's relative pointer
-    /// motion (winit only ever gets absolute motion, already in range).
+    /// anvil's `clamp_coords`. Both relative and absolute motion must stay
+    /// on a mapped output, including client-supplied virtual coordinates.
     pub fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
         clamp_point_to_rectangles(
             pos,

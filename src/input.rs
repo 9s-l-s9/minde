@@ -687,8 +687,10 @@ impl MindeState {
         utime: u64,
     ) {
         let under_current = self.surface_under(self.pointer_location);
-        // Apply any active pointer lock/confinement before moving.
-        let (new_pos, locked) = self.constrain_pointer(under_current.as_ref(), proposed);
+        // Keep the cursor in the output layout while retaining the original
+        // device samples below for relative motion under a lock/confinement.
+        let clamped = self.clamp_to_outputs(proposed);
+        let (new_pos, locked) = self.constrain_pointer(under_current.as_ref(), clamped);
 
         let Some(pointer) = self.seat.get_pointer() else {
             return;

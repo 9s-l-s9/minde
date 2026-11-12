@@ -3,7 +3,7 @@
 # Bounded nested e2e gate for virtual-keyboard, virtual-pointer and
 # keyboard-shortcuts-inhibit.
 #
-# Three layers:
+# Four layers:
 #   1. wayland-info asserts all three manager globals are advertised
 #      (zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1 and
 #      zwp_keyboard_shortcuts_inhibit_manager_v1), the same way the
@@ -15,11 +15,14 @@
 #   3. wlrctl (a zwlr_virtual_pointer_v1 client) drives the hand-rolled virtual
 #      pointer; we assert the compositor stays alive and logs no protocol error
 #      (the pointer path runs through the same processing as real input).
+#   4. Rust protocol clients check absolute bounds and output changes, scroll
+#      frame delivery, and exact errors for malformed axis/source requests.
 #
 # Every client call is wrapped in `timeout`.
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_VIRTUAL_INPUT_E2E_OUT:-/tmp/swm14g}
 FOOT_PID=""
@@ -48,6 +51,12 @@ nested_start "$OUT" "${MINDE_VIRTUAL_INPUT_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
 }
+
+timeout 60 "$NESTED_PROTOCOL_CLIENT" virtual-pointer >"$OUT/pointer.log" 2>&1 || {
+    cat "$OUT/pointer.log" >&2
+    exit 1
+}
+cat "$OUT/pointer.log"
 
 info=$(nested_wayland timeout 15 wayland-info 2>"$OUT/wayland-info.err") || {
     echo "error: wayland-info failed against the nested compositor" >&2
@@ -165,6 +174,14 @@ if nested_log_has "protocol error"; then
     grep -a "protocol error" "$NESTED_LOG" >&2 || true
     exit 1
 fi
+
+# These malformed clients must produce protocol errors; run them only after
+# checking that all preceding valid clients completed without such errors.
+timeout 60 "$NESTED_PROTOCOL_CLIENT" virtual-pointer-errors >"$OUT/pointer-errors.log" 2>&1 || {
+    cat "$OUT/pointer-errors.log" >&2
+    exit 1
+}
+cat "$OUT/pointer-errors.log"
 
 kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died during the virtual-input checks" >&2

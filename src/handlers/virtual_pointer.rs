@@ -35,7 +35,9 @@
 use std::sync::Mutex;
 
 use smithay::backend::input::{Axis, AxisSource, ButtonState};
+use smithay::desktop::{Space, Window};
 use smithay::input::pointer::AxisFrame;
+use smithay::output::Output;
 use smithay::reexports::{
     wayland_protocols_wlr::virtual_pointer::v1::server::{
         zwlr_virtual_pointer_manager_v1::{self, ZwlrVirtualPointerManagerV1},
@@ -47,10 +49,10 @@ use smithay::reexports::{
         protocol::wl_pointer,
     },
 };
-use smithay::utils::Point;
+use smithay::utils::{Logical, Point};
 
 use crate::input::PointerButtonSource;
-use crate::state::MindeState;
+use crate::state::{MindeState, clamp_point_to_rectangles};
 
 /// Registers the `zwlr_virtual_pointer_manager_v1` global (v2). The returned
 /// id is kept alive by the display; callers discard it like the other
@@ -77,8 +79,45 @@ struct PendingAxis {
 }
 
 /// Userdata for a `zwlr_virtual_pointer_v1` object.
+#[derive(Default)]
 pub struct VirtualPointerData {
     pending: Mutex<PendingAxis>,
+    output: Option<Output>,
+}
+
+impl VirtualPointerData {
+    fn absolute_position(
+        &self,
+        space: &Space<Window>,
+        x: u32,
+        y: u32,
+        x_extent: u32,
+        y_extent: u32,
+    ) -> Option<Point<f64, Logical>> {
+        if x_extent == 0 || y_extent == 0 {
+            return None;
+        }
+        // Resolve current geometry on every event: the requested output can
+        // move, scale, rotate, disappear or be re-enabled during this device's
+        // lifetime. A disabled/removed target falls back to a mapped output.
+        let geo = self
+            .output
+            .as_ref()
+            .and_then(|output| space.output_geometry(output))
+            .or_else(|| {
+                space
+                    .outputs()
+                    .find_map(|output| space.output_geometry(output))
+            })?;
+        let position = geo.loc.to_f64()
+            + Point::from((
+                x.min(x_extent) as f64 / x_extent as f64 * geo.size.w as f64,
+                y.min(y_extent) as f64 / y_extent as f64 * geo.size.h as f64,
+            ));
+        // Keep the inclusive protocol extent inside the output's exclusive
+        // far edge, even when another output begins exactly at that edge.
+        Some(clamp_point_to_rectangles(position, [geo]))
+    }
 }
 
 impl GlobalDispatch<ZwlrVirtualPointerManagerV1, ()> for MindeState {
@@ -104,23 +143,25 @@ impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for MindeState {
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
-        match request {
-            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { id, .. }
-            | zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
-                id, ..
-            } => {
-                // We only run a single seat; the seat/output hints are ignored
-                // and the pointer drives the one compositor pointer.
-                data_init.init(
-                    id,
-                    VirtualPointerData {
-                        pending: Mutex::new(PendingAxis::default()),
-                    },
-                );
-            }
-            zwlr_virtual_pointer_manager_v1::Request::Destroy => {}
+        let (id, output) = match request {
+            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointer { id, .. } => (id, None),
+            zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput {
+                id,
+                output,
+                ..
+            } => (id, output.as_ref().and_then(Output::from_resource)),
+            zwlr_virtual_pointer_manager_v1::Request::Destroy => return,
             _ => unreachable!(),
-        }
+        };
+        // Minde has one seat. Retain the output identity independently of the
+        // client's wl_output resource, which it may release after this request.
+        data_init.init(
+            id,
+            VirtualPointerData {
+                output,
+                ..Default::default()
+            },
+        );
     }
 }
 
@@ -154,22 +195,13 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 if !state.virtual_input_gate() {
                     return;
                 }
-                if x_extent == 0 || y_extent == 0 {
-                    return;
-                }
-                // Map the client's abstract extent onto the first output's
-                // geometry (the same output the real absolute path uses).
-                let Some(output) = state.space.outputs().next() else {
+                let Some(position) = data.absolute_position(&state.space, x, y, x_extent, y_extent)
+                else {
                     return;
                 };
-                let Some(geo) = state.space.output_geometry(output) else {
-                    return;
-                };
-                let px = geo.loc.x as f64 + (x as f64 / x_extent as f64) * geo.size.w as f64;
-                let py = geo.loc.y as f64 + (y as f64 / y_extent as f64) * geo.size.h as f64;
                 state.pointer_absolute_motion(
                     crate::input::AbsolutePointerSource::Virtual(pointer.id()),
-                    (px, py).into(),
+                    position,
                     time,
                     (time as u64) * 1000,
                 );
@@ -196,7 +228,7 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 );
             }
             zwlr_virtual_pointer_v1::Request::Axis { time, axis, value } => {
-                if let Some(axis) = wl_axis(axis) {
+                if let Some(axis) = wl_axis(pointer, axis) {
                     let mut p = data.pending.lock().unwrap();
                     p.time = time;
                     p.dirty = true;
@@ -207,21 +239,25 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 }
             }
             zwlr_virtual_pointer_v1::Request::AxisSource { axis_source } => {
-                if let WEnum::Value(src) = axis_source {
-                    let source = match src {
-                        wl_pointer::AxisSource::Wheel => AxisSource::Wheel,
-                        wl_pointer::AxisSource::Finger => AxisSource::Finger,
-                        wl_pointer::AxisSource::Continuous => AxisSource::Continuous,
-                        wl_pointer::AxisSource::WheelTilt => AxisSource::WheelTilt,
-                        _ => AxisSource::Wheel,
-                    };
-                    let mut p = data.pending.lock().unwrap();
-                    p.source = Some(source);
-                    p.dirty = true;
-                }
+                let source = match axis_source {
+                    WEnum::Value(wl_pointer::AxisSource::Wheel) => AxisSource::Wheel,
+                    WEnum::Value(wl_pointer::AxisSource::Finger) => AxisSource::Finger,
+                    WEnum::Value(wl_pointer::AxisSource::Continuous) => AxisSource::Continuous,
+                    WEnum::Value(wl_pointer::AxisSource::WheelTilt) => AxisSource::WheelTilt,
+                    _ => {
+                        pointer.post_error(
+                            zwlr_virtual_pointer_v1::Error::InvalidAxisSource,
+                            "invalid scroll source",
+                        );
+                        return;
+                    }
+                };
+                let mut p = data.pending.lock().unwrap();
+                p.source = Some(source);
+                p.dirty = true;
             }
             zwlr_virtual_pointer_v1::Request::AxisStop { time, axis } => {
-                if let Some(axis) = wl_axis(axis) {
+                if let Some(axis) = wl_axis(pointer, axis) {
                     let mut p = data.pending.lock().unwrap();
                     p.time = time;
                     p.dirty = true;
@@ -237,7 +273,7 @@ impl Dispatch<ZwlrVirtualPointerV1, VirtualPointerData> for MindeState {
                 value,
                 discrete,
             } => {
-                if let Some(axis) = wl_axis(axis) {
+                if let Some(axis) = wl_axis(pointer, axis) {
                     let mut p = data.pending.lock().unwrap();
                     p.time = time;
                     p.dirty = true;
@@ -317,11 +353,17 @@ fn discrete_v120(steps: i32) -> i32 {
 }
 
 /// Translate a `wl_pointer.axis` enum value into Smithay's [`Axis`].
-fn wl_axis(axis: WEnum<wl_pointer::Axis>) -> Option<Axis> {
+fn wl_axis(pointer: &ZwlrVirtualPointerV1, axis: WEnum<wl_pointer::Axis>) -> Option<Axis> {
     match axis {
         WEnum::Value(wl_pointer::Axis::HorizontalScroll) => Some(Axis::Horizontal),
         WEnum::Value(wl_pointer::Axis::VerticalScroll) => Some(Axis::Vertical),
-        _ => None,
+        _ => {
+            pointer.post_error(
+                zwlr_virtual_pointer_v1::Error::InvalidAxis,
+                "invalid scroll axis",
+            );
+            None
+        }
     }
 }
 
@@ -340,6 +382,97 @@ impl MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::output::{Mode, PhysicalProperties, Scale, Subpixel};
+    use smithay::utils::Transform;
+
+    fn output(name: &str, size: (i32, i32)) -> Output {
+        let output = Output::new(
+            name.into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+                serial_number: name.into(),
+            },
+        );
+        output.change_current_state(
+            Some(Mode {
+                size: size.into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        output
+    }
+
+    #[test]
+    fn absolute_mapping_keeps_the_requested_output_through_layout_changes() {
+        let first = output("first", (1920, 1080));
+        let target = output("target", (800, 600));
+        let mut space = Space::default();
+        space.map_output(&first, (0, 0));
+        space.map_output(&target, (-800, 200));
+        let pointer = VirtualPointerData {
+            output: Some(target.clone()),
+            ..Default::default()
+        };
+        let middle = |space: &Space<Window>| pointer.absolute_position(space, 50, 50, 100, 100);
+        assert_eq!(middle(&space), Some((-400.0, 500.0).into()));
+        assert_eq!(
+            VirtualPointerData::default().absolute_position(&space, 50, 50, 100, 100),
+            Some((960.0, 540.0).into())
+        );
+
+        target.change_current_state(None, Some(Transform::_90), Some(Scale::Integer(2)), None);
+        space.map_output(&target, (2000, -400));
+        assert_eq!(middle(&space), Some((2150.0, -200.0).into()));
+        // Unmapping models disable/removal; retaining the Output identity
+        // makes re-enabling it recover the original association.
+        space.unmap_output(&target);
+        assert_eq!(middle(&space), Some((960.0, 540.0).into()));
+        space.map_output(&target, (2000, -400));
+        assert_eq!(middle(&space), Some((2150.0, -200.0).into()));
+        space.unmap_output(&first);
+        space.unmap_output(&target);
+        assert_eq!(middle(&space), None);
+    }
+
+    #[test]
+    fn virtual_extents_stay_inside_the_target_including_shared_edges() {
+        let first = output("first", (800, 600));
+        let adjacent = output("adjacent", (1024, 768));
+        let mut space = Space::default();
+        space.map_output(&first, (-800, -600));
+        space.map_output(&adjacent, (0, -600));
+        let pointer = VirtualPointerData {
+            output: Some(first.clone()),
+            ..Default::default()
+        };
+        let geometry = space.output_geometry(&first).unwrap().to_f64();
+        for (x, y, x_extent, y_extent) in [
+            (0, 0, 100, 100),
+            (100, 100, 100, 100),
+            (1000, 1000, 1, 1),
+            (u32::MAX, u32::MAX, 1, 1),
+        ] {
+            let point = pointer
+                .absolute_position(&space, x, y, x_extent, y_extent)
+                .unwrap();
+            assert!(geometry.contains(point), "{point:?} escaped {geometry:?}");
+            if x > 0 {
+                assert!(point.x > -0.01 && point.y > -0.01);
+            }
+        }
+        for (x_extent, y_extent) in [(0, 0), (0, 100), (100, 0)] {
+            assert_eq!(
+                pointer.absolute_position(&space, 1, 1, x_extent, y_extent),
+                None
+            );
+        }
+    }
 
     #[test]
     fn wheel_steps_leave_room_for_legacy_fractional_accumulation() {
