@@ -11,7 +11,7 @@
 ;; path so public facades and private compositor modules resolve regardless of
 ;; cwd.
 ;; current-filename can be #f when this file is re-(load)ed at runtime
-;; (Print R); the module dir is then already on the load path anyway
+;; through a personal reload command; the module dir is already on the load path
 ;; (MINDE_SCHEME_DIR, plus the initial load added it).
 (let ((f (current-filename)))
   (when (string? f)
@@ -99,46 +99,45 @@
 (define* (bind-key! mods key thunk #:optional doc)
   "Bind KEY (an xkb keysym name string, e.g. \"Return\", \"q\", \"d\") with
 modifier list MODS (e.g. '(super)) to THUNK, a zero-argument procedure run
-when the binding fires. Global binding, always active."
+when the binding fires, or a nested keymap. Global binding, always active."
   (let ((binding (cons (mods->bitmask mods) key)))
     (hash-set! %keybindings binding thunk)
+    (set-binding-submap! %keybindings binding (and (hash-table? thunk) thunk))
     (if doc (hash-set! %global-binding-docs binding doc)
         (hash-remove! %global-binding-docs binding))))
 
 ;; keymap object -> (key -> one-line doc), fed by the optional doc
 ;; argument of bind-prefix-key!; the ? which-key echo and describe-key
 ;; read it.
-(define %binding-docs (make-hash-table))
+(define %binding-docs (make-weak-key-hash-table))
 
-;; (PARENT KEY CHILD) triples identify nested maps even when a binding wraps
-;; entry into the child with a small side effect (the w window listing and f
-;; frame-number overlay).  The live objects remain authoritative; this table
-;; only preserves their relationship for help/reference traversal.
-(define %binding-submaps '())
+;; Parent map -> (key -> child map), including wrappers that show a window
+;; list or frame labels on entry. Weak parents let replaced configuration
+;; trees and their metadata be collected after a reload.
+(define %binding-submaps (make-weak-key-hash-table))
 
 (define (set-binding-submap! parent key child)
-  (set! %binding-submaps
-        (filter (lambda (entry)
-                  (not (and (eq? parent (car entry))
-                            (string=? key (cadr entry)))))
-                %binding-submaps))
-  (when child
-    (set! %binding-submaps (cons (list parent key child) %binding-submaps))))
+  (let ((children (hash-ref %binding-submaps parent)))
+    (cond (child
+           (unless children
+             (set! children (make-hash-table))
+             (hash-set! %binding-submaps parent children))
+           (hash-set! children key child))
+          (children (hash-remove! children key)))))
 
 (define (binding-submap parent key)
-  (let ((entry (find (lambda (entry)
-                       (and (eq? parent (car entry))
-                            (string=? key (cadr entry))))
-                     %binding-submaps)))
-    (and entry (caddr entry))))
+  (let ((children (hash-ref %binding-submaps parent)))
+    (and children (hash-ref children key))))
 
 (define (copy-binding-submaps! source target)
-  (for-each (lambda (entry)
-              (when (and (eq? source (car entry))
-                         (hash-ref source (cadr entry))
-                         (eq? (hash-ref source (cadr entry)) (hash-ref target (cadr entry))))
-                (set-binding-submap! target (cadr entry) (caddr entry))))
-            (list-copy %binding-submaps)))
+  (let ((children (hash-ref %binding-submaps source)))
+    (when children
+      (hash-for-each
+       (lambda (key child)
+         (when (and (hash-ref source key)
+                    (eq? (hash-ref source key) (hash-ref target key)))
+           (set-binding-submap! target key child)))
+       children))))
 
 (define (set-binding-doc! keymap key doc)
   (if doc
@@ -408,7 +407,7 @@ focused client), #f otherwise."
        ;; same modifier as the prefix itself. Only at the top level --
        ;; inside a nested keymap the prefix keysym is just another key.
        ;; An explicit prefix-map binding for the prefix keysym wins over
-       ;; the literal forward (e.g. Print Print below).
+       ;; the literal forward (e.g. Print Print in the optional legacy map).
        ((and (eq? %key-state %prefix-bindings)
              (string=? keysym-name %prefix-key)
              (not (hash-ref %prefix-bindings keysym-name)))
@@ -476,7 +475,9 @@ focused client), #f otherwise."
           (let ((thunk (hash-ref %keybindings (cons mods-bitmask keysym-name))))
             (cond
              (thunk
-              (run-binding! thunk mods-bitmask keysym-name)
+              (let ((result (if (hash-table? thunk) thunk
+                                (run-binding! thunk mods-bitmask keysym-name))))
+                (when (hash-table? result) (set-key-state! result)))
               #t)
              ;; Per-app remapped keys (StumpWM define-remapped-keys): a
              ;; key headed for the client may translate to a different
@@ -487,140 +488,12 @@ focused client), #f otherwise."
                    (send-key target)
                    #t))
              (else #f))))))
-
-;; ---------------------------------------------------------------------
-;; Default bindings
-;; ---------------------------------------------------------------------
-
-;; The terminal is the only application launcher in the portable default.
-(define (terminal-command)
-  "Return the configured terminal command, with dependency-light fallbacks."
-  (or (getenv "MINDE_TERMINAL") "foot || xterm"))
-
-(bind-prefix-key! "Return" (lambda () (wm-spawn (terminal-command))))
-;; r: StumpWM exec -- native prompt with PATH completion (TAB). An
-;; external launcher (fuzzel/bemenu) is no longer needed but still works
-;; as a layer-shell client if you prefer one.
-(bind-prefix-key! "r" (lambda () (run-prompt!)))
 ;; Dynamic groups auto-tile; manual splits are refused there (StumpWM).
 (define (guard-manual-tiling thunk)
   (if (dynamic-group?)
       (echo (format #f "~a is a dynamic group"
                     (string-trim-both (current-group-name))))
       (thunk)))
-
-(bind-prefix-key! "v" (lambda () (guard-manual-tiling split-frame-vertical!)))
-(bind-prefix-key! "h" (lambda () (guard-manual-tiling split-frame-horizontal!)))
-(bind-prefix-key! "c" (lambda () (guard-manual-tiling remove-split!)))
-(bind-prefix-key! "n" (lambda () (focus-next-frame!)))
-;; f: StumpWM `next` -- cycle through ALL of the group's windows,
-;; emacs-buffer-style, jumping frames as needed.
-(bind-prefix-key! "f" (lambda () (focus-next-window!)))
-;; p: StumpWM `pull` -- dig the next hidden window out into this frame.
-(bind-prefix-key! "p" (lambda () (pull-hidden-next!)))
-;; o: cycle only within the current frame's own window stack. Print Print
-;; (prefix key twice) does the same -- nobody sends a literal Print to a
-;; client anyway; rebind or unbind "Print" here to restore the StumpWM
-;; literal-forward behavior.
-(bind-prefix-key! "o" (lambda () (focus-next-window-in-frame!)))
-(bind-prefix-key! "Print" (lambda () (focus-next-window-in-frame!)))
-(bind-prefix-key! "k" (lambda () (close-current-window!)))
-(bind-prefix-key! "d" (lambda () (close-current-window!))) ; StumpWM delete-window
-(bind-prefix-key! "g" (lambda () (switch-to-next-group!)))
-;; G: new group -- prompts for a name; empty input auto-names (roman).
-(bind-prefix-key! "G"
-  (lambda ()
-    (read-one-line "new group: "
-      (lambda (name)
-        (let ((g (if (string-null? name)
-                     (create-auto-named-group!)
-                     (create-group! (string-append " " name " ")))))
-          (echo (string-append "new group:" (group-name g)))))
-      #:history 'group)))
-;; y: StumpWM `info` -- echo the current window and group.
-(bind-prefix-key! "y" (lambda ()
-                        (let ((id (current-frame-window)))
-                          (echo (if id
-                                    (format #f "~a  [~a]" (window-title id)
-                                            (string-trim-both (current-group-name)))
-                                    "no window")))))
-(bind-prefix-key! "m" (lambda () (move-window-to-next-group!)))
-(bind-prefix-key! "Q" (lambda () (wm-quit)))
-
-;; ---------------------------------------------------------------------
-;; Window numbers + navigation (StumpWM parity, conflict-free keys)
-;; ---------------------------------------------------------------------
-
-;; 0-9: jump to window by number; C-0..C-9: pull it here instead.
-(for-each
- (lambda (n)
-   (let ((k (number->string n)))
-     (bind-prefix-key! k (lambda () (select-window-by-number! n)))
-     (bind-prefix-key! (string-append "C-" k)
-                       (lambda () (pull-window-by-number! n)))))
- (iota 10))
-
-;; Arrows: directional frame focus; M-arrows move the window along;
-;; S-arrows swap windows with the neighbor frame.
-(for-each
- (lambda (pair)
-   (let ((name (car pair)) (dir (cdr pair)))
-     (bind-prefix-key! name (lambda () (move-focus! dir)))
-     (bind-prefix-key! (string-append "M-" name) (lambda () (move-window! dir)))
-     (bind-prefix-key! (string-append "S-" name) (lambda () (exchange-windows! dir)))))
- '(("Left" . left) ("Right" . right) ("Up" . up) ("Down" . down)))
-
-;; Tab: toggle to the previously focused window (emacs C-x b RET);
-;; S-Tab (keysym ISO_Left_Tab): toggle to the previous frame; u: toggle
-;; to the previous group (StumpWM gother).
-(bind-prefix-key! "Tab" (lambda () (other-window!)))
-(bind-prefix-key! "ISO_Left_Tab" (lambda () (other-frame!)))
-(bind-prefix-key! "u" (lambda () (switch-to-last-group!)))
-
-;; W: StumpWM `windows` -- echo the numbered window list.
-(bind-prefix-key! "W" (lambda () (echo (echo-windows-string))))
-
-;; C: StumpWM `only` -- collapse all splits, keep every window;
-;; Delete: fclear -- show this frame empty (its windows stay, hidden).
-(bind-prefix-key! "C" (lambda () (collapse-to-one-frame!)))
-(bind-prefix-key! "Delete" (lambda () (clear-current-frame!)))
-
-;; Reverse cycling, mirroring f/p/n/o forwards.
-(bind-prefix-key! "C-f" (lambda () (focus-previous-window!)))
-(bind-prefix-key! "C-p" (lambda () (pull-hidden-previous!)))
-(bind-prefix-key! "C-n" (lambda () (focus-previous-frame!)))
-(bind-prefix-key! "C-o" (lambda () (focus-previous-window-in-frame!)))
-
-;; ---------------------------------------------------------------------
-;; Help, eval prompt, message history, marks, group management
-;; (StumpWM parity)
-;; ---------------------------------------------------------------------
-
-;; While the prefix (or a submap) is armed, ? echoes its bindings and
-;; stays armed -- docs for the existing map so that's actually useful:
-(for-each
- (lambda (p) (set-binding-doc! %prefix-bindings (car p) (cdr p)))
- '(("Return" . "terminal") ("r" . "run program (prompt)")
-   ("v" . "vsplit") ("h" . "hsplit") ("c" . "remove split")
-   ("n" . "next frame") ("f" . "next window (group)")
-   ("p" . "pull hidden window") ("o" . "next window in frame")
-   ("k" . "close window") ("d" . "close window")
-   ("g" . "next group") ("G" . "new group (prompt)")
-   ("m" . "move window to next group") ("y" . "window info")
-   ("l" . "windowlist (prompt)") ("P" . "misc submap")
-   ("R" . "reload init.scm") ("L" . "lock screen") ("Q" . "quit (asks)")
-   ("s" . "resize mode") ("F" . "float/unfloat window")
-   ("M-F" . "apply layout (prompt)")
-   ("Tab" . "last window") ("ISO_Left_Tab" . "last frame")
-   ("u" . "last group") ("W" . "window list echo")
-   ("C" . "only: collapse splits") ("Delete" . "fclear: empty frame")
-   ("z" . "command mode (RET/C-g exits)")))
-
-;; F1: describe-key -- press it, then any key, get told what it does.
-(bind-prefix-key! "F1" (lambda () (describe-key!)) "describe next key")
-
-;; z: command mode -- every key acts as a prefix key until RET/C-g.
-(bind-prefix-key! "z" (lambda () (command-mode!)) "command mode (RET/C-g exits)")
 
 ;; colon: eval a Scheme expression in the compositor (StumpWM's colon /
 ;; eval-line rolled into one -- our commands ARE Scheme).
@@ -635,35 +508,6 @@ focused client), #f otherwise."
           (lambda (key . args)
             (echo (format #f "error: ~a ~s" key args))))))
     #:history 'eval))
-(bind-prefix-key! "colon" (lambda () (eval-prompt!)) "eval scheme (prompt)")
-
-;; C-m: re-show the last message (StumpWM lastmsg).
-(bind-prefix-key! "C-m"
-  (lambda () (echo (or (last-message) "no messages")))
-  "last message again")
-
-;; Q now asks before quitting (StumpWM quit-confirm); logout! (minde
-;; session) owns the actual prompt-then-wm-quit shape, so this, the
-;; portable "s q" binding, and the colon prompt all agree on one
-;; implementation.
-(bind-prefix-key! "Q" (lambda () (logout!)) "quit (asks)")
-
-;; ---------------------------------------------------------------------
-;; Session management (minde session): L locks; M-L suspends (locks
-;; first and waits for confirmation -- see the module for why). Logout
-;; is deliberately not on its own single keystroke anywhere: Q above
-;; and the portable "s q" binding both go through logout!'s confirmation
-;; prompt.
-;; ---------------------------------------------------------------------
-(bind-prefix-key! "L" (lambda () (lock-screen!)) "lock screen")
-(bind-prefix-key! "M-L" (lambda () (suspend!)) "suspend (locks first)")
-
-;; Marks: tag windows, then pull them all here at once. (Not on "t":
-;; that must stay free as the literal-forward escape for the default
-;; C-t prefix.)
-(bind-prefix-key! "x" (lambda () (mark-window-toggle!)) "mark/unmark window")
-(bind-prefix-key! "M-x" (lambda () (pull-marked!)) "pull marked windows here")
-(bind-prefix-key! "C-x" (lambda () (clear-marks!)) "clear marks")
 
 ;; Group management: M-g select by name, M-m move-and-follow; grename /
 ;; gkill live in the P submap (see below).
@@ -672,8 +516,6 @@ focused client), #f otherwise."
    (map (lambda (name) (cons (string-trim-both name) name)) (group-names))
    switch-to-group!
    #:prompt "groups:"))
-(bind-prefix-key! "M-g" (lambda () (gselect!)) "switch group (prompt)")
-(bind-prefix-key! "M-m" (lambda () (move-current-window-to-next-group-and-follow!)) "move window + follow")
 
 ;; ---------------------------------------------------------------------
 ;; Timers, fullscreen, force kill, banish, urgency, clipboard
@@ -772,11 +614,6 @@ winit it is stored but configures nothing. Returns #t when stored."
           (%input-choice accel-profile '(flat adaptive) "accel-profile")
           (%input-choice click-method '(button-areas clickfinger) "click-method")))))
 
-;; Fullscreen / force kill / banish (see (minde frames)).
-(bind-prefix-key! "M-f" (lambda () (fullscreen!)) "fullscreen toggle")
-(bind-prefix-key! "K" (lambda () (kill-current-window!)) "kill window (force)")
-(bind-prefix-key! "B" (lambda () (move-pointer-to-corner!)) "banish pointer")
-
 ;; Frame indicator (StumpWM curframe): echo the frame geometry and pulse
 ;; the focus border bright for a moment.
 (define (flash-current-frame!)
@@ -787,11 +624,9 @@ winit it is stored but configures nothing. Returns #t when stored."
   ;; Restore the current state's color without changing keyboard ownership
   ;; or invalidating a pending which-key timer.
   (wm-run-after 400 refresh-key-border!))
-(bind-prefix-key! "C-c" (lambda () (flash-current-frame!)) "flash current frame")
 
 ;; Urgency: Rust calls (handle-urgent-window! id) on xdg-activation requests.
 (define (handle-urgent-window! id) (add-urgent-window! id))
-(bind-prefix-key! "C-u" (lambda () (next-urgent!)) "jump to urgent window")
 
 ;; Foreign-toplevel management (wlr-foreign-toplevel-management): external
 ;; bars/switchers request actions on windows by their compositor id. Rust
@@ -847,23 +682,9 @@ unbound-variable path."
     (if m
         (begin (set-clipboard! m) (echo "copied last message"))
         (echo "no messages"))))
-(bind-prefix-key! "M-c" (lambda () (copy-last-message!)) "copy last message")
 
 ;; ---------------------------------------------------------------------
-;; Multi-head (multi-monitor): each group has a frame tree per head;
-;; S cycles heads, M-s toggles to the last one. Directional focus
-;; (prefix arrows) also crosses monitor edges. Users who prefer one big
-;; tree spanning all monitors can (set-head-mode! 'span).
-;;
-;; These two are development-only: install-portable-keymap! rebuilds the
-;; map from scratch, so the release default binds heads under "o" instead.
-;; ---------------------------------------------------------------------
-
-(bind-prefix-key! "S" (lambda () (focus-next-head!)) "next head (monitor)")
-(bind-prefix-key! "M-s" (lambda () (focus-last-head!)) "last head (monitor)")
-
-;; ---------------------------------------------------------------------
-;; iresize: Print s enters an interactive resize mode (StumpWM iresize).
+;; Interactive resize mode (StumpWM iresize), entered with C-t m r.
 ;; Arrows/hjkl move the nearest split divider by %resize-step pixels,
 ;; b/= balances all frames, Return/Escape leaves the mode. The mode works
 ;; by its bindings returning %resize-map, which dispatch-key re-arms
@@ -912,11 +733,6 @@ unbound-variable path."
   (call-if-bound 'wm-message %resize-help 0)
   %resize-map)
 
-(bind-prefix-key! "s"
-  (lambda ()
-    (call-if-bound 'wm-message %resize-help 0)
-    %resize-map))
-
 ;; ---------------------------------------------------------------------
 ;; Gaps: space between frames (inner) and against the screen edge
 ;; (outer). Off by default; uncomment to taste.
@@ -925,9 +741,9 @@ unbound-variable path."
 ;; (set-gaps! 8 8)
 
 ;; ---------------------------------------------------------------------
-;; Layouts: named frame-tree presets ((minde layouts)). Print F
-;; prompts (TAB completes) and applies; Print P s saves the live tree
-;; under a name to ~/.config/minde/layouts.scm, reloaded at startup.
+;; Layouts: named frame-tree presets ((minde layouts)). C-t m l prompts
+;; and applies; save-layout-prompt! saves the live tree under a name to
+;; ~/.config/minde/layouts.scm, reloaded at startup.
 ;; Spec grammar: 'leaf | (hsplit ratio a b) | (vsplit ratio a b).
 ;; ---------------------------------------------------------------------
 
@@ -940,7 +756,7 @@ unbound-variable path."
 ;; One full-screen frame.
 (define-layout! "full" 'leaf)
 
-;; Layouts saved with Print P s in earlier sessions.
+;; Load layouts saved in earlier sessions.
 (load-layouts!)
 
 (define (layout-prompt!)
@@ -950,82 +766,6 @@ unbound-variable path."
         (apply-layout! name)))
     #:completions layout-names
     #:history 'layout))
-
-;; F floats/unfloats (the user's old StumpWM float-this binding); the
-;; layout prompt moved to M-F.
-(bind-prefix-key! "F"
-  (lambda ()
-    (float-this!)
-    ;; Floating in/out of a dynamic group changes the tiled set.
-    (when (dynamic-group?) (retile-dynamic!)))
-  "float/unfloat window")
-(bind-prefix-key! "M-F" (lambda () (layout-prompt!)) "apply layout (prompt)")
-
-;; ---------------------------------------------------------------------
-;; Placement rules: route windows to a group/frame by app-id or title
-;; substring when they map (StumpWM define-frame-preference). Examples:
-;; ---------------------------------------------------------------------
-
-;; (add-placement-rule! "zen" #:group "II" #:frame 0)
-;; (add-placement-rule! "emacs" #:frame 1 #:follow? #t)
-;; (add-placement-rule! "Picture-in-Picture" #:float? #t)
-
-;; Miscellaneous built-in operations. Personal launchers and desktop policy
-;; belong in a user configuration layered over this portable file.
-(bind-prefix-key! "P"
-  (make-keymap
-   ;; s: save the current frame tree as a named layout (Print F applies).
-   "s" (lambda ()
-         (read-one-line "save layout as: "
-           (lambda (name)
-             (unless (string-null? name)
-               (save-layout! name)))
-           #:completions layout-names
-           #:history 'layout))
-   ;; r: rename the current group; k: delete it (windows move on).
-   "r" (lambda ()
-         (read-one-line "rename group: "
-           (lambda (name) (rename-current-group! name))
-           #:history 'group))
-   "k" (lambda () (delete-current-group!))
-   ;; n: rename the current window (StumpWM title).
-   "n" (lambda ()
-         (read-one-line "window name: "
-           (lambda (name) (rename-window! name))))
-   ;; p: re-apply placement rules to existing windows.
-   "p" (lambda () (place-existing-windows!))
-   ;; f: unfloat every float of this group; t: always-on-top toggle;
-   ;; y: always-show (sticky, follows every group switch).
-   "f" (lambda () (flatten-floats!))
-   "t" (lambda () (toggle-always-on-top!))
-   "y" (lambda () (toggle-always-show!))
-   ;; i: window properties echo; d: date; V: version; M: modifiers.
-   "i" (lambda () (show-window-properties!))
-   "d" (lambda () (echo-date!))
-   "V" (lambda () (version!))
-   "M" (lambda () (modifiers!))
-   ;; u: unmaximize toggle; g: gravity of the unmaximized window.
-   "u" (lambda () (unmaximize!))
-   "g" (lambda ()
-         (read-one-line "gravity: "
-           (lambda (s)
-             (unless (string-null? s)
-               (set-window-gravity! (string->symbol s))))
-           #:completions %gravity-names))
-   ;; R/F: remember/forget a persistent placement rule for this window.
-   "R" (lambda () (remember!))
-   "F" (lambda () (forget!))
-   ;; D/O: dump / restore the whole desktop (groups + frame layouts).
-   "D" (lambda ()
-         (read-one-line "dump desktop to: "
-           (lambda (path)
-             (unless (string-null? path) (dump-desktop-to-file path)))
-           #:initial (string-append (getenv "HOME") "/.config/minde/desktop.scm")))
-   "O" (lambda ()
-         (read-one-line "restore desktop from: "
-           (lambda (path)
-             (unless (string-null? path) (restore-from-file path)))
-           #:initial (string-append (getenv "HOME") "/.config/minde/desktop.scm")))))
 
 ;; Prompt-driven workflows, all through the native read-one-line prompt
 ;; ((minde ui prompt) module -- StumpWM's input.lisp semantics: emacs
@@ -1080,8 +820,6 @@ unbound-variable path."
     (if (null? items)
         (echo "no windows")
         (select-from-menu items focus-window-by-id! #:prompt "windows:"))))
-
-(bind-prefix-key! "l" (lambda () (windowlist!)))
 
 ;; ---------------------------------------------------------------------
 ;; Group & window management parity (StumpWM)
@@ -1196,15 +934,6 @@ refresh)."
   (sync-frames!)
   (echo "redisplayed"))
 
-;; Bindings: windowlist variants at the top level, group management in
-;; the M-G submap, window odds and ends in the P submap.
-(bind-prefix-key! "C-l" (lambda () (frame-windowlist!)) "frame windowlist (menu)")
-(bind-prefix-key! "M-l" (lambda () (windowlist-by-class!)) "windowlist by class (menu)")
-(bind-prefix-key! "M-p" (lambda () (pull-from-windowlist!)) "pull from windowlist (menu)")
-(bind-prefix-key! "M-w" (lambda () (select-window-by-name!)) "select window by name (prompt)")
-(bind-prefix-key! "M-t" (lambda () (select-floating-window!)) "select floating window (menu)")
-(bind-prefix-key! "C-r" (lambda () (redisplay!)) "redisplay windows")
-
 ;; Dynamic groups (StumpWM parity): prompts and per-group commands.
 (define (gnew-dynamic-prompt!)
   (read-one-line "new dynamic group: "
@@ -1235,50 +964,6 @@ refresh)."
         (if r
             (change-split-ratio! (inexact->exact r))
             (echo "not a number"))))))
-
-(bind-prefix-key! "M-G"
-  (make-keymap
-   "n" (lambda () (gnewbg-prompt!))
-   "N" (lambda () (gnewbg-float-prompt!))
-   "m" (lambda () (gmerge-prompt!))
-   "M" (lambda () (gmove-marked-prompt!))
-   "o" (lambda () (delete-other-groups!))
-   "g" (lambda () (echo (groups-echo-string)))
-   "f" (lambda () (shift-current-window-to-next-group!))
-   "b" (lambda () (shift-current-window-to-previous-group!))
-   "k" (lambda () (kill-windows-current-group!))
-   "K" (lambda () (kill-windows-other!))
-   "d" (lambda () (gnew-dynamic-prompt!))
-   "D" (lambda () (gnewbg-dynamic-prompt!))
-   "r" (lambda () (rotate-windows! 'forward))
-   "C-r" (lambda () (rotate-windows! 'backward))
-   "s" (lambda () (rotate-stack! 'forward))
-   "x" (lambda () (exchange-with-master!))
-   "l" (lambda () (change-layout-prompt!))
-   "S" (lambda () (change-split-ratio-prompt!))
-   "t" (lambda () (retile-dynamic-group!)))
-  "groups submap")
-(for-each
- (lambda (p) (set-binding-doc! (hash-ref %prefix-bindings "M-G") (car p) (cdr p)))
- '(("n" . "new group in background (prompt)")
-   ("N" . "new float group in background (prompt)")
-   ("m" . "merge a group here (menu)")
-   ("M" . "move marked windows to a group (menu)")
-   ("o" . "kill all other groups")
-   ("g" . "group list echo")
-   ("f" . "next group, taking the window")
-   ("b" . "previous group, taking the window")
-   ("k" . "close all windows in this group")
-   ("K" . "close all windows in other groups")
-   ("d" . "new dynamic group (prompt)")
-   ("D" . "new dynamic group in background (prompt)")
-   ("r" . "rotate windows through master")
-   ("C-r" . "rotate windows backward")
-   ("s" . "rotate the stack")
-   ("x" . "exchange window with master")
-   ("l" . "master layout (prompt)")
-   ("S" . "master split ratio (prompt)")
-   ("t" . "retile")))
 
 ;; ---------------------------------------------------------------------
 ;; Frames & placement parity (StumpWM): fselect, expose,
@@ -1322,10 +1007,6 @@ refresh)."
                                (lambda () (expose-pick! #f)))
         #t)))
 
-(bind-prefix-key! "j" (lambda () (fselect!)) "fselect: jump to frame by number")
-(bind-prefix-key! "M-e" (lambda () (expose-mode!)) "expose: pick window from grid")
-(bind-prefix-key! "M-o" (lambda () (focus-sibling-frame!)) "sibling frame")
-
 ;; Uniform splits (StumpWM hsplit/vsplit-uniformly): split the current
 ;; frame into N equal parts.
 (define (split-uniformly-prompt! orientation)
@@ -1339,15 +1020,6 @@ refresh)."
                 (hsplit-equally! n)
                 (vsplit-equally! n))
             (echo "need a count between 2 and 9"))))))
-
-(bind-prefix-key! "M-h"
-  (lambda () (guard-manual-tiling
-              (lambda () (split-uniformly-prompt! 'horizontal))))
-  "hsplit uniformly (prompt)")
-(bind-prefix-key! "M-v"
-  (lambda () (guard-manual-tiling
-              (lambda () (split-uniformly-prompt! 'vertical))))
-  "vsplit uniformly (prompt)")
 
 ;; Gravity names for the P g prompt.
 (define %gravity-names
@@ -1373,7 +1045,6 @@ refresh)."
   (echo "send key: press a key...")
   (set! %describe-next-key
         (lambda (mods name) (send-key (key-spec mods name)))))
-(bind-prefix-key! "C-q" (lambda () (send-raw-key!)) "send next key to window")
 
 ;; Help family: describe-command / where-is work over the binding docs
 ;; (%binding-docs); describe-function / describe-variable introspect the
@@ -1458,12 +1129,6 @@ refresh)."
               (echo (truncate-for-echo (format #f "~a = ~s" s v)))
               (echo (format #f "~a is unbound" s))))))))
 
-(bind-prefix-key! "F2" (lambda () (describe-command!)) "describe command (prompt)")
-(bind-prefix-key! "F3" (lambda () (commands!)) "list all commands")
-(bind-prefix-key! "F4" (lambda () (describe-function!)) "describe function (prompt)")
-(bind-prefix-key! "F5" (lambda () (where-is!)) "where-is (doc search)")
-(bind-prefix-key! "F6" (lambda () (describe-variable!)) "describe variable (prompt)")
-
 ;; copy-unhandled-error: the last keybinding error onto the clipboard.
 (define (copy-unhandled-error!)
   (if %last-unhandled-error
@@ -1485,44 +1150,6 @@ refresh)."
     (lambda (key . args)
       (echo (format #f "load-module failed: ~a ~s" key args)))))
 
-;; Colon/REPL-callable, unbound by default (like StumpWM): which-key-mode!,
-;; define-remapped-keys!, toggle-remapped-keys!, unbind-remapped-keys!,
-;; send-key / meta / send-escape, ratrelwarp, load-module!,
-;; copy-unhandled-error!, reload-configuration!.
-
-;; Not ported yet (missing infrastructure), from StumpWM:
-;;   D/t dashboards -- interactive terminal scripts; run them in a
-;;                     terminal yourself, or bind alacritty -e wrappers
-;;   (command-mode is Print z)
-;;   z  zen (gaps + mode line) -- no gaps/mode-line
-;;   S  screenshot map         -- needs wlr-screencopy (grim) support
-
-;; Print as the prefix key, matching the user's StumpWM setup. Comment out
-;; to fall back to the C-t default.
-(set-prefix-key! '() "Print")
-
-;; ---------------------------------------------------------------------
-;; Standalone-session extras
-;; ---------------------------------------------------------------------
-
-;; Hardware/media keys work without the prefix. All of these just spawn
-;; shell commands and are harmless no-ops if the tool isn't installed.
-(bind-key! '() "XF86MonBrightnessUp"
-           (lambda () (wm-spawn "brightnessctl set +5%"))
-           "increase brightness 5%")
-(bind-key! '() "XF86MonBrightnessDown"
-           (lambda () (wm-spawn "brightnessctl set 5%-"))
-           "decrease brightness 5%")
-(bind-key! '() "XF86AudioRaiseVolume"
-           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"))
-           "increase volume 5%")
-(bind-key! '() "XF86AudioLowerVolume"
-           (lambda () (wm-spawn "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"))
-           "decrease volume 5%")
-(bind-key! '() "XF86AudioMute"
-           (lambda () (wm-spawn "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"))
-           "toggle audio mute")
-
 ;; ---------------------------------------------------------------------
 ;; Portable prefix map
 ;; ---------------------------------------------------------------------
@@ -1537,191 +1164,123 @@ refresh)."
                    (cons (format #f "~a — ~a" name (command-summary command))
                          name))))
           (command-names))))
-    (select-from-menu items invoke-command #:prompt "command: ")))
+    (select-from-menu items
+      (lambda (name)
+        (let ((result (invoke-command name)))
+          (when (hash-table? result) (set-key-state! result))))
+      #:prompt "command: ")))
 
-(define (bind-portable-key! key procedure doc)
-  (when (hash-ref %prefix-bindings key)
-    (error "duplicate portable key binding" key))
-  (bind-prefix-key! key procedure doc))
-
-(define (install-portable-keymap!)
-  "Replace the accumulated development bindings with the release default."
-  (set! %prefix-bindings (make-hash-table))
-  (set! %binding-docs (make-hash-table))
-  (set! %binding-submaps '())
-  (for-each
-   (lambda (entry)
-     (let ((key (car entry)) (direction (cadr entry)))
-       (bind-portable-key! key (lambda () (move-focus! direction)) "focus frame")))
-   '(("h" left) ("j" down) ("k" up) ("l" right)))
-  (bind-portable-key! "n" focus-next-window! "next window")
-  (bind-portable-key! "p" pull-hidden-next! "pull next hidden window")
-  (for-each
-   (lambda (number)
-     (let ((key (number->string number)))
-       (bind-portable-key! key (lambda () (select-window-by-number! number)) "select numbered window")
-       ))
-   (iota 10))
-  (bind-portable-key! "Return" (lambda () (wm-spawn (terminal-command))) "terminal")
-  (bind-portable-key! "r" run-prompt! "run command")
-  (bind-portable-key! "space" command-palette! "command palette")
-  (bind-portable-key! "colon" eval-prompt! "evaluate Scheme")
-  (let* ((pull-map
-          (make-documented-keymap
-           "n" pull-hidden-next! "pull next hidden window"
-           "p" pull-hidden-previous! "pull previous hidden window"))
-         (window-map
-          (make-documented-keymap
-           "n" focus-next-window! "next window"
-           "p" focus-previous-window! "previous window"
-           "c" close-current-window! "close window"
-           "f" float-this! "float/unfloat window"
-           "w" windowlist! "window list"
-           "u" pull-map "pull hidden window"
-           "0" (lambda () (pull-window-by-number! 0)) "pull window 0"
-           "1" (lambda () (pull-window-by-number! 1)) "pull window 1"
-           "2" (lambda () (pull-window-by-number! 2)) "pull window 2"
-           "3" (lambda () (pull-window-by-number! 3)) "pull window 3"
-           "4" (lambda () (pull-window-by-number! 4)) "pull window 4"
-           "5" (lambda () (pull-window-by-number! 5)) "pull window 5"
-           "6" (lambda () (pull-window-by-number! 6)) "pull window 6"
-           "7" (lambda () (pull-window-by-number! 7)) "pull window 7"
-           "8" (lambda () (pull-window-by-number! 8)) "pull window 8"
-           "9" (lambda () (pull-window-by-number! 9)) "pull window 9")))
-    (for-each
-     (lambda (entry)
-       (let ((key (car entry)) (direction (cadr entry)))
-         (hash-set! window-map key (lambda () (move-window! direction)))
-         (set-binding-doc! window-map key "move window")))
-     '(("h" left) ("j" down) ("k" up) ("l" right)))
-    (bind-portable-key! "w" window-map "window commands"))
-  (let ((window-map (hash-ref %prefix-bindings "w")))
-    (bind-prefix-key!
-     "w"
-     (lambda ()
-       (echo (echo-windows-string))
-       window-map)
-     "window commands")
-    (set-binding-submap! %prefix-bindings "w" window-map))
-  (let ((exchange-map
-         (make-documented-keymap
-          "h" (lambda () (exchange-windows! 'left)) "exchange left"
-          "j" (lambda () (exchange-windows! 'down)) "exchange down"
-          "k" (lambda () (exchange-windows! 'up)) "exchange up"
-          "l" (lambda () (exchange-windows! 'right)) "exchange right")))
-    (bind-portable-key! "x" exchange-map "exchange windows")
-    (bind-portable-key! "f"
-         (make-documented-keymap
-          "h" (lambda () (guard-manual-tiling split-frame-horizontal!)) "split horizontally"
-          "v" (lambda () (guard-manual-tiling split-frame-vertical!)) "split vertically"
-          "c" (lambda () (guard-manual-tiling remove-split!)) "remove split"
-          "o" collapse-to-one-frame! "collapse to one frame"
-          "e" clear-current-frame! "empty frame"
-          "0" (lambda () (focus-frame-by-index! 0)) "select frame 0"
-          "1" (lambda () (focus-frame-by-index! 1)) "select frame 1"
-          "2" (lambda () (focus-frame-by-index! 2)) "select frame 2"
-          "3" (lambda () (focus-frame-by-index! 3)) "select frame 3"
-          "4" (lambda () (focus-frame-by-index! 4)) "select frame 4"
-          "5" (lambda () (focus-frame-by-index! 5)) "select frame 5"
-          "6" (lambda () (focus-frame-by-index! 6)) "select frame 6"
-          "7" (lambda () (focus-frame-by-index! 7)) "select frame 7"
-          "8" (lambda () (focus-frame-by-index! 8)) "select frame 8"
-          "9" (lambda () (focus-frame-by-index! 9)) "select frame 9")
-         "frame commands"))
-  (let ((frame-map (hash-ref %prefix-bindings "f")))
-    (bind-prefix-key!
-     "f"
-     (lambda ()
-       (let ((generation (show-frame-overlays!)))
-         (wm-run-after 2000 (lambda () (clear-frame-overlays! generation))))
-       frame-map)
-     "frame commands")
-    (set-binding-submap! %prefix-bindings "f" frame-map))
-  (bind-portable-key! "g"
-         (make-documented-keymap
-          "n" switch-to-next-group! "next group"
-          "p" switch-to-previous-group! "previous group"
-          "o" switch-to-last-group! "last group"
-          "s" gselect! "select group"
-          "m" move-current-window-to-next-group-and-follow! "move window and follow")
-         "group commands")
-  (bind-portable-key! "o"
-         (make-documented-keymap
-          "n" focus-next-head! "next head (monitor)"
-          "p" focus-previous-head! "previous head (monitor)"
-          "o" focus-last-head! "last head (monitor)"
-          "s" (lambda () (set-head-mode! 'span)) "span heads (one tree over all monitors)"
-          "h" (lambda () (set-head-mode! 'per-head)) "per-head mode (a tree per monitor)")
-         "output (monitor) commands")
-  (bind-portable-key! "m"
-         (make-documented-keymap
-          "l" layout-prompt! "select layout"
-          "r" enter-resize-mode! "resize mode"
-          "c" command-mode! "command mode")
-         "layout and mode commands")
-  (bind-portable-key! "s"
-    (make-documented-keymap
-     "r" (lambda () (reload-configuration!)) "reload configuration"
-     "l" (lambda () (lock-screen!)) "lock screen"
-     ;; z: sleep -- zzz, and free of "s" (the submap key itself, which
-     ;; would be confusing to reuse) and "l" (lock) and "r" (reload).
-     "z" (lambda () (suspend!)) "suspend (locks first)"
-     "q" (lambda () (logout!)) "log out (asks)")
-    "session commands"))
-
-(unless (or (getenv "MINDE_FULL_KEYMAP")
-            (getenv "MINDE_E2E_LEGACY_KEYMAP"))
-  (install-portable-keymap!))
+(define (show-windows!) (echo (echo-windows-string)))
+(define (show-frame-labels!)
+  (let ((generation (show-frame-overlays!)))
+    (wm-run-after 2000 (lambda () (clear-frame-overlays! generation)))))
+(define (save-layout-prompt!)
+  (read-one-line "save layout as: "
+    (lambda (name) (unless (string-null? name) (save-layout! name)))
+    #:completions layout-names #:history 'layout))
+(define (desktop-file-prompt! prompt action)
+  (read-one-line prompt
+    (lambda (path) (unless (string-null? path) (action path)))
+    #:initial (string-append (or (getenv "HOME") ".") "/.config/minde/desktop.scm")))
+(define (dump-desktop-prompt!) (desktop-file-prompt! "dump desktop to: " dump-desktop-to-file))
+(define (restore-desktop-prompt!) (desktop-file-prompt! "restore desktop from: " restore-from-file))
 
 ;; Declarative configuration is parsed and validated without evaluation. A
 ;; candidate binding table is built completely before these globals are
 ;; swapped, so a malformed reload cannot partially redefine the session.
 (define %configuration-base-bindings #f)
 (define %configuration-base-docs #f)
+(define %configuration-base-globals #f)
+(define %configuration-base-global-docs #f)
+(define %configuration-default-file "default-config.scm")
 
 (define (copy-hash-table table)
   (let ((copy (make-hash-table)))
     (hash-for-each (lambda (key value) (hash-set! copy key value)) table)
     copy))
 
-(define (configuration-file-path)
-  (or (getenv "MINDE_CONFIG")
-      (let ((directory (or (getenv "MINDE_SCHEME_DIR")
+(define (bundled-configuration-path file)
+  (let ((directory (or (getenv "MINDE_SCHEME_DIR")
                            (let ((file (current-filename)))
                              (and (string? file) (dirname file)))
                            "scheme")))
-        (string-append directory "/default-config.scm"))))
+    (string-append directory "/" file)))
 
-(define (capture-configuration-base!)
-  (unless %configuration-base-bindings
-    (set! %configuration-base-bindings (copy-hash-table %prefix-bindings))
-    (copy-binding-submaps! %prefix-bindings %configuration-base-bindings)
-    (set! %configuration-base-docs
-          (let ((docs (hash-ref %binding-docs %prefix-bindings)))
-            (if docs (copy-hash-table docs) (make-hash-table))))))
+(define (configuration-file-path)
+  (or (getenv "MINDE_CONFIG") (bundled-configuration-path %configuration-default-file)))
 
 (define (register-configuration-layer!)
   "Makes the bindings currently installed by a user init layer the atomic
-reload baseline. Call once after adding imperative user bindings."
+reload baseline, including globals. Call once after adding imperative bindings."
   (set! %configuration-base-bindings (copy-hash-table %prefix-bindings))
   (copy-binding-submaps! %prefix-bindings %configuration-base-bindings)
   (set! %configuration-base-docs
         (let ((docs (hash-ref %binding-docs %prefix-bindings)))
           (if docs (copy-hash-table docs) (make-hash-table))))
+  (set! %configuration-base-globals (copy-hash-table %keybindings))
+  (copy-binding-submaps! %keybindings %configuration-base-globals)
+  (set! %configuration-base-global-docs (copy-hash-table %global-binding-docs))
   #t)
 
+(define (merge-configuration-bindings base overrides)
+  ;; Merge data before constructing maps: overridden defaults are never built.
+  (append (filter (lambda (binding) (not (assoc (car binding) overrides))) base)
+          overrides))
+
+(define (compile-configuration-action action)
+  ;; Returns a callable/table, description and optional child-map relationship.
+  (cond
+   ((symbol? action)
+    (let ((command (command-ref action)))
+      (list (command-procedure command) (command-summary command) #f)))
+   ((eq? (car action) 'call)
+    (let* ((command (command-ref (cadr action)))
+           (arguments (validate-command-arguments (cadr action) (caddr action)))
+           (proc (command-procedure command)))
+      (list (lambda () (apply proc arguments)) (command-summary command) #f)))
+   (else
+    (let* ((fields (cdr action))
+           (child (make-hash-table)) (docs (make-hash-table))
+           (enter (cadr (assq 'enter fields))))
+      (apply-configuration-bindings! (cdr (assq 'bindings fields)) child docs #f)
+      (hash-set! %binding-docs child docs)
+      (list (if enter
+                (let ((proc (car (compile-configuration-action enter))))
+                  (lambda () (proc) child))
+                child)
+            (cadr (assq 'description fields)) child)))))
+
+(define (apply-configuration-bindings! bindings table docs global?)
+  (for-each
+   (lambda (binding)
+     (let ((key (if global? (call-with-values (lambda () (parse-key-spec (car binding))) cons)
+                    (car binding)))
+           (action (cadr binding)))
+       (set-binding-submap! table key #f)
+       (if action
+           (let ((compiled (compile-configuration-action action)))
+             (hash-set! table key (car compiled))
+             (hash-set! docs key (if (pair? (cddr binding)) (caddr binding) (cadr compiled)))
+             (when (caddr compiled) (set-binding-submap! table key (caddr compiled))))
+           (begin (hash-remove! table key) (hash-remove! docs key)))))
+   bindings))
+
 (define (apply-configuration! config)
-  (capture-configuration-base!)
-  (let ((candidate (copy-hash-table %configuration-base-bindings))
-        (candidate-docs (copy-hash-table %configuration-base-docs)))
-    (for-each
-     (lambda (binding)
-       (let* ((key (car binding))
-              (command (command-ref (cadr binding))))
-         (hash-set! candidate key (command-procedure command))
-         (hash-set! candidate-docs key (command-summary command))))
-     (configuration-bindings config))
-    (copy-binding-submaps! %configuration-base-bindings candidate)
+  (let* ((defaults (and (not %configuration-base-bindings)
+                         (validate-configuration-file (bundled-configuration-path "default-config.scm"))))
+         (candidate (if defaults (make-hash-table) (copy-hash-table %configuration-base-bindings)))
+         (candidate-docs (if defaults (make-hash-table) (copy-hash-table %configuration-base-docs)))
+         (globals (if defaults (make-hash-table) (copy-hash-table %configuration-base-globals)))
+         (global-docs (if defaults (make-hash-table) (copy-hash-table %configuration-base-global-docs))))
+    (unless defaults
+      (copy-binding-submaps! %configuration-base-bindings candidate)
+      (copy-binding-submaps! %configuration-base-globals globals))
+    (apply-configuration-bindings!
+     (merge-configuration-bindings (if defaults (configuration-bindings defaults) '())
+                                    (configuration-bindings config)) candidate candidate-docs #f)
+    (apply-configuration-bindings!
+     (merge-configuration-bindings (if defaults (configuration-global-bindings defaults) '())
+                                    (configuration-global-bindings config)) globals global-docs #t)
     ;; This native setting also works before the compositor state exists.
     ;; Tests without Rust may omit the primitive; a real rejection must leave
     ;; the rest of the active configuration untouched.
@@ -1735,6 +1294,8 @@ reload baseline. Call once after adding imperative user bindings."
     ;; this point: publish the complete candidate as one short commit step.
     (set! %prefix-bindings candidate)
     (hash-set! %binding-docs candidate candidate-docs)
+    (set! %keybindings globals)
+    (set! %global-binding-docs global-docs)
     (set-prefix-key! (configuration-prefix-modifiers config)
                      (configuration-prefix-key config))))
 
@@ -1765,26 +1326,13 @@ reload baseline. Call once after adding imperative user bindings."
           #f)))))
 
 (clear-command-registry!)
-(register-builtin-command! 'switch-to-next-group! switch-to-next-group!)
-(register-builtin-command! 'switch-to-previous-group! switch-to-previous-group!)
-(register-builtin-command! 'switch-to-last-group! switch-to-last-group!)
-(register-builtin-command! 'focus-next-frame! focus-next-frame!)
-(register-builtin-command! 'focus-previous-frame! focus-previous-frame!)
-(register-builtin-command! 'focus-next-window! focus-next-window!)
-(register-builtin-command! 'focus-previous-window! focus-previous-window!)
-(register-builtin-command! 'pull-hidden-next! pull-hidden-next!)
-(register-builtin-command! 'split-frame-horizontal! split-frame-horizontal!)
-(register-builtin-command! 'split-frame-vertical! split-frame-vertical!)
-(register-builtin-command! 'remove-split! remove-split!)
-(register-builtin-command! 'clear-current-frame! clear-current-frame!)
-(register-builtin-command! 'collapse-to-one-frame! collapse-to-one-frame!)
-(register-builtin-command! 'focus-next-head! focus-next-head!)
-(register-builtin-command! 'focus-last-head! focus-last-head!)
-
-(register-builtin-command! 'gaps-on! gaps-on!)
-(register-builtin-command! 'gaps-off! gaps-off!)
-(register-builtin-command! 'toggle-gaps! toggle-gaps!)
-(register-builtin-command! 'reload-configuration! reload-configuration!)
+(for-each
+ (lambda (entry)
+   (let* ((name (car entry)) (proc (module-ref (current-module) name)))
+     (register-builtin-command! name
+       (if (memq name '(split-frame-horizontal! split-frame-vertical! remove-split!))
+           (lambda () (guard-manual-tiling proc)) proc))))
+ builtin-command-metadata)
 (register-control-commands!)
 
 (define (refresh-command-help!)
@@ -1807,7 +1355,9 @@ reload baseline. Call once after adding imperative user bindings."
      keymap))
   (visit %prefix-bindings))
 
-(refresh-command-help!)
+(when (or (getenv "MINDE_FULL_KEYMAP") (getenv "MINDE_E2E_LEGACY_KEYMAP"))
+  (load-from-path "keymaps/stumpwm.scm")
+  (refresh-command-help!))
 
 (reload-configuration!)
 

@@ -53,8 +53,35 @@ The configuration is one data expression, not evaluated code:
   ("z" reload-configuration!)))
 ```
 
-Binding targets must be registered commands with no arguments. Unknown fields,
-versions, modifiers, commands, key names, and duplicate keys are errors.
+The complete portable map lives in [`scheme/default-config.scm`](../scheme/default-config.scm).
+A personal file overrides bindings by key and inherits the rest. Removing an
+override restores the bundled binding; `#f` explicitly unbinds it. Replacing
+a submap replaces its entire contents. Defaults are read again on each reload,
+so edits to the bundled map do not require rebuilding or restarting.
+
+An action is a registered command with no arguments, or a `call` with named,
+typed arguments. A nested `keymap` has a description, bindings, and an optional
+`enter` action that runs before the map is armed. An optional third item on a
+binding overrides its help text. `global-bindings` uses the same grammar and
+does not require the prefix:
+
+```scheme
+(minde-config
+ (version 1)
+ (prefix (ctrl) "t")
+ (global-bindings ("s-F8" run-prompt!))
+ (bindings
+  ("n" #f)
+  ("h" (call move-focus! ((direction . left))) "focus left")
+  ("w" (keymap
+         (description "my window commands")
+         (enter show-windows!)
+         (bindings ("w" windowlist!) ("c" close-current-window!))))))
+```
+
+Unknown fields, versions, modifiers, commands, key names, invalid arguments,
+and duplicate keys within a map are errors. Arbitrary Scheme expressions are
+not actions; register a personal command in your init to expose one.
 Keys use case-sensitive XKB names such as `Return`, `space`, `Escape`, and
 `XF86AudioPlay`. Binding modifiers are `C-` (Control), `M-` (Alt), `S-` (Shift),
 and `s-` (Super). Their order is normalized: `M-C-g` becomes `C-M-g`.
@@ -85,13 +112,15 @@ scripts/mindectl check-config path/to/config.scm --live
 ```
 
 Both modes read the file as data, validate key names with libxkbcommon, and
-require commands with no arguments.
+check command names and argument schemas recursively, including global maps.
 Live checking sends the data to the session for validation; it does not apply
 the configuration or invoke the bound commands. It uses the normal IPC
 deadline, adjustable with `--timeout-ms`.
 
 Reload builds and validates a candidate table before publishing it. Failure
-leaves the active prefix, bindings and native emergency exit unchanged.
+leaves the active prefix, prefix/global bindings, help and native emergency
+exit unchanged. Return opens the run prompt; defaults assume no terminal,
+brightness or audio-control programs are installed.
 
 ## Imperative personal layer
 
@@ -99,6 +128,10 @@ Personal Scheme can add launchers, hooks, layouts, placement rules and
 `handle-startup!`. After installing personal bindings, call
 `(register-configuration-layer!)` once so later declarative reloads retain that
 baseline.
+
+This explicitly captures the current prefix and global bindings in place of
+inheriting future bundled defaults. Use declarative bindings when changes
+should remain entirely controlled by the configuration file.
 
 `bind-prefix-key!` and `bind-key!` replace the binding's help text along with
 its action. Omitting the optional description makes the new binding
@@ -486,14 +519,19 @@ connector name (`n=eDP-1`) on such builds. See
 | `MINDE_INIT` | Scheme entry point |
 | `MINDE_SCHEME_DIR` | bundled module search directory |
 | `MINDE_CONFIG` | declarative configuration file |
-| `MINDE_TERMINAL` | terminal command; default `foot \|\| xterm` |
+| `MINDE_FULL_KEYMAP` | set to `1` to load the optional historical map |
 | `MINDE_LOG_FORMAT` | `human` or newline-delimited `json` |
 | `MINDE_UNSAFE_REPL` | opt into the unsafe threaded development REPL |
 | `XKB_DEFAULT_*` | keyboard rules, model, layout, variant and options |
 
-`MINDE_FULL_KEYMAP=1` retains the historical feature-oriented map. It is an
-escape hatch for established configurations, not the portable release
-default.
+`MINDE_FULL_KEYMAP=1` loads `scheme/keymaps/stumpwm.scm` instead of constructing
+the portable map. Its fallback configuration is `keymaps/stumpwm.conf`, with
+Print as prefix; `MINDE_CONFIG` can override it. A personal init may explicitly
+load this file after the core with `(load-from-path "keymaps/stumpwm.scm")`.
+The file registers its imperative baseline for later declarative reloads.
+It is an escape hatch for established configurations, not a compatibility
+promise before 1.0. Its modal and utility commands are also available through
+the portable command palette and declarative bindings.
 
 ## Persistent data
 

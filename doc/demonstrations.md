@@ -43,10 +43,10 @@ Scheme sources.
 
 ## Coverage model
 
-Every registered command has exactly one demo ID and every demo ID has exactly
-one scenario. Manifest generation fails on missing, duplicate or stale IDs.
-Public bindings without a command scenario remain in the generated API
-inventory with the explicit classification `non-visual`; their behavior is
-covered by the focused Scheme suites rather than by meaningless UI clips. The
+Commands with a recorded demonstration have a demo ID that names exactly one
+scenario. Manifest generation fails on missing, duplicate or stale IDs.
+Utility and modal commands without a dedicated recording, and public bindings
+without a command scenario, use the explicit classification `non-visual` in
+the generated API inventory. Focused Scheme suites cover their behavior. The
 live boundary is fully described; some pre-1.0 curation debt remains (see
 `architecture.md`).

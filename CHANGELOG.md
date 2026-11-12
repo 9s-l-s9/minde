@@ -10,6 +10,11 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- Portable bindings, including nested maps and global shortcuts, now come
+  from validated configuration data. Typed command arguments and `#f` unbinding
+  are supported. Return opens the run prompt; terminal, brightness and audio
+  launchers belong in personal configuration. The historical map loads only
+  from its optional file, and its utility commands remain discoverable (#163).
 - The desktop selector and control tests now use Scheme, and protocol test
   clients share a Rust harness. CI metadata is generated in Scheme, with
   build manifests and package inputs updated accordingly.
@@ -42,7 +47,7 @@ Target version: `1.0.0-rc1`.
   personal commands against the running session without applying changes;
   configuration readers disable read-time evaluation (#24).
 - Configuration documentation describes the actual default-file lookup and
-  shows the shipped `C-t` prefix with no declarative overrides (#105, #132).
+  shows the shipped `C-t` prefix (#105, #132).
 - Output mirror diagnostics compare raw usable rectangles, so head gaps
   and span layouts do not produce false drift reports; real geometry
   disagreements remain visible (#8).

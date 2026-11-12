@@ -289,31 +289,84 @@ This inventory enumerates the live exports of the public modules. It currently c
 |---|---|---|---|---|
 | `apply-layout!` | `(group head layout)` | `control` | Apply a named layout to a manual group's head. | `non-visual` |
 | `clear-current-frame!` | `()` | `frame` | Hide every window in the current frame. | `frame-clear` |
+| `clear-marks!` | `()` | `window` | Clear all window marks. | `non-visual` |
+| `close-current-window!` | `()` | `window` | Close the focused window. | `non-visual` |
 | `close-window!` | `(window)` | `control` | Request a client close; completion means its window disappeared. | `non-visual` |
 | `collapse-to-one-frame!` | `()` | `frame` | Collapse the current head to one frame. | `frame-collapse` |
+| `command-mode!` | `()` | `input` | Keep the prefix map armed until cancelled. | `non-visual` |
+| `command-palette!` | `()` | `prompt` | Choose a registered command. | `non-visual` |
+| `commands!` | `()` | `help` | List prefix commands. | `non-visual` |
+| `copy-unhandled-error!` | `()` | `help` | Copy the last keybinding error. | `non-visual` |
+| `describe-command!` | `()` | `help` | Describe a prefix command. | `non-visual` |
+| `describe-function!` | `()` | `help` | Describe a Scheme function. | `non-visual` |
+| `describe-key!` | `()` | `help` | Describe the next key. | `non-visual` |
+| `describe-variable!` | `()` | `help` | Describe a Scheme variable. | `non-visual` |
 | `desktop-snapshot` | `()` | `control` | Inspect every group, window, frame, and output. | `non-visual` |
+| `dump-desktop-prompt!` | `()` | `persistence` | Save the desktop to a chosen file. | `non-visual` |
+| `enter-resize-mode!` | `()` | `frame` | Resize the current frame interactively. | `non-visual` |
+| `eval-prompt!` | `()` | `prompt` | Evaluate Scheme. | `non-visual` |
+| `exchange-windows!` | `(direction)` | `window` | Exchange windows with a neighboring frame. | `non-visual` |
+| `expose-mode!` | `()` | `window` | Choose a window from a temporary grid. | `non-visual` |
+| `float-this!` | `()` | `window` | Float or tile the focused window. | `non-visual` |
+| `focus-frame-by-index!` | `(index)` | `frame` | Select a numbered frame. | `non-visual` |
 | `focus-last-head!` | `()` | `output` | Return to the last focused output head. | `head-last` |
 | `focus-next-frame!` | `()` | `frame` | Focus the next frame. | `frame-next` |
 | `focus-next-head!` | `()` | `output` | Focus the next output head. | `head-next` |
 | `focus-next-window!` | `()` | `window` | Focus the next group window. | `window-next` |
 | `focus-previous-frame!` | `()` | `frame` | Focus the previous frame. | `frame-previous` |
+| `focus-previous-head!` | `()` | `output` | Focus the previous output head. | `non-visual` |
 | `focus-previous-window!` | `()` | `window` | Focus the previous group window. | `window-previous` |
 | `focus-window!` | `(window)` | `control` | Focus a window across groups and heads. | `non-visual` |
+| `forget!` | `()` | `placement` | Forget placement of the current window. | `non-visual` |
+| `frame-windowlist!` | `()` | `window` | Choose a window in the current frame. | `non-visual` |
+| `fselect!` | `()` | `frame` | Choose a labeled frame. | `non-visual` |
 | `gaps-off!` | `()` | `frame` | Disable gaps. | `gaps-off` |
 | `gaps-on!` | `()` | `frame` | Enable gaps. | `gaps-on` |
+| `gmerge-prompt!` | `()` | `group` | Merge a group here. | `non-visual` |
+| `gmove-marked-prompt!` | `()` | `group` | Move marked windows to another group. | `non-visual` |
+| `gnew-dynamic-prompt!` | `()` | `group` | Create and focus a dynamic group. | `non-visual` |
+| `gnewbg-dynamic-prompt!` | `()` | `group` | Create a dynamic group in the background. | `non-visual` |
+| `gnewbg-float-prompt!` | `()` | `group` | Create a floating group in the background. | `non-visual` |
+| `gnewbg-prompt!` | `()` | `group` | Create a group in the background. | `non-visual` |
+| `gselect!` | `()` | `group` | Choose a group. | `non-visual` |
+| `layout-prompt!` | `()` | `frame` | Choose a saved layout. | `non-visual` |
+| `lock-screen!` | `()` | `session` | Lock the session using configured policy. | `non-visual` |
+| `logout!` | `()` | `session` | Log out after confirmation. | `non-visual` |
+| `mark-window-toggle!` | `()` | `window` | Toggle the current window's mark. | `non-visual` |
+| `move-current-window-to-next-group-and-follow!` | `()` | `group` | Move the window to the next group and follow. | `non-visual` |
+| `move-focus!` | `(direction)` | `frame` | Focus a frame in a direction. | `non-visual` |
+| `move-window!` | `(direction)` | `window` | Move the window to a neighboring frame. | `non-visual` |
 | `move-window-to-group!` | `(window group)` | `control` | Move a window to an existing group without following. | `non-visual` |
+| `pull-from-windowlist!` | `()` | `window` | Pull a window chosen from a list. | `non-visual` |
 | `pull-hidden-next!` | `()` | `window` | Pull the next hidden window. | `window-pull` |
+| `pull-hidden-previous!` | `()` | `window` | Pull the previous hidden window. | `non-visual` |
+| `pull-marked!` | `()` | `window` | Pull marked windows into the current frame. | `non-visual` |
+| `pull-window-by-number!` | `(number)` | `window` | Pull a numbered window. | `non-visual` |
 | `reload-configuration!` | `()` | `configuration` | Validate and atomically reload configuration. | `configuration-reload` |
+| `remember!` | `()` | `placement` | Remember placement of the current window. | `non-visual` |
 | `remove-split!` | `()` | `frame` | Remove the current split. | `frame-remove-split` |
+| `restore-desktop-prompt!` | `()` | `persistence` | Restore the desktop from a chosen file. | `non-visual` |
+| `run-prompt!` | `()` | `prompt` | Run a command. | `non-visual` |
+| `save-layout-prompt!` | `()` | `persistence` | Save the current layout under a name. | `non-visual` |
 | `screenshot` | `(path window)` | `control` | Queue a PNG capture. Observe completion with action-status or mindectl wait using the returned request-id. | `non-visual` |
+| `select-floating-window!` | `()` | `window` | Choose a floating window. | `non-visual` |
+| `select-window-by-name!` | `()` | `window` | Choose a window by name. | `non-visual` |
+| `select-window-by-number!` | `(number)` | `window` | Select a numbered window. | `non-visual` |
+| `set-head-mode!` | `(mode)` | `output` | Select per-head or spanning frame trees. | `non-visual` |
 | `set-window-floating!` | `(window enabled)` | `control` | Set floating state; focus the target when changing it. | `non-visual` |
 | `set-window-fullscreen!` | `(window enabled)` | `control` | Set fullscreen state; enabling replaces any fullscreen owner. | `non-visual` |
+| `show-frame-labels!` | `()` | `frame` | Show frame labels briefly. | `non-visual` |
+| `show-windows!` | `()` | `window` | Show the group window list. | `non-visual` |
 | `split-frame!` | `(group head frame direction)` | `control` | Split an explicitly selected manual frame. | `non-visual` |
 | `split-frame-horizontal!` | `()` | `frame` | Split the frame into columns. | `frame-split-horizontal` |
 | `split-frame-vertical!` | `()` | `frame` | Split the frame into rows. | `frame-split-vertical` |
+| `suspend!` | `()` | `session` | Suspend after the session locks. | `non-visual` |
 | `switch-group!` | `(group)` | `control` | Switch to an existing group by its exact name. | `non-visual` |
 | `switch-to-last-group!` | `()` | `group` | Return to the last focused group. | `group-last` |
 | `switch-to-next-group!` | `()` | `group` | Focus the next group. | `group-next` |
 | `switch-to-previous-group!` | `()` | `group` | Focus the previous group. | `group-previous` |
 | `toggle-gaps!` | `()` | `frame` | Toggle gaps. | `gaps-toggle` |
+| `where-is!` | `()` | `help` | Find a binding by its description. | `non-visual` |
+| `windowlist!` | `()` | `window` | Choose a window. | `non-visual` |
+| `windowlist-by-class!` | `()` | `window` | Choose a window by application. | `non-visual` |
 | `windows` | `()` | `control` | List windows across all groups. | `non-visual` |

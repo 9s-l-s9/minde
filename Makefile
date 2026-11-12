@@ -96,7 +96,7 @@ compile-scheme:
 		if [ ! -e "$$go" ] || [ "$$src" -nt "$$go" ]; then \
 			mkdir -p "$$(dirname "$$go")"; \
 			case $$src in \
-				scheme/*/*) warn= ;; \
+				scheme/minde/*) warn= ;; \
 				*) warn=-W0 ;; \
 			esac; \
 			$(GUILE_ENV) guild compile $$warn -L scheme -o "$$go" "$$src" >/dev/null; \

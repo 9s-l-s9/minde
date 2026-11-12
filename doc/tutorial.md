@@ -21,7 +21,8 @@ prefix is `C-t`; a personal Guix Home configuration may replace that with
 
 Inside the nested compositor:
 
-1. Press `C-t Return` to open foot, falling back to xterm.
+1. Press `C-t Return` to open the run prompt, type an installed terminal
+   command such as `foot`, and press Return.
 2. Press `C-t ?` to show contextual help.
 3. Open a second terminal and use `C-t n` / `C-t w p` to cycle windows.
 4. Use `C-t f h` or `C-t f v` to split the current frame.

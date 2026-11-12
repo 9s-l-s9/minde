@@ -41,6 +41,21 @@
 (move-window! 'right)
 (define original (dump-frames))
 
+;; Commands that return modal maps also work when chosen in the palette.
+(for-each
+ (lambda (name)
+   (command-palette!)
+   (string-for-each (lambda (character)
+                      (let ((text (string character)))
+                        (wm-handle-key 0 #f text text))) name)
+   (key "Return")
+   (check "palette arms the returned selection map" (hash-table? %key-state) #t)
+   (check "palette selection shows labels" (pair? %overlays) #t)
+   (key "Escape")
+   (check "palette selection restores the layout on cancellation" (dump-frames) original)
+   (check "palette selection clears overlays" %overlays '()))
+ '("fselect!" "expose-mode!"))
+
 (for-each
  (lambda (exit)
    (enter-expose)

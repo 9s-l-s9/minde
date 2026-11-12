@@ -70,8 +70,11 @@ xdotool key 0; sleep 0.3
 
 before=$(nested_window_count)
 xdotool key Print; sleep 0.2; xdotool key Return
+sleep 0.3
+xdotool type --clearmodifiers 'foot --app-id=minde-portable-prompt sh -c "sleep 10"'
+xdotool key Return
 nested_wait_for_window_after "$before" 12 || {
-    echo "error: portable Print Return did not launch a terminal" >&2
+    echo "error: portable run prompt did not launch the requested command" >&2
     exit 1
 }
 
@@ -85,4 +88,4 @@ for screenshot in help windows window-list frames; do
         exit 1
     }
 done
-echo "portable keymap e2e: lowercase submaps, help, numbering, and terminal passed"
+echo "portable keymap e2e: lowercase submaps, help, numbering, and run prompt passed"

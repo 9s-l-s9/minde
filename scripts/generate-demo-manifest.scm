@@ -51,8 +51,9 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 (register-builtin-command-schemas!)
 (define catalog-ids
   (delete-duplicates
-   (map (lambda (name) (command-demo-id (command-ref name)))
-        (command-names))))
+   (filter (lambda (id) (not (eq? id 'non-visual)))
+           (map (lambda (name) (command-demo-id (command-ref name)))
+                (command-names)))))
 (unless (and (lset= eq? ids catalog-ids)
              (= (length ids) (length catalog-ids)))
   (error "scenario IDs and command demo IDs differ" ids catalog-ids))

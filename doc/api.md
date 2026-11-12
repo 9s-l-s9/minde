@@ -80,7 +80,9 @@ the same definitions.
 
 ## Declarative configuration
 
-`scheme/default-config.scm` is a single data expression, not executable code:
+[`scheme/default-config.scm`](../scheme/default-config.scm) contains the full
+portable map as a single data expression. A minimal personal override file
+inherits those bindings:
 
 ```scheme
 (minde-config

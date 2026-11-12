@@ -56,7 +56,7 @@ display manager:
     guix shell -m manifest.scm
     scripts/run-nested
 
-The prefix key is C-t: `C-t Return` opens a terminal, `C-t ?` shows
+The prefix key is C-t: `C-t Return` opens the run prompt, `C-t ?` shows
 contextual help.  See doc/tutorial.md for a first session and
 doc/generated/keybindings.md for the complete key map.
 

@@ -220,7 +220,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                             (go (string-append ccache "/"
                                                 (string-drop-right relpath 4)
                                                 ".go"))
-                            (warn (if (string-index relpath #\/) '() '("-W0"))))
+                            (warn (if (string-prefix? "minde/" relpath) '() '("-W0"))))
                        (mkdir-p (dirname go))
                        (apply invoke "guild" "compile" "-L" scheme-src
                               "-o" go (append warn (list src))))))

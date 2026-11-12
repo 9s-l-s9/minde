@@ -104,7 +104,45 @@
   (check "prefix key" (configuration-prefix-key config) "t")
   (check "explicit default emergency exit" (configuration-emergency-exit config)
          '((ctrl alt) "BackSpace"))
-  (check "binding count" (length (configuration-bindings config)) 0))
+  (check "bundled configuration declares its complete prefix map"
+         (length (configuration-bindings config)) 27)
+  (check "bundled configuration has no external global shortcuts"
+         (configuration-global-bindings config) '()))
+
+(let* ((datum '(minde-config (version 1) (prefix (ctrl) "t")
+                (global-bindings ("s-F8" personal-noop!))
+                (bindings
+                 ("n" #f)
+                 ("M-C-g" (call move-focus! ((direction . left))) "go left")
+                 ("w" (keymap (description "custom") (enter personal-noop!)
+                         (bindings ("Page_Up" personal-noop!)))))))
+       (normalized (validate-configuration datum)))
+  (check "nested data normalization is idempotent" (validate-configuration normalized) normalized)
+  (check "nested key aliases normalize"
+         (cadr (assq 'bindings (cdr (cadr (assoc "w" (configuration-bindings normalized))))))
+         '("Prior" personal-noop!))
+  (check "global keys survive validation" (configuration-global-bindings normalized)
+         '(("s-F8" personal-noop!))))
+(for-each
+ (lambda (action)
+   (check (format #f "invalid declarative action ~s" action)
+          (rejected? `(minde-config (version 1) (prefix (ctrl) "t") (bindings ("x" ,action)))) #t))
+ '((call move-focus! ((direction . sideways)))
+   (call move-focus! ((direction . "left")))
+   (call move-focus! ())
+   (call focus-frame-by-index! ((index . -1)))
+   (call focus-frame-by-index! ((index . 1.5)))
+   (call personal-noop! ())
+   (call move-focus! ((direction . left) (direction . up)))
+   (call move-focus! ((extra . left)))
+   (keymap (description "bad") (enter missing-command!) (bindings))
+   (keymap (description "bad") (bindings ("Page_Up" windows) ("Prior" windows)))
+   (keymap (description "bad") (bindings) (bindings))
+   (keymap (description "") (bindings))
+   (keymap (description "bad") (unknown #t) (bindings))))
+(check "global aliases cannot collide"
+       (rejected? '(minde-config (version 1) (prefix (ctrl) "t") (bindings)
+                     (global-bindings ("M-C-g" windows) ("C-M-g" windows)))) #t)
 (check "unknown command rejected"
        (catch #t
          (lambda ()

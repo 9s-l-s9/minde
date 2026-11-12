@@ -3,6 +3,10 @@
 The authoritative repository-default table is generated from the actual
 loaded keymaps in [`generated/keybindings.md`](generated/keybindings.md). Run
 `make docs` after changing a binding; `make check-docs` rejects stale output.
+All default prefix and global bindings are data in
+[`scheme/default-config.scm`](../scheme/default-config.scm), validated and
+reloaded together. See [configuration](configuration.md) for overrides,
+typed command arguments, nested maps and unbinding.
 
 ## Modal convention
 
@@ -29,15 +33,15 @@ the same configuration.
 
 ## Direct keys
 
-Brightness and audio keys spawn `brightnessctl` and `wpctl` commands when
-those programs are installed. **Ctrl+Alt+BackSpace** is the native emergency
+The default global map is empty. Add personal brightness, audio and launcher
+commands in your configuration. **Ctrl+Alt+BackSpace** is the native emergency
 exit: it immediately ends the entire session without asking applications to
 save. It works through broken Scheme, shortcut inhibitors and session locks.
 Use `C-t s q` for a normal, confirmed logout. The declarative
 `emergency-exit` setting can rebind or disable the emergency chord; Super+Q
 has no repository-default action.
-These direct bindings are included in the generated table instead of being
-maintained in a second list.
+The native chord is included in the generated table. `C-t Return` and `C-t r`
+open the run prompt with PATH completion; no terminal program is assumed.
 
 ## Help and discoverability
 
@@ -53,6 +57,6 @@ above 36 choices. An unbound key, Escape, Return, or `C-g` cancels selection
 and clears its overlays; expose also restores the saved layout. Group/head
 changes and session locking cancel these modes automatically.
 
-The historical full keymap remains available through
-`MINDE_FULL_KEYMAP=1` for established configurations. It is not the release
-default and is not a compatibility promise before 1.0.
+The historical full keymap lives in `scheme/keymaps/stumpwm.scm` and loads only
+when selected through `MINDE_FULL_KEYMAP=1` or explicitly by a personal init.
+It is not the release default or a compatibility promise before 1.0.
