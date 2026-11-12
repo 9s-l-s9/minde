@@ -19,6 +19,42 @@
    (check (format #f "registered zero-argument command ~a" command)
           (validate-configuration (candidate command)) (candidate command)))
  '(focus-next-window! desktop-snapshot windows personal-noop!))
+(define (with-keys keys)
+  `(minde-config (version 1) (prefix (ctrl) "t")
+                 (bindings ,@(map (lambda (key) (list key 'personal-noop!)) keys))))
+(define (rejected? datum)
+  (catch #t (lambda () (validate-configuration datum) #f) (lambda _ #t)))
+(for-each
+ (lambda (pair)
+   (let* ((datum (with-keys (list (car pair))))
+          (normalized (validate-configuration datum)))
+     (check (format #f "canonical binding ~s" (car pair))
+            (configuration-bindings normalized) (list (list (cdr pair) 'personal-noop!)))
+     (check "validation leaves input unchanged" (configuration-bindings datum)
+            (list (list (car pair) 'personal-noop!)))
+     (check "normalization is idempotent" (validate-configuration normalized) normalized)))
+ '(("M-C-g" . "C-M-g") ("s-S-M-C-g" . "C-M-S-s-g") ("C-C-g" . "C-g")
+   ("Page_Up" . "Prior") ("M-C-Page_Up" . "C-M-Prior")
+   ("U0061" . "a") ("A" . "A") ("XF86AudioPlay" . "XF86AudioPlay")
+   ("KP_Enter" . "KP_Enter") ("minus" . "minus")))
+(for-each
+ (lambda (key)
+   (check (format #f "invalid binding ~s" key) (rejected? (with-keys (list key))) #t)
+   (check (format #f "invalid prefix ~s" key)
+          (rejected? `(minde-config (version 1) (prefix () ,key) (bindings))) #t))
+ (append '("Retrun" "Space" "esc" "Pritn" "c-x" "Ctrl-x" "C-" "C--g"
+           "" " " "Return " "NoSymbol")
+         (list (string-append "Return" (string #\nul) "ignored"))))
+(for-each
+ (lambda (keys)
+   (check (format #f "canonical duplicates ~s" keys) (rejected? (with-keys keys)) #t))
+ '(("C-M-g" "M-C-g") ("C-g" "C-C-g") ("Prior" "Page_Up")
+   ("M-C-Prior" "C-M-Page_Up") ("a" "U0061")))
+(check "modifier and keysym case remain distinct"
+       (length (configuration-bindings (validate-configuration (with-keys '("S-g" "s-g" "A" "a"))))) 4)
+(check "prefix aliases normalize without reordering fields"
+       (validate-configuration '(minde-config (bindings) (prefix (control) "Page_Up") (version 1)))
+       '(minde-config (bindings) (prefix (control) "Prior") (version 1)))
 (check "argument-requiring command rejected during validation"
        (catch #t
          (lambda () (validate-configuration (candidate 'focus-window!)) #f)

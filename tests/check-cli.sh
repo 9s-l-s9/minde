@@ -52,4 +52,31 @@ if "$binary" --check-config "$config_dir/arguments.scm" >"$config_dir/error" 2>&
 fi
 grep -q 'key binding command requires arguments' "$config_dir/error"
 
+for key in Retrun Space esc c-x Ctrl-x C- NoSymbol; do
+    printf '(minde-config (version 1) (prefix () "Print") (bindings ("%s" windows)))\n' "$key" \
+        >"$config_dir/invalid-key.scm"
+    if "$binary" --check-config "$config_dir/invalid-key.scm" >"$config_dir/error" 2>&1; then
+        echo "CLI contract: accepted invalid binding key: $key" >&2
+        exit 1
+    fi
+    grep -Eq 'XKB key name|unknown key modifier' "$config_dir/error"
+done
+cat >"$config_dir/duplicate.scm" <<'EOF'
+(minde-config (version 1) (prefix (ctrl) "t")
+ (bindings ("M-C-Page_Up" windows) ("C-M-Prior" desktop-snapshot)))
+EOF
+if "$binary" --check-config "$config_dir/duplicate.scm" >"$config_dir/error" 2>&1; then
+    echo "CLI contract: accepted duplicate canonical bindings" >&2
+    exit 1
+fi
+grep -q 'duplicate binding key' "$config_dir/error"
+cat >"$config_dir/prefix.scm" <<'EOF'
+(minde-config (version 1) (prefix () "Pritn") (bindings))
+EOF
+if "$binary" --check-config "$config_dir/prefix.scm" >"$config_dir/error" 2>&1; then
+    echo "CLI contract: accepted invalid prefix key" >&2
+    exit 1
+fi
+grep -q 'unknown XKB key name' "$config_dir/error"
+
 echo "CLI contract: ok ($version)"

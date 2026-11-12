@@ -16,6 +16,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Configuration validation checks case-sensitive XKB names in bindings and
+  prefix keys, normalizes modifier order and keysym aliases, and rejects
+  duplicates after normalization. Offline checks and live reload use the
+  same rules; invalid keys leave the active configuration unchanged (#148).
 - Offline configuration checks recognize bundled control commands and reject
   bindings that require arguments. `mindectl check-config FILE --live` checks
   personal commands against the running session without applying changes;

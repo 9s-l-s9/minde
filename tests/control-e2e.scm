@@ -1,6 +1,6 @@
 ;;; SPDX-License-Identifier: GPL-3.0-or-later
 ;;; Exercise only the documented client interface in the private compositor.
-(use-modules (ice-9 popen) (ice-9 textual-ports) (ice-9 binary-ports)
+(use-modules (ice-9 popen) (ice-9 textual-ports) (ice-9 binary-ports) (ice-9 rdelim)
              (rnrs bytevectors) (srfi srfi-1) (json) (minde agent))
 (define out (cadr (command-line)))
 (define measurements '())
@@ -74,6 +74,50 @@
       (error \"valid personal configuration did not reload\"))
     (if config-test-original (setenv \"MINDE_CONFIG\" config-test-original)
         (unsetenv \"MINDE_CONFIG\"))
+    (unless (reload-configuration!) (error \"original configuration did not reload\")) #t)")))
+;; Normalize both a prefix alias and reversed modifiers, then drive the
+;; resulting binding through real XKB events in the private Xvfb session.
+(let ((file (string-append out "/key-config.scm")))
+  (define (save prefix keys)
+    (call-with-output-file file
+      (lambda (p)
+        (write `(minde-config (version 1) (prefix () ,prefix)
+                             (bindings ,@(map (lambda (key) (list key 'config-key-test!)) keys))) p))))
+  (define (press expected)
+    (check (zero? (system* "timeout" "5" "xdotool" "key" "--clearmodifiers" "Page_Up" "ctrl+alt+g"))
+           "could not send private-session key events")
+    (let loop ((remaining 20))
+      (unless (= (cli '("eval" "config-key-hits")) expected)
+        (check (positive? remaining) "normalized binding did not fire" expected)
+        (usleep 100000) (loop (- remaining 1)))))
+  (save "Page_Up" '("M-C-g"))
+  (cli (list "eval" (format #f "(begin
+    (define config-key-hits 0)
+    (register-command! 'config-key-test! (lambda () (set! config-key-hits (+ config-key-hits 1)))
+      #:category 'test #:summary \"Canonical key test.\")
+    (setenv \"MINDE_CONFIG\" ~s)
+    (unless (reload-configuration!) (error \"canonical key reload failed\"))
+    (unless (and (string=? %prefix-key \"Prior\") (hash-ref %prefix-bindings \"C-M-g\")
+                 (not (hash-ref %prefix-bindings \"M-C-g\")))
+      (error \"configuration keys were not normalized\"))
+    (define config-key-bindings %prefix-bindings) #t)" file)))
+  (let* ((pipe (open-pipe* OPEN_READ "timeout" "5" "xdotool" "search" "--sync" "--name" "Smithay"))
+         (window (read-line pipe)))
+    (check (and (zero? (close-pipe pipe)) (string? window)) "private compositor window missing")
+    (check (zero? (system* "timeout" "5" "xdotool" "windowfocus" window)) "could not focus private compositor"))
+  (press 1)
+  (for-each
+   (lambda (candidate)
+     (save (car candidate) (cdr candidate))
+     (cli (list "check-config" file "--live") #:success? #f)
+     (cli '("eval" "(begin
+       (when (reload-configuration!) (error \"invalid key reload succeeded\"))
+       (unless (and (eq? config-key-bindings %prefix-bindings) (string=? %prefix-key \"Prior\"))
+         (error \"invalid key changed active configuration\")) #t)")))
+   '(("Pritn" "g") ("Print" "Space") ("Print" "M-C-Prior" "C-M-Page_Up")))
+  (press 2)
+  (cli '("eval" "(begin
+    (if config-test-original (setenv \"MINDE_CONFIG\" config-test-original) (unsetenv \"MINDE_CONFIG\"))
     (unless (reload-configuration!) (error \"original configuration did not reload\")) #t)")))
 (let ((names (map (lambda (a) (ref a "name")) (vector->list (ref (cli '("capabilities")) "actions")))))
   (for-each (lambda (operation)

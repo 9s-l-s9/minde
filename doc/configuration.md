@@ -51,7 +51,13 @@ The configuration is one data expression, not evaluated code:
 ```
 
 Binding targets must be registered commands with no arguments. Unknown fields,
-versions, modifiers, commands, and duplicate keys are errors.
+versions, modifiers, commands, key names, and duplicate keys are errors.
+Keys use case-sensitive XKB names such as `Return`, `space`, `Escape`, and
+`XF86AudioPlay`. Binding modifiers are `C-` (Control), `M-` (Alt), `S-` (Shift),
+and `s-` (Super). Their order is normalized: `M-C-g` becomes `C-M-g`.
+XKB aliases are normalized too: `Page_Up` becomes `Prior`. Bindings that become
+identical after normalization are duplicates. Prefix keys use the same XKB
+names, with modifiers supplied separately in the prefix's list.
 
 ```sh
 scripts/mindectl check-config path/to/config.scm
@@ -66,7 +72,8 @@ validate against commands registered in the running session, use:
 scripts/mindectl check-config path/to/config.scm --live
 ```
 
-Both modes read the file as data and require commands with no arguments.
+Both modes read the file as data, validate key names with libxkbcommon, and
+require commands with no arguments.
 Live checking sends the data to the session for validation; it does not apply
 the configuration or invoke the bound commands. It uses the normal IPC
 deadline, adjustable with `--timeout-ms`.

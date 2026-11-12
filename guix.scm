@@ -104,6 +104,14 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
         ;; cargo's .cargo-checksum.json for those crates.
         (delete 'patch-source-shebangs)
         (delete 'patch-generated-file-shebangs)
+        (add-after 'unpack 'pin-keysym-library
+          (lambda _
+            ;; Standalone mindectl checks also need XKB, without relying on
+            ;; a development shell or the compositor's linked libraries.
+            (substitute* "scheme/minde/keysyms.scm"
+              (("\"libxkbcommon\"")
+               (string-append "\"" #$(this-package-input "libxkbcommon")
+                              "/lib/libxkbcommon.so.0\"")))))
         (add-after 'unpack 'check-vendor
           (lambda _
             (unless (file-exists? "vendor")

@@ -89,8 +89,9 @@ the same definitions.
  (bindings))
 ```
 
-The loader rejects unknown fields, versions, modifiers and commands, as well
-as duplicate bindings. It constructs a complete candidate binding table and
+The loader rejects unknown fields, versions, modifiers, XKB key names and
+commands, as well as duplicate bindings after normalizing modifier order and
+keysym aliases. It constructs a complete candidate binding table and
 publishes it only after validation succeeds. A failed live reload therefore
 keeps the active prefix and bindings unchanged.
 

@@ -135,6 +135,19 @@
            (test-equal "offline error code" "invalid-configuration"
              (ref (ref (json result) "error") "code"))))
        '(personal-noop! focus-window!))
+      (for-each
+       (lambda (keys)
+         (save `(minde-config (version 1) (prefix (ctrl) "t")
+                              (bindings ,@(map (lambda (key) (list key 'windows)) keys))))
+         (test-equal "CLI rejects invalid or duplicate canonical keys" 1
+           (vector-ref (run-client (list "check-config" file) '()) 0)))
+       '(("Space") ("M-C-g" "C-M-g") ("Prior" "Page_Up")))
+      (save '(minde-config (version 1) (prefix () "Page_Up") (bindings ("M-C-g" windows))))
+      (test-equal "CLI accepts aliases and reordered modifiers" 0
+        (vector-ref (run-client (list "check-config" file) '()) 0))
+      (save '(minde-config (version 1) (prefix () "Pritn") (bindings)))
+      (test-equal "CLI rejects unknown prefix keys" 1
+        (vector-ref (run-client (list "check-config" file) '()) 0))
       (let ((result (run-client (list "check-config" file "--live" "--scheme")
                                '("(error misc-error () \"requires arguments\" \"\")"))))
         (test-equal "live validation failure exit" 1 (vector-ref result 0)))
