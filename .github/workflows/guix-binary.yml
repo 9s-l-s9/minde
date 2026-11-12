@@ -31,29 +31,32 @@ jobs:
       - name: Exclude compromised certificate chains
         shell: bash
         run: |
-          python3 - <<'PY'
-          import hashlib, os, pathlib, re, ssl
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'minde-trust'
-          root.mkdir(mode=0o700)
-          (root / 'empty').mkdir()
-          blocked = {
-              # emSign ECC Root CA - G3, plus AAA Certificate Services
-              # (cross-signed the same compromised eMudhra intermediates).
-              '86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b',
-              'd7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4',
-          }
-          source = pathlib.Path('/etc/ssl/certs/ca-certificates.crt').read_text()
-          certs = re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', source, re.S)
-          certs = [c for c in certs if hashlib.sha256(ssl.PEM_cert_to_DER_cert(c)).hexdigest() not in blocked]
-          assert len(certs) > 50, 'unexpected/empty CA bundle'
-          bundle = root / 'ca-certificates.crt'
-          bundle.write_text('\n'.join(certs) + '\n')
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              for key in ('MINDE_CA_BUNDLE', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE', 'GIT_SSL_CAINFO', 'CARGO_HTTP_CAINFO', 'REQUESTS_CA_BUNDLE'):
-                  env.write(f'{key}={bundle}\n')
-              env.write(f'SSL_CERT_DIR={root / "empty"}\n')
-          print(f'TLS trust: {len(certs)} certificates; compromised trust paths excluded')
-          PY
+          set -euo pipefail
+          root="$RUNNER_TEMP/minde-trust"
+          mkdir -m 700 -p "$root/empty" "$root/certs"
+          awk -v root="$root/certs" '
+            /-----BEGIN CERTIFICATE-----/ { n++; active=1 }
+            active { print > (root "/cert-" n ".pem") }
+            /-----END CERTIFICATE-----/ { close(root "/cert-" n ".pem"); active=0 }
+          ' /etc/ssl/certs/ca-certificates.crt
+          bundle="$root/ca-certificates.crt"
+          : > "$bundle"
+          count=0
+          for cert in "$root"/certs/*.pem; do
+            digest=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d ' ' -f 1)
+            # emSign ECC Root CA - G3 and AAA Certificate Services.
+            case "$digest" in
+              86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b|d7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4) continue ;;
+            esac
+            cat "$cert" >> "$bundle"
+            count=$((count + 1))
+          done
+          [ "$count" -gt 50 ] || { echo 'unexpected/empty CA bundle' >&2; exit 1; }
+          for key in MINDE_CA_BUNDLE SSL_CERT_FILE CURL_CA_BUNDLE GIT_SSL_CAINFO CARGO_HTTP_CAINFO; do
+            printf '%s=%s\n' "$key" "$bundle" >> "$GITHUB_ENV"
+          done
+          printf 'SSL_CERT_DIR=%s/empty\n' "$root" >> "$GITHUB_ENV"
+          echo "TLS trust: $count certificates; compromised trust paths excluded"
 
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
