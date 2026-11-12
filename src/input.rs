@@ -19,6 +19,29 @@ use smithay::{
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The first physical press decides whether its matching release reaches a
+/// client. Keep this across focus, prompt, inhibitor and lock transitions.
+#[derive(Default)]
+pub(crate) struct KeyboardPresses(std::collections::HashMap<u32, bool>);
+
+impl KeyboardPresses {
+    fn held(&self, code: u32) -> Option<bool> {
+        self.0.get(&code).copied()
+    }
+
+    fn press(&mut self, code: u32, forwarded: bool) {
+        self.0.entry(code).or_insert(forwarded);
+    }
+
+    fn release(&mut self, code: u32) -> bool {
+        self.0.remove(&code).unwrap_or(false)
+    }
+
+    fn take(&mut self) -> std::collections::hash_map::IntoIter<u32, bool> {
+        std::mem::take(&mut self.0).into_iter()
+    }
+}
+
 /// BTN_LEFT/BTN_RIGHT in the libinput/evdev button namespace. Emulated as the tool's
 /// tip-down/up "click" for tablet-unaware clients.
 const BTN_LEFT: u32 = 0x110;
@@ -236,16 +259,28 @@ impl MindeState {
                 if self.locked {
                     self.enforce_lock_focus();
                 }
-                keyboard.input::<(), _>(
+                let intercepted = keyboard.input::<(), _>(
                     self,
                     key_code,
                     key_state,
                     serial,
                     time,
                     |data, mods, keysym_handle| {
-                        // Only intercept on key press; let releases and
-                        // repeats always reach the client so held keys don't
-                        // get stuck if a binding consumed the press.
+                        if key_state == KeyState::Released {
+                            if data.key_repeat.as_ref().is_some_and(|(c, _)| *c == key_code.raw()) {
+                                data.cancel_key_repeat();
+                            }
+                            return if data.keyboard_presses.release(key_code.raw()) {
+                                FilterResult::Forward
+                            } else {
+                                FilterResult::Intercept(())
+                            };
+                        }
+                        // A repeated press must not change ownership if policy,
+                        // keyboard focus or an inhibitor changed while held.
+                        if let Some(forwarded) = data.keyboard_presses.held(key_code.raw()) {
+                            return if forwarded { FilterResult::Forward } else { FilterResult::Intercept(()) };
+                        }
                         if key_state == KeyState::Pressed {
                             // Any new press ends the previous compositor-side
                             // repeat (prompts/armed keymaps; re-armed below
@@ -362,17 +397,14 @@ impl MindeState {
                                 }
                                 return FilterResult::Intercept(());
                             }
-                        } else if data
-                            .key_repeat
-                            .as_ref()
-                            .is_some_and(|(c, _)| *c == key_code.raw())
-                        {
-                            // The repeated key was released: stop the timer.
-                            data.cancel_key_repeat();
                         }
                         FilterResult::Forward
                     },
                 );
+                if key_state == KeyState::Pressed {
+                    self.keyboard_presses
+                        .press(key_code.raw(), intercepted.is_none());
+                }
                 // XKB group toggles (grp:* options) change the layout
                 // inside xkbcommon; notice them for (wm-keyboard-layouts)
                 // and handle-keyboard-layout-changed!.
@@ -535,6 +567,34 @@ impl MindeState {
                 tracing::info!(name = device.name(), "input device removed");
             }
             _ => {}
+        }
+    }
+
+    /// Balance physical keys before suspending libinput, which may never send
+    /// their releases. A later press starts a fresh policy decision. Locking
+    /// does not suspend input, so it retains the ledger until real releases.
+    pub(crate) fn reset_keyboard_input(&mut self) {
+        self.cancel_key_repeat();
+        let held = self.keyboard_presses.take();
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let time = self.start_time.elapsed().as_millis() as u32;
+        for (code, forwarded) in held {
+            keyboard.input::<(), _>(
+                self,
+                code.into(),
+                KeyState::Released,
+                SERIAL_COUNTER.next_serial(),
+                time,
+                |_, _, _| {
+                    if forwarded {
+                        FilterResult::Forward
+                    } else {
+                        FilterResult::Intercept(())
+                    }
+                },
+            );
         }
     }
 
@@ -1084,11 +1144,44 @@ fn map_absolute_to_global(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsolutePointerMotion, AbsolutePointerSource, DEFAULT_EMERGENCY_EXIT, ToolRoute,
-        emergency_exit_binding, emergency_exit_matches, map_absolute_to_global, modifier_bitmask,
-        tool_route, xkb,
+        AbsolutePointerMotion, AbsolutePointerSource, DEFAULT_EMERGENCY_EXIT, KeyboardPresses,
+        ToolRoute, emergency_exit_binding, emergency_exit_matches, map_absolute_to_global,
+        modifier_bitmask, tool_route, xkb,
     };
     use smithay::utils::Point;
+
+    #[test]
+    fn physical_releases_keep_the_first_press_decision() {
+        let mut keys = KeyboardPresses::default();
+        keys.press(30, true);
+        keys.press(42, false);
+        // Policy can change while a key is held, including repeated presses.
+        keys.press(30, false);
+        keys.press(42, true);
+        assert!(keys.release(30));
+        assert!(!keys.release(42));
+        assert!(!keys.release(30));
+        assert!(!keys.release(99));
+        keys.press(42, true);
+        assert!(keys.release(42));
+    }
+
+    #[test]
+    fn input_reset_balances_old_keys_and_starts_new_decisions() {
+        let mut keys = KeyboardPresses::default();
+        keys.press(30, true);
+        keys.press(42, false);
+        let mut releases: Vec<_> = keys.take().collect();
+        releases.sort_unstable();
+        assert_eq!(releases, [(30, true), (42, false)]);
+        assert_eq!(keys.held(30), None);
+        assert_eq!(keys.held(42), None);
+        assert!(!keys.release(30));
+        keys.press(30, false);
+        assert!(!keys.release(30));
+        keys.press(42, true);
+        assert!(keys.release(42));
+    }
 
     #[test]
     fn emergency_exit_requires_the_configured_chord() {

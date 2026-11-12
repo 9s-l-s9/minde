@@ -520,8 +520,9 @@ pub fn init_udev(
                 // its release here (libinput is suspended), so an armed
                 // compositor-side repeat would keep firing its Scheme
                 // handler every 40 ms into the paused session -- and keep
-                // going after resume. Drop it with the session.
-                state.cancel_key_repeat();
+                // going after resume. Balance forwarded physical keys and
+                // discard consumed ones together with the repeat timer.
+                state.reset_keyboard_input();
                 state.invalidate_lock_presentation();
                 let handle = state.handle.clone();
                 if let Some(udev) = state.udev_data.as_mut() {

@@ -3,6 +3,7 @@
 mod capture;
 mod emergency;
 mod input;
+mod keyboard;
 mod lock;
 mod outputs;
 mod render;
@@ -20,6 +21,7 @@ fn main() {
         Some("emergency-exit") => lock::emergency_exit(),
         Some("emergency-config") => emergency::run(args.get(1).expect("locked or inhibited")),
         Some("input-lifecycle") => input::run(),
+        Some("keyboard-filter") => keyboard::run(),
         Some("capture-clock") => capture::clock(),
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),

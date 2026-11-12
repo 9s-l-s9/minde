@@ -60,6 +60,9 @@
 
 (check-true "prompt active" (input-active?))
 (check "prompt rendered" (car %messages) "run: |")
+(check "prompt forwards Shift for client modifier state"
+       (wm-handle-key 1 #f "Shift_L" "") #f)
+(check-true "modifier leaves prompt active" (input-active?))
 
 (key "f" "f") (key "o" "o") (key "x" "x")
 (check "typed text rendered with cursor" (car %messages) "run: fox|")
@@ -151,6 +154,12 @@
 ;; A paste arriving after the prompt closed is a silent no-op.
 (handle-paste! "late")
 (check-true "late paste ignored" (not (input-active?)))
+
+(select-from-menu '("one" "two") (lambda (_) #t))
+(check "menu forwards Control for client modifier state"
+       (wm-handle-key 4 #f "Control_L" "") #f)
+(check-true "modifier leaves menu active" (menu-active?))
+(key "Escape" "")
 
 ;; A prefix keysym in a child map is ordinary input. Only a binding found
 ;; in the top-level prefix map may retain the repeated-prefix behavior.

@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Compositor-consumed keys also consume their matching releases, including
+  across prompt, focus, shortcut-inhibitor and lock transitions. VT suspension
+  releases forwarded physical keys and cancels compositor repeat (#77).
+- Prompts and menus forward pure modifiers, so applications retain the correct
+  held-Shift state after submission. Menus also accept keypad Enter (#79, #113).
 - Development builds refresh the compiled revision after Git changes and
   tracked-file edits, including linked worktrees. Version detection leaves
   the Git index untouched and preserves incremental builds (#36).

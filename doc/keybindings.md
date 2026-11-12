@@ -43,6 +43,13 @@ has no repository-default action.
 The native chord is included in the generated table. `C-t Return` and `C-t r`
 open the run prompt with PATH completion; no terminal program is assumed.
 
+Prompts and menus accept both Return and keypad Enter. They consume text keys
+and their matching releases while forwarding modifier keys such as Shift and
+Control, so applications keep their modifier state when the prompt closes.
+Shortcut and prefix releases also remain consumed if focus changes, an
+application changes shortcut inhibition, or the session locks while a key is
+held. Keys already forwarded to applications keep their matching releases.
+
 ## Help and discoverability
 
 Binding descriptions are stored beside live binding objects. Nested maps are

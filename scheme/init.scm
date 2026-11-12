@@ -372,15 +372,16 @@ focused client), #f otherwise."
       (set! %describe-next-key #f)
       (report mods-bitmask keysym-name))
     #t)
-   ;; A native input prompt is open: it owns the keyboard.
+   ;; Prompts and menus consume text, but modifiers must reach Smithay's
+   ;; forwarding path so clients and input-method grabs receive their state.
    ((input-active?)
     (if (modifier-keysym? keysym-name)
-        #t
+        #f
         (input-handle-key! mods-bitmask keysym-name utf8)))
    ;; A menu is open (select-from-menu): same deal.
    ((menu-active?)
     (if (modifier-keysym? keysym-name)
-        #t
+        #f
         (menu-handle-key! mods-bitmask keysym-name utf8)))
    (else (dispatch-key mods-bitmask keysym-name))))
 

@@ -119,6 +119,8 @@ impl SessionLockHandler for MindeState {
         self.absolute_pointer_motion.reset();
         crate::guile::set_session_locked(true);
 
+        // Input keeps arriving while locked. Retain physical press decisions
+        // so a release cannot leak from a consumed desktop shortcut to the locker.
         self.cancel_key_repeat();
         self.enforce_lock_focus();
         self.set_text_input_focus(None);

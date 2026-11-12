@@ -69,6 +69,12 @@
 (check "Return selects the marked value" %selected 'c)
 (check-false "menu closed after select" (menu-active?))
 
+(open-menu)
+(ctrl "n")
+(key "KP_Enter" "")
+(check "keypad Enter selects the marked value" %selected 'b)
+(check-false "keypad Enter closes the menu" (menu-active?))
+
 ;; Digits select directly.
 (open-menu)
 (key "1" "1")

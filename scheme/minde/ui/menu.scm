@@ -204,7 +204,7 @@ menu owns the keyboard)."
     (cond
      ((or (equal? key "C-g") (string=? keysym-name "Escape"))
       (menu-abort!))
-     ((string=? keysym-name "Return") (select-current!))
+     ((member keysym-name '("Return" "KP_Enter")) (select-current!))
      ((or (equal? key "C-n") (string=? keysym-name "Down")) (move-selection! 1))
      ((or (equal? key "C-p") (string=? keysym-name "Up")) (move-selection! -1))
      ((and (not (menu-filter? m)) (equal? key "j")) (move-selection! 1))

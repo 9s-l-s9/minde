@@ -45,7 +45,7 @@ window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
 timeout 5 xdotool windowfocus "$window"
 export MINDE_SESSION_LOCK_TEST_WINDOW="$window"
 
-for scenario in session-lock input-lifecycle; do
+for scenario in session-lock input-lifecycle keyboard-filter; do
     if ! timeout 75 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1; then
         cat "$OUT/$scenario.log" >&2
         echo "error: $scenario regression failed; inspect $OUT" >&2

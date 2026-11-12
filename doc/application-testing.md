@@ -189,7 +189,11 @@ are retained in `/tmp/minde-soak/results.json`.
 Java, Wine, games, touch/tablet, IME, drag-and-drop and multi-GPU retain
 manual/optional application coverage. Session-lock ownership and input
 isolation are exercised by `tests/session-lock-e2e.sh` using
-`ext-session-lock-v1`. The fullscreen/pointer gate also unmaps X11 windows
+`ext-session-lock-v1`. Its keyboard filter scenario checks press/release pairs
+through prompts, menus, focus changes, shortcut inhibition and locking, plus
+held modifiers, keypad Enter and compositor repeat. VT suspension balances held
+physical keys and cancels repeat; actual VT switching still needs a hardware
+session. The fullscreen/pointer gate also unmaps X11 windows
 during move/resize grabs and terminates only its private Xwayland child.
 It verifies window and menu cleanup, foreign handles, failed runtime status,
 child `DISPLAY`, and continued native input. Automatic Xwayland restart

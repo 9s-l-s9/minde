@@ -295,6 +295,7 @@ pub struct MindeState {
     /// the held raw keycode plus its calloop timer's token.
     pub key_repeat_enabled: bool,
     pub key_repeat: Option<(u32, smithay::reexports::calloop::RegistrationToken)>,
+    pub(crate) keyboard_presses: crate::input::KeyboardPresses,
 
     /// True while `handle-keyboard-layout-changed!` is running. A hook
     /// that itself calls `set-keyboard-layout!` re-enters
@@ -727,6 +728,7 @@ impl MindeState {
             reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
             key_repeat: None,
+            keyboard_presses: Default::default(),
             in_layout_changed_hook: false,
             synthetic_actions: VecDeque::new(),
             synthetic_timer: None,
