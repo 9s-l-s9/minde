@@ -259,6 +259,9 @@ struct HeadEntry {
     /// Desired adaptive-sync state; re-applied whenever the CRTC is
     /// (re)initialised so it survives disable/enable cycles.
     vrr: bool,
+    /// Reapply gamma after the first completed frame of a modeset/resume.
+    /// Waiting until then avoids a driver resetting the LUT after we set it.
+    gamma_reapply: bool,
 }
 
 impl HeadEntry {
@@ -303,6 +306,32 @@ struct DeviceData {
     registration_token: RegistrationToken,
     drm_scanner: DrmScanner,
     heads: HashMap<crtc::Handle, HeadEntry>,
+}
+
+impl DeviceData {
+    /// Smithay's bandwidth fallback performs blocking commits on other
+    /// heads, without vblank events. Replay those heads here, including
+    /// after a partial failure; heads awaiting our own flip stay deferred.
+    fn reapply_gamma_after_fallback(
+        &self,
+        gamma: &mut crate::handlers::gamma_control::GammaControls,
+        except: Option<crtc::Handle>,
+    ) {
+        for (crtc, entry) in &self.heads {
+            if Some(*crtc) != except
+                && entry.enabled()
+                && entry.power == PowerState::On
+                && !entry.gamma_reapply
+                && entry.surface.as_ref().is_some_and(|surface| {
+                    !surface
+                        .drm_output
+                        .with_compositor(|c| c.surface().commit_pending())
+                })
+            {
+                gamma.reapply(&entry.output);
+            }
+        }
+    }
 }
 
 /// State private to the udev backend, held inside `MindeState` for the
@@ -520,8 +549,9 @@ pub fn init_udev(
                     udev.paused = false;
                     for (node, device) in udev.devices.iter_mut() {
                         let _ = device.drm_output_manager.lock().activate(false);
-                        for (crtc, head) in device.heads.iter() {
+                        for (crtc, head) in device.heads.iter_mut() {
                             if head.enabled() {
+                                head.gamma_reapply = true;
                                 to_repaint.push((*node, *crtc));
                             }
                         }
@@ -892,6 +922,7 @@ fn create_head(
             power: PowerState::On,
             vrr_support: VrrSupport::NotSupported,
             vrr: false,
+            gamma_reapply: false,
         },
     );
     // Assign the stable head id now so it survives disable/enable cycles.
@@ -937,7 +968,7 @@ pub(crate) fn enable_head(
     output.change_current_state(Some(wl_mode), None, None, Some(position));
     state.space.map_output(&output, position);
 
-    if let Err(err) = init_surface(udev, node, crtc, mode) {
+    if let Err(err) = init_surface(udev, &mut state.gamma_controls, node, crtc, mode) {
         // Back to fully disabled: no global (that is what `enabled()`
         // means), not mapped, and the just-failed mode/position off the
         // Output again -- an "enable without a mode" falls back to the
@@ -981,6 +1012,7 @@ pub(crate) fn enable_head(
 /// reads both). Shared by [`enable_head`] and the DPMS power-on path.
 fn init_surface(
     udev: &mut UdevBackendData,
+    gamma: &mut crate::handlers::gamma_control::GammaControls,
     node: DrmNode,
     crtc: crtc::Handle,
     mode: control::Mode,
@@ -989,6 +1021,7 @@ fn init_surface(
         gpus,
         devices,
         primary_gpu,
+        paused,
         ..
     } = udev;
     let device = devices.get_mut(&node).ok_or("unknown drm device")?;
@@ -1007,8 +1040,12 @@ fn init_surface(
             None,
             &mut renderer,
             &DrmOutputRenderElements::default(),
-        )
-        .map_err(|err| format!("failed to initialize drm output: {err}"))?;
+        );
+    if !*paused {
+        device.reapply_gamma_after_fallback(gamma, Some(crtc));
+    }
+    let drm_output = drm_output.map_err(|err| format!("failed to initialize drm output: {err}"))?;
+    let entry = device.heads.get_mut(&crtc).ok_or("unknown head")?;
     drop(renderer);
     // Cache what the connector says about VRR and re-apply the desired
     // state so a disable/enable (or power) cycle keeps adaptive sync.
@@ -1034,6 +1071,7 @@ fn init_surface(
         redraw: RedrawState::Idle,
         flip_generation: 0,
     });
+    entry.gamma_reapply = true;
     Ok(())
 }
 
@@ -1119,6 +1157,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     // satisfy the bandwidth of the one just removed; try to undo that.
     let udev = state.udev_data.as_mut().unwrap();
     let primary_gpu = udev.primary_gpu;
+    let paused = udev.paused;
     let UdevBackendData { gpus, devices, .. } = udev;
     if let Some(device) = devices.get_mut(&node) {
         match gpus.single_renderer(&primary_gpu) {
@@ -1132,6 +1171,9 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
                     )
                 {
                     warn!(%err, "failed to restore modifiers after disabling head");
+                }
+                if !paused {
+                    device.reapply_gamma_after_fallback(&mut state.gamma_controls, None);
                 }
             }
             Err(err) => warn!(%err, "no renderer to restore modifiers with"),
@@ -1246,6 +1288,7 @@ impl MindeState {
         // as presented, with the real vblank timestamp/sequence when the kernel
         // provided monotonic timestamps (otherwise fall back to our own clock
         // and only claim Vsync).
+        let submitted_ok = submitted.is_ok();
         let mut stale_flip = false;
         match submitted {
             Ok(Some(FrameUserData {
@@ -1286,6 +1329,30 @@ impl MindeState {
         if stale_flip {
             debug!(?node, ?crtc, "ignoring the vblank of an abandoned flip");
             return;
+        }
+
+        if submitted_ok {
+            // An older frame can finish while a requested modeset is still
+            // pending after a render failure. It must not consume the replay.
+            let reapply = self
+                .udev_data
+                .as_mut()
+                .filter(|udev| !udev.paused)
+                .and_then(|udev| udev.devices.get_mut(&node))
+                .and_then(|device| device.heads.get_mut(&crtc))
+                .is_some_and(|entry| {
+                    entry.enabled()
+                        && entry.power == PowerState::On
+                        && entry.surface.as_ref().is_some_and(|surface| {
+                            !surface
+                                .drm_output
+                                .with_compositor(|c| c.surface().commit_pending())
+                        })
+                        && std::mem::take(&mut entry.gamma_reapply)
+                });
+            if reapply {
+                self.gamma_controls.reapply(&output);
+            }
         }
 
         // The flip completed: repaint right away if anything changed while
@@ -1511,7 +1578,7 @@ impl MindeState {
             .map(|(_, drm)| *drm)
             .ok_or("current mode is not a connector mode")?;
         info!(?crtc, output = %output.name(), "powering head on");
-        if let Err(err) = init_surface(udev, node, crtc, mode) {
+        if let Err(err) = init_surface(udev, &mut self.gamma_controls, node, crtc, mode) {
             // The recorded mode may have been set while powered off
             // (`udev_set_mode` cannot test it without a CRTC) and only
             // fail here. Retry at the preferred mode rather than staying
@@ -1531,7 +1598,7 @@ impl MindeState {
                 %err, output = %output.name(),
                 "power-on at the recorded mode failed; retrying at the preferred mode"
             );
-            init_surface(udev, node, crtc, preferred_drm)?;
+            init_surface(udev, &mut self.gamma_controls, node, crtc, preferred_drm)?;
             output.change_current_state(Some(preferred_wl), None, None, None);
         }
         if let Some(entry) = udev
@@ -1643,13 +1710,12 @@ impl MindeState {
             .ok_or("head is not driven by the udev backend")?;
         let udev = self.udev_data.as_mut().ok_or("no udev backend")?;
         let primary_gpu = udev.primary_gpu;
+        let paused = udev.paused;
         // Split borrows (see `render_surface`): surface in `devices`,
         // renderer in `gpus`.
         let UdevBackendData { gpus, devices, .. } = udev;
-        let entry = devices
-            .get_mut(&node)
-            .and_then(|d| d.heads.get_mut(&crtc))
-            .ok_or("unknown head")?;
+        let device = devices.get_mut(&node).ok_or("unknown drm device")?;
+        let entry = device.heads.get_mut(&crtc).ok_or("unknown head")?;
         let drm_mode = resolve_connector_mode(&entry.modes, wl_mode, custom)
             .ok_or("no matching connector mode; custom modelines are not supported")?;
         let Some(surface) = entry.surface.as_mut() else {
@@ -1663,15 +1729,25 @@ impl MindeState {
         let mut renderer = gpus
             .single_renderer(&primary_gpu)
             .map_err(|err| format!("failed to get renderer for modeset: {err}"))?;
-        surface
+        let result = surface
             .drm_output
             .use_mode::<_, MindeRenderElements<UdevRenderer<'_>>>(
                 drm_mode,
                 &mut renderer,
                 &DrmOutputRenderElements::default(),
             )
-            .map_err(|err| format!("modeset failed: {err}"))?;
+            .map_err(|err| format!("modeset failed: {err}"));
         drop(renderer);
+        let except = if result.is_ok() {
+            entry.gamma_reapply = true;
+            Some(crtc)
+        } else {
+            None
+        };
+        if !paused {
+            device.reapply_gamma_after_fallback(&mut self.gamma_controls, except);
+        }
+        result?;
         output.change_current_state(Some(wl_mode), None, None, None);
         self.render_now(node, crtc);
         Ok(())
@@ -1706,11 +1782,15 @@ impl MindeState {
                 Ok(())
             };
         }
+        if entry.vrr == on {
+            return Ok(());
+        }
         surface
             .drm_output
             .with_compositor(|c| c.use_vrr(on))
             .map_err(|err| format!("failed to set adaptive sync: {err}"))?;
         entry.vrr = on;
+        entry.gamma_reapply |= entry.vrr_support == VrrSupport::RequiresModeset;
         info!(?crtc, output = %entry.output.name(), on, "adaptive sync");
         self.render_now(node, crtc);
         Ok(())
@@ -1741,9 +1821,9 @@ impl MindeState {
     }
 
     /// Resolves an output to the DRM device fd, CRTC, and gamma ramp length
-    /// needed to drive its gamma ramps. `None` if the output isn't a udev
-    /// surface or its CRTC reports no gamma. Used by the gamma-control
-    /// handler (udev-only; winit never advertises the global).
+    /// needed to drive its gamma ramps. Powered-off heads retain their CRTC;
+    /// creating a control does not require a live render surface. Used by
+    /// gamma control (udev-only; winit never advertises the global).
     pub fn gamma_info_for_output(
         &self,
         output: &Output,
@@ -1751,22 +1831,36 @@ impl MindeState {
         use smithay::reexports::drm::control::Device as ControlDevice;
         let udev = self.udev_data.as_ref()?;
         for device in udev.devices.values() {
-            for entry in device.heads.values() {
+            for (crtc, entry) in &device.heads {
                 if &entry.output != output {
                     continue;
                 }
-                let Some(surface) = entry.surface.as_ref() else {
-                    return None; // disabled: no CRTC to drive
-                };
-                let (fd, crtc) = surface.drm_output.with_compositor(|compositor| {
-                    let drm_surface = compositor.surface();
-                    (drm_surface.device_fd().clone(), drm_surface.crtc())
-                });
-                let size = fd.get_crtc(crtc).ok()?.gamma_length();
-                return Some((fd, crtc, size));
+                if !entry.enabled() {
+                    return None;
+                }
+                let fd = device.drm_output_manager.device().device_fd().clone();
+                let size = fd.get_crtc(*crtc).ok()?.gamma_length();
+                return Some((fd, *crtc, size));
             }
         }
         None
+    }
+
+    /// Updates while DPMS-off, paused, or awaiting a modeset completion are
+    /// retained by gamma control and replayed when the head is usable again.
+    pub(crate) fn gamma_output_writable(&self, output: &Output) -> bool {
+        let Some(udev) = self.udev_data.as_ref().filter(|udev| !udev.paused) else {
+            return false;
+        };
+        udev.devices.values().any(|device| {
+            device.heads.values().any(|entry| {
+                &entry.output == output
+                    && entry.enabled()
+                    && entry.power == PowerState::On
+                    && entry.surface.is_some()
+                    && !entry.gamma_reapply
+            })
+        })
     }
 
     /// Force damage even for a takeover of an already black screen, but

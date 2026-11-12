@@ -10,6 +10,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Gamma controls enforce resource ownership: rejected or retired controls
+  cannot change or remove a newer owner's ramps. Night-light tables survive
+  DPMS, modesets and VT changes; off-screen updates and restoration are
+  deferred, replay failures are reported, and non-file payloads are rejected
+  before reading (#54, #156).
 - The nested backend retries temporary render and swap failures with a full
   redraw, and stops cleanly on graphics-context loss. Failed frames do not
   acknowledge a lock or send frame callbacks (#33).

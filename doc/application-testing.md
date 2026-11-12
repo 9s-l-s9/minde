@@ -107,6 +107,17 @@ the desktop, lock surfaces, lock confirmation, output disable and DPMS off,
 and verifies clean shutdown after context loss during rendering or swapping.
 It runs in `make check-e2e`; no fault-injection code is built into Minde.
 
+## Gamma control lifecycle
+
+`cargo test handlers::gamma_control` uses real Wayland resource identities and
+events with a mock CRTC device. It covers rejected duplicates within one client
+and across clients with identical wire object numbers, stale controls
+after output removal, deferred writes and restores, retained original ramps
+across owner replacement, replay errors, and invalid descriptor handling.
+These checks run in the normal Rust gate and do not alter a display's gamma.
+They verify compositor state and hardware-call sequencing; driver-specific
+gamma persistence is outside their hardware-independent coverage.
+
 ## Portable and historical keymaps
 
 `make check-e2e` runs two nested sessions. The broad behavior suite retains

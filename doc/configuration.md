@@ -133,6 +133,30 @@ the total edge padding. It enables legacy mode with no head inset. Calling
 for omitted keywords. Gap settings currently belong in the personal Scheme
 layer, not the declarative `minde-config` expression.
 
+## Gamma and night light
+
+The DRM backend advertises `wlr-gamma-control-unstable-v1` for clients such as
+gammastep and wlsunset. Each output has at most one owning control. A rejected
+duplicate, or a control invalidated by output removal, cannot change or
+destroy another control's state. The nested backend does not advertise gamma
+control.
+
+A control can be created while its output is powered off. Minde retains the
+latest table while DPMS, VT switching or output reinitialization prevents
+hardware updates. After a modeset, power-on or session activation, it reapplies
+the table after the first completed frame; blocking modesets on other outputs
+during bandwidth fallback are followed by an immediate replay. If replay fails, the client receives
+`failed` and the log names the output. Destroying a control or disconnecting its
+client restores the original table, deferring restoration while the output is
+inaccessible. A replacement control inherits that original baseline if the
+restore is still pending.
+
+Disabling or disconnecting an output invalidates its control; clients must
+create a new one when the output returns. Tables must arrive through a regular
+file or shared-memory descriptor with exactly three native-endian 16-bit
+ramps of the advertised length. Pipes and device descriptors are rejected
+before reading them on the compositor thread.
+
 ## Input device configuration
 
 On the DRM/libinput backend, per-device pointer and touchpad behavior is

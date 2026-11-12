@@ -350,10 +350,7 @@ pub struct MindeState {
     /// (blue-light tools: gammastep, wlsunset). Only ever populated under
     /// the udev backend, which alone advertises the manager global. See
     /// `handlers::gamma_control`.
-    pub gamma_controls: std::collections::HashMap<
-        smithay::output::Output,
-        crate::handlers::gamma_control::GammaControlEntry,
-    >,
+    pub gamma_controls: crate::handlers::gamma_control::GammaControls,
 
     /// `wlr-foreign-toplevel-management-unstable-v1` manager state: mirrors
     /// the window registry into taskbar/switcher handles. See
@@ -748,7 +745,7 @@ impl MindeState {
             image_copy_capture_state,
             capture_sessions: Vec::new(),
             pending_captures: Vec::new(),
-            gamma_controls: std::collections::HashMap::new(),
+            gamma_controls: Default::default(),
             foreign_toplevel,
             output_management,
             output_power,
