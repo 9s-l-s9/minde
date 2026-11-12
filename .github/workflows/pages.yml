@@ -51,7 +51,9 @@ jobs:
 
       - name: Build with Haunt
         working-directory: site
-        run: guix shell -m manifest.scm -- haunt build
+        run: |
+          rm -rf -- _site
+          guix shell -m manifest.scm -- haunt build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
