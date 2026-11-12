@@ -163,6 +163,7 @@ check-e2e:
 	sh tests/init-bytecode-e2e.sh
 	sh tests/gaps-e2e.sh
 	sh tests/resize-e2e.sh
+	sh tests/guile-boundary-e2e.sh
 	sh tests/e2e.sh
 	sh tests/portable-e2e.sh
 	sh tests/screencapture-e2e.sh

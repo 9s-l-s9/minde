@@ -262,17 +262,16 @@ pub struct AutomationDndSource {
 }
 
 impl AutomationDndSource {
-    pub fn files<I, P>(
-        paths: I,
-        token: AutomationToken,
-        results: AutomationResults,
-    ) -> Result<Self, DropFilesError>
+    pub fn files<I, P>(paths: I, results: AutomationResults) -> Result<Self, DropFilesError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<Path>,
     {
+        // Invalid paths must not leave an observable pending operation.
+        let payload = build_uri_list(paths)?;
+        let token = results.allocate(AutomationOperation::DropFiles);
         Ok(Self::new(
-            build_uri_list(paths)?,
+            payload,
             vec![URI_LIST_MIME.to_owned()],
             AutomationOperation::DropFiles,
             token,
@@ -496,6 +495,14 @@ mod tests {
 
     #[test]
     fn uri_list_rejects_empty_relative_missing_and_directory_paths() {
+        let results = AutomationResults::default();
+        assert!(AutomationDndSource::files(["relative"], results.clone()).is_err());
+        assert!(results.recent().is_empty());
+        assert_eq!(
+            results.next_token(),
+            1,
+            "invalid paths must not consume tokens"
+        );
         assert!(matches!(
             build_uri_list(Vec::<PathBuf>::new()),
             Err(DropFilesError::Empty)

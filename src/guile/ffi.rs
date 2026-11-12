@@ -68,7 +68,7 @@ unsafe extern "C" {
 
     pub fn scm_from_int64(x: i64) -> Scm;
     pub fn scm_to_int64(x: Scm) -> i64;
-    pub fn scm_integer_p(x: Scm) -> Scm;
+    pub fn scm_is_signed_integer(x: Scm, min: i64, max: i64) -> c_int;
     pub fn scm_string_p(x: Scm) -> Scm;
     pub fn scm_symbol_p(x: Scm) -> Scm;
     pub fn scm_symbol_to_string(x: Scm) -> Scm;

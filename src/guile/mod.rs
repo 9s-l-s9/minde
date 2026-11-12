@@ -21,7 +21,7 @@ pub use paths::scheme_dir;
 use ffi::Scm;
 use smithay::reexports::calloop::LoopSignal;
 use smithay::reexports::calloop::channel::Sender;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
@@ -521,12 +521,46 @@ pub fn publish_status() {
     PUBLISH_STATUS.call(&[]);
 }
 
-/// Converts a Scheme integer to `i64`. Only call this on values expected to
-/// be integers (e.g. subr arguments); on a non-integer Guile will raise,
-/// unwinding through this call -- acceptable since we're still on the
-/// Guile-owned call stack at that point.
-pub fn to_i64(v: Scm) -> i64 {
-    unsafe { ffi::scm_to_int64(v) }
+/// Check exactness and range before converting: Guile must not longjmp past
+/// Rust-owned values when a caller supplies a flonum, bignum or non-number.
+fn to_i64(v: Scm) -> Option<i64> {
+    unsafe {
+        (ffi::scm_is_signed_integer(v, i64::MIN, i64::MAX) != 0).then(|| ffi::scm_to_int64(v))
+    }
+}
+
+fn to_i32(v: Scm) -> Option<i32> {
+    i32::try_from(to_i64(v)?).ok()
+}
+
+fn to_id(v: Scm) -> Option<u64> {
+    u64::try_from(to_i64(v)?).ok()
+}
+
+fn boolean_arg(v: Scm) -> Option<bool> {
+    to_bool(unsafe { ffi::scm_boolean_p(v) }).then(|| to_bool(v))
+}
+
+fn geometry_args([x, y, w, h]: [Scm; 4]) -> Option<[i32; 4]> {
+    let (x, y, w, h) = (to_i32(x)?, to_i32(y)?, to_i32(w)?, to_i32(h)?);
+    x.checked_add(w)?;
+    y.checked_add(h)?;
+    (w >= 0 && h >= 0).then_some([x, y, w, h])
+}
+
+fn placement_args([id, x, y, w, h]: [Scm; 5]) -> Option<(u64, [i32; 4])> {
+    Some((to_id(id)?, geometry_args([x, y, w, h])?))
+}
+
+// Primitive argument failures return #f normally, so Rust drops any values
+// already collected (notably earlier entries of a placement batch).
+macro_rules! checked_arg {
+    ($value:expr) => {
+        match $value {
+            Some(value) => value,
+            None => return from_bool(false),
+        }
+    };
 }
 
 pub fn to_bool(v: Scm) -> bool {
@@ -667,11 +701,7 @@ unsafe extern "C" fn wm_log(msg: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
-    let id = to_i64(id) as u64;
-    let x = to_i64(x) as i32;
-    let y = to_i64(y) as i32;
-    let w = to_i64(w) as i32;
-    let h = to_i64(h) as i32;
+    let (id, [x, y, w, h]) = checked_arg!(placement_args([id, x, y, w, h]));
     from_bool(send_command(WmCommand::Place { id, x, y, w, h }))
 }
 
@@ -680,7 +710,7 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
 /// fact; Scheme's `window-title` asks here first and keeps its own copy
 /// only for rename overrides and for tests without a compositor.
 unsafe extern "C" fn wm_window_title(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     match with_state(|state| state.window_title(id)).flatten() {
         Some((title, app_id)) => unsafe { ffi::scm_cons(from_str(&title), from_str(&app_id)) },
         None => from_bool(false),
@@ -750,25 +780,28 @@ unsafe extern "C" fn wm_place_windows(placements: Scm) -> Scm {
             return from_bool(false);
         }
         let entry = unsafe { ffi::scm_car(list) };
-        let mut fields = [0i64; 5];
-        let mut tiled = true;
+        let mut fields = [ffi::SCM_BOOL_F; 5];
         let mut rest = entry;
-        for (index, field) in fields.iter_mut().enumerate() {
+        for field in &mut fields {
             if !to_bool(unsafe { ffi::scm_pair_p(rest) }) {
                 return from_bool(false);
             }
-            let item = unsafe { ffi::scm_car(rest) };
-            if !to_bool(unsafe { ffi::scm_integer_p(item) }) {
+            *field = unsafe { ffi::scm_car(rest) };
+            rest = unsafe { ffi::scm_cdr(rest) };
+        }
+        let tiled = if to_bool(unsafe { ffi::scm_null_p(rest) }) {
+            true
+        } else {
+            if !to_bool(unsafe { ffi::scm_pair_p(rest) }) {
                 return from_bool(false);
             }
-            *field = to_i64(item);
-            rest = unsafe { ffi::scm_cdr(rest) };
-            if index == 4 && to_bool(unsafe { ffi::scm_pair_p(rest) }) {
-                tiled = to_bool(unsafe { ffi::scm_car(rest) });
+            let tiled = checked_arg!(boolean_arg(unsafe { ffi::scm_car(rest) }));
+            if !to_bool(unsafe { ffi::scm_null_p(ffi::scm_cdr(rest)) }) {
+                return from_bool(false);
             }
-        }
-        let [id, x, y, w, h] = fields;
-        let (id, x, y, w, h) = (id as u64, x as i32, y as i32, w as i32, h as i32);
+            tiled
+        };
+        let (id, [x, y, w, h]) = checked_arg!(placement_args(fields));
         commands.push((
             id,
             if tiled {
@@ -861,7 +894,7 @@ unsafe extern "C" fn wm_control_ready() -> Scm {
 /// (events . ((SEQUENCE LINE) ...)))`. A gap requires a new desktop snapshot.
 /// The public Scheme wrapper applies lock-time privacy to historical lines.
 unsafe extern "C" fn wm_events_since(cursor: Scm) -> Scm {
-    let cursor = to_i64(cursor);
+    let cursor = checked_arg!(to_i64(cursor));
     let page = crate::events::since(if cursor < 0 { u64::MAX } else { cursor as u64 });
     let events = scm_list_map(&page.events, |event| {
         scm_list(&[from_i64(event.sequence as i64), from_str(&event.line)])
@@ -874,20 +907,18 @@ unsafe extern "C" fn wm_events_since(cursor: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_send_string(text: Scm, delay: Scm) -> Scm {
-    let Some(text) = to_string_lossy(text) else {
-        return from_bool(false);
-    };
     let delay_ms = if delay == ffi::SCM_UNDEFINED {
         20
     } else {
-        to_i64(delay).max(0) as u64
+        checked_arg!(to_i64(delay)).max(0) as u64
     };
+    let text = checked_arg!(to_string_lossy(text));
     from_bool(send_command(WmCommand::SendString { text, delay_ms }))
 }
 
 fn button_number(value: Scm) -> Option<u32> {
-    if to_bool(unsafe { ffi::scm_integer_p(value) }) {
-        return match to_i64(value) {
+    if let Some(value) = to_i64(value) {
+        return match value {
             1 | 272 => Some(1),
             2 | 274 => Some(2),
             3 | 273 => Some(3),
@@ -912,7 +943,7 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
     let count = if count == ffi::SCM_UNDEFINED {
         1
     } else {
-        to_i64(count)
+        checked_arg!(to_i64(count))
     };
     if !(1..=32).contains(&count) {
         return from_bool(false);
@@ -929,21 +960,15 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
 /// automation token; completion via `(wm-automation-status token)` ->
 /// `(screenshot done|failed)` plus an `automation-result` event line.
 unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
-    let Some(path) = to_string_lossy(path) else {
-        return from_bool(false);
-    };
-    if !path.starts_with('/') {
-        return from_bool(false);
-    }
     let window_id = if window_id == ffi::SCM_UNDEFINED {
         None
     } else {
-        let id = to_i64(window_id);
-        if id < 0 {
-            return from_bool(false);
-        }
-        Some(id as u64)
+        Some(checked_arg!(to_id(window_id)))
     };
+    let path = checked_arg!(to_string_lossy(path));
+    if !path.starts_with('/') || path.contains('\0') {
+        return from_bool(false);
+    }
     let token = crate::automation_dnd::automation_results()
         .allocate(crate::automation_dnd::AutomationOperation::Screenshot);
     if send_command(WmCommand::Screenshot {
@@ -963,15 +988,15 @@ unsafe extern "C" fn wm_paste_key() -> Scm {
 
 unsafe extern "C" fn wm_scroll(dx: Scm, dy: Scm) -> Scm {
     from_bool(send_command(WmCommand::Scroll {
-        dx: to_i64(dx) as f64,
-        dy: to_i64(dy) as f64,
+        dx: checked_arg!(to_i64(dx)) as f64,
+        dy: checked_arg!(to_i64(dy)) as f64,
     }))
 }
 
 /// `(wm-send-key mods keysym-name)` -- synthesizes one key press/release
 /// (wrapped in the requested modifiers) into the focused window.
 unsafe extern "C" fn wm_send_key(mods: Scm, keysym: Scm) -> Scm {
-    let mods = to_i64(mods).max(0) as u32;
+    let mods = checked_arg!(to_i64(mods).and_then(|v| u32::try_from(v.max(0)).ok()));
     let Some(keysym) = to_string_lossy(keysym) else {
         return from_bool(false);
     };
@@ -979,13 +1004,13 @@ unsafe extern "C" fn wm_send_key(mods: Scm, keysym: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_warp_pointer_relative(dx: Scm, dy: Scm) -> Scm {
-    let dx = to_i64(dx) as i32;
-    let dy = to_i64(dy) as i32;
+    let dx = checked_arg!(to_i32(dx));
+    let dy = checked_arg!(to_i32(dy));
     from_bool(send_command(WmCommand::WarpPointerRel { dx, dy }))
 }
 
 unsafe extern "C" fn wm_set_key_repeat(on: Scm) -> Scm {
-    let on = to_bool(on);
+    let on = checked_arg!(boolean_arg(on));
     from_bool(send_command(WmCommand::SetKeyRepeat { on }))
 }
 
@@ -1006,23 +1031,27 @@ unsafe extern "C" fn wm_keyboard_layouts() -> Scm {
 /// `(wm-set-keyboard-layout! spec)` -- SPEC is a zero-based layout index
 /// or one of the symbols `next` / `prev`. Queued to the compositor;
 /// returns #t once queued, #f without one. Anything else raises.
-unsafe extern "C" fn wm_set_keyboard_layout(spec: Scm) -> Scm {
-    let spec = if to_bool(unsafe { ffi::scm_symbol_p(spec) }) {
+fn keyboard_layout_spec(spec: Scm) -> Result<KeyboardLayoutSpec, &'static str> {
+    if to_bool(unsafe { ffi::scm_symbol_p(spec) }) {
         match to_string_lossy(unsafe { ffi::scm_symbol_to_string(spec) }).as_deref() {
-            Some("next") => KeyboardLayoutSpec::Next,
-            Some("prev") | Some("previous") => KeyboardLayoutSpec::Prev,
-            _ => {
-                scheme_error("wm-set-keyboard-layout!", "expected an index, next or prev");
-            }
+            Some("next") => Ok(KeyboardLayoutSpec::Next),
+            Some("prev") | Some("previous") => Ok(KeyboardLayoutSpec::Prev),
+            _ => Err("expected an index, next or prev"),
         }
     } else if to_bool(unsafe { ffi::scm_exact_integer_p(spec) }) {
-        let idx = to_i64(spec);
-        if idx < 0 {
-            scheme_error("wm-set-keyboard-layout!", "layout index must be >= 0");
-        }
-        KeyboardLayoutSpec::Index(idx as usize)
+        to_i64(spec)
+            .and_then(|idx| usize::try_from(idx).ok())
+            .map(KeyboardLayoutSpec::Index)
+            .ok_or("layout index must fit a non-negative machine integer")
     } else {
-        scheme_error("wm-set-keyboard-layout!", "expected an index, next or prev");
+        Err("expected an index, next or prev")
+    }
+}
+
+unsafe extern "C" fn wm_set_keyboard_layout(spec: Scm) -> Scm {
+    let spec = match keyboard_layout_spec(spec) {
+        Ok(spec) => spec,
+        Err(message) => scheme_error(c"wm-set-keyboard-layout!", from_str(message)),
     };
     from_bool(send_command(WmCommand::SetKeyboardLayout { spec }))
 }
@@ -1030,8 +1059,8 @@ unsafe extern "C" fn wm_set_keyboard_layout(spec: Scm) -> Scm {
 /// `(wm-add-overlay x y text)` -- adds a positioned text overlay at a
 /// global logical position (fselect/expose frame labels).
 unsafe extern "C" fn wm_add_overlay(x: Scm, y: Scm, text: Scm) -> Scm {
-    let x = to_i64(x) as i32;
-    let y = to_i64(y) as i32;
+    let x = checked_arg!(to_i32(x));
+    let y = checked_arg!(to_i32(y));
     let Some(text) = to_string_lossy(text) else {
         return from_bool(false);
     };
@@ -1043,32 +1072,28 @@ unsafe extern "C" fn wm_clear_overlays() -> Scm {
 }
 
 unsafe extern "C" fn wm_place_float(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
-    let id = to_i64(id) as u64;
-    let x = to_i64(x) as i32;
-    let y = to_i64(y) as i32;
-    let w = to_i64(w) as i32;
-    let h = to_i64(h) as i32;
+    let (id, [x, y, w, h]) = checked_arg!(placement_args([id, x, y, w, h]));
     from_bool(send_command(WmCommand::PlaceFloat { id, x, y, w, h }))
 }
 
 unsafe extern "C" fn wm_raise_window(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     from_bool(send_command(WmCommand::Raise { id }))
 }
 
 unsafe extern "C" fn wm_set_floating(id: Scm, on: Scm) -> Scm {
-    let id = to_i64(id) as u64;
-    let on = to_bool(on);
+    let id = checked_arg!(to_id(id));
+    let on = checked_arg!(boolean_arg(on));
     from_bool(send_command(WmCommand::SetFloating { id, on }))
 }
 
 unsafe extern "C" fn wm_focus_window(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     from_bool(send_command(WmCommand::Focus { id }))
 }
 
 unsafe extern "C" fn wm_close_window(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     from_bool(send_command(WmCommand::Close { id }))
 }
 
@@ -1079,14 +1104,12 @@ unsafe extern "C" fn wm_clear_focus() -> Scm {
 /// `(wm-message text)` or `(wm-message text timeout-ms)`. Guile passes
 /// SCM_UNDEFINED for a missing optional argument.
 unsafe extern "C" fn wm_message(text: Scm, timeout: Scm) -> Scm {
-    let Some(text) = to_string_lossy(text) else {
-        return from_bool(false);
-    };
     let timeout_ms = if timeout.0 == ffi::SCM_UNDEFINED.0 {
         5000
     } else {
-        to_i64(timeout).max(0) as u64
+        checked_arg!(to_i64(timeout)).max(0) as u64
     };
+    let text = checked_arg!(to_string_lossy(text));
     from_bool(send_command(WmCommand::Message { text, timeout_ms }))
 }
 
@@ -1118,35 +1141,32 @@ unsafe extern "C" fn wm_border_color(hex: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_focus_rect(x: Scm, y: Scm, w: Scm, h: Scm) -> Scm {
-    let x = to_i64(x) as i32;
-    let y = to_i64(y) as i32;
-    let w = to_i64(w) as i32;
-    let h = to_i64(h) as i32;
+    let [x, y, w, h] = checked_arg!(geometry_args([x, y, w, h]));
     from_bool(send_command(WmCommand::FocusRect { x, y, w, h }))
 }
 
 /// `(wm-run-after-ms ms token)` -- see `wm-run-after` in init.scm for the
 /// thunk-keeping wrapper.
 unsafe extern "C" fn wm_run_after_ms(ms: Scm, token: Scm) -> Scm {
-    let ms = to_i64(ms).max(0) as u64;
-    let token = to_i64(token);
+    let ms = checked_arg!(to_i64(ms)).max(0) as u64;
+    let token = checked_arg!(to_i64(token));
     from_bool(send_command(WmCommand::RunAfter { ms, token }))
 }
 
 unsafe extern "C" fn wm_set_fullscreen(id: Scm, on: Scm) -> Scm {
-    let id = to_i64(id) as u64;
-    let on = to_bool(on);
+    let id = checked_arg!(to_id(id));
+    let on = checked_arg!(boolean_arg(on));
     from_bool(send_command(WmCommand::Fullscreen { id, on }))
 }
 
 unsafe extern "C" fn wm_kill_window(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     from_bool(send_command(WmCommand::Kill { id }))
 }
 
 unsafe extern "C" fn wm_warp_pointer(x: Scm, y: Scm) -> Scm {
-    let x = to_i64(x) as i32;
-    let y = to_i64(y) as i32;
+    let x = checked_arg!(to_i32(x));
+    let y = checked_arg!(to_i32(y));
     from_bool(send_command(WmCommand::WarpPointer { x, y }))
 }
 
@@ -1156,7 +1176,7 @@ unsafe extern "C" fn wm_pointer_position() -> Scm {
 }
 
 unsafe extern "C" fn wm_window_geometry(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     // A configure request is not the committed surface size: terminals can
     // round it to a character grid and clients can commit asynchronously.
     // Safe compositor-thread queries use the same Space facts as screenshot
@@ -1198,24 +1218,16 @@ fn string_list(mut list: Scm) -> Option<Vec<String>> {
 }
 
 unsafe extern "C" fn wm_drop_files(x: Scm, y: Scm, paths: Scm) -> Scm {
-    let Some(paths) = string_list(paths) else {
-        return from_bool(false);
-    };
-    // Validate before allocating a public token: malformed requests return #f.
-    if crate::automation_dnd::build_uri_list(&paths).is_err() {
-        return from_bool(false);
-    }
+    let x = checked_arg!(to_i32(x));
+    let y = checked_arg!(to_i32(y));
+    let paths = checked_arg!(string_list(paths));
     let results = crate::automation_dnd::automation_results().clone();
-    let token = results.allocate(crate::automation_dnd::AutomationOperation::DropFiles);
-    let source = match crate::automation_dnd::AutomationDndSource::files(paths, token, results) {
+    let source = match crate::automation_dnd::AutomationDndSource::files(paths, results) {
         Ok(source) => source,
         Err(_) => return from_bool(false),
     };
-    if send_command(WmCommand::Drop {
-        x: to_i64(x) as i32,
-        y: to_i64(y) as i32,
-        source,
-    }) {
+    let token = source.token();
+    if send_command(WmCommand::Drop { x, y, source }) {
         from_i64(token as i64)
     } else {
         from_bool(false)
@@ -1223,20 +1235,13 @@ unsafe extern "C" fn wm_drop_files(x: Scm, y: Scm, paths: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_drop_text(x: Scm, y: Scm, text: Scm) -> Scm {
-    if !to_bool(unsafe { ffi::scm_string_p(text) }) {
-        return from_bool(false);
-    }
-    let Some(text) = to_string_lossy(text) else {
-        return from_bool(false);
-    };
+    let x = checked_arg!(to_i32(x));
+    let y = checked_arg!(to_i32(y));
+    let text = checked_arg!(to_string_lossy(text));
     let results = crate::automation_dnd::automation_results().clone();
     let token = results.allocate(crate::automation_dnd::AutomationOperation::DropText);
     let source = crate::automation_dnd::AutomationDndSource::text(text, token, results);
-    if send_command(WmCommand::Drop {
-        x: to_i64(x) as i32,
-        y: to_i64(y) as i32,
-        source,
-    }) {
+    if send_command(WmCommand::Drop { x, y, source }) {
         from_i64(token as i64)
     } else {
         from_bool(false)
@@ -1244,7 +1249,7 @@ unsafe extern "C" fn wm_drop_text(x: Scm, y: Scm, text: Scm) -> Scm {
 }
 
 unsafe extern "C" fn wm_automation_status(token: Scm) -> Scm {
-    let token = to_i64(token);
+    let token = checked_arg!(to_i64(token));
     if token <= 0 {
         return from_bool(false);
     }
@@ -1393,7 +1398,9 @@ fn scm_to_spec_value(v: Scm) -> Result<SpecValue, String> {
             return Ok(SpecValue::Bool(to_bool(v)));
         }
         if to_bool(ffi::scm_exact_integer_p(v)) {
-            return Ok(SpecValue::Int(ffi::scm_to_int64(v)));
+            return to_i64(v)
+                .map(SpecValue::Int)
+                .ok_or_else(|| "integer out of range".into());
         }
         if to_bool(ffi::scm_real_p(v)) {
             return Ok(SpecValue::Real(ffi::scm_to_double(v)));
@@ -1453,11 +1460,10 @@ fn scm_to_alist(v: Scm) -> Result<Vec<(String, SpecValue)>, String> {
 }
 
 /// Raises a Scheme `misc-error` from inside a gsubr (never returns; Guile
-/// unwinds to the caller, so `mindectl eval` reports the message).
-fn scheme_error(subr: &str, message: &str) -> ! {
-    let subr = to_cstring(subr);
-    let msg = to_cstring(&message.replace('~', "~~"));
-    unsafe { ffi::scm_misc_error(subr.as_ptr(), msg.as_ptr(), ffi::SCM_EOL) }
+/// unwinds to the caller, so `mindectl eval` reports the message). Call only
+/// after dropping all Rust-owned values: Guile's exit skips Rust destructors.
+fn scheme_error(subr: &'static CStr, message: Scm) -> ! {
+    unsafe { ffi::scm_misc_error(subr.as_ptr(), c"~A".as_ptr(), scm_list(&[message])) }
 }
 
 /// `(wm-configure-output! name alist)`: queue an output change for the
@@ -1474,13 +1480,19 @@ fn scheme_error(subr: &str, message: &str) -> ! {
 /// when that is bound.
 unsafe extern "C" fn wm_configure_output(name: Scm, alist: Scm) -> Scm {
     if !to_bool(unsafe { ffi::scm_string_p(name) }) {
-        scheme_error("wm-configure-output!", "output name must be a string");
+        scheme_error(
+            c"wm-configure-output!",
+            from_str("output name must be a string"),
+        );
     }
-    let name = to_string_lossy(name).unwrap_or_default();
-    let spec = match scm_to_alist(alist).and_then(|entries| parse_output_change_spec(&entries)) {
+    let parsed = scm_to_alist(alist)
+        .and_then(|entries| parse_output_change_spec(&entries))
+        .map_err(|message| from_str(&message));
+    let spec = match parsed {
         Ok(spec) => spec,
-        Err(msg) => scheme_error("wm-configure-output!", &msg),
+        Err(message) => scheme_error(c"wm-configure-output!", message),
     };
+    let name = to_string_lossy(name).unwrap_or_default();
     from_bool(send_command(WmCommand::ConfigureOutput { name, spec }))
 }
 
@@ -1512,22 +1524,22 @@ unsafe extern "C" fn wm_configure_input_rule(
     accel: Scm,
     click: Scm,
 ) -> Scm {
-    let tri = |v: Scm| match to_i64(v) {
+    let tap = checked_arg!(to_i64(tap));
+    let natural = checked_arg!(to_i64(natural));
+    let tri = |v: i64| match v {
         1 => Some(true),
         0 => Some(false),
         _ => None,
     };
-    let opt = |v: Scm| {
-        to_string_lossy(v)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-    };
+    let match_name = checked_arg!(to_string_lossy(match_));
+    let accel = checked_arg!(to_string_lossy(accel));
+    let click = checked_arg!(to_string_lossy(click));
     let rule = InputRule {
-        match_name: to_string_lossy(match_).unwrap_or_default(),
+        match_name,
         tap: tri(tap),
         natural_scroll: tri(natural),
-        accel_profile: opt(accel),
-        click_method: opt(click),
+        accel_profile: (!accel.is_empty()).then_some(accel),
+        click_method: (!click.is_empty()).then_some(click),
     };
     {
         let mut rules = INPUT_RULES.lock().unwrap();
@@ -1618,15 +1630,7 @@ fn register_gsubr(name: &str, req: i32, opt: i32, f: ffi::Gsubr) {
     }
 }
 
-/// Initializes Guile on the calling (main) thread, registers all Rust
-/// subrs, then loads `scheme/init.scm`.
-///
-/// Must be called from the compositor's main thread, before any other
-/// libguile call, and only once.
-pub fn init(loop_signal: LoopSignal) {
-    set_loop_signal(loop_signal);
-    boot();
-
+fn register_primitives() {
     unsafe {
         register_gsubr("wm-spawn", 1, 0, gsubr!(wm_spawn, 1));
         register_gsubr("wm-quit", 0, 0, gsubr!(wm_quit, 0));
@@ -1730,6 +1734,14 @@ pub fn init(loop_signal: LoopSignal) {
         register_gsubr("wm-events-since", 1, 0, gsubr!(wm_events_since, 1));
         register_gsubr("wm-control-ready?", 0, 0, gsubr!(wm_control_ready, 0));
     }
+}
+
+/// Initializes Guile on the compositor's main thread, registers all Rust
+/// subrs, then loads policy. Call only once, before any other libguile call.
+pub fn init(loop_signal: LoopSignal) {
+    set_loop_signal(loop_signal);
+    boot();
+    register_primitives();
 
     // Init file resolution: $MINDE_INIT > ~/.config/minde/init.scm >
     // the repo's scheme/init.scm (the tested default).
@@ -2039,5 +2051,126 @@ mod tests {
         .unwrap();
         assert!(!super::handle_key(0, 0, "a", "a"));
         assert!(super::output_config_allowed());
+        numeric_arguments();
+    }
+
+    fn numeric_arguments() {
+        use super::*;
+        let (sender, receiver) = smithay::reexports::calloop::channel::channel();
+        assert!(COMMAND_SENDER.set(sender).is_ok());
+        register_primitives();
+        let results = crate::automation_dnd::automation_results();
+        let before = results.recent();
+        let rules_before = input_rules().len();
+
+        for invalid in ["1.0", "10.5", "1/2", "#f", "\"x\"", "(expt 2 70)"] {
+            let value = eval_string(invalid).unwrap();
+            assert_eq!(to_i64(value), None, "{invalid}");
+            for expression in [
+                format!("(wm-place-window 0 0 0 {invalid} 20)"),
+                format!("(wm-place-float 0 0 {invalid} 20 20)"),
+                format!("(wm-place-windows (list '(0 1 2 3 4) (list 0 0 0 {invalid} 20)))"),
+                format!("(wm-click {invalid})"),
+                format!("(wm-click 'left {invalid})"),
+                format!("(wm-drop-text {invalid} 0 \"payload\")"),
+                format!("(wm-drop-files 0 {invalid} (list \"/proc/self/exe\"))"),
+                format!("(wm-send-string \"text\" {invalid})"),
+                format!("(wm-message \"text\" {invalid})"),
+                format!("(wm-screenshot \"/tmp/minde-boundary.png\" {invalid})"),
+                format!("(wm-configure-input-rule! \"test\" 1 {invalid} \"\" \"\")"),
+                format!("(wm-run-after-ms 1 {invalid})"),
+                format!("(wm-scroll 0 {invalid})"),
+                format!("(wm-warp-pointer-relative 0 {invalid})"),
+                format!("(wm-focus-window {invalid})"),
+            ] {
+                assert_eq!(
+                    eval_string(&expression),
+                    Some(ffi::SCM_BOOL_F),
+                    "{expression}"
+                );
+                assert!(receiver.try_recv().is_err(), "queued command: {expression}");
+            }
+        }
+        for expression in [
+            "(wm-place-window -1 0 0 20 20)",
+            "(wm-place-window 0 0 0 -1 20)",
+            "(wm-place-float 0 0 0 20 -1)",
+            "(wm-place-window 0 4294967306 0 20 20)",
+            "(wm-place-window 0 2147483647 0 1 20)",
+            "(wm-focus-rect 0 0 -1 20)",
+            "(wm-place-windows '((0 1 2 3 4) (0 0 0 20 20 42)))",
+            "(wm-place-windows '((0 0 0 20 20 #t extra)))",
+            "(wm-place-windows '((0 0 0 20 20 . #t)))",
+            "(wm-place-windows '((0 0 0 20)))",
+            "(wm-place-windows '((0 0 0 20 20) . 1))",
+            "(wm-set-floating 0 'yes)",
+            "(wm-set-fullscreen 0 'yes)",
+            "(wm-set-key-repeat 'yes)",
+            "(wm-send-key 4294967296 \"a\")",
+            "(wm-drop-text 2147483648 0 \"payload\")",
+            "(wm-drop-files 0 0 '(\"relative\"))",
+            "(wm-configure-input-rule! #f 1 1 \"\" \"\")",
+        ] {
+            assert_eq!(
+                eval_string(expression),
+                Some(ffi::SCM_BOOL_F),
+                "{expression}"
+            );
+            assert!(receiver.try_recv().is_err(), "queued command: {expression}");
+        }
+        assert_eq!(
+            results.recent(),
+            before,
+            "rejected requests allocated tokens"
+        );
+        assert_eq!(input_rules().len(), rules_before);
+
+        for expression in [
+            "(wm-configure-output! \"test\" (list (cons 'scale (expt 2 70))))",
+            "(wm-configure-output! \"test\" '((position . (1 invalid))))",
+            "(wm-set-keyboard-layout! (expt 2 70))",
+            "(wm-set-keyboard-layout! -1)",
+            "(wm-set-keyboard-layout! 'invalid)",
+        ] {
+            // These two APIs deliberately raise; errors must remain catchable.
+            assert!(eval_string(expression).is_none(), "{expression}");
+            assert!(receiver.try_recv().is_err());
+        }
+        for value in [i64::MIN, -1, 0, i64::MAX] {
+            assert_eq!(to_i64(from_i64(value)), Some(value));
+        }
+        assert_eq!(
+            eval_string("(wm-place-windows '((0 -10 -20 0 0) (1 2 3 4 5 #f)))"),
+            Some(ffi::SCM_EOL)
+        );
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::Place {
+                id: 0,
+                x: -10,
+                y: -20,
+                w: 0,
+                h: 0
+            }
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::PlaceFloat {
+                id: 1,
+                x: 2,
+                y: 3,
+                w: 4,
+                h: 5
+            }
+        ));
+        assert_eq!(eval_string("(wm-click 'right)"), Some(ffi::SCM_BOOL_T));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::Click {
+                button: 3,
+                count: 1
+            }
+        ));
+        assert!(receiver.try_recv().is_err());
     }
 }

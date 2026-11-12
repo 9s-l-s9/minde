@@ -10,6 +10,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Scheme numeric arguments are checked for exactness and range before
+  applying commands or allocating automation tokens. Malformed placement
+  batches return `#f` without partial changes; negative or overflowing
+  geometry cannot abort the compositor (#25, #26, #142).
 - Keyboard and output-policy hooks accept ordinary Scheme truth values
   without terminating the compositor on a non-boolean result (#27).
 - The portable prefix followed by the space bar opens the command palette
