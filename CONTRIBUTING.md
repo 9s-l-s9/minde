@@ -19,7 +19,8 @@ Normal development and pre-commit verification use one command:
 ./check
 ```
 
-It always runs the same fixed fast gate. `./check --help` lists the optional
+It always runs the same fixed gate, including Rust unit tests and Clippy.
+`./check --help` lists the optional
 focused, integration, and release modes. Granular
 `make check-*` targets are retained for debugging and CI, but are not required
 knowledge for normal contribution.
@@ -52,8 +53,8 @@ locally:
 guix shell -m manifest.scm -- scripts/ci
 ```
 
-It composes the fast gate (`./check`, which already includes the documentation
-and static-analysis gates) and the release-metadata check. On version tags the
+It composes the development gate (`./check`, which includes documentation and
+static analysis) and the release-metadata check. On version tags the
 hosted workflow additionally runs `scripts/ci --release-artifacts`, which builds
 the deterministic source and vendored archives, verifies they are
 byte-reproducible, and writes them with `SHA256SUMS` to `build/ci/artifacts`.

@@ -53,10 +53,7 @@ check-tools:
 		echo "error: guile is required; enter: guix shell -m manifest.scm" >&2; exit 127; }
 
 check-rust:
-	cargo fmt --all -- --check
-	cargo build --locked
-	cargo test --locked
-	cargo clippy --locked --all-targets -- -D warnings
+	./check --rust-only
 
 check-cli: check-rust
 	sh tests/check-cli.sh target/debug/minde

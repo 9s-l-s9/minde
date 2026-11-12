@@ -70,7 +70,9 @@ Entered with `guix shell -m manifest.scm`:
 
 - `guile-3.0`
 - `pkg-config`
+- `rust`
 - `rust:cargo`
+- `rust:tools`
 
 ### Inputs (linked/runtime)
 

@@ -10,14 +10,14 @@ usage() {
     cat <<'EOF'
 usage: ./check [TEST.scm ...]
 
-With no arguments, run the fixed fast development gate: Rust format/check,
+With no arguments, run the fixed development gate: Rust format/build/test/Clippy,
 Scheme/API/configuration/keymap and control-client suites, static analysis,
 and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
   --release      integration, videos, package, and archive verification
-  --rust-only    just Rust format/check (no Guile required; see
+  --rust-only    just Rust format/build/test/Clippy (requires libguile; see
                  manifest-check.scm)
   --scheme-only  just the Scheme suites, static analysis, and docs (no
                  Rust/native toolchain required; see manifest-scheme.scm)
@@ -39,7 +39,7 @@ run_release() {
 
 rust_gate() {
     cargo fmt --all -- --check
-    # Scoped to this one command, not exported: cargo check runs build-script
+    # Scoped to Cargo commands, not exported: Cargo runs build-script
     # binaries (e.g. x11-dl's, libudev-sys's) that dynamically link
     # libgcc_s.so.1 from gcc-toolchain and need it findable at *run* time, not
     # just link time -- the same class of gap scripts/run-nested and
@@ -48,8 +48,12 @@ rust_gate() {
     # process (as an earlier version of this fix did) instead broke plain
     # shell tools like grep/sed further down the gate with a segfault, by
     # feeding them mismatched libraries from the same directory.
+    for step in build test; do
+        LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            cargo "$step" --locked
+    done
     LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        cargo check --locked
+        cargo clippy --locked --all-targets -- -D warnings
 }
 
 scheme_gate() {

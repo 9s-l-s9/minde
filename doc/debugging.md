@@ -10,8 +10,9 @@ configuration.
 ./check tests/config-test.scm
 ```
 
-The default command always runs the same fixed fast gate and is also the normal
-pre-commit command. Rust uses `cargo check` without final linking. Run
+The default command always runs the same fixed gate and is also the normal
+pre-commit command. Rust is built, unit-tested and checked with Clippy; use
+`./check --scheme-only` for a focused Scheme loop. Run
 `./check --all` only when nested integration changed.
 Toolkit/browser matrices and the soak runner remain separate to avoid
 unnecessary closures and memory use; see
@@ -116,10 +117,10 @@ preference:
 The vendored crate graph (`vendor/`, git-pinned Smithay and its
 dependents) is large -- roughly 373 MB on disk -- so expect the first
 `cargo build`/`cargo check` after a clean checkout, a `Cargo.lock` change,
-or a manifest change to take a while: a measured cold fixed-gate run took
-about two minutes versus 16 seconds warm on an unchanged profile, and a
-cold `cargo check` took 2m10s versus 0.67s immediately repeated. `./check` uses `cargo check` rather than a full link so that
-warm loops stay fast even though the initial one does not.
+or a manifest change to take a while. The default gate also links the
+compositor and its unit tests, then runs Clippy. Subsequent runs reuse Cargo's
+build artifacts; `./check --scheme-only` avoids Rust work for a focused
+Scheme check.
 
 `mold` is available in the pinned Guix channels but
 `sccache` is not, adding a third-party compiler-cache package would

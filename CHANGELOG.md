@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- CI, `./check`, and `make check-rust` now share Rust build, unit-test and
+  Clippy gates. Guix package checks also run Rust tests and Clippy offline
+  in release mode (#169).
 - Guile string conversion uses explicit byte lengths, preserving Unicode and
   embedded NULs without reading past the allocated buffer. Non-string inputs
   return failure without raising through Rust (#6).

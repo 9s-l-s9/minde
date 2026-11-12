@@ -27,11 +27,11 @@ extract_inputs() {
         $0 == start { collecting = 1 }
         collecting { print; if (collecting > 1 && $0 ~ /\)\)[[:space:]]*$/) exit; collecting++ }
     ' guix.scm |
+        sed -E 's/\(list ([[:alnum:]-]+) "([^"]+)"\)/\1:\2/g' |
         tr -d '()\n' |
         tr -s ' ' '\n' |
-        sed 's/^"cargo"$/rust:cargo/' |
         grep -vE '^[[:space:]]*$' |
-        grep -vE '^(native-inputs|inputs|propagated-inputs|list|rust)$' |
+        grep -vE '^(native-inputs|inputs|propagated-inputs|list)$' |
         sort -u
 }
 

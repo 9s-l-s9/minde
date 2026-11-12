@@ -135,6 +135,9 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
         (replace 'check
           (lambda* (#:key tests? #:allow-other-keys)
             (when tests?
+              (invoke "cargo" "test" "--locked" "--release" "--offline")
+              (invoke "cargo" "clippy" "--locked" "--release" "--offline"
+                      "--all-targets" "--" "-D" "warnings")
               (setenv "GUILE_AUTO_COMPILE" "0")
               (for-each
                (lambda (test)
@@ -144,6 +147,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                  "tests/groups-test.scm"
                  "tests/layouts-test.scm"
                  "tests/portable-keymap-test.scm"
+                 "tests/unsafe-repl-test.scm"
                  "tests/ipc-reply-test.scm"
                  "tests/commands-test.scm"
                  "tests/control-test.scm"
@@ -317,6 +321,7 @@ Type=Application
   (native-inputs
    (list rust
          (list rust "cargo")
+         (list rust "tools")
          pkg-config
          guile-3.0))
   (inputs

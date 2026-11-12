@@ -14,7 +14,7 @@
 # check-scheme's (manifest-scheme.scm: just Guile and text-processing tools)
 # no longer block on each other's Guix install, and check-scheme's usually-
 # faster, more-actionable failures (Scheme suites, static analysis, doc
-# drift) surface without waiting on `cargo check` to finish compiling
+# drift) surface without waiting on the Rust gate to finish compiling
 # Smithay.
 #
 # Guix bootstrap bytes and channel revisions are pinned. The TLS step runs
@@ -71,7 +71,7 @@ jobs:
           submodules: true
           persist-credentials: false
 
-      # `cargo check` compiles the full dependency graph (Smithay and its
+      # The Rust gate compiles the full dependency graph (Smithay and its
       # transitive deps) from network-fetched sources -- not the vendored
       # crate mirror, which is only materialized for --release-artifacts.
       # Without this, every run recompiles all of it from scratch.

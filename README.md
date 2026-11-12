@@ -90,8 +90,8 @@ Enter `guix shell -m manifest.scm` once per session, then run
 
     ./check
 
-before committing.  It runs the fast Rust, Scheme, API, configuration,
-keymap, and documentation gates; `./check --help` lists the optional
+before committing.  It runs Rust builds, unit tests and Clippy, plus Scheme,
+API, configuration, keymap, and documentation gates; `./check --help` lists the optional
 deeper suites.  Anything touching DRM, libinput, or VT switching needs
 real hardware; see doc/hardware-validation.md.
 

@@ -7,31 +7,28 @@ phony targets so it cannot drift from the real commands. For narrative
 guidance see [`../README.md`](../README.md#development)
 and [`debugging.md`](debugging.md).
 
-`./check` with no arguments and `make check` are not the same
-gate: the bare `./check` fast path runs `cargo check` (a type
-check, no build or tests) alongside the Scheme/API/configuration/
-keymap and control-client suites, static analysis, and docs, while `make check` runs
-`check-rust` (`cargo fmt --check`, a full `cargo build`,
-`cargo test`, and `cargo clippy`) ahead of the same Scheme/API/
-configuration/keymap/control-client suites (docs remain `make check-docs`).
-Its Rust gate is stronger and slower; `./check` is the fast inner-loop gate for Scheme-only
-changes. This divergence is intentional but easy to forget, so use
-`make check` (or `make check-rust` alone) before trusting a Rust
-change that only `./check` has seen.
+`./check`, hosted CI, and `make check-rust` share one Rust gate:
+`cargo fmt --check`, `cargo build --locked`, `cargo test --locked`,
+and `cargo clippy --locked --all-targets -- -D warnings`.
+The default `./check` also runs the Scheme/API/configuration/keymap and
+control-client suites, static analysis, and documentation checks.
+`make check` adds the CLI contract test; its documentation gate remains
+`make check-docs`. Use `./check --scheme-only` for a focused Scheme loop.
+Guix package checks run Rust tests and Clippy offline in release mode.
 
 ## `./check`
 
 ```
 usage: ./check [TEST.scm ...]
 
-With no arguments, run the fixed fast development gate: Rust format/check,
+With no arguments, run the fixed development gate: Rust format/build/test/Clippy,
 Scheme/API/configuration/keymap and control-client suites, static analysis,
 and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
   --release      integration, videos, package, and archive verification
-  --rust-only    just Rust format/check (no Guile required; see
+  --rust-only    just Rust format/build/test/Clippy (requires libguile; see
                  manifest-check.scm)
   --scheme-only  just the Scheme suites, static analysis, and docs (no
                  Rust/native toolchain required; see manifest-scheme.scm)

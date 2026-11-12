@@ -1,5 +1,5 @@
 ;; Fast-gate environment: everything `scripts/ci`'s default gate (cargo
-;; fmt/check, the Scheme suites, static analysis, docs, release metadata)
+;; fmt/build/test/Clippy, Scheme suites, static analysis, docs, release metadata)
 ;; actually touches, and nothing else. manifest.scm's e2e/demo/app-matrix
 ;; tools (Xorg, xdotool, imagemagick, grim, wf-recorder, foot, xterm,
 ;; wl-clipboard, wlr-randr, wayland-utils, swayidle, wtype, wlrctl, ffmpeg,
@@ -18,8 +18,7 @@
    "pkg-config"
    ;; Guile (embedded via libguile)
    "guile"
-   ;; Smithay native deps -- linked at compile time, so `cargo check`
-   ;; needs these even though it never runs the compositor.
+   ;; Smithay native deps -- required by the compositor and unit-test binaries.
    "wayland"
    "wayland-protocols"
    "libxkbcommon"
