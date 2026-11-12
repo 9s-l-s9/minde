@@ -65,6 +65,8 @@ locally with `./check --all` or the granular `make check-*` targets.
 
 ## Change expectations
 
+- Use Rust and Guile Scheme for implementations and tests, with shell scripts
+  for orchestration. Do not add Python scripts or interpreter dependencies.
 - Keep Rust formatted and free of Clippy warnings.
 - Add Scheme or Rust tests at the lowest layer that can catch the regression.
 - Keep generated files, logs, and screenshots out of the repository.
