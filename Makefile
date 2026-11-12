@@ -22,6 +22,7 @@ SCHEME_TESTS := \
 	tests/gaps-test.scm \
 	tests/groups-test.scm \
 	tests/session-test.scm \
+	tests/unsafe-repl-test.scm \
 	tests/layouts-test.scm \
 	tests/callbacks-test.scm \
 	tests/next-pull-test.scm \

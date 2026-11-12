@@ -51,6 +51,10 @@ false security boundary.
 The supported IPC evaluator is serialized on the event-loop thread.
 `MINDE_UNSAFE_REPL=1` opts into a separate-thread Guile REPL and may violate
 runtime ownership assumptions. Never enable it in a normal login session.
+The REPL requires a private, session-user-owned `XDG_RUNTIME_DIR` and binds
+`minde-repl.sock` with mode `0600` before starting its server. It refuses an
+unset, relative, shared, or symlinked runtime directory, and never removes
+existing entries at the socket path. Failure disables only the REPL.
 
 ## Dependencies and provenance
 

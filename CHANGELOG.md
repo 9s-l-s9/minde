@@ -10,6 +10,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- The opt-in unsafe REPL now requires a private, owned runtime directory,
+  creates its socket with mode `0600`, and preserves existing socket-path
+  entries instead of deleting them (#172).
 - Installed Scheme policy takes precedence over development checkouts, and
   release binaries never load policy from their former build directory (#171).
 - Fullscreen state is now local to each group. Switching away leaves other

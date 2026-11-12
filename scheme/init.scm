@@ -1817,11 +1817,7 @@ reload baseline. Call once after adding imperative user bindings."
 ;; The Guile REPL server owns another thread and can race policy mutation.
 ;; Keep it solely as an explicit development escape hatch.
 (when (getenv "MINDE_UNSAFE_REPL")
-  (use-modules (system repl server)))
-
-(define %repl-socket-path
-  (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
-                 "/minde-repl.sock"))
+  (use-modules (system repl server) (minde unsafe-repl)))
 
 ;; A failure to start the REPL server (e.g. unwritable runtime dir) should
 ;; not prevent the rest of the init file / compositor from working.
@@ -1832,15 +1828,13 @@ reload baseline. Call once after adding imperative user bindings."
            (not (getenv "MINDE_REPL_STARTED")))
   (catch #t
     (lambda ()
-      ;; Remove a stale socket left over from a previous run, if any.
-      (when (file-exists? %repl-socket-path)
-        (delete-file %repl-socket-path))
-      (spawn-server (make-unix-domain-server-socket #:path %repl-socket-path))
+      (spawn-server (make-private-repl-socket (getenv "XDG_RUNTIME_DIR")))
       (setenv "MINDE_REPL_STARTED" "1")
-      (wm-log (string-append "REPL server listening at " %repl-socket-path)))
+      (wm-log (string-append "REPL server listening at "
+                             (getenv "XDG_RUNTIME_DIR") "/minde-repl.sock")))
     (lambda (key . args)
-      (wm-log (format #f "could not start REPL server at ~a: ~a ~a"
-                       %repl-socket-path key args)))))
+      (wm-log (format #f "could not start unsafe REPL server: ~a ~a"
+                       key args)))))
 
 ;; The compositor -> policy contract: every callback Rust will invoke is
 ;; defined by now (built in above or by the user's configuration), so a

@@ -55,8 +55,12 @@ preference:
 - **Interactive, unsafe**: set `MINDE_UNSAFE_REPL=1` before startup.
   `scheme/init.scm` then starts a Guile REPL server
   (`(system repl server)`) on its own thread, listening on a Unix-domain
-  socket at `$XDG_RUNTIME_DIR/minde-repl.sock` (or `/tmp` if
-  `XDG_RUNTIME_DIR` is unset). A log line `REPL server listening at ...`
+  socket at `$XDG_RUNTIME_DIR/minde-repl.sock`, with mode `0600`.
+  Startup requires an absolute runtime directory owned by the session user,
+  with no group or other permissions; symlinks are rejected. There is no
+  `/tmp` fallback. Existing socket paths are never removed automatically:
+  after a crash, remove a stale socket only after confirming its server has
+  stopped. A log line `REPL server listening at ...`
   confirms the socket path actually used. The server (`(system repl
   server)`) speaks Guile's plain-text REPL protocol directly over the
   socket -- it sends a banner and a prompt, then evaluates whatever is
