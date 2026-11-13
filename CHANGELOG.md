@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `urgent-window` is discoverable and remains available through both live
+  subscriptions and journal replay while locked. Both paths share one
+  redaction policy, including suppression of unknown events and redaction
+  of partial title payloads (#112).
 - Runtime and generated API catalogs resolve exported bindings to their
   values, restoring callable signatures and procedure documentation,
   including re-exports. Unbound exports remain inspectable (#111).

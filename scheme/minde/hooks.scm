@@ -7,8 +7,10 @@
 ;;;
 ;;; Hooks fired by the bundled modules:
 ;;;   new-window (id title app-id)   -- window mapped and placed
+;;;   window-title-changed (id title app-id) -- title or application ID changed
 ;;;   destroy-window (id)            -- window unmapped
 ;;;   focus-window (id)              -- shown window changed (id or #f)
+;;;   urgent-window (id)             -- window requested attention
 ;;;   focus-frame (x y w h)          -- current frame changed
 ;;;   focus-group (name)             -- group switched
 ;;;   message (text)                 -- something was echoed

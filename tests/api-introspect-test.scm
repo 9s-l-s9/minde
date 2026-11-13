@@ -150,6 +150,13 @@
           (list? (assq-ref entry 'arguments))))
  (assq-ref catalog 'hooks))
 
+(let ((urgent (entry-named (assq-ref (describe-api "urgent") 'hooks) 'urgent-window)))
+  (check "urgency hook is discoverable with its window ID payload"
+         (equal? (assq-ref urgent 'arguments) '(id)))
+  (check "urgency hook has meaningful documentation"
+         (let ((doc (assq-ref urgent 'documentation)))
+           (and (string? doc) (not (string-null? doc))))))
+
 ;; --- Gsubr metadata covers every register_gsubr call in the Rust source ----
 ;; The gsubr table in api-introspect.scm is hand-maintained; parse the
 ;; registration sites out of src/guile/mod.rs and fail on any name missing

@@ -5,7 +5,84 @@ use smithay::reexports::x11rb::{
     protocol::xproto::{ConnectionExt, ImageFormat, ImageOrder},
     rust_connection::RustConnection,
 };
-use std::{env, io, time::Instant};
+use std::{
+    env,
+    io::{self, BufRead, BufReader},
+    os::unix::net::UnixStream,
+    time::Instant,
+};
+
+fn event_policy_while_locked() {
+    let socket = UnixStream::connect(format!(
+        "{}/minde-events.sock",
+        env::var("XDG_RUNTIME_DIR").unwrap()
+    ))
+    .unwrap();
+    let mut subscriber = BufReader::new(socket);
+    let start = Instant::now();
+    while ipc("(wm-events-active?)") != "(ok #t)" {
+        assert!(
+            start.elapsed() < TIMEOUT,
+            "event subscriber was not accepted"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let reply = ipc("(begin
+          (define lock-urgent-id (car (all-window-ids)))
+          (define lock-urgent-cursor (wm-event-cursor))
+          (handle-urgent-window! lock-urgent-id)
+          (run-event-hook! 'private-extension \"private payload\")
+          (run-event-hook! 'focus-frame 901 902 903 904)
+          lock-urgent-id)");
+    let id: u32 = reply
+        .strip_prefix("(ok ")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let expected = format!("(urgent-window {id})");
+    let mut urgent = false;
+    let start = Instant::now();
+    loop {
+        let remaining = TIMEOUT
+            .checked_sub(start.elapsed())
+            .expect("locked event stream did not reach its marker");
+        subscriber
+            .get_ref()
+            .set_read_timeout(Some(remaining))
+            .unwrap();
+        let mut line = String::new();
+        assert!(subscriber.read_line(&mut line).unwrap() > 0);
+        let line = line.trim_end();
+        assert!(
+            !line.starts_with("(message "),
+            "locked stream exposed a message"
+        );
+        assert!(
+            !line.starts_with("(private-extension "),
+            "locked stream exposed an unknown event"
+        );
+        urgent |= line == expected;
+        if line == "(focus-frame 901 902 903 904)" {
+            break;
+        }
+    }
+    assert!(urgent, "live locked stream omitted the urgency event");
+    assert_eq!(
+        ipc("(let* ((reply (events-since lock-urgent-cursor))
+                     (events (vector->list (assq-ref reply 'events))))
+               (and (not (assq-ref reply 'gap))
+                    (any (lambda (event)
+                           (and (eq? (assq-ref event 'name) 'urgent-window)
+                                (equal? (assq-ref event 'arguments) (vector lock-urgent-id)))) events)
+                    (not (any (lambda (event)
+                                (memq (assq-ref event 'name) '(message private-extension))) events))))"),
+        "(ok #t)",
+        "locked journal and live stream disagree"
+    );
+    assert_eq!(ipc("(begin (clear-urgent! lock-urgent-id) #t)"), "(ok #t)");
+    println!("ok - locked live events and journal retain urgency and suppress private payloads");
+}
 
 pub struct HostPixels {
     connection: RustConnection,
@@ -176,6 +253,7 @@ pub fn run() {
     );
     desktop.roundtrip();
     println!("ok - lock confirmation observes a cleared nested framebuffer");
+    event_policy_while_locked();
 
     let mut attacker = Client::new("denied lock surface attacker");
     let denied = attacker.lock(false);

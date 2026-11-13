@@ -2,7 +2,7 @@
 ;;; Event push serialization, sanitization and lock-privacy filtering
 ;;; (scheme/event-stream.scm).
 
-(use-modules (ice-9 rdelim))
+(use-modules (ice-9 rdelim) (minde control))
 
 ;; ipc-writable-datum lives in ipc-reply.scm; event-stream.scm reuses it for
 ;; the writable-data guarantee. wm-log is a Rust gsubr at runtime; stub it so
@@ -14,11 +14,17 @@
 (define %immediate-locked? #f)
 (define %lock-confirmed? #f)
 (define %published '())
+(define %journal '())
+(define (wm-events-since sequence)
+  `((sequence . 1) (gap . #f) (events . ,%journal)))
 (define (wm-session-locked?) %immediate-locked?)
 (define (wm-session-lock-confirmed?) %lock-confirmed?)
 (define (wm-events-active?) #f)
 (define (wm-publish-event line)
   (set! %published (cons line %published)) #t)
+;; An older init defined this at top level. Reloading must use the module's
+;; policy even when that local binding still shadows an unprefixed import.
+(define (event-redact-args name args) args)
 (load-from-path "ipc-reply.scm")
 (load-from-path "event-stream.scm")
 
@@ -84,6 +90,48 @@
 (check "locked geometry events keep flowing"
        (equal? (parse-line (event->line 'focus-frame '(1 2 3 4) #t))
                '(focus-frame 1 2 3 4)))
+
+;; Both a live line and replay of a pre-lock event must apply the same policy.
+;; Unknown extensions are available unlocked but suppressed while locked.
+(define (replayed-datums reply)
+  (map (lambda (entry)
+         (cons (assq-ref entry 'name) (vector->list (assq-ref entry 'arguments))))
+       (vector->list (assq-ref reply 'events))))
+(for-each
+ (lambda (sample)
+   (let ((datum (car sample)) (redacted (cadr sample)))
+     (set! %journal (list (list 1 (call-with-output-string (lambda (port) (write datum port))))))
+     (for-each
+      (lambda (locked?)
+        (set! %immediate-locked? locked?)
+        (let* ((expected (if locked? redacted datum))
+               (line (event->line (car datum) (cdr datum) locked?))
+               (replay (events-since 0)))
+          (check (format #f "live policy for ~s, locked ~s" datum locked?)
+                 (equal? (and line (parse-line line)) expected))
+          (check (format #f "journal policy for ~s, locked ~s" datum locked?)
+                 (equal? (replayed-datums replay) (if expected (list expected) '())))
+          (check "filtering retains the journal watermark" (= (assq-ref replay 'sequence) 1))
+          (check "explicit redaction uses the same policy as locking"
+                 (equal? (replayed-datums (events-since 0 #:redact? #t))
+                         (if redacted (list redacted) '())))))
+      '(#f #t))))
+ '(((new-window 42 "secret title" "secret.app") (new-window 42 "" ""))
+   ((window-title-changed 42 "new secret" "secret.app") (window-title-changed 42 "" ""))
+   ((window-geometry 42 (1 2 3 4)) (window-geometry 42 (1 2 3 4)))
+   ((destroy-window 42) (destroy-window 42))
+   ((focus-window #f) (focus-window #f))
+   ((focus-frame 1 2 3 4) (focus-frame 1 2 3 4))
+   ((focus-group " I ") (focus-group " I "))
+   ((urgent-window 0) (urgent-window 0))
+   ((session-lock) (session-lock))
+   ((session-unlock) (session-unlock))
+   ((automation-result 7 screenshot done) (automation-result 7 screenshot done))
+   ((message "secret message") #f)
+   ((private-extension "private data") #f)
+   ((new-window 42 "partial title") (new-window 42 "" ""))
+   ((window-title-changed) #f)))
+(set! %immediate-locked? #f)
 
 ;; --- minde-mirror-event drives wm-publish-event with the finished line --
 

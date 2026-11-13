@@ -27,26 +27,17 @@
 ;;; events are filtered, mirroring (minde status)'s redact? policy (window
 ;;; id retained; human-readable title and app-id omitted). new-window keeps its
 ;;; id but blanks title and app-id; message (arbitrary on-screen text) is
-;;; suppressed entirely. Id-only lifecycle and geometry events keep flowing so
-;;; an agent can still track focus and window churn while locked.
+;;; suppressed entirely, as are unknown extension events. Known state events,
+;;; including urgency and geometry, keep flowing while locked. Journal replay
+;;; applies the same policy to events recorded before the lock.
 
-(define (event-redact-args name args)
-  "Returns ARGS filtered for the locked session, or #f to suppress the event.
-Keeps window ids and geometry; blanks or drops human-readable strings."
-  (case name
-    ((new-window window-title-changed)
-     ;; (id title app-id) -> keep id, blank the title and app-id strings.
-     (if (and (pair? args) (pair? (cdr args)) (pair? (cddr args)))
-         (list (car args) "" "")
-         args))
-    ((message) #f)                      ; arbitrary on-screen text: suppress
-    (else args)))
+(use-modules ((minde event-policy) #:prefix events:))
 
 (define (event->line name args locked?)
   "Returns the readable one-line s-expression for event NAME with payload ARGS,
 or #f when the event is suppressed under LOCKED?. Each payload value honors the
 writable-data guarantee via ipc-writable-datum."
-  (let ((payload (if locked? (event-redact-args name args) args)))
+  (let ((payload (if locked? (events:event-redact-args name args) args)))
     (and payload
          (call-with-output-string
            (lambda (port)

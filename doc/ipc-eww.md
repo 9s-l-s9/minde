@@ -142,10 +142,15 @@ title- and content-bearing events are filtered, mirroring `status.json`'s
 `redact?` policy (window id retained; human-readable title and app-id omitted):
 
 - `new-window` and `window-title-changed` keep their id but report empty `""` title and app-id;
-- `message` events (arbitrary on-screen text) are suppressed entirely;
-- id-only lifecycle and geometry events (`focus-window`, `destroy-window`,
+- `message` events (arbitrary on-screen text) and unknown extension events
+  are suppressed entirely;
+- id-only lifecycle and geometry events (`focus-window`, `urgent-window`, `destroy-window`,
   `focus-frame`, `focus-group`, `window-geometry`, `session-lock`, `session-unlock`) keep flowing,
   so an agent can still track focus and window churn while locked.
+
+Live subscriptions and `events-since` share this policy. Replay also redacts
+events recorded before locking, and filtering preserves the journal cursor.
+Unknown extension events remain available on both paths while unlocked.
 
 **Slow-consumer and eviction policy.** Delivery never blocks the compositor
 event loop. Writes to a subscriber are non-blocking; unsent bytes are buffered

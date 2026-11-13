@@ -10,6 +10,7 @@
   #:use-module (minde compositor model)
   #:use-module (minde compositor frames)
   #:use-module (minde compositor rust)
+  #:use-module (minde event-policy)
   #:use-module (minde groups)
   #:use-module ((minde layouts) #:prefix layout:)
   #:export (desktop-snapshot
@@ -599,15 +600,10 @@ Query-time lock redaction also applies to events recorded before locking."
                                               (let ((datum (read p)))
                                                 (unless (eof-object? (read p)) (fail 'invalid-event))
                                                 datum)))))
-                                 (name (car datum)) (args (cdr datum)))
-                            (and (or (not redact?)
-                                     (memq name '(focus-window focus-frame focus-group
-                                                  destroy-window session-lock session-unlock
-                                                  automation-result window-geometry
-                                                  new-window window-title-changed)))
+                                 (name (car datum)) (args (cdr datum))
+                                 (payload (if redact? (event-redact-args name args) args)))
+                            (and payload
                                  `((sequence . ,(car entry)) (name . ,name)
-                                   (arguments . ,(list->vector
-                                                  (if (and redact? (memq name '(new-window window-title-changed)))
-                                                      (list (car args) "" "") args)))))))
+                                   (arguments . ,(list->vector payload))))))
                         (lambda _ #f)))
                     (or events '())))))))

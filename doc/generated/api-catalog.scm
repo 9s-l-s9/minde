@@ -393,6 +393,7 @@
    ((name . window-geometry) (arguments id rectangle) (documentation . "Native journal event: committed window geometry changed; RECTANGLE is (x y width height), or #f for a hidden or unavailable window."))
    ((name . destroy-window) (arguments id) (documentation . "A window was unmapped."))
    ((name . focus-window) (arguments id) (documentation . "The shown window changed (ID or #f)."))
+   ((name . urgent-window) (arguments id) (documentation . "A window requested attention."))
    ((name . focus-frame) (arguments x y w h) (documentation . "The current frame changed."))
    ((name . focus-group) (arguments name) (documentation . "The focused group switched."))
    ((name . message) (arguments text) (documentation . "Something was echoed to the user."))

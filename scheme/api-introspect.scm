@@ -164,6 +164,7 @@
      "Native journal event: committed window geometry changed; RECTANGLE is (x y width height), or #f for a hidden or unavailable window.")
     (destroy-window (id) "A window was unmapped.")
     (focus-window (id) "The shown window changed (ID or #f).")
+    (urgent-window (id) "A window requested attention.")
     (focus-frame (x y w h) "The current frame changed.")
     (focus-group (name) "The focused group switched.")
     (message (text) "Something was echoed to the user.")
