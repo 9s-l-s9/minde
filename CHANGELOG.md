@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Control errors return flat association lists for their details, matching
+  argument-validation errors and preserving the same shape in stored and
+  replayed receipts (#106).
 - `minde-msg` validates timeout syntax and bounds before IPC, rejects missing
   arguments with usage status 2, and accepts `--` before literal message text.
   Quoted text and trailing newlines are preserved (#114).

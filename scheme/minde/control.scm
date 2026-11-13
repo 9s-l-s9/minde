@@ -176,7 +176,7 @@ Null denotes unavailable information. Locking forces content redaction."
       (redacted . ,(and redact? #t))
       ,@(if redact? (desktop-body #t) body))))
 
-(define (fail code . details)
+(define* (fail code #:optional (details '()))
   (throw 'control-error code details))
 
 (define (require-window id)

@@ -122,6 +122,10 @@ satisfied. `pending` means completion still needs observation. `error`
 carries `code`, `stage`, `effects-may-have-occurred`, and structured details.
 An allocated but unsubmitted receipt has status `ready`.
 
+Built-in control and argument-validation errors use a flat association list
+for `details`, such as `((window . 999))` or `((expected . 3) (actual . 4))`.
+JSON preserves these compound details in the usual `$scheme` tag.
+
 Failures such as `unknown-window`, `unknown-group`, `invalid-argument`, and
 `stale-state` are useful recovery signals. Check the failure stage before
 assuming that nothing changed. There is no rollback of arbitrary hooks or

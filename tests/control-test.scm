@@ -71,6 +71,7 @@
 (define (check-true description value) (check description (and value #t) #t))
 (define (status result) (assq-ref result 'status))
 (define (code result) (assq-ref (assq-ref result 'error) 'code))
+(define (details result) (assq-ref (assq-ref result 'error) 'details))
 (define (window id)
   (find (lambda (w) (= id (assq-ref w 'id)))
         (vector->list (assq-ref (desktop-snapshot) 'windows))))
@@ -137,11 +138,25 @@
  '(((window . "1")) ((window . -1)) ((window . 1) (unknown . #t))
    ((window . 1) (window . 2)) ()))
 (check "invalid calls never send close requests" %closed '())
-(check "missing target is explicit"
-       (code (act 'focus-window! '((window . 999)))) 'unknown-window)
+(for-each
+ (lambda (sample)
+   (let* ((request (new-action-request))
+          (reply (act (car sample) (cadr sample) request))
+          (expected (cadddr sample)))
+     (check "target and argument failures retain their code" (code reply) (caddr sample))
+     (check "error details are a flat association list" (details reply) expected)
+     (check "stored receipt preserves flat details"
+            (details (action-status (assq-ref request 'request-id))) expected)
+     (check "rejected invocation replays the same details"
+            (details (act (car sample) (cadr sample) request)) expected)))
+ '((focus-window! ((window . 999)) unknown-window ((window . 999)))
+   (switch-group! ((group . "missing group")) unknown-group ((group . "missing group")))
+   (close-window! ((window . "wrong type")) invalid-argument
+     ((command . close-window!) (reason . type-or-constraint) (parameter . window)))))
 (set! %ready? #f)
-(check "unsafe execution context is rejected"
-       (code (act 'close-window! '((window . 1)))) 'unsupported-context)
+(let ((reply (act 'close-window! '((window . 1)))))
+  (check "unsafe execution context is rejected" (code reply) 'unsupported-context)
+  (check "errors without details retain the empty list" (details reply) '()))
 (set! %ready? #t)
 (check "context rejection sends no close" %closed '())
 (let ((request (new-action-request)))
@@ -153,7 +168,11 @@
 (let* ((request (new-action-request)) (id (assq-ref request 'request-id)))
   (focus-window-by-id! 2)
   (focus-window-by-id! 1)
-  (check "stale call is rejected" (code (act 'close-window! '((window . 1)) request)) 'stale-state)
+  (let* ((actual (assq-ref (desktop-snapshot) 'revision))
+         (reply (act 'close-window! '((window . 1)) request)))
+    (check "stale call is rejected" (code reply) 'stale-state)
+    (check "stale-state details expose both revisions" (details reply)
+           `((expected . ,(assq-ref request 'revision)) (actual . ,actual))))
   (check "stale rejection is a terminal observable receipt"
          (code (action-status id)) 'stale-state)
   (check "retry of same stale invocation returns its original rejection"
