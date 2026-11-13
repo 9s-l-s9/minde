@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Source release CI requires a version-matching tag on `origin/main`, tied
+  to the checkout and triggering event, before building or publishing.
+  Release candidates are published as prereleases (#120).
 - Demo manifests reject empty fields and embedded record separators before
   capture starts. Setup, action, and cleanup cannot shift columns during
   shell parsing; `#t` remains the explicit no-op expression (#119).

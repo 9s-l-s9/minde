@@ -1,0 +1,50 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Validate the checked-out tag before building or publishing source archives.
+set -eu
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+if [ "$#" -ne 1 ] || { [ "$1" != --check ] && [ "$1" != --publish ]; }; then
+    echo 'usage: scripts/ci-release --check | --publish' >&2
+    exit 2
+fi
+mode=$1
+fail() { echo "ci release: $*" >&2; exit 1; }
+
+tag=${GITHUB_REF_NAME:-}
+if [ -z "$tag" ] || [ "${GITHUB_REF:-}" != "refs/tags/$tag" ]; then
+    fail 'a version-tag event is required'
+fi
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+if [ -z "$version" ] || [ "$tag" != "v$version" ]; then
+    fail "tag $tag does not match Cargo version $version"
+fi
+revision=$(git rev-parse --verify "refs/tags/$tag^{commit}") ||
+    fail 'the release tag must resolve to a local commit'
+[ "$revision" = "$(git rev-parse --verify HEAD)" ] ||
+    fail 'the release tag does not match the checkout'
+[ -n "${GITHUB_SHA:-}" ] || fail 'the event revision is missing'
+event_revision=$(git rev-parse --verify --end-of-options "$GITHUB_SHA^{commit}") ||
+    fail 'the event revision must resolve to a local commit'
+[ "$revision" = "$event_revision" ] || fail 'the release tag does not match the event revision'
+main=$(git rev-parse --verify 'refs/remotes/origin/main^{commit}') ||
+    fail 'origin/main is missing; fetch the complete release history'
+git merge-base --is-ancestor "$revision" "$main" ||
+    fail 'the release tag is not on origin/main'
+
+if [ "$mode" = --check ]; then
+    echo "ci release: $tag matches $revision on origin/main"
+    exit 0
+fi
+
+output=${MINDE_CI_OUTPUT:-build/ci/artifacts}
+for artifact in "minde-$version.tar.gz" "minde-$version-vendored.tar.gz" SHA256SUMS; do
+    [ -s "$output/$artifact" ] || fail "missing release artifact: $output/$artifact"
+done
+set -- gh release create "$tag" \
+    "$output/minde-$version.tar.gz" "$output/minde-$version-vendored.tar.gz" "$output/SHA256SUMS" \
+    --verify-tag --title "$tag" --notes "Source archives for $revision."
+# A hyphen in build metadata does not make a stable version a prerelease.
+case ${version%%+*} in *-*) set -- "$@" --prerelease ;; esac
+exec "$@"

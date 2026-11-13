@@ -73,6 +73,7 @@ check-control-e2e:
 	sh tests/control-e2e.sh
 
 check-static:
+	sh tests/ci-release-test.sh
 	sh tests/lint-borrows.sh
 	sh tests/lint-hook-borrows.sh
 	sh tests/nested-harness-test.sh
@@ -83,7 +84,7 @@ check-static:
 			scripts/minde-cmd \
 			scripts/minde-msg scripts/mindectl \
 			scripts/create-release-archives scripts/check-guix-package \
-			scripts/ci scripts/ci-binary scripts/ci-bootstrap-guix \
+			scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-bootstrap-guix \
 			scripts/hardware-report scripts/release; \
 	else \
 		echo "note: shellcheck unavailable; static shell analysis skipped"; \

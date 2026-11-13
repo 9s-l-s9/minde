@@ -7,6 +7,20 @@ are checked together by `make check-docs`.
 Status and diagnostic schemas: `1`.
 Persistent state formats: `1`.
 
+## Tagged source releases
+
+The source-archive CI job accepts only `v<Cargo version>` tags whose commit
+is on `origin/main` and matches both the checkout and the triggering event.
+It fetches full history and runs `scripts/ci-release --check` before building.
+Hosted `scripts/ci --release-artifacts` runs the same validation before its
+gates; local archive checks can still run without a tag.
+
+`scripts/ci-release --publish` repeats the checks and publishes only the two
+archives for that version and their `SHA256SUMS`. Versions with a
+prerelease suffix, such as `1.0.0-rc1`, use GitHub's prerelease flag. Stable
+versions remain normal releases, including versions with build metadata.
+This source-release policy is separate from the Guix binary builds below.
+
 ## GitHub-built Guix binaries
 
 `.github/workflows/guix-binary.yml` builds the complete Guix package on pushes

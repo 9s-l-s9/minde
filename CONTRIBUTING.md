@@ -46,7 +46,7 @@ scheme` REPL; see `doc/debugging.md#editor-setup` and `#interactive-scheme-debug
 
 ## Continuous integration
 
-Hosted CI runs exactly one script, `scripts/ci`, the same one you can run
+Hosted development checks use `scripts/ci`, the same entry point you can run
 locally:
 
 ```sh
@@ -62,6 +62,11 @@ No gate logic lives in `.github/workflows/ci.yml`; if a hosted run disagrees
 with a local one, the bug is in `scripts/ci`. Nested/e2e, application, demo, and
 soak gates stay out of CI because headless runners cannot support them; run them
 locally with `./check --all` or the granular `make check-*` targets.
+
+Tagged source releases additionally use `scripts/ci-release` to require a
+tag matching Cargo's version on `origin/main`. The helper checks the checkout
+and event revisions again before publishing and marks candidate versions as
+prereleases. Its tests use temporary Git histories and a mocked publisher.
 
 ## Change expectations
 

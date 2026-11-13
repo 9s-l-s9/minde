@@ -3,11 +3,10 @@
 #
 # Single noninteractive CI entry point.
 #
-# This is the one script both a developer and the hosted GitHub Actions runner
-# execute. The hosted workflow (.github/workflows/ci.yml) does nothing but
-# install Guix and call this file; if a hosted run and a local run ever
-# disagree, that is a bug by construction, because no gate logic lives in the
-# workflow YAML.
+# Developers and hosted GitHub Actions runners execute the same gates here.
+# The workflow installs Guix and calls this file; tagged releases also use
+# scripts/ci-release for validation and publication. Gate and release policy
+# stays in these scripts rather than in the workflow YAML.
 #
 # Default mode composes the existing gates that are safe on a headless runner:
 #   * ./check              -- the fast development gate. It already includes the
@@ -89,6 +88,12 @@ EOF
         exit 2
         ;;
 esac
+
+# Local archive checks can run without a release tag. Hosted release builds
+# must validate the event before entering Guix or running expensive gates.
+if [ "$release_artifacts" -eq 1 ] && [ "${GITHUB_ACTIONS:-false}" = true ]; then
+    sh scripts/ci-release --check
+fi
 
 # Enter the pinned environment once, then re-exec inside it, so every gate sees
 # the same tools whether or not the caller already ran `guix shell`.
