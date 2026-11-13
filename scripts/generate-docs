@@ -2,6 +2,10 @@
 set -eu
 
 out=${1:-doc/generated}
+# The default updates the repository's established document locations. An
+# explicit output directory contains every artifact, including testing.md.
+testing_out="$out/testing.md"
+[ "$#" -ne 0 ] || testing_out=doc/testing.md
 mkdir -p "$out"
 
 guile --no-auto-compile -L scheme -L tools/guile-autodoc scripts/generate-api-reference.scm \
@@ -16,5 +20,5 @@ guile --no-auto-compile -L scheme scripts/generate-api-catalog.scm \
     >"$out/api-catalog.scm"
 guile --no-auto-compile -L scheme scripts/generate-manual.scm \
     >"$out/manual.html"
-sh scripts/generate-testing-reference doc/testing.md
+sh scripts/generate-testing-reference "$testing_out"
 sh scripts/generate-packaging-reference "$out/packaging.md"

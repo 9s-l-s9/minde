@@ -22,8 +22,10 @@ Normal development and pre-commit verification use one command:
 It always runs the same fixed gate, including Rust unit tests and Clippy.
 ShellCheck is required: its absence or a shell lint failure fails the gate.
 Documentation link checks require ripgrep and fail on discovery or extraction
-errors; a document without links is valid. The static gate also exercises
-these failures and demo-duration validation with isolated fixtures.
+errors; a document without links is valid. Generated-document checks leave
+source documents untouched and reject stale testing references, including
+when the command inventory changes. The static gate exercises these cases,
+link-check failures and demo-duration validation with isolated fixtures.
 `./check --help` lists the optional
 focused, integration, and release modes. Granular
 `make check-*` targets are retained for debugging and CI, but are not required

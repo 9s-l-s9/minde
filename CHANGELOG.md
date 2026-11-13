@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Generated-document checks compare the testing reference in a temporary
+  directory instead of overwriting `doc/testing.md` before comparison.
+  Stale text and changed command inventories now fail validation while
+  preserving the source files (#92).
 - Tearing control rejects duplicate objects on a surface with the required
   manager error, including requests through another manager binding.
   Destroying a control permits replacement; destroying its surface leaves

@@ -13,7 +13,6 @@ for document in api-reference.md api-browser.html keybindings.md demo-manifest.j
     fi
 done
 
-sh scripts/generate-testing-reference "$tmp/testing.md"
 if ! diff -u "doc/testing.md" "$tmp/testing.md"; then
     echo "error: doc/testing.md is stale; run make docs" >&2
     exit 1

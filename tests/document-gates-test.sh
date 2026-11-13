@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 root=$PWD
 if [ "${1:-all}" = all ]; then
     failed=0
-    for scenario in links demos; do
+    for scenario in links demos generated; do
         sh "$root/tests/document-gates-test.sh" "$scenario" || failed=1
     done
     exit "$failed"
@@ -26,6 +26,58 @@ reject() {
     [ ! -s stdout ] || fail "$1 printed success after failure"
 }
 case $1 in
+generated)
+    # Exercise the actual generation driver, testing-reference generator and
+    # comparison gate. Other renderers have fixed output to keep this fixture
+    # small; the command inventory and file comparisons remain real.
+    mkdir scripts
+    cp "$root/scripts/generate-docs" "$root/scripts/generate-testing-reference" scripts/
+    cp "$root/check" check
+    cat >bin/guile <<'EOF'
+#!/bin/sh
+printf 'rendered fixture\n'
+EOF
+    cat >scripts/generate-packaging-reference <<'EOF'
+#!/bin/sh
+printf 'packaging fixture\n' >"$1"
+EOF
+    chmod +x bin/guile
+    PATH="$scratch/bin:$PATH"
+    export PATH
+    printf '.PHONY: check\n# Initial gate.\ncheck:\n' >Makefile
+    scripts/generate-docs
+    [ -s doc/testing.md ] || fail 'default generation omitted doc/testing.md'
+    [ ! -e doc/generated/testing.md ] || fail 'default generation duplicated the testing reference'
+    cp doc/testing.md artifacts/current.md
+    run generated-docs || { cat stdout stderr >&2; fail 'fresh generated documents rejected'; }
+    cmp doc/testing.md artifacts/current.md || fail 'checking fresh documents changed the source'
+    echo 'ok - default generation and fresh comparison preserve document locations'
+
+    printf '\nSTALE LINE\n' >>doc/testing.md
+    cp doc/testing.md artifacts/stale.md
+    if run generated-docs; then fail 'stale testing reference passed comparison'; fi
+    grep -q 'doc/testing.md is stale' stderr || fail 'missing stale testing-reference diagnostic'
+    cmp doc/testing.md artifacts/stale.md || fail 'checking stale documents rewrote the source'
+    echo 'ok - stale testing reference fails and retains its original bytes'
+
+    cp artifacts/current.md doc/testing.md
+    printf '\n.PHONY: new-gate\n# New gate.\nnew-gate:\n' >>Makefile
+    if run generated-docs; then fail 'changed command inventory passed comparison'; fi
+    grep -q 'doc/testing.md is stale' stderr || fail 'missing changed-inventory diagnostic'
+    cmp doc/testing.md artifacts/current.md || fail 'checking changed inventory rewrote the source'
+    echo 'ok - changed command inventory fails without repairing the source'
+
+    scripts/generate-docs "$scratch/output with spaces"
+    [ -s 'output with spaces/testing.md' ] || fail 'explicit output directory lacks testing reference'
+    grep -q 'new-gate' 'output with spaces/testing.md' || fail 'explicit output lacks current inventory'
+    cmp doc/testing.md artifacts/current.md || fail 'explicit output generation changed the source'
+    for artifact in doc/generated/*; do
+        cmp "$artifact" "output with spaces/${artifact##*/}" || fail 'explicit output omitted an artifact'
+    done
+    scripts/generate-docs
+    run generated-docs || { cat stdout stderr >&2; fail 'regeneration did not repair the reference'; }
+    echo 'ok - explicit output stays isolated and default regeneration repairs drift'
+    ;;
 links)
     # A restricted PATH exercises missing-tool behavior even when the host
     # has ripgrep installed. All other validator commands remain real.
