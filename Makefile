@@ -73,23 +73,22 @@ check-control-e2e:
 	sh tests/control-e2e.sh
 
 check-static:
+	@command -v shellcheck >/dev/null 2>&1 || { \
+		echo "error: shellcheck is required; enter: guix shell -m manifest-scheme.scm" >&2; exit 127; }
+	sh tests/make-gates-test.sh
 	sh tests/ci-release-test.sh
 	sh tests/release-notes-test.sh
 	sh tests/lint-borrows.sh
 	sh tests/lint-hook-borrows.sh
 	sh tests/nested-harness-test.sh
-	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
-			scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
-			scripts/generate-packaging-reference \
-			scripts/minde-cmd \
-			scripts/minde-msg scripts/mindectl \
-			scripts/create-release-archives scripts/check-guix-package \
-			scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-bootstrap-guix \
-			scripts/hardware-report scripts/release; \
-	else \
-		echo "note: shellcheck unavailable; static shell analysis skipped"; \
-	fi
+	shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
+		scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
+		scripts/generate-packaging-reference \
+		scripts/minde-cmd \
+		scripts/minde-msg scripts/mindectl scripts/minde-agent \
+		scripts/create-release-archives scripts/check-guix-package \
+		scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-bootstrap-guix \
+		scripts/hardware-report scripts/release scripts/run-nested
 
 # Compile scheme/**/*.scm (modules, init.scm and the files it loads) to
 # $(CCACHE); only sources newer than their .go are rebuilt. The Guix package
@@ -277,7 +276,7 @@ release-archives:
 	sh scripts/create-release-archives "$(VERSION)"
 
 check-release-archives:
-	@version="$(VERSION)"; \
+	@set -eu; version="$(VERSION)"; \
 	if [ -z "$$version" ]; then \
 		version=$$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1); \
 	fi; \
@@ -305,7 +304,7 @@ check-ui-package:
 check-all: check check-e2e check-apps check-docs
 
 check-hardware:
-	@report=$$(sh scripts/hardware-report); \
+	@set -eu; report=$$(sh scripts/hardware-report); \
 	echo "hardware snapshot: $$report"; \
 	echo "complete it from a spare VT using doc/hardware-validation.md"
 

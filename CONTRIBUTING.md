@@ -20,6 +20,7 @@ Normal development and pre-commit verification use one command:
 ```
 
 It always runs the same fixed gate, including Rust unit tests and Clippy.
+ShellCheck is required: its absence or a shell lint failure fails the gate.
 `./check --help` lists the optional
 focused, integration, and release modes. Granular
 `make check-*` targets are retained for debugging and CI, but are not required

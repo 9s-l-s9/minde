@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Verification targets propagate archive build/comparison and hardware-report
+  failures. Static checks require ShellCheck and include `scripts/run-nested`
+  and `scripts/minde-agent`, so omitted tooling or launchers cannot silently
+  pass (#123, #124).
 - Local releases reject missing, empty, or duplicate Unreleased changelog
   sections before builds or output cleanup. Release notes retain the
   validated changes and previous artifacts survive validation failures (#122).

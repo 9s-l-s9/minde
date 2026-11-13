@@ -121,6 +121,8 @@ make release-archives VERSION=1.0.0-rc1
 Archive order, owner/group, timestamps, tar format, and gzip metadata are
 normalized. The check creates each archive twice, compares the bytes, rejects
 workspace-only paths, and resolves the complete locked Cargo graph offline.
+Either archive build failing, either byte comparison differing, or the final
+verification failing stops `make check-release-archives` with an error.
 Changing dependencies requires refreshing the ignored mirror first:
 
 ```sh
