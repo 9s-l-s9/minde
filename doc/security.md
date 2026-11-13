@@ -74,6 +74,17 @@ owner dies, and the session stays locked throughout recovery. A client that
 abandons an unconfirmed lock must reconnect before trying again: the pinned
 protocol library retains output bindings from its abandoned lock.
 
+Owner loss fires `wm-on-session-lock-lost` and the `session-lock-lost` hook
+once, including loss before presentation confirmation. The default session
+policy restarts `%lock-command` after one second, doubling subsequent retry
+delays up to 30 seconds. It retries failed starts too, stops when a replacement
+owns the lock, and invalidates queued retries on unlock. Backoff persists across
+repeated locker crashes until a successful unlock. Set `%lock-restart?` to `#f`
+to disable this policy. `wm-session-lock-abandoned?` reports whether recovery
+still needs an owner; it becomes false before a replacement's first frame.
+If the configured locker is broken, use the [manual recovery procedure](debugging.md#recovering-a-dead-locker)
+from another VT with a working locker and the same Wayland socket.
+
 If locker startup throws or timeout registration fails, `suspend!` removes
 its pending confirmation hook and propagates the error. A later manual lock
 cannot complete that abandoned suspend, and a new attempt can start immediately.

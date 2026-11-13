@@ -6,7 +6,7 @@
 ;;; Run with:
 ;;;   guile -L scheme tests/session-test.scm
 ;;;
-;;; Injects the four callbacks required by the module's explicit runtime
+;;; Injects the five callbacks required by the module's explicit runtime
 ;;; boundary. The real Rust side is not built while this runs; lock state and
 ;;; timer delivery are controlled by the fakes below.
 
@@ -30,6 +30,8 @@
 (define %lock-confirmed? #f)
 (define (wm-session-locked?) %immediate-locked?)
 (define (wm-session-lock-confirmed?) %lock-confirmed?)
+(define %abandoned? #f)
+(define (wm-session-lock-abandoned?) %abandoned?)
 
 ;; Now it's safe to load the modules under test.
 (use-modules (minde compositor frames))
@@ -49,7 +51,8 @@
  #:spawn wm-spawn
  #:quit wm-quit
  #:run-after wm-run-after
- #:session-locked? wm-session-lock-confirmed?)
+ #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
 
 ;; ---------------------------------------------------------------------
 ;; Tiny assertion helpers
@@ -277,7 +280,8 @@
   (set! %messages '())
   ((@@ (minde session) configure-session-runtime!)
    #:spawn spawn #:quit wm-quit #:run-after schedule
-   #:session-locked? wm-session-lock-confirmed?)
+   #:session-locked? wm-session-lock-confirmed?
+   #:lock-abandoned? wm-session-lock-abandoned?)
   (let ((failure (catch #t (lambda () (suspend!) #f) (lambda args args))))
     (check (string-append name ": reports the setup error")
            (and failure (car failure)) expected-key)
@@ -292,7 +296,8 @@
     (set! %lock-command "true")
     ((@@ (minde session) configure-session-runtime!)
      #:spawn wm-spawn #:quit wm-quit #:run-after wm-run-after
-     #:session-locked? wm-session-lock-confirmed?)
+     #:session-locked? wm-session-lock-confirmed?
+     #:lock-abandoned? wm-session-lock-abandoned?)
     (wm-on-session-lock)
     (check (string-append name ": a later manual lock does not suspend")
            (spawned? "false") #f)
@@ -330,7 +335,8 @@
           ((@@ (minde session) configure-session-runtime!)
            #:spawn (lambda (_) (escape 'escaped))
            #:quit wm-quit #:run-after wm-run-after
-           #:session-locked? wm-session-lock-confirmed?)
+           #:session-locked? wm-session-lock-confirmed?
+           #:lock-abandoned? wm-session-lock-abandoned?)
           (suspend!)
           'returned))
        'escaped)
@@ -340,7 +346,8 @@
        (event-hook-procedures 'session-lock) (list unrelated-lock-hook))
 ((@@ (minde session) configure-session-runtime!)
  #:spawn wm-spawn #:quit wm-quit #:run-after wm-run-after
- #:session-locked? wm-session-lock-confirmed?)
+ #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
 (wm-on-session-lock)
 (check "a manual lock after continuation escape does not suspend"
        (spawned? "false") #f)
@@ -363,6 +370,86 @@
        (>= %lock-hook-fired 1) #t)
 (check "wm-on-session-unlock runs the session-unlock hook"
        (>= %unlock-hook-fired 1) #t)
+
+;; Drive timers individually, rather than merely inspecting registrations.
+(define (fire-recovery-timer!)
+  (let ((timer (last %timers)))
+    (set! %timers (drop-right %timers 1))
+    ((cdr timer))))
+(set! %spawned '())
+(set! %timers '())
+(set! %abandoned? #t)
+(set! %lock-command "replacement-locker")
+(wm-on-session-lock-lost)
+(wm-on-session-lock-lost)
+(check "owner loss schedules one delayed retry" (map car %timers) '(1000))
+(check "loss does not spawn synchronously" %spawned '())
+(fire-recovery-timer!)
+(check "retry spawns the configured locker" %spawned '("replacement-locker"))
+(check "missing replacement doubles the backoff" (map car %timers) '(2000))
+(for-each (lambda (_) (fire-recovery-timer!)) (iota 5))
+(check "backoff is capped at 30 seconds" (map car %timers) '(30000))
+
+;; Ownership is enough: a replacement need not have confirmed presentation.
+(set! %abandoned? #f)
+(set! %lock-confirmed? #f)
+(set! %spawned '())
+(fire-recovery-timer!)
+(check "replacement ownership stops retries before confirmation" %spawned '())
+(check "replacement leaves no recovery timer" %timers '())
+(set! %abandoned? #t)
+(wm-on-session-lock-lost)
+(check "a crashing replacement retains the backoff" (map car %timers) '(30000))
+
+;; A stale timer after unlock cannot act on a later lock's abandoned state.
+(define stale-recovery (cdr (car %timers)))
+(wm-on-session-unlock)
+(set! %timers '())
+(wm-on-session-lock-lost)
+(stale-recovery)
+(check "unlock invalidates the old generation" %spawned '())
+(check "unlock resets the next recovery delay" (map car %timers) '(1000))
+
+;; Disabling the default policy also cancels already queued recovery work.
+(set! %lock-restart? #f)
+(fire-recovery-timer!)
+(wm-on-session-lock-lost)
+(check "disabled recovery does not spawn" %spawned '())
+(check "disabled recovery does not schedule" %timers '())
+(set! %lock-restart? #t)
+
+((@@ (minde session) configure-session-runtime!)
+ #:spawn (lambda (_) (throw 'locker-exec-failed)) #:quit wm-quit
+ #:run-after wm-run-after #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
+(wm-on-session-lock-lost)
+(fire-recovery-timer!)
+(check "spawn failure retains a delayed retry" (map car %timers) '(2000))
+(wm-on-session-unlock)
+
+(set! %spawned '())
+(set! %timers '())
+((@@ (minde session) configure-session-runtime!)
+ #:spawn wm-spawn #:quit wm-quit
+ #:run-after (lambda (ms thunk)
+               (wm-run-after ms thunk)
+               (throw 'recovery-timer-failed))
+ #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
+(wm-on-session-lock-lost)
+(check "failed timer registration leaves recovery idle"
+       (@@ (minde session) %lock-recovery-pending?) #f)
+(fire-recovery-timer!)
+(check "callback from failed registration cannot spawn" %spawned '())
+((@@ (minde session) configure-session-runtime!)
+ #:spawn wm-spawn #:quit wm-quit #:run-after wm-run-after
+ #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
+(wm-on-session-lock-lost)
+(fire-recovery-timer!)
+(check "recovery can retry after registration failure"
+       %spawned '("replacement-locker"))
+(wm-on-session-unlock)
 
 (if (zero? %failures)
     (format #t "all session tests passed~%")

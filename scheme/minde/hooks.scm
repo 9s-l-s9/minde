@@ -15,6 +15,7 @@
 ;;;   focus-group (name)             -- group switched
 ;;;   message (text)                 -- something was echoed
 ;;;   session-lock ()                -- the session-lock surface came up
+;;;   session-lock-lost ()           -- owner disappeared; session stays locked
 ;;;   session-unlock ()              -- the session-lock surface went away
 ;;;
 ;;; A hook procedure that throws is logged and dropped from that run --

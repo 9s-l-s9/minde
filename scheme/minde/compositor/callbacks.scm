@@ -44,6 +44,7 @@
     (handle-input-device-added! . 2)
     (handle-startup! . 0)
     (wm-on-session-lock . 0)
+    (wm-on-session-lock-lost . 0)
     (wm-on-session-unlock . 0)))
 
 (define (compositor-callback-arities)

@@ -35,6 +35,7 @@ pub(crate) struct LockState {
     owner_client: Option<ClientId>,
     pending: Option<SessionLocker>,
     confirmed: bool,
+    loss_reported: bool,
     presentation: LockPresentation,
 }
 
@@ -105,9 +106,14 @@ impl SessionLockHandler for MindeState {
         if client.is_some() && client == self.session_lock.owner_client {
             return;
         }
+        // A replacement may arrive in the same dispatch batch as the old
+        // owner's destruction. Report that loss before replacing its handle.
+        self.report_lock_owner_loss();
         self.session_lock.owner_client = client;
         self.session_lock.owner = Some(confirmation.ext_session_lock().clone());
         self.session_lock.pending = Some(confirmation);
+        self.session_lock.loss_reported = false;
+        crate::guile::set_session_lock_abandoned(false);
         self.session_lock.presentation.reset();
         self.lock_surfaces.clear();
         self.locked = true;
@@ -154,6 +160,7 @@ impl SessionLockHandler for MindeState {
         // Only the owning, confirmed protocol object reaches this callback:
         // dispatch_lock_request checks it before Smithay's dispatch.
         crate::guile::set_session_lock_confirmed(false);
+        crate::guile::set_session_lock_abandoned(false);
         self.locked = false;
         self.absolute_pointer_motion.reset();
         self.session_lock.owner = None;
@@ -278,6 +285,7 @@ impl MindeState {
     /// completions have settled. Removed/off DRM outputs no longer expose any
     /// content; newly active outputs must have their own presentation receipt.
     pub(crate) fn maybe_confirm_lock(&mut self) {
+        self.report_lock_owner_loss();
         if self.session_lock.pending.is_none() {
             return;
         }
@@ -302,6 +310,26 @@ impl MindeState {
             crate::guile::set_session_lock_confirmed(true);
             tracing::info!("session locked (ext-session-lock)");
             crate::guile::on_session_lock();
+        }
+    }
+
+    /// Report each vanished owner once, including destruction before the
+    /// presentation acknowledgement. Retain its client identity so an
+    /// unconfirmed owner still needs a fresh connection to take over.
+    fn report_lock_owner_loss(&mut self) {
+        if self.locked
+            && !self.session_lock.loss_reported
+            && self
+                .session_lock
+                .owner
+                .as_ref()
+                .is_some_and(|owner| !owner.is_alive())
+        {
+            self.session_lock.loss_reported = true;
+            self.session_lock.pending = None;
+            crate::guile::set_session_lock_abandoned(true);
+            tracing::warn!("session lock owner disappeared; session remains locked");
+            crate::guile::on_session_lock_lost();
         }
     }
 

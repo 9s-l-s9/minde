@@ -23,6 +23,7 @@
 (define (wm-quit) #t)
 (define (wm-session-locked?) #f)
 (define (wm-session-lock-confirmed?) #f)
+(define (wm-session-lock-abandoned?) #f)
 (define (wm-log msg) (set! %logs (cons msg %logs)) #t)
 (define (wm-place-window id x y w h) #t)
 (define (wm-focus-window id) #t)

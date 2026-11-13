@@ -28,6 +28,26 @@ scripts/mindectl eval '(reload-configuration!)'
 
 ## Running-session evidence
 
+### Recovering a dead locker
+
+If a lock client dies, Minde keeps the session locked and the default policy
+retries `%lock-command` with a delay. If that binary or its configuration is
+broken, switch to another VT, log in as the same user, and start a working
+locker against Minde's existing socket:
+
+```sh
+XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-N swaylock -f
+```
+
+Use `ss -xlpn` to identify the listening Wayland socket owned by the `minde`
+process, then replace `wayland-N` with its name. Use the original `XDG_RUNTIME_DIR`
+if the session uses a custom directory. With multiple compositors running,
+choose Minde's socket explicitly. Return to Minde's VT and
+unlock through the replacement. This does not restart the compositor or expose
+the desktop. A still-running owner must exit before a replacement can take over.
+
+### Build and log evidence
+
 Use the running compositor's build identity in bug reports:
 
 ```sh

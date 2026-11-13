@@ -10,12 +10,12 @@
 ;;; with the Rust side's session-lock state so suspend! can wait for the
 ;;; lock to actually be up.
 ;;;
-;;; Interface contract with the Rust side: it calls two 0-arg events,
-;;; `wm-on-session-lock` and `wm-on-session-unlock`, defined and
-;;; exported from (minde groups) (see the comment there) rather than
+;;; Interface contract with the Rust side: it calls three 0-arg events,
+;;; `wm-on-session-lock`, `wm-on-session-lock-lost`, and `wm-on-session-unlock`,
+;;; defined and exported from (minde groups) (see the comment there) rather than
 ;;; here, because that's where this codebase's other Rust-facing 0/N-arg
-;;; event entry points already live. Both run named hooks ('session-lock
-;;; / 'session-unlock) via (minde hooks); suspend! below adds a
+;;; event entry points already live. They run the corresponding named hooks
+;;; via (minde hooks); suspend! below adds a
 ;;; one-shot 'session-lock hook of its own to know when it's safe to
 ;;; actually suspend, instead of racing the locker's own startup time.
 ;;;
@@ -41,6 +41,7 @@
             lock-screen!
             suspend!
             %lock-command
+            %lock-restart?
             %suspend-command
             %lock-on-suspend?
             %lock-timeout-ms))
@@ -51,6 +52,7 @@
 ;; ---------------------------------------------------------------------
 
 (define %lock-command "swaylock -f")
+(define %lock-restart? #t)
 ;; Guix systems run elogind rather than full systemd, but elogind speaks
 ;; the same logind D-Bus API, so loginctl still works unmodified.
 (define %suspend-command "loginctl suspend")
@@ -74,24 +76,27 @@
 (define %runtime-quit #f)
 (define %runtime-run-after #f)
 (define %runtime-session-locked? #f)
+(define %runtime-lock-abandoned? #f)
 
 (define (require-procedure name value)
   (unless (procedure? value)
     (error "session runtime capability must be a procedure" name value)))
 
-(define* (configure-session-runtime! #:key spawn quit run-after session-locked?)
-  "Registers the four runtime callbacks required by session management.
+(define* (configure-session-runtime! #:key spawn quit run-after session-locked? lock-abandoned?)
+  "Registers the five runtime callbacks required by session management.
 All callbacks are validated before any are installed, so a bad registration
 cannot leave the module partially configured."
   (for-each (lambda (entry) (require-procedure (car entry) (cdr entry)))
             `((spawn . ,spawn)
               (quit . ,quit)
               (run-after . ,run-after)
-              (session-locked? . ,session-locked?)))
+              (session-locked? . ,session-locked?)
+              (lock-abandoned? . ,lock-abandoned?)))
   (set! %runtime-spawn spawn)
   (set! %runtime-quit quit)
   (set! %runtime-run-after run-after)
   (set! %runtime-session-locked? session-locked?)
+  (set! %runtime-lock-abandoned? lock-abandoned?)
   #t)
 
 (define (runtime-capability name value)
@@ -156,6 +161,52 @@ to the caller; spawning does not itself confirm that the session is locked."
   (warn-if-missing! %lock-command)
   (spawn! %lock-command)
   (echo "locking..."))
+
+;; An abandoned lock never opens the desktop. Retry the configured UI after
+;; 1, 2, 4, 8, 16, then 30 seconds between attempts. Keep the backoff across
+;; owners that repeatedly crash; a successful unlock resets it. The runtime
+;; predicate becomes false at ownership acquisition, before presentation,
+;; so a slowly starting replacement is never mistaken for another failure.
+(define %lock-recovery-generation 0)
+(define %lock-recovery-pending? #f)
+(define %lock-recovery-delay-ms 1000)
+
+(define (cancel-lock-recovery!)
+  (set! %lock-recovery-generation (+ 1 %lock-recovery-generation))
+  (set! %lock-recovery-pending? #f)
+  (set! %lock-recovery-delay-ms 1000))
+
+(define (schedule-lock-recovery!)
+  (when (and %lock-restart? (not %lock-recovery-pending?))
+    (let ((generation %lock-recovery-generation)
+          (delay %lock-recovery-delay-ms)
+          (registered? #f))
+      (dynamic-wind
+        (lambda () (set! %lock-recovery-pending? #t))
+        (lambda ()
+          (unless (run-after delay (lambda () (retry-lock-recovery! generation delay)))
+            (error "cannot schedule session lock recovery"))
+          (set! registered? #t))
+        (lambda ()
+          ;; Invalidate a callback even if registration queued it then threw.
+          (unless registered? (cancel-lock-recovery!)))))))
+
+(define (retry-lock-recovery! generation delay)
+  (when (= generation %lock-recovery-generation)
+    (set! %lock-recovery-pending? #f)
+    (when (and %lock-restart?
+               ((runtime-capability 'lock-abandoned? %runtime-lock-abandoned?)))
+      (set! %lock-recovery-delay-ms (min 30000 (* 2 delay)))
+      ;; Schedule before spawning: an invalid command or a failed spawn
+      ;; still gets a later attempt, even when no new lock owner appears.
+      (schedule-lock-recovery!)
+      (catch #t
+        (lambda () (spawn! %lock-command))
+        (lambda args
+          (format (current-error-port) "minde: cannot restart locker: ~s~%" args))))))
+
+(add-event-hook! 'session-lock-lost schedule-lock-recovery!)
+(add-event-hook! 'session-unlock cancel-lock-recovery!)
 
 ;; ---------------------------------------------------------------------
 ;; Suspend: locks first, then waits for confirmation that the lock

@@ -11,6 +11,7 @@
        (begin (set! %test-emergency-exit (list mods key)) #t)))
 (define (wm-session-locked?) #f)
 (define (wm-session-lock-confirmed?) #f)
+(define (wm-session-lock-abandoned?) #f)
 (define (wm-log message) #t)
 (define (wm-place-window . arguments) #t)
 (define (wm-focus-window . arguments) #t)

@@ -340,7 +340,12 @@ Physical touch/tablet events, Java, Wine, games, IME, drag-and-drop and multi-GP
 manual/optional application coverage. Session-lock ownership and input
 isolation are exercised by `tests/session-lock-e2e.sh` using
 `ext-session-lock-v1`, including inhibitor inactivation when the focused lock
-surface is destroyed. Its keyboard filter scenario checks press/release pairs
+surface is destroyed. It checks one owner-loss notification on disconnection
+or an unconfirmed lock's destruction, and launches a real replacement locker
+through the default Scheme recovery policy. The replacement takes ownership
+and unlocks without exposing desktop input. Scheme tests drive retry timers,
+backoff, failed starts, cancellation and stale callbacks.
+Its keyboard filter scenario checks press/release pairs
 through prompts, menus, focus changes, shortcut inhibition and locking, plus
 held modifiers, keypad Enter and compositor repeat. VT suspension balances held
 physical keys and cancels repeat; actual VT switching still needs a hardware

@@ -121,6 +121,12 @@ rectangle in that same coordinate system. Prefer the public
 frames: `wm-focus-window` and `wm-raise-window` only act on the currently shown
 compositor objects.
 
+`wm-session-lock-abandoned?` reports a locked session whose owner has vanished.
+`wm-on-session-lock-lost` runs the zero-argument `session-lock-lost` hook once
+for each vanished owner, including loss before lock confirmation. The default
+`(minde session)` policy retries `%lock-command` with backoff while that predicate
+is true; `%lock-restart?` disables automatic retries. See [session recovery](security.md).
+
 `wm-send-string` and its alias `wm-type` pace characters at 20 ms by default
 and accept an optional delay in milliseconds. Characters unavailable in the
 active layout use a temporary client keymap, with a balanced press/release.

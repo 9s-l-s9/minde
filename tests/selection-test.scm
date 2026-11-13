@@ -22,6 +22,7 @@
 (define (wm-clear-overlays) (set! %overlays '()) #t)
 (define (wm-session-locked?) #f)
 (define (wm-session-lock-confirmed?) #f)
+(define (wm-session-lock-abandoned?) #f)
 (setenv "MINDE_CONFIG" "scheme/default-config.scm")
 (setenv "MINDE_RULES_FILE" "/nonexistent-minde-selection-rules")
 (fluid-set! %file-port-name-canonicalization 'absolute)

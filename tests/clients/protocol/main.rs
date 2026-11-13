@@ -31,6 +31,7 @@ fn main() {
         Some("output-power-lifecycle") => outputs::power_lifecycle(),
         Some("output-mode") => outputs::mode_limits(),
         Some("session-lock") => lock::run(),
+        Some("lock-recovery") => lock::recovery_locker(),
         Some("emergency-exit") => lock::emergency_exit(),
         Some("emergency-config") => emergency::run(args.get(1).expect("locked or inhibited")),
         Some("input-lifecycle") => input::run(),

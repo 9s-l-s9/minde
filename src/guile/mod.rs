@@ -112,6 +112,7 @@ static RUNTIME_STARTED: OnceLock<std::time::Instant> = OnceLock::new();
 /// including the REPL. Set from the session-lock handler's lock/unlock
 /// transitions (see `src/handlers/session_lock.rs`).
 static SESSION_LOCKED: AtomicBool = AtomicBool::new(false);
+static SESSION_LOCK_ABANDONED: AtomicBool = AtomicBool::new(false);
 // Readiness for suspend is stricter than the immediate input/privacy guard.
 static SESSION_LOCK_CONFIRMED: AtomicBool = AtomicBool::new(false);
 
@@ -257,6 +258,10 @@ pub fn set_xwayland_status(status: &str, display: Option<u32>) {
 
 pub fn set_session_locked(locked: bool) {
     SESSION_LOCKED.store(locked, Ordering::SeqCst);
+}
+
+pub fn set_session_lock_abandoned(abandoned: bool) {
+    SESSION_LOCK_ABANDONED.store(abandoned, Ordering::SeqCst);
 }
 
 pub fn set_session_lock_confirmed(confirmed: bool) {
@@ -487,6 +492,7 @@ static KEYBOARD_LAYOUT_CHANGED: Hook = Hook::new("handle-keyboard-layout-changed
 static INPUT_DEVICE_ADDED: Hook = Hook::new("handle-input-device-added!");
 static STARTUP: Hook = Hook::new("handle-startup!");
 static SESSION_LOCK: Hook = Hook::new("wm-on-session-lock");
+static SESSION_LOCK_LOST: Hook = Hook::new("wm-on-session-lock-lost");
 static SESSION_UNLOCK: Hook = Hook::new("wm-on-session-unlock");
 
 /// Evaluate one IPC request through the Scheme-side envelope. This is called
@@ -835,6 +841,10 @@ unsafe extern "C" fn wm_idle_ms() -> Scm {
 /// locked via ext-session-lock (swaylock &c.).
 unsafe extern "C" fn wm_session_locked() -> Scm {
     from_bool(SESSION_LOCKED.load(Ordering::SeqCst))
+}
+
+unsafe extern "C" fn wm_session_lock_abandoned() -> Scm {
+    from_bool(SESSION_LOCK_ABANDONED.load(Ordering::SeqCst))
 }
 
 /// `(wm-session-lock-confirmed?)` -> whether this locked session has
@@ -1751,6 +1761,12 @@ fn register_primitives() {
         );
         register_gsubr("wm-session-locked?", 0, 0, gsubr!(wm_session_locked, 0));
         register_gsubr(
+            "wm-session-lock-abandoned?",
+            0,
+            0,
+            gsubr!(wm_session_lock_abandoned, 0),
+        );
+        register_gsubr(
             "wm-session-lock-confirmed?",
             0,
             0,
@@ -2004,6 +2020,11 @@ pub fn on_startup() {
 /// `on_*` hooks; a Scheme error is caught and never crashes the compositor.
 pub fn on_session_lock() {
     SESSION_LOCK.call(&[]);
+}
+
+/// The lock owner vanished, but rendering and input remain locked.
+pub fn on_session_lock_lost() {
+    SESSION_LOCK_LOST.call(&[]);
 }
 
 /// Calls `(wm-on-session-unlock)` if bound, once the session is unlocked.

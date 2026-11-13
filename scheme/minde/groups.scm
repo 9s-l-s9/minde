@@ -93,6 +93,7 @@
             change-default-layout!
             change-default-split-ratio!
             wm-on-session-lock
+            wm-on-session-lock-lost
             wm-on-session-unlock))
 
 ;; ---------------------------------------------------------------------
@@ -1319,7 +1320,7 @@ overlay; redefine it to update a bar or stay silent."
 ;; the other 0/N-arg Rust event entry points above, rather than in
 ;; (minde session), because Rust looks these up by plain top-level
 ;; name (see rust-call's comment) and this is the established home for
-;; that. Both just run a user-extensible named hook; (minde
+;; that. They run user-extensible named hooks; (minde
 ;; session)'s suspend! adds a one-shot 'session-lock hook of its own to
 ;; know when the lock surface is actually up before it suspends.
 ;; ---------------------------------------------------------------------
@@ -1334,3 +1335,8 @@ Cancels frame selection and runs the 'session-lock hook."
   "Rust: the session-lock surface was torn down; the session is
 unlocked again. Runs the 'session-unlock hook."
   (run-event-hook! 'session-unlock))
+
+(define (wm-on-session-lock-lost)
+  "Rust: the lock owner disappeared; the session remains locked.
+Runs the 'session-lock-lost hook once for that owner."
+  (run-event-hook! 'session-lock-lost))

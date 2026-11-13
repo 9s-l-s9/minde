@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- The default session policy restarts a vanished lock client with backoff,
+  including failed replacement starts. Recovery keeps the session locked and
+  stops when a new owner takes over or the session unlocks (#154).
+
 - `wm-send-string` and `wm-type` type characters outside the active layout
   through temporary client keymaps. They preserve the clipboard and no longer
   depend on a client's Ctrl+V binding (#144).

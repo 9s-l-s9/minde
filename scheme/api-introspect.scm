@@ -142,6 +142,8 @@
                               "Whether the locked session has passed its output presentation barrier; safe to suspend.")
     (wm-session-locked? "(wm-session-locked?)"
      "Return whether the session is currently locked.")
+    (wm-session-lock-abandoned? "(wm-session-lock-abandoned?)"
+     "Return whether the session remains locked without a live owner; false as soon as a replacement takes ownership.")
     (wm-publish-event "(wm-publish-event line)"
      "Mirror one serialized event LINE to every event-socket subscriber.")
     (wm-events-active? "(wm-events-active?)"
@@ -171,6 +173,7 @@
     (focus-group (name) "The focused group switched.")
     (message (text) "Something was echoed to the user.")
     (session-lock () "The session-lock surface came up.")
+    (session-lock-lost () "The lock owner disappeared; the session remains locked.")
     (session-unlock () "The session-lock surface went away.")
     (automation-result (token operation status)
      "An asynchronous automation request reached a terminal status.")))

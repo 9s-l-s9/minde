@@ -227,6 +227,13 @@ fn unlock(owner: &mut Client, lock: u32, desktop: &mut Client, ordinary: &mut Cl
 pub fn run() {
     let pixels = HostPixels::new();
     locked(false);
+    assert_eq!(
+        ipc("(begin (set! %lock-restart? #f)
+        (define lock-test-losses 0)
+        (add-event-hook! 'session-lock-lost
+          (lambda () (set! lock-test-losses (+ lock-test-losses 1)))) #t)"),
+        "(ok #t)"
+    );
     let mut desktop = Client::new("desktop before lock");
     desktop.toplevel(true);
     desktop.event(desktop.keyboard, 1);
@@ -368,17 +375,30 @@ pub fn run() {
     println!("ok - focused wl_surface destruction keeps live owner locked and able to unlock");
 
     let mut abandoned = Client::new("owner that disconnects");
+    let losses = ipc("lock-test-losses");
     let abandoned_lock = abandoned.lock(true);
     abandoned.lock_surface(abandoned_lock, true);
     desktop.roundtrip();
     ordinary.roundtrip();
     let starts = [desktop.events.len(), ordinary.events.len()];
     drop(abandoned);
+    until(
+        || ipc("lock-test-losses") != losses,
+        "no owner-loss hook after disconnect",
+    );
+    assert_eq!(ipc("(wm-session-lock-abandoned?)"), "(ok #t)");
+    let losses = ipc("lock-test-losses");
     ordinary.roundtrip();
     locked(true);
     ordinary.roundtrip();
     let mut takeover = Client::new("abandoned lock takeover");
     let takeover_lock = takeover.lock(true);
+    assert_eq!(ipc("(wm-session-lock-abandoned?)"), "(ok #f)");
+    assert_eq!(
+        ipc("lock-test-losses"),
+        losses,
+        "owner loss reported more than once"
+    );
     assert!(pixels.samples().iter().all(|p| *p == 0));
     locked(true);
     for (c, start) in [&mut desktop, &mut ordinary].into_iter().zip(starts) {
@@ -428,6 +448,7 @@ pub fn run() {
     println!("ok - denied lock on owner's connection cannot unlock session");
 
     let mut pending = Client::new("owner aborting unconfirmed lock");
+    let losses = ipc("lock-test-losses");
     let compositor = pending.bind("wl_compositor", 1);
     let output = pending.bind("wl_output", 1);
     let manager = pending.bind("ext_session_lock_manager_v1", 1);
@@ -445,6 +466,11 @@ pub fn run() {
     ]);
     pending.roundtrip();
     assert!(!pending.events.iter().any(|e| e.is(lock, 0)));
+    until(
+        || ipc("lock-test-losses") != losses,
+        "pending owner abort did not notify policy",
+    );
+    assert_eq!(ipc("(wm-session-lock-abandoned?)"), "(ok #t)");
     locked(true);
     let retry = pending.lock(false);
     pending.send(retry, 0, &[]);
@@ -461,7 +487,77 @@ pub fn run() {
     recovery.roundtrip();
     locked(false);
     println!("ok - pending lock abort requires reconnection and fresh owner can recover");
+    automatic_recovery(&mut desktop, &mut ordinary);
     println!("session-lock-e2e: all checks passed");
+}
+
+fn automatic_recovery(desktop: &mut Client, ordinary: &mut Client) {
+    let executable = std::env::current_exe().unwrap();
+    let command = format!(
+        "exec '{}' lock-recovery",
+        executable.to_str().unwrap().replace('\'', "'\\''")
+    );
+    assert_eq!(
+        ipc(&format!(
+            "(begin (define lock-test-old-command %lock-command)
+        (set! %lock-command {command:?}) (set! %lock-restart? #t)
+        (define lock-test-replacement-ready #f)
+        (define lock-test-release-replacement #f) #t)"
+        )),
+        "(ok #t)"
+    );
+    let mut owner = Client::new("owner replaced by default policy");
+    let lock = owner.lock(true);
+    owner.lock_surface(lock, true);
+    desktop.roundtrip();
+    ordinary.roundtrip();
+    let starts = [desktop.events.len(), ordinary.events.len()];
+    drop(owner);
+    until(
+        || ipc("lock-test-replacement-ready") == "(ok #t)",
+        "policy did not start replacement locker",
+    );
+    locked(true);
+    assert_eq!(ipc("(wm-session-lock-abandoned?)"), "(ok #f)");
+    for (client, start) in [desktop, ordinary].into_iter().zip(starts) {
+        client.roundtrip();
+        assert!(
+            client.keyboard_events(start, &[1, 3]).is_empty(),
+            "recovery exposed desktop input"
+        );
+    }
+    assert_eq!(
+        ipc("(begin (set! lock-test-release-replacement #t) #t)"),
+        "(ok #t)"
+    );
+    until(
+        || ipc("(wm-session-locked?)") == "(ok #f)",
+        "replacement could not unlock",
+    );
+    assert_eq!(
+        ipc("(begin (set! %lock-command lock-test-old-command) #t)"),
+        "(ok #t)"
+    );
+    println!(
+        "ok - default policy starts a fresh locker after owner death and replacement can unlock"
+    );
+}
+
+/// A real replacement process, launched through the configured wm-spawn path.
+pub fn recovery_locker() {
+    let mut owner = Client::new("automatically restarted locker");
+    let lock = owner.lock(true);
+    owner.lock_surface(lock, true);
+    assert_eq!(
+        ipc("(begin (set! lock-test-replacement-ready #t) #t)"),
+        "(ok #t)"
+    );
+    until(
+        || ipc("lock-test-release-replacement") == "(ok #t)",
+        "parent did not release replacement locker",
+    );
+    owner.send(lock, 2, &[]);
+    owner.roundtrip();
 }
 pub fn emergency_exit() {
     let mut owner = Client::new("emergency exit while locked");

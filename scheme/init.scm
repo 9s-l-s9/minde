@@ -555,7 +555,8 @@ focused client), #f otherwise."
  #:spawn wm-spawn
  #:quit wm-quit
  #:run-after wm-run-after
- #:session-locked? wm-session-lock-confirmed?)
+ #:session-locked? wm-session-lock-confirmed?
+ #:lock-abandoned? wm-session-lock-abandoned?)
 
 ;; ---------------------------------------------------------------------
 ;; libinput device configuration (per-device tap-to-click, natural
