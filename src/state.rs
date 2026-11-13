@@ -301,8 +301,8 @@ pub struct MindeState {
 
     /// Last title/app-id reported to Scheme per window id. Clients set
     /// them before or after the first buffer commit and retitle at will;
-    /// the commit handler diffs
-    /// against this and calls `handle-window-title-change!` on change.
+    /// commit and X11 property handlers compare against this and call
+    /// `handle-window-title-change!` on change.
     pub reported_titles: std::collections::HashMap<u64, (String, String)>,
 
     /// Compositor-side auto-repeat for consumed key presses (prompts and
@@ -2238,6 +2238,8 @@ impl MindeState {
         let (title, app_id) = self.window_title_app_id(&window);
         window.user_data().insert_if_missing(|| WindowId(id));
         self.windows.insert(id, window);
+        self.reported_titles
+            .insert(id, (title.clone(), app_id.clone()));
         self.foreign_toplevel_created(id, title, app_id);
         id
     }
@@ -2286,56 +2288,39 @@ impl MindeState {
     /// The title and app-id (X11 class) window `id` currently carries, as
     /// the client set them: the one source `(wm-window-title)` reads.
     pub fn window_title(&self, id: u64) -> Option<(String, String)> {
-        use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
-        let window = self.window_by_id(id)?;
-        if let Some(toplevel) = window.toplevel() {
-            return Some(with_states(toplevel.wl_surface(), |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .and_then(|data| data.lock().ok())
-                    .map(|data| {
-                        (
-                            data.title.clone().unwrap_or_default(),
-                            data.app_id.clone().unwrap_or_default(),
-                        )
-                    })
-                    .unwrap_or_default()
-            }));
-        }
-        let x11 = window.x11_surface()?;
-        Some((x11.title(), x11.class()))
+        self.window_by_id(id)
+            .map(|window| self.window_title_app_id(&window))
     }
 
     /// Reports a toplevel's title/app-id to Scheme when either changed
     /// since the last report (see `reported_titles`). Called from the
-    /// commit handler; X11 windows are skipped (their class arrives with
-    /// the map request and doesn't change).
+    /// xdg commit and X11 property handlers, after shell metadata updates.
     pub fn report_title_if_changed(&mut self, window: &Window) {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
-        let Some(toplevel) = window.toplevel() else {
-            return;
-        };
         let Some(id) = self.id_for_window(window) else {
             return;
         };
         // Compare in place; clone only when something actually changed
-        // (this runs on every commit of every toplevel).
+        // on the xdg path, which runs on every toplevel commit.
         let reported = self.reported_titles.get(&id);
-        let changed = with_states(toplevel.wl_surface(), |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|d| {
-                    let d = d.lock().unwrap();
-                    let title = d.title.as_deref().unwrap_or_default();
-                    let app_id = d.app_id.as_deref().unwrap_or_default();
-                    let same = reported.is_some_and(|(t, a)| t == title && a == app_id);
-                    (!same).then(|| (title.to_string(), app_id.to_string()))
-                })
-        });
+        let changed = if let Some(toplevel) = window.toplevel() {
+            with_states(toplevel.wl_surface(), |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|d| {
+                        let d = d.lock().unwrap();
+                        let title = d.title.as_deref().unwrap_or_default();
+                        let app_id = d.app_id.as_deref().unwrap_or_default();
+                        let same = reported.is_some_and(|(t, a)| t == title && a == app_id);
+                        (!same).then(|| (title.to_string(), app_id.to_string()))
+                    })
+            })
+        } else {
+            let current = self.window_title_app_id(window);
+            (reported != Some(&current)).then_some(current)
+        };
         if let Some(current) = changed {
             guile::on_window_title(id, &current.0, &current.1);
             self.foreign_toplevel_title(id, &current.0, &current.1);

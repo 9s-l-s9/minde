@@ -263,6 +263,9 @@ held modifiers, keypad Enter and compositor repeat. VT suspension balances held
 physical keys and cancels repeat; actual VT switching still needs a hardware
 session. The fullscreen/pointer gate also unmaps X11 windows
 during move/resize grabs and terminates only its private Xwayland child.
+Its Rust X11 client changes legacy and UTF-8 titles and WM_CLASS without
+repainting, checking Scheme hooks and foreign-toplevel property/done events.
+It covers repeated values, title precedence, deleted properties and remapping.
 It verifies window and menu cleanup, foreign handles, failed runtime status,
 child `DISPLAY`, and continued native input. Automatic Xwayland restart
 remains unimplemented.

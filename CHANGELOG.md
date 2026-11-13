@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- X11 title and class changes update foreign-toplevel handles and Scheme
+  metadata hooks without requiring a repaint. Repeated values are ignored,
+  and remapped windows begin with their current metadata (#42).
 - Themed cursor hotspots follow fractional output scale, retaining subpixel
   precision through the image-to-logical conversion before rounding physical
   placement. Cached cursor images stay aligned across scale changes (#35).

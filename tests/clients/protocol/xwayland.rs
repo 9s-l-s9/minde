@@ -110,6 +110,184 @@ impl Drop for X11Client {
         let _ = self.process.wait();
     }
 }
+pub fn metadata() {
+    use smithay::reexports::x11rb::{
+        COPY_DEPTH_FROM_PARENT,
+        connection::Connection,
+        protocol::xproto::{AtomEnum, ConnectionExt, CreateWindowAux, PropMode, WindowClass},
+        wrapper::ConnectionExt as _,
+    };
+    let display = env::var("MINDE_X11_DISPLAY").unwrap();
+    let (connection, screen) = smithay::reexports::x11rb::connect(Some(&display)).unwrap();
+    let root = connection.setup().roots[screen].root;
+    let window = connection.generate_id().unwrap();
+    connection
+        .create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            300,
+            200,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new(),
+        )
+        .unwrap();
+    let net_name = connection
+        .intern_atom(false, b"_NET_WM_NAME")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let utf8 = connection
+        .intern_atom(false, b"UTF8_STRING")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let name = u32::from(AtomEnum::WM_NAME);
+    let class = u32::from(AtomEnum::WM_CLASS);
+    let string_type = u32::from(AtomEnum::STRING);
+    let set = |property, kind, value: &[u8]| {
+        connection
+            .change_property8(PropMode::REPLACE, window, property, kind, value)
+            .unwrap();
+    };
+    set(name, string_type, b"X11 metadata initial");
+    set(class, string_type, b"instance\0org.minde.initial\0");
+    let mut observer = Observer::new();
+    connection.map_window(window).unwrap();
+    connection.flush().unwrap();
+    let id = await_id("X11 metadata initial");
+    let handle = observer.handle("X11 metadata initial");
+    evaluate(
+        "(begin (define x11-metadata-events '()) \
+        (define (record-x11-metadata id title app) \
+          (set! x11-metadata-events (cons (list id title app) x11-metadata-events))) \
+        (add-event-hook! 'window-title-changed record-x11-metadata) #t)",
+        "#t",
+    );
+    for (index, (property, kind, value, title, app, opcode)) in [
+        (
+            name,
+            string_type,
+            Some(b"X11 legacy changed".as_slice()),
+            "X11 legacy changed",
+            "org.minde.initial",
+            0,
+        ),
+        (
+            net_name,
+            utf8,
+            Some("X11 Grüße".as_bytes()),
+            "X11 Grüße",
+            "org.minde.initial",
+            0,
+        ),
+        (
+            class,
+            string_type,
+            Some(b"instance\0org.minde.changed\0".as_slice()),
+            "X11 Grüße",
+            "org.minde.changed",
+            1,
+        ),
+        (
+            net_name,
+            utf8,
+            None,
+            "X11 legacy fallback",
+            "org.minde.changed",
+            0,
+        ),
+        (class, string_type, None, "X11 legacy fallback", "", 1),
+        (name, string_type, None, "", "", 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        observer.c.roundtrip();
+        let start = observer.c.events.len();
+        // WM_NAME must not supersede _NET_WM_NAME. The following class
+        // notification orders this negative assertion through the XWM.
+        if index == 2 {
+            set(name, string_type, b"X11 legacy fallback");
+        }
+        // Repeated property notifications must not repeat Scheme or
+        // foreign-toplevel updates. No repaint is requested by this client.
+        for _ in 0..2 {
+            if let Some(value) = value {
+                set(property, kind, value);
+            } else {
+                connection.delete_property(window, property).unwrap();
+            }
+        }
+        connection.flush().unwrap();
+        let expected = if opcode == 0 { title } else { app };
+        observer.c.wait(start, |e| {
+            e.is(handle, opcode) && text(&e.data, 0) == expected
+        });
+        observer.c.wait(start, |e| e.is(handle, 5));
+        observer.c.roundtrip();
+        let events: Vec<_> = observer.c.events[start..]
+            .iter()
+            .filter(|e| e.object == handle)
+            .map(|e| e.opcode)
+            .collect();
+        assert_eq!(
+            events,
+            [opcode, 5],
+            "X11 metadata must have one property and done"
+        );
+        evaluate("(length x11-metadata-events)", &(index + 1).to_string());
+        // Compare Scheme values: its printer may escape non-ASCII text.
+        evaluate(
+            &format!("(equal? (car x11-metadata-events) '({id} {title:?} {app:?}))"),
+            "#t",
+        );
+        evaluate(
+            &format!("(equal? (wm-window-title {id}) '({title:?} . {app:?}))"),
+            "#t",
+        );
+    }
+    connection.unmap_window(window).unwrap();
+    connection.flush().unwrap();
+    observer.c.event(handle, 6);
+    until(
+        || ipc(&format!("(wm-window-title {id})")) == "(ok #f)",
+        "X11 metadata window stayed registered",
+    );
+    set(name, string_type, b"X11 metadata remapped");
+    set(class, string_type, b"instance\0org.minde.remapped\0");
+    connection.map_window(window).unwrap();
+    connection.flush().unwrap();
+    let remapped = await_id("X11 metadata remapped");
+    assert!(remapped > id);
+    let new_handle = observer.handle("X11 metadata remapped");
+    assert_ne!(new_handle, handle);
+    assert!(
+        observer
+            .c
+            .events
+            .iter()
+            .any(|e| e.is(new_handle, 1) && text(&e.data, 0) == "org.minde.remapped")
+    );
+    evaluate("(length x11-metadata-events)", "6");
+    connection.destroy_window(window).unwrap();
+    connection.flush().unwrap();
+    observer.c.event(new_handle, 6);
+    evaluate(
+        "(begin (remove-event-hook! 'window-title-changed record-x11-metadata) #t)",
+        "#t",
+    );
+    println!(
+        "ok - X11 title/class changes notify Scheme and foreign handles without repaint or duplicates"
+    );
+    println!("ok - X11 title precedence, property deletion and remap metadata stay synchronized");
+}
 pub fn run() {
     struct ReleaseSuper;
     impl Drop for ReleaseSuper {

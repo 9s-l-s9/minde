@@ -64,9 +64,11 @@ impl CompositorHandler for MindeState {
             };
             if let Some(window) = &window {
                 window.on_commit();
-                // Title/app-id arrive (and change) via ordinary commits
-                // after the first buffer-bearing commit.
-                self.report_title_if_changed(window);
+                // Xdg metadata changes with commits; X11 metadata changes
+                // through XWM property notifications, independently of paint.
+                if window.toplevel().is_some() {
+                    self.report_title_if_changed(window);
+                }
             }
             window
         } else {

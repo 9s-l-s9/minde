@@ -45,6 +45,7 @@ fn main() {
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
         Some("xwayland-lifecycle") => xwayland::run(),
+        Some("x11-metadata") => xwayland::metadata(),
         Some("selection-transfer") => selection::run(),
         _ => panic!("select a protocol test scenario"),
     }

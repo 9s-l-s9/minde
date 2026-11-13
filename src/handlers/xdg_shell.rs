@@ -374,8 +374,6 @@ impl MindeState {
         self.space.map_element(window.clone(), (0, 0), false);
         let id = self.register_window(window.clone());
         let (title, app_id) = self.window_title(id).unwrap_or_default();
-        self.reported_titles
-            .insert(id, (title.clone(), app_id.clone()));
         guile::on_window_map(id, &title, &app_id);
         if fullscreen {
             guile::on_foreign_fullscreen(id, true);
