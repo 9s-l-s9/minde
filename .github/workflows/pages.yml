@@ -17,12 +17,15 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+      - 'scripts/ci-bootstrap-guix'
+      - 'guix/ci-channels.scm'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+
+env:
+  NODE_OPTIONS: --use-openssl-ca
 
 concurrency:
   group: pages
@@ -30,24 +33,60 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: read
     steps:
+      - name: Exclude compromised certificate chains
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/minde-trust"
+          mkdir -p "$root/empty" "$root/certs"
+          chmod 700 "$root/empty" "$root/certs"
+          awk -v root="$root/certs" '
+            /-----BEGIN CERTIFICATE-----/ { n++; active=1 }
+            active { print > (root "/cert-" n ".pem") }
+            /-----END CERTIFICATE-----/ { close(root "/cert-" n ".pem"); active=0 }
+          ' /etc/ssl/certs/ca-certificates.crt
+          bundle="$root/ca-certificates.crt"
+          : > "$bundle"
+          count=0
+          for cert in "$root"/certs/*.pem; do
+            digest=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d ' ' -f 1)
+            # emSign ECC Root CA - G3 and AAA Certificate Services.
+            case "$digest" in
+              86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b|d7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4) continue ;;
+            esac
+            cat "$cert" >> "$bundle"
+            count=$((count + 1))
+          done
+          [ "$count" -gt 50 ] || { echo 'unexpected/empty CA bundle' >&2; exit 1; }
+          for key in MINDE_CA_BUNDLE SSL_CERT_FILE CURL_CA_BUNDLE GIT_SSL_CAINFO CARGO_HTTP_CAINFO; do
+            printf '%s=%s\n' "$key" "$bundle" >> "$GITHUB_ENV"
+          done
+          printf 'SSL_CERT_DIR=%s/empty\n' "$root" >> "$GITHUB_ENV"
+          echo "TLS trust: $count certificates; compromised trust paths excluded"
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      # No /gnu/store cache: confirmed non-functional in ci.yml (the daemon/
-      # build-user-owned substitute cache can't be tar'd up by the
-      # unprivileged runner account actions/cache saves as). pullAfterInstall
-      # is the real lever -- see ci.yml's header comment for measurements.
-      - name: Install Guix
-        uses: PromyLOPh/guix-install-action@v1
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
         with:
-          pullAfterInstall: false
+          enablement: false
+
+      - name: Install verified Guix bootstrap
+        run: scripts/ci-bootstrap-guix
+
+      - name: Select pinned Guix revision
+        run: |
+          profile=$(guix time-machine -C guix/ci-channels.scm)
+          echo "$profile/bin" >> "$GITHUB_PATH"
 
       - name: Build with Haunt
         working-directory: site
@@ -56,13 +95,13 @@ jobs:
           guix shell -m manifest.scm -- haunt build
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: site/_site
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       pages: write
       id-token: write
@@ -70,6 +109,37 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Exclude compromised certificate chains
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/minde-trust"
+          mkdir -p "$root/empty" "$root/certs"
+          chmod 700 "$root/empty" "$root/certs"
+          awk -v root="$root/certs" '
+            /-----BEGIN CERTIFICATE-----/ { n++; active=1 }
+            active { print > (root "/cert-" n ".pem") }
+            /-----END CERTIFICATE-----/ { close(root "/cert-" n ".pem"); active=0 }
+          ' /etc/ssl/certs/ca-certificates.crt
+          bundle="$root/ca-certificates.crt"
+          : > "$bundle"
+          count=0
+          for cert in "$root"/certs/*.pem; do
+            digest=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d ' ' -f 1)
+            # emSign ECC Root CA - G3 and AAA Certificate Services.
+            case "$digest" in
+              86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b|d7a7a0fb5d7e2731d771e9484ebcdef71d5f0c3e0a2948782bc83ee0ea699ef4) continue ;;
+            esac
+            cat "$cert" >> "$bundle"
+            count=$((count + 1))
+          done
+          [ "$count" -gt 50 ] || { echo 'unexpected/empty CA bundle' >&2; exit 1; }
+          for key in MINDE_CA_BUNDLE SSL_CERT_FILE CURL_CA_BUNDLE GIT_SSL_CAINFO CARGO_HTTP_CAINFO; do
+            printf '%s=%s\n' "$key" "$bundle" >> "$GITHUB_ENV"
+          done
+          printf 'SSL_CERT_DIR=%s/empty\n' "$root" >> "$GITHUB_ENV"
+          echo "TLS trust: $count certificates; compromised trust paths excluded"
+
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

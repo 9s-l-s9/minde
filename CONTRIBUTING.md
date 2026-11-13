@@ -68,6 +68,13 @@ tag matching Cargo's version on `origin/main`. The helper checks the checkout
 and event revisions again before publishing and marks candidate versions as
 prereleases. Its tests use temporary Git histories and a mocked publisher.
 
+The Pages workflow builds `site/` with the same verified Guix bootstrap and
+pinned channel revision. It pins actions by commit, filters TLS roots before
+checkout and deployment, and keeps Pages/OIDC write permissions in the deploy
+job. The build job has only contents and Pages read access, with automatic
+Pages enablement disabled. Changes to its bootstrap or channel pin also
+trigger a site rebuild.
+
 ## Change expectations
 
 - Use Rust and Guile Scheme for implementations and tests, with shell scripts

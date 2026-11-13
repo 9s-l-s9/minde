@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Pages CI pins actions and Guix inputs, uses the verified bootstrap and
+  filtered TLS roots, and grants Pages/OIDC write permissions only to the
+  deployment job. Checkout credentials are not retained (#121).
 - Source release CI requires a version-matching tag on `origin/main`, tied
   to the checkout and triggering event, before building or publishing.
   Release candidates are published as prereleases (#120).
