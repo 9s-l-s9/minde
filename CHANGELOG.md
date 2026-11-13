@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Control snapshots retain fullscreen state for hidden groups. Fullscreen
+  setters affect the target's own group, preserve unrelated fullscreen
+  owners, and leave focus unchanged when disabling or repeating a satisfied
+  setting (#107).
 - Control receipts accept only the exact server-issued request ID. Altered
   spellings cannot execute actions or consume their receipts, and oversized
   numeric suffixes are rejected before parsing or retention (#108).

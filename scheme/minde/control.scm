@@ -101,7 +101,7 @@ This counter also detects a supported change followed by its inverse."
          (visible? (and (eq? g (current-group))
                         (or (window-floating? id)
                             (any (lambda (x) (assq-ref x 'selected)) locations))))
-         (fullscreen? (equal? id (fullscreen-window))))
+         (fullscreen? (equal? id (fullscreen-window g))))
     `((id . ,id) (group . ,(group-name g))
       ,@(if redact? '()
             `((title . ,(window-title id)) (app-id . ,(or (window-app-id id) ""))))
@@ -216,13 +216,14 @@ Null denotes unavailable information. Locking forces content redaction."
   `((window . ,id) (floating . ,enabled)))
 
 (define (fullscreen-target! id enabled)
-  (require-window id)
-  (unless (eq? (equal? id (fullscreen-window)) enabled)
-    (when (fullscreen-window) (fullscreen!))
-    (when enabled
-      (focus-target! id)
-      (fullscreen!)))
-  (unless (eq? (equal? id (fullscreen-window)) enabled)
+  (let ((group (require-window id)))
+    (unless (eq? (equal? id (fullscreen-window group)) enabled)
+      ;; Set the owner's state explicitly, without toggling another group's
+      ;; fullscreen or reapplying state that a focus hook later changes.
+      (unless (set-group-fullscreen! group id enabled)
+        (fail 'target-unavailable `((window . ,id))))
+      (when enabled (focus-target! id))))
+  (unless (eq? (equal? id (fullscreen-window (require-window id))) enabled)
     (fail 'postcondition-failed `((window . ,id))))
   `((window . ,id) (fullscreen . ,enabled)))
 
@@ -348,7 +349,7 @@ Loading this module has no compositor side effects; call after legacy setup."
             '(floating placement focus group) 'immediate "Set floating state; focus the target when changing it."
             '(perform-action! 'set-window-floating! '((window . 42) (enabled . #t))))
   (register 'set-window-fullscreen! fullscreen-target! (list window enabled) 'window
-            '(fullscreen focus group) 'immediate "Set fullscreen state; enabling replaces any fullscreen owner."
+            '(fullscreen focus group) 'immediate "Set fullscreen in the target's group; enabling a changed state focuses the target."
             '(perform-action! 'set-window-fullscreen! '((window . 42) (enabled . #t))))
   (register 'split-frame! split-target!
             (list group head '((name . frame) (type . integer) (minimum . 0))

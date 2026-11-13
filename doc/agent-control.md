@@ -93,7 +93,7 @@ The initial typed actions are:
 | `switch-group!` | `group` | Selected group checked |
 | `move-window-to-group!` | `window`, `group` | Membership checked; does not follow the window |
 | `set-window-floating!` | `window`, `enabled` | State checked; changing it focuses the target |
-| `set-window-fullscreen!` | `window`, `enabled` | State checked; enabling can replace the fullscreen owner |
+| `set-window-fullscreen!` | `window`, `enabled` | State checked in the target's group; enabling a changed state focuses the target |
 | `split-frame!` | `group`, `head`, `frame`, `direction` | Explicit manual frame split |
 | `apply-layout!` | `group`, `head`, `layout` | Named layout applied to a manual group head |
 | `close-window!` | `window` | Pending until the window disappears |
@@ -103,6 +103,13 @@ Use help for exact enums and constraints. Frame indices come from the
 snapshot and must be used with its revision. Operations also recheck their
 targets after user hooks; an execution failure can therefore follow earlier
 effects such as a group switch.
+
+Fullscreen ownership is independent in each group, including hidden groups.
+The snapshot reports that ownership even when the window is not visible.
+Enabling fullscreen replaces only the target group's previous owner and
+focuses the target when its state changes. Disabling fullscreen preserves
+the active group and focus. Repeating an already satisfied setting leaves
+the desktop unchanged.
 
 An action returns an alist inside the existing `(ok VALUE)` IPC envelope.
 For example, the payload can look like:

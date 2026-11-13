@@ -244,6 +244,60 @@
 (check "unrelated fullscreen disable keeps current fullscreen" (fullscreen-window) 2)
 (act 'set-window-fullscreen! '((window . 2) (enabled . #f)))
 
+;; Fullscreen belongs to a group even while another group is active.
+(handle-window-fullscreen! 1 #t)
+(handle-window-fullscreen! 2 #t)
+(check "snapshot retains hidden fullscreen" (assq-ref (window 1) 'fullscreen) #t)
+(check "snapshot retains active fullscreen" (assq-ref (window 2) 'fullscreen) #t)
+(check "hidden fullscreen stays invisible" (assq-ref (window 1) 'visible) #f)
+(check "enabling hidden fullscreen again is unchanged"
+       (status (act 'set-window-fullscreen! '((window . 1) (enabled . #t)))) 'unchanged)
+(check "unchanged hidden fullscreen preserves group" (current-group-name) " II ")
+(check "unchanged hidden fullscreen preserves active owner" (fullscreen-window) 2)
+(let* ((request (new-action-request))
+       (reply (act 'set-window-fullscreen! '((window . 1) (enabled . #f)) request)))
+  (check "disabling hidden fullscreen applies" (status reply) 'applied)
+  (check "disabled hidden fullscreen is reported" (assq-ref (window 1) 'fullscreen) #f)
+  (check "hidden disable preserves active group" (current-group-name) " II ")
+  (check "hidden disable preserves active fullscreen" (fullscreen-window) 2)
+  (check "hidden disable preserves keyboard focus" %focused 2)
+  (check "hidden disable replays its receipt"
+         (act 'set-window-fullscreen! '((window . 1) (enabled . #f)) request) reply))
+(check "repeated hidden disable is unchanged"
+       (status (act 'set-window-fullscreen! '((window . 1) (enabled . #f)))) 'unchanged)
+(check "enabling a hidden target applies"
+       (status (act 'set-window-fullscreen! '((window . 1) (enabled . #t)))) 'applied)
+(check "new fullscreen activates its target" (focused-window-id) 1)
+(check "new fullscreen preserves the outgoing group's owner" (assq-ref (window 2) 'fullscreen) #t)
+(check "disabling hidden floating fullscreen applies"
+       (status (act 'set-window-fullscreen! '((window . 2) (enabled . #f)))) 'applied)
+(check "hidden floating disable preserves current fullscreen" (fullscreen-window) 1)
+(check "hidden floating disable clears its own state" (assq-ref (window 2) 'fullscreen) #f)
+(handle-window-fullscreen! 2 #t)
+(check "enabling replaces the target group's other fullscreen owner"
+       (status (act 'set-window-fullscreen! '((window . 3) (enabled . #t)))) 'applied)
+(check "replacement is fullscreen" (fullscreen-window) 3)
+(check "replacement receives keyboard focus" %focused 3)
+(check "replacement retires its peer" (assq-ref (window 2) 'fullscreen) #f)
+(check "replacement preserves the other group's fullscreen" (assq-ref (window 1) 'fullscreen) #t)
+(act 'set-window-fullscreen! '((window . 3) (enabled . #f)))
+(switch-to-group! " I ")
+(define (cancel-fullscreen-on-switch . args)
+  (remove-event-hook! 'focus-group cancel-fullscreen-on-switch)
+  (handle-window-fullscreen! 3 #f))
+(add-event-hook! 'focus-group cancel-fullscreen-on-switch)
+(let ((reply (act 'set-window-fullscreen! '((window . 3) (enabled . #t)))))
+  (remove-event-hook! 'focus-group cancel-fullscreen-on-switch)
+  (check "a hook can invalidate the requested fullscreen state" (status reply) 'error)
+  (when (eq? (status reply) 'error)
+    (check "fullscreen hook failure is a postcondition failure" (code reply) 'postcondition-failed)
+    (check "fullscreen hook failure records possible effects"
+           (assq-ref (assq-ref reply 'error) 'effects-may-have-occurred) #t)))
+(check "fullscreen hook leaves the unrelated owner intact" (assq-ref (window 1) 'fullscreen) #t)
+(act 'set-window-fullscreen! '((window . 1) (enabled . #f)))
+(act 'set-window-fullscreen! '((window . 3) (enabled . #f)))
+(focus-window-by-id! 2)
+
 ;; A pending receipt is replayed without resending, even after state changes.
 (let* ((request (new-action-request))
        (reply (act 'close-window! '((window . 3)) request))

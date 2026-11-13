@@ -2585,9 +2585,10 @@ Returning to a fullscreen group restores its window and focus."
               (and (not (group-owns-window? group (fullscreen-id full))) group))
             %group-fullscreens))))
 
-(define (fullscreen-window)
-  "Returns the active group's fullscreen window identifier, or #f."
-  (let ((full (hashq-ref %group-fullscreens %active-group)))
+(define* (fullscreen-window #:optional (group %active-group))
+  "Returns GROUP's fullscreen window identifier, or #f.
+GROUP defaults to the active group; hidden groups retain their own state."
+  (let ((full (hashq-ref %group-fullscreens group)))
     (and full (fullscreen-id full))))
 
 (define* (set-group-fullscreen! group id on #:key (preserve-focus? #t))
