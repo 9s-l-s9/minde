@@ -151,8 +151,8 @@ is answered \"y\" or \"yes\"."
 (define (lock-screen!)
   "Locks the session by spawning %lock-command (default \"swaylock
 -f\"). Warns (best-effort, see warn-if-missing!) when the configured
-locker isn't on PATH; either way this never throws -- worst case is an
-inert wm-spawn, same as pressing a launcher key for a missing program."
+locker isn't on PATH. Invalid configuration or runtime errors propagate
+to the caller; spawning does not itself confirm that the session is locked."
   (warn-if-missing! %lock-command)
   (spawn! %lock-command)
   (echo "locking..."))
@@ -176,16 +176,19 @@ inert wm-spawn, same as pressing a launcher key for a missing program."
 (define %suspend-armed? #f)
 (define %suspend-generation 0)
 
+(define (disarm-suspend! generation)
+  (and %suspend-armed? (= generation %suspend-generation)
+       (begin
+         (set! %suspend-armed? #f)
+         (remove-event-hook! 'session-lock on-locked-for-suspend!)
+         #t)))
+
 (define (on-locked-for-suspend!)
-  (when %suspend-armed?
-    (set! %suspend-armed? #f)
-    (remove-event-hook! 'session-lock on-locked-for-suspend!)
+  (when (disarm-suspend! %suspend-generation)
     (spawn! %suspend-command)))
 
 (define (on-lock-timeout! generation)
-  (when (and %suspend-armed? (= generation %suspend-generation))
-    (set! %suspend-armed? #f)
-    (remove-event-hook! 'session-lock on-locked-for-suspend!)
+  (when (disarm-suspend! generation)
     (echo "suspend cancelled: lock did not confirm in time")))
 
 (define (suspend!)
@@ -206,9 +209,21 @@ suspends immediately without locking."
    (%suspend-armed? (echo "suspend already pending"))
    (else
     (set! %suspend-generation (+ %suspend-generation 1))
-    (set! %suspend-armed? #t)
-    (add-event-hook! 'session-lock on-locked-for-suspend!)
-    (lock-screen!)
-    (let ((generation %suspend-generation))
-      (run-after %lock-timeout-ms
-                 (lambda () (on-lock-timeout! generation)))))))
+    (let ((generation %suspend-generation) (prepared? #f))
+      (dynamic-wind
+        (lambda () #t)
+        (lambda ()
+          (set! %suspend-armed? #t)
+          (add-event-hook! 'session-lock on-locked-for-suspend!)
+          ;; Establish the timeout before starting the locker. A failed
+          ;; registration cannot leave an attempt waiting without a deadline.
+          (unless (run-after %lock-timeout-ms
+                            (lambda () (on-lock-timeout! generation)))
+            (error "cannot schedule suspend lock timeout"))
+          (lock-screen!)
+          (set! prepared? #t)
+          #t)
+        (lambda ()
+          ;; Exceptions and non-local exits preserve their original result,
+          ;; but must not attach a suspend to an unrelated future lock.
+          (unless prepared? (disarm-suspend! generation))))))))

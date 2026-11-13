@@ -266,6 +266,86 @@
 (set! %immediate-locked? #f)
 (set! %lock-confirmed? #f)
 
+;; A failed setup must not leave a suspend attached to the next manual lock.
+;; Its already-recorded timeout must also be harmless during a later retry.
+(define (unrelated-lock-hook) #t)
+(add-event-hook! 'session-lock unrelated-lock-hook)
+(define (check-failed-suspend name command spawn schedule expected-key)
+  (set! %lock-command command)
+  (set! %spawned '())
+  (set! %timers '())
+  (set! %messages '())
+  ((@@ (minde session) configure-session-runtime!)
+   #:spawn spawn #:quit wm-quit #:run-after schedule
+   #:session-locked? wm-session-lock-confirmed?)
+  (let ((failure (catch #t (lambda () (suspend!) #f) (lambda args args))))
+    (check (string-append name ": reports the setup error")
+           (and failure (car failure)) expected-key)
+    (when (memq expected-key '(locker-start-failed timer-start-failed))
+      (check (string-append name ": preserves the original error payload")
+             failure (list expected-key 'detail))))
+  (check (string-append name ": immediately disarmed")
+         (@@ (minde session) %suspend-armed?) #f)
+  (check (string-append name ": preserves only the unrelated hook")
+         (event-hook-procedures 'session-lock) (list unrelated-lock-hook))
+  (let ((failed-timers %timers))
+    (set! %lock-command "true")
+    ((@@ (minde session) configure-session-runtime!)
+     #:spawn wm-spawn #:quit wm-quit #:run-after wm-run-after
+     #:session-locked? wm-session-lock-confirmed?)
+    (wm-on-session-lock)
+    (check (string-append name ": a later manual lock does not suspend")
+           (spawned? "false") #f)
+    (set! %spawned '())
+    (suspend!)
+    (check (string-append name ": can start a fresh attempt") (spawned? "true") #t)
+    (for-each (lambda (timer) ((cdr timer))) failed-timers)
+    (check (string-append name ": stale timers cannot cancel the retry")
+           (@@ (minde session) %suspend-armed?) #t)
+    (wm-on-session-lock)
+    (for-each (lambda (timer) ((cdr timer))) %timers)
+    (wm-on-session-lock)
+    (check (string-append name ": retry suspends exactly once")
+           (length (filter (lambda (c) (equal? c "false")) %spawned)) 1)))
+
+(check-failed-suspend "false locker command" #f wm-spawn wm-run-after 'wrong-type-arg)
+(check-failed-suspend "list locker command" '("true") wm-spawn wm-run-after 'wrong-type-arg)
+(check-failed-suspend "throwing spawn" "true"
+                      (lambda (command)
+                        (wm-spawn command)
+                        (throw 'locker-start-failed 'detail))
+                      wm-run-after 'locker-start-failed)
+(check-failed-suspend "throwing timer registration" "true" wm-spawn
+                      (lambda (ms thunk)
+                        (wm-run-after ms thunk)
+                        (throw 'timer-start-failed 'detail))
+                      'timer-start-failed)
+(check-failed-suspend "rejected timer registration" "true" wm-spawn
+                      (lambda _ #f) 'misc-error)
+
+(set! %spawned '())
+(check "continuation escape preserves its result"
+       (call/cc
+        (lambda (escape)
+          ((@@ (minde session) configure-session-runtime!)
+           #:spawn (lambda (_) (escape 'escaped))
+           #:quit wm-quit #:run-after wm-run-after
+           #:session-locked? wm-session-lock-confirmed?)
+          (suspend!)
+          'returned))
+       'escaped)
+(check "continuation escape disarms the pending suspend"
+       (@@ (minde session) %suspend-armed?) #f)
+(check "continuation escape preserves unrelated hooks"
+       (event-hook-procedures 'session-lock) (list unrelated-lock-hook))
+((@@ (minde session) configure-session-runtime!)
+ #:spawn wm-spawn #:quit wm-quit #:run-after wm-run-after
+ #:session-locked? wm-session-lock-confirmed?)
+(wm-on-session-lock)
+(check "a manual lock after continuation escape does not suspend"
+       (spawned? "false") #f)
+(remove-event-hook! 'session-lock unrelated-lock-hook)
+
 ;; ---------------------------------------------------------------------
 ;; wm-on-session-lock / wm-on-session-unlock ((minde groups)) run
 ;; user-extensible 'session-lock / 'session-unlock hooks.

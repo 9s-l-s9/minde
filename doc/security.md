@@ -42,6 +42,11 @@ owner dies, and the session stays locked throughout recovery. A client that
 abandons an unconfirmed lock must reconnect before trying again: the pinned
 protocol library retains output bindings from its abandoned lock.
 
+If locker startup throws or timeout registration fails, `suspend!` removes
+its pending confirmation hook and propagates the error. A later manual lock
+cannot complete that abandoned suspend, and a new attempt can start immediately.
+Timeouts left by an abandoned attempt cannot cancel a newer one.
+
 Screen captures requested through either capture protocol or `wm-screenshot`
 fail while the session is locked. Accepting a lock also fails captures still
 waiting for a rendered frame, before confirming lock presentation. Those

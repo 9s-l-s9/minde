@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Suspend setup errors and early exits remove the pending confirmation hook,
+  allowing a fresh attempt and preventing an unrelated later lock from
+  suspending the machine. Failed timeout registration also cancels setup;
+  stale timeouts cannot cancel a newer attempt (#104).
 - JSON logs quote non-finite floating-point fields as `"NaN"`, `"inf"` or
   `"-inf"`, preserving their diagnostic meaning without breaking parsers
   (#145).
