@@ -53,6 +53,24 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+DRM device ownership (udev, requires a removable GPU):
+
+- Keep the primary GPU connected and repeatedly attach/remove a secondary
+  GPU. Compare the compositor's `/proc/PID/fd` links to `/dev/dri/` before
+  attachment and after each removal. Removed-device descriptors must not
+  accumulate, and outputs from other devices must remain usable.
+- Retain logs for a device that fails initialization. Repeated attempts must
+  release the libseat device each time and leave no notifier or renderer
+  registration behind.
+- In a separate disposable session, removing the primary GPU must withdraw
+  `wp_linux_drm_syncobj_manager_v1` from `wayland-info` when that interface was
+  present. Removing a secondary GPU must preserve it. Primary-GPU replacement
+  and driver recovery still require their own hardware validation.
+
+Automated ownership tests exercise real file descriptors, failed DRM
+initialization and calloop registration lifetimes without acquiring a seat.
+They do not exercise a physical GPU's EGL/GBM teardown or libseat backend.
+
 Repaint recovery (udev):
 
 - With two monitors, park an animating window outside every output, then

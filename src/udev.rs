@@ -56,8 +56,8 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata,
-            DrmEventTime, DrmNode, NodeType, VrrSupport,
+            DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode,
+            NodeType, VrrSupport,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -85,10 +85,9 @@ use smithay::{
         },
         drm::control::{self, Device as ControlDevice, ModeFlags, ModeTypeFlags, connector, crtc},
         input::{Device as LibinputDevice, Libinput},
-        rustix::fs::OFlags,
         wayland_server::backend::GlobalId,
     },
-    utils::{Clock, DeviceFd, Logical, Monotonic, Point},
+    utils::{Clock, Logical, Monotonic, Point},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState, supports_syncobj_eventfd},
@@ -102,6 +101,9 @@ use crate::edid::{EdidInfo, parse_edid};
 use crate::handlers::output_management::HeadChange;
 use crate::render::{BorderBuffers, MindeRenderElements};
 use crate::{MindeState, guile};
+
+mod device;
+use device::{EventRegistration, SessionDevice};
 
 /// The renderer type produced by `GpuManager::single_renderer`, matching
 /// anvil's `UdevRenderer` alias. We only ever address the primary node
@@ -340,10 +342,14 @@ fn resolve_connector_mode<M: Copy>(
 }
 
 struct DeviceData {
+    // Drop the notifier and rendering resources before returning the
+    // original descriptor to libseat (fields are dropped in this order).
+    _registration: EventRegistration<MindeState>,
     drm_output_manager: GbmDrmOutputManager,
-    registration_token: RegistrationToken,
     drm_scanner: DrmScanner,
     heads: HashMap<crtc::Handle, HeadEntry>,
+    render_node: Option<DrmNode>,
+    _session_device: SessionDevice<LibSeatSession>,
 }
 
 impl DeviceData {
@@ -394,9 +400,10 @@ pub struct UdevBackendData {
     /// `linux-drm-syncobj-v1` explicit-sync state, created only when the
     /// primary GPU exposes syncobj timeline eventfds (`DRM_CAP_SYNCOBJ_TIMELINE`
     /// via [`supports_syncobj_eventfd`]). `None` on hardware without support,
-    /// in which case the global is simply never advertised. See
-    /// [`DrmSyncobjHandler`] below.
-    syncobj_state: Option<DrmSyncobjState>,
+    /// in which case the global is simply never advertised. The tuple stores
+    /// the owning card node so a secondary-device removal cannot retire it.
+    /// See [`DrmSyncobjHandler`] below.
+    syncobj_state: Option<(DrmNode, DrmSyncobjState)>,
     /// libinput devices currently present on the seat. Retained so
     /// `wm-configure-input!` can re-apply rules to devices already plugged
     /// in (rules are otherwise applied on `InputEvent::DeviceAdded`).
@@ -430,7 +437,11 @@ impl UdevBackendData {
 /// when the primary GPU supports syncobj timelines (see `syncobj_state`).
 impl DrmSyncobjHandler for MindeState {
     fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
-        self.udev_data.as_mut()?.syncobj_state.as_mut()
+        self.udev_data
+            .as_mut()?
+            .syncobj_state
+            .as_mut()
+            .map(|(_, state)| state)
     }
 }
 
@@ -475,8 +486,14 @@ enum DeviceAddError {
     DrmDevice(DrmError),
     #[error("failed to initialize gbm device: {0}")]
     GbmDevice(std::io::Error),
-    #[error("failed to access drm node: {0}")]
-    DrmNode(CreateDrmNodeError),
+    #[error("failed to duplicate session device descriptor: {0}")]
+    DuplicateFd(std::io::Error),
+    #[error("failed to obtain primary renderer: {0}")]
+    Renderer(String),
+    #[error("failed to register drm notifier: {0}")]
+    Notifier(smithay::reexports::calloop::Error),
+    #[error("render node {0} is already owned by another drm device")]
+    DuplicateRenderNode(DrmNode),
 }
 
 /// Entry point: takes over a VT via libseat, discovers DRM/libinput
@@ -693,49 +710,26 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
     let dh = state.display_handle.clone();
     let udev = state.udev_data.as_mut().unwrap();
 
-    let fd = udev
-        .session
-        .open(
-            path,
-            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-        )
-        .map_err(DeviceAddError::DeviceOpen)?;
-    let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+    // Duplicate udev notifications must not replace a live device and lose
+    // its heads or remove another registration for the same render node.
+    if udev.devices.contains_key(&node) {
+        return Ok(());
+    }
+    let session_device =
+        SessionDevice::open(udev.session.clone(), path).map_err(DeviceAddError::DeviceOpen)?;
+    let fd = DrmDeviceFd::new(
+        session_device
+            .duplicate()
+            .map_err(DeviceAddError::DuplicateFd)?,
+    );
 
     let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
-
-    // linux-drm-syncobj-v1 (explicit sync): create the global once, from the
-    // first DRM device that supports syncobj timeline eventfds
-    // (DRM_CAP_SYNCOBJ_TIMELINE, probed by `supports_syncobj_eventfd`). We only
-    // ever render on the primary GPU, so its device fd is the import device
-    // Smithay uses to import client acquire/release fences. Hardware without
-    // support just never gets the global -- no faked explicit-sync claim.
-    if udev.syncobj_state.is_none() {
-        if supports_syncobj_eventfd(&fd) {
-            info!("drm device supports syncobj timelines; enabling linux-drm-syncobj-v1");
-            udev.syncobj_state = Some(DrmSyncobjState::new::<MindeState>(&dh, fd.clone()));
-        } else {
-            info!("drm device lacks syncobj timeline support; linux-drm-syncobj-v1 not advertised");
-        }
-    }
-
-    let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
-
-    let registration_token = handle
-        .insert_source(
-            notifier,
-            move |event, metadata, state: &mut MindeState| match event {
-                DrmEvent::VBlank(crtc) => state.frame_finish(node, crtc, metadata),
-                DrmEvent::Error(err) => error!(%err, "drm error"),
-            },
-        )
-        .unwrap();
+    let gbm = GbmDevice::new(fd.clone()).map_err(DeviceAddError::GbmDevice)?;
 
     // Try to add this GPU's render node to the shared GpuManager (needed
     // even though we only ever render with the primary node, since
     // `single_renderer` looks the node up there).
-    let egl_display = unsafe { EGLDisplay::new(gbm.clone()) };
-    if let Ok(display) = egl_display
+    let render_node = if let Ok(display) = unsafe { EGLDisplay::new(gbm.clone()) }
         && let Ok(egl_device) = EGLDevice::device_for_display(&display)
     {
         let render_node = egl_device
@@ -743,48 +737,122 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
             .ok()
             .flatten()
             .unwrap_or(node);
-        let _ = udev.gpus.as_mut().add_node(render_node, gbm.clone());
+        if udev
+            .devices
+            .values()
+            .any(|device| device.render_node == Some(render_node))
+        {
+            return Err(DeviceAddError::DuplicateRenderNode(render_node));
+        }
+        match udev.gpus.as_mut().add_node(render_node, gbm.clone()) {
+            Ok(()) => Some(render_node),
+            Err(err) => {
+                warn!(
+                    ?err,
+                    ?node,
+                    "could not register render node; trying primary renderer for scanout"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Prepare rendering before registering its notifier or advertising
+    // explicit sync. Undo the GPU entry on every fallible setup path.
+    let setup = (|| {
+        let render_formats = udev
+            .gpus
+            .single_renderer(&udev.primary_gpu)
+            .map_err(|err| DeviceAddError::Renderer(err.to_string()))?
+            .as_mut()
+            .egl_context()
+            .dmabuf_render_formats()
+            .iter()
+            .copied()
+            .collect::<FormatSet>();
+        let allocator = GbmAllocator::new(
+            gbm.clone(),
+            GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+        );
+        let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), None.into());
+        let manager = DrmOutputManager::new(
+            drm,
+            allocator,
+            framebuffer_exporter,
+            Some(gbm),
+            SUPPORTED_FORMATS.iter().copied(),
+            render_formats,
+        );
+        let token = handle
+            .insert_source(
+                notifier,
+                move |event, metadata, state: &mut MindeState| match event {
+                    DrmEvent::VBlank(crtc) => state.frame_finish(node, crtc, metadata),
+                    DrmEvent::Error(err) => error!(%err, "drm error"),
+                },
+            )
+            .map_err(|err| DeviceAddError::Notifier(err.error))?;
+        Ok((manager, EventRegistration::new(handle, token)))
+    })();
+    let (drm_output_manager, registration) = match setup {
+        Ok(resources) => resources,
+        Err(err) => {
+            remove_gpu_node(udev, render_node);
+            return Err(err);
+        }
+    };
+
+    // Card nodes key `devices`; primary_gpu is a render node. Only the
+    // successfully registered primary device may own explicit-sync imports.
+    if render_node == Some(udev.primary_gpu) && udev.syncobj_state.is_none() {
+        if supports_syncobj_eventfd(&fd) {
+            info!("primary drm device supports syncobj timelines; enabling linux-drm-syncobj-v1");
+            udev.syncobj_state = Some((node, DrmSyncobjState::new::<MindeState>(&dh, fd)));
+        } else {
+            info!(
+                "primary drm device lacks syncobj timeline support; linux-drm-syncobj-v1 not advertised"
+            );
+        }
     }
-
-    let allocator = GbmAllocator::new(
-        gbm.clone(),
-        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-    );
-    let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), None.into());
-
-    let mut renderer = udev
-        .gpus
-        .single_renderer(&udev.primary_gpu)
-        .map_err(|_| DeviceAddError::DrmNode(CreateDrmNodeError::NotDrmNode))?;
-    let render_formats = renderer
-        .as_mut()
-        .egl_context()
-        .dmabuf_render_formats()
-        .iter()
-        .copied()
-        .collect::<FormatSet>();
-
-    let drm_output_manager = DrmOutputManager::new(
-        drm,
-        allocator,
-        framebuffer_exporter,
-        Some(gbm),
-        SUPPORTED_FORMATS.iter().copied(),
-        render_formats,
-    );
 
     udev.devices.insert(
         node,
         DeviceData {
+            _registration: registration,
             drm_output_manager,
-            registration_token,
             drm_scanner: DrmScanner::new(),
             heads: HashMap::new(),
+            render_node,
+            _session_device: session_device,
         },
     );
 
     scan_connectors(state, node);
     Ok(())
+}
+
+fn remove_gpu_node(udev: &mut UdevBackendData, node: Option<DrmNode>) {
+    if let Some(node) = node {
+        udev.gpus.as_mut().remove_node(&node);
+        // Removing the backend entry only marks enumeration dirty. Refresh
+        // now to drop cached renderers/EGL displays even if no render follows.
+        if let Err(err) = udev.gpus.devices() {
+            warn!(?err, "failed to refresh renderers after device removal");
+        }
+    }
+}
+
+fn remove_device_syncobj<N: PartialEq>(
+    state: &mut Option<(N, DrmSyncobjState)>,
+    node: N,
+    dh: &smithay::reexports::wayland_server::DisplayHandle,
+) {
+    if let Some((_, syncobj)) = state.take_if(|(owner, _)| *owner == node) {
+        // into_global also invalidates imported timelines and wakes waiters.
+        dh.remove_global::<MindeState>(syncobj.into_global());
+    }
 }
 
 /// Scans `node` for connector changes and creates/tears down an output
@@ -1297,27 +1365,25 @@ fn device_changed(state: &mut MindeState, node: DrmNode) {
 }
 
 fn device_removed(state: &mut MindeState, node: DrmNode) {
-    let handle = state.handle.clone();
     // Tear down every output this device was driving.
-    let connectors: Vec<(connector::Info, crtc::Handle)> = state
+    let crtcs: Vec<crtc::Handle> = state
         .udev_data
-        .as_mut()
-        .and_then(|u| u.devices.get_mut(&node))
-        .map(|d| {
-            d.drm_scanner
-                .crtcs()
-                .map(|(info, crtc)| (info.clone(), crtc))
-                .collect()
-        })
+        .as_ref()
+        .and_then(|u| u.devices.get(&node))
+        .map(|device| device.heads.keys().copied().collect())
         .unwrap_or_default();
-    for (info, crtc) in connectors {
-        connector_disconnected(state, node, &info, crtc);
+    for crtc in crtcs {
+        disable_head(state, node, crtc);
+        remove_head(state, node, crtc);
     }
     let Some(udev) = state.udev_data.as_mut() else {
         return;
     };
     if let Some(device) = udev.devices.remove(&node) {
-        handle.remove(device.registration_token);
+        remove_device_syncobj(&mut udev.syncobj_state, node, &state.display_handle);
+        remove_gpu_node(udev, device.render_node);
+        // Drops notifier/output-manager refs before closing the libseat lease.
+        drop(device);
     }
 }
 
@@ -2345,6 +2411,36 @@ impl MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_sync_releases_only_its_owning_device() {
+        use smithay::{reexports::wayland_server::Display, utils::DeviceFd};
+        use std::{fs::File, os::fd::OwnedFd};
+
+        let display = Display::<MindeState>::new().unwrap();
+        // DrmNode construction probes sysfs even from a dev_t. Exercise
+        // ownership with plain IDs so this test also runs without GPUs.
+        let owner = 0_u8;
+        let other = 1_u8;
+        for _ in 0..32 {
+            // No DRM ioctls are required to register this global. A harmless
+            // fd lets its actual refcount/lifetime run without a real seat.
+            let fd: OwnedFd = File::open("/dev/null").unwrap().into();
+            let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+            let weak = fd.downgrade();
+            let mut state = Some((
+                owner,
+                DrmSyncobjState::new::<MindeState>(&display.handle(), fd),
+            ));
+            remove_device_syncobj(&mut state, other, &display.handle());
+            assert!(state.is_some());
+            assert!(weak.upgrade().is_some());
+            remove_device_syncobj(&mut state, owner, &display.handle());
+            assert!(state.is_none());
+            assert!(weak.upgrade().is_none());
+            remove_device_syncobj(&mut state, owner, &display.handle());
+        }
+    }
 
     #[test]
     fn failed_renders_keep_retrying_without_refresh_rate_spinning() {

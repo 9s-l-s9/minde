@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- DRM device setup failures and removal release the libseat lease, event
+  registration and GPU resources, including cached renderers. Explicit sync
+  belongs to the successfully initialized primary GPU and is withdrawn when
+  that device disappears; duplicate device notifications preserve live heads
+  (#58).
 - The security model now states the existing trust requirement for every
   connected Wayland client, lists privileged interfaces and their limits,
   and explains why socket access does not isolate sandboxed apps (#133).
