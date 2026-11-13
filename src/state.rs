@@ -2456,6 +2456,7 @@ impl MindeState {
         self.absolute_pointer_motion.reset();
         self.pointer_location = self.clamp_to_outputs(self.pointer_location);
         self.schedule_redraw();
+        self.start_udev_if_ready();
         guile::on_output_configured();
     }
 
@@ -2581,6 +2582,30 @@ impl MindeState {
                 tracing::warn!(output = name, %reason, "configure-output!: rejected");
                 guile::on_output_configure_failed(name, &reason.0);
             }
+        }
+    }
+
+    /// Preserve a connector's layout when immutable monitor metadata
+    /// requires replacing its Output. The caller restores only supported
+    /// modes; identity, scale and explicit positioning survive separately.
+    pub(crate) fn inherit_output_layout(
+        old: &smithay::output::Output,
+        new: &smithay::output::Output,
+    ) {
+        if let Some(id) = old.user_data().get::<OutputId>() {
+            new.user_data().insert_if_missing(|| OutputId(id.0));
+        }
+        new.change_current_state(
+            None,
+            Some(old.current_transform()),
+            Some(old.current_scale()),
+            Some(old.current_location()),
+        );
+        if let Some(flag) = old.user_data().get::<ExplicitPosition>() {
+            let explicit = flag.0.load(std::sync::atomic::Ordering::Relaxed);
+            new.user_data().insert_if_missing(|| {
+                ExplicitPosition(std::sync::atomic::AtomicBool::new(explicit))
+            });
         }
     }
 
@@ -2836,6 +2861,56 @@ impl ClientData for ClientState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaced_monitor_keeps_layout_and_head_id_but_not_stale_modes() {
+        use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+        use smithay::utils::Transform;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let physical = PhysicalProperties {
+            size: (600, 340).into(),
+            subpixel: Subpixel::Unknown,
+            make: "TST".into(),
+            model: "Monitor".into(),
+            serial_number: "1".into(),
+        };
+        let old = Output::new("DP-1".into(), physical.clone());
+        let new = Output::new("DP-1".into(), physical);
+        old.user_data().insert_if_missing(|| OutputId(42));
+        old.user_data()
+            .insert_if_missing(|| ExplicitPosition(AtomicBool::new(true)));
+        old.change_current_state(
+            Some(Mode {
+                size: (1920, 1080).into(),
+                refresh: 60_000,
+            }),
+            Some(Transform::_90),
+            Some(Scale::Fractional(1.5)),
+            Some((-800, 200).into()),
+        );
+        MindeState::inherit_output_layout(&old, &new);
+        assert_eq!(new.user_data().get::<OutputId>().unwrap().0, 42);
+        assert_eq!(new.current_location(), old.current_location());
+        assert_eq!(new.current_scale().fractional_scale(), 1.5);
+        assert_eq!(
+            new.current_scale().integer_scale(),
+            old.current_scale().integer_scale()
+        );
+        assert_eq!(new.current_transform(), old.current_transform());
+        assert_eq!(new.current_mode(), None);
+        assert!(new.modes().is_empty());
+        let flag = &new.user_data().get::<ExplicitPosition>().unwrap().0;
+        assert!(flag.load(Ordering::Relaxed));
+        flag.store(false, Ordering::Relaxed);
+        assert!(
+            old.user_data()
+                .get::<ExplicitPosition>()
+                .unwrap()
+                .0
+                .load(Ordering::Relaxed)
+        );
+    }
 
     fn rectangle(x: i32, y: i32, width: i32, height: i32) -> Rectangle<i32, Logical> {
         Rectangle::new((x, y).into(), (width, height).into())

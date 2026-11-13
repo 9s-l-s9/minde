@@ -487,6 +487,9 @@ struct HeadBackup {
 /// protocol and must not make daemons re-evaluate.
 #[derive(Clone, PartialEq)]
 pub(crate) struct HeadProtoState {
+    // Replacing an Output also replaces its protocol resources, even if
+    // its name, properties and layout happen to be identical.
+    output: Output,
     identity: HeadSnapshot,
     enabled: bool,
     current_mode: Option<Mode>,
@@ -500,6 +503,7 @@ pub(crate) struct HeadProtoState {
 fn head_proto_state(output: &Output, enabled: bool, adaptive_sync: Option<bool>) -> HeadProtoState {
     let loc = output.current_location();
     HeadProtoState {
+        output: output.clone(),
         identity: HeadSnapshot::of(output),
         enabled,
         current_mode: output.current_mode(),
@@ -518,7 +522,9 @@ impl MindeState {
             self.output_management.heads_all.push(output.clone());
         }
         self.invalidate_lock_presentation();
-        self.output_management_refresh();
+        if !self.applying_output_config {
+            self.output_management_refresh();
+        }
     }
 
     /// Forgets `output` (connector gone / window closed) and re-advertises,
@@ -526,7 +532,9 @@ impl MindeState {
     pub fn output_management_remove_output(&mut self, output: &Output) {
         self.output_management.heads_all.retain(|o| o != output);
         self.invalidate_lock_presentation();
-        self.output_management_refresh();
+        if !self.applying_output_config {
+            self.output_management_refresh();
+        }
     }
 
     /// Every known head, in registration order.
@@ -688,6 +696,7 @@ impl MindeState {
             return Err(err);
         }
         self.applying_output_config = false;
+        self.commit_udev_enable_intent(changes);
         // Closing a layer role cannot be rolled back. Wait until every head
         // succeeded, including when the DRM hook already unmapped the output.
         for r in &resolved {
@@ -1485,6 +1494,8 @@ mod tests {
         // would be sent. Layer-shell exclusive zones never appear here,
         // which is the point -- they cannot trigger a refresh.
         assert!(before == head_proto_state(&h.output, true, h.adaptive_sync));
+        let replacement = head("a", true, Some(false));
+        assert!(before != head_proto_state(&replacement.output, true, replacement.adaptive_sync));
         // Each protocol-visible property makes the snapshot differ.
         assert!(before != head_proto_state(&h.output, false, h.adaptive_sync));
         assert!(before != head_proto_state(&h.output, true, Some(true)));

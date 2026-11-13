@@ -94,7 +94,7 @@ use smithay::{
         presentation::{PresentationState, Refresh},
     },
 };
-use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
+use smithay_drm_extras::drm_scanner::DrmScanner;
 use tracing::{debug, error, info, warn};
 
 use crate::edid::{EdidInfo, parse_edid};
@@ -104,6 +104,8 @@ use crate::{MindeState, guile};
 
 mod device;
 use device::{EventRegistration, SessionDevice};
+mod connectors;
+use connectors::ConnectorMapper;
 
 /// The renderer type produced by `GpuManager::single_renderer`, matching
 /// anvil's `UdevRenderer` alias. We only ever address the primary node
@@ -291,7 +293,7 @@ struct HeadEntry {
     /// powered off (DPMS).
     surface: Option<OutputSurface>,
     /// DPMS state; only meaningful while enabled (reset to `On` on
-    /// disable so a re-enabled head always lights up).
+    /// explicit disable so a re-enabled head always lights up).
     power: PowerState,
     /// What the connector reports about variable refresh rate, cached
     /// when the head is enabled (`NotSupported` while disabled or unknown).
@@ -302,6 +304,9 @@ struct HeadEntry {
     /// Reapply gamma after the first completed frame of a modeset/resume.
     /// Waiting until then avoids a driver resetting the LUT after we set it.
     gamma_reapply: bool,
+    /// Retry failed automatic setup on later scans, while preserving an
+    /// explicit disable across hotplug notifications and session resumes.
+    wanted_enabled: bool,
 }
 
 impl HeadEntry {
@@ -346,7 +351,8 @@ struct DeviceData {
     // original descriptor to libseat (fields are dropped in this order).
     _registration: EventRegistration<MindeState>,
     drm_output_manager: GbmDrmOutputManager,
-    drm_scanner: DrmScanner,
+    drm_scanner: DrmScanner<ConnectorMapper>,
+    waiting_connectors: std::collections::HashSet<connector::Handle>,
     heads: HashMap<crtc::Handle, HeadEntry>,
     render_node: Option<DrmNode>,
     _session_device: SessionDevice<LibSeatSession>,
@@ -541,7 +547,7 @@ pub fn init_udev(
         gpus,
         devices: HashMap::new(),
         started: false,
-        paused: false,
+        paused: !session.is_active(),
         dmabuf_state: None,
         presentation_state,
         // Filled in by `device_added` once the primary GPU is opened and its
@@ -615,20 +621,34 @@ pub fn init_udev(
                 if libinput_context.resume().is_err() {
                     error!("failed to resume libinput context");
                 }
-                let mut to_repaint = Vec::new();
+                let mut active_nodes = Vec::new();
                 if let Some(udev) = state.udev_data.as_mut() {
                     udev.paused = false;
                     for (node, device) in udev.devices.iter_mut() {
-                        let _ = device.drm_output_manager.lock().activate(false);
-                        for (crtc, head) in device.heads.iter_mut() {
-                            if head.enabled() {
-                                head.gamma_reapply = true;
-                                to_repaint.push((*node, *crtc));
-                            }
+                        match device.drm_output_manager.lock().activate(false) {
+                            Ok(()) => active_nodes.push(*node),
+                            Err(err) => warn!(?node, %err, "failed to reactivate drm device"),
                         }
                     }
                 }
                 state.invalidate_lock_presentation();
+                // Hotplug while paused must be reconciled only after the
+                // device is active. Failed setup is retried by the same scan.
+                for node in &active_nodes {
+                    scan_connectors(state, *node);
+                }
+                let mut to_repaint = Vec::new();
+                if let Some(udev) = state.udev_data.as_mut() {
+                    for node in active_nodes {
+                        let device = udev.devices.get_mut(&node).unwrap();
+                        for (crtc, head) in device.heads.iter_mut() {
+                            if head.enabled() {
+                                head.gamma_reapply = true;
+                                to_repaint.push((node, *crtc));
+                            }
+                        }
+                    }
+                }
                 for (node, crtc) in to_repaint {
                     state.handle_repaint_now(node, crtc);
                 }
@@ -822,7 +842,8 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
         DeviceData {
             _registration: registration,
             drm_output_manager,
-            drm_scanner: DrmScanner::new(),
+            drm_scanner: DrmScanner::new_with_mapper(ConnectorMapper::default()),
+            waiting_connectors: Default::default(),
             heads: HashMap::new(),
             render_node,
             _session_device: session_device,
@@ -855,44 +876,96 @@ fn remove_device_syncobj<N: PartialEq>(
     }
 }
 
-/// Scans `node` for connector changes and creates/tears down an output
-/// per (dis)connected connector (anvil's multi-output policy).
+/// Reconcile heads against the full current mapping. A waiting connector
+/// can acquire a CRTC without another Connected event, and a known head
+/// can gain usable modes after its first scan.
 fn scan_connectors(state: &mut MindeState, node: DrmNode) {
-    let scan_result = {
+    let (connected, retired) = {
         let udev = state.udev_data.as_mut().unwrap();
+        if udev.paused || !udev.session.is_active() {
+            return;
+        }
         let Some(device) = udev.devices.get_mut(&node) else {
             return;
         };
-        match device
+        if !device.drm_output_manager.device().is_active() {
+            return;
+        }
+        if let Err(err) = device
             .drm_scanner
             .scan_connectors(device.drm_output_manager.device())
         {
-            Ok(scan) => scan,
-            Err(err) => {
-                warn!(?err, "failed to scan connectors");
-                return;
-            }
+            warn!(?err, "failed to scan connectors");
+            return;
         }
-    };
-
-    for event in scan_result {
-        match event {
-            DrmScanEvent::Connected {
-                connector,
-                crtc: Some(crtc),
-            } => {
-                if !connector_connected(state, node, &connector, crtc) {
-                    warn!(?node, ?crtc, "failed to set up connected connector");
+        let mut connected = Vec::new();
+        let mut waiting = std::collections::HashSet::new();
+        for info in device.drm_scanner.connectors().values() {
+            if info.state() != connector::State::Connected {
+                continue;
+            }
+            if let Some(crtc) = device.drm_scanner.crtc_for_connector(&info.handle()) {
+                connected.push((info.clone(), crtc));
+            } else {
+                waiting.insert(info.handle());
+                if !device.waiting_connectors.contains(&info.handle()) {
+                    warn!(?node, connector = ?info.handle(), "connected output waiting for a free controller");
                 }
             }
-            DrmScanEvent::Disconnected {
-                connector,
-                crtc: Some(crtc),
-            } => {
-                connector_disconnected(state, node, &connector, crtc);
-            }
-            _ => {}
         }
+        device.waiting_connectors = waiting;
+        connected.sort_by_key(|(info, _)| u32::from(info.handle()));
+        let heads: Vec<_> = device
+            .heads
+            .iter()
+            .map(|(crtc, h)| (h.connector, *crtc))
+            .collect();
+        let mapping: Vec<_> = connected
+            .iter()
+            .map(|(info, crtc)| (info.handle(), *crtc))
+            .collect();
+        let retired = connectors::retired(&heads, &mapping);
+        (connected, retired)
+    };
+
+    let was_applying = state.applying_output_config;
+    let old_outputs: Vec<_> = state.space.outputs().cloned().collect();
+    state.applying_output_config = true;
+    let mut changed = !retired.is_empty();
+    let mut relocated = HashMap::new();
+    for crtc in retired {
+        let entry = &state.udev_data.as_ref().unwrap().devices[&node].heads[&crtc];
+        if connected
+            .iter()
+            .any(|(info, _)| info.handle() == entry.connector)
+        {
+            relocated.insert(entry.connector, HeadSettings::of(entry));
+        }
+        disable_head(state, node, crtc);
+        remove_head(state, node, crtc);
+    }
+    for (info, crtc) in connected {
+        changed |= refresh_connector(state, node, &info, crtc, relocated.remove(&info.handle()));
+    }
+    state.applying_output_config = was_applying;
+    if changed && !was_applying {
+        for output in old_outputs {
+            if !state.output_enabled(&output) {
+                state.close_output_layers(&output);
+            }
+        }
+        state.invalidate_lock_presentation();
+        state.space.refresh();
+        state.update_usable_area();
+        // A replacement Output can keep the same Scheme head ID and
+        // geometry, so update_usable_area need not detect an association change.
+        state.refresh_foreign_toplevel_outputs();
+        state.update_fractional_scales();
+        state.reconfigure_lock_surfaces();
+        state.absolute_pointer_motion.reset();
+        state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+        state.start_udev_if_ready();
+        state.schedule_redraw();
     }
 }
 
@@ -914,27 +987,69 @@ fn read_edid(device: &impl ControlDevice, connector: connector::Handle) -> Optio
     parse_edid(&data)
 }
 
-/// A connector was connected: register it as a head and bring it up at
-/// its preferred mode, to the right of the outputs already enabled
-/// (anvil's left-to-right policy). Heads default to enabled; a daemon such
-/// as kanshi/shikane may disable it again through wlr-output-management.
-fn connector_connected(
-    state: &mut MindeState,
-    node: DrmNode,
-    info: &connector::Info,
-    crtc: crtc::Handle,
-) -> bool {
-    let Some(preferred) = create_head(state, node, info, crtc) else {
-        return false;
-    };
-    let position = right_edge_of_outputs(state);
-    match enable_head(state, node, crtc, preferred, position) {
-        Ok(()) => true,
-        Err(err) => {
-            warn!(%err, "failed to enable hotplugged head");
-            false
+struct HeadSettings {
+    output: Output,
+    wanted_enabled: bool,
+    power: PowerState,
+    vrr: bool,
+}
+
+impl HeadSettings {
+    fn of(entry: &HeadEntry) -> Self {
+        Self {
+            output: entry.output.clone(),
+            wanted_enabled: entry.wanted_enabled,
+            power: entry.power,
+            vrr: entry.vrr,
         }
     }
+}
+
+fn same_monitor(output: &Output, physical: &PhysicalProperties, edid: Option<&EdidInfo>) -> bool {
+    let old = output.physical_properties();
+    old.size == physical.size
+        && old.subpixel == physical.subpixel
+        && old.make == physical.make
+        && old.model == physical.model
+        && old.serial_number == physical.serial_number
+        && output.user_data().get::<EdidInfo>() == edid
+}
+
+/// Update advertised modes without resetting a still-supported current
+/// mode. Mode ordering is immaterial; keep retained modes stable so a
+/// reordered kernel list cannot cause endless output-management updates.
+fn set_connector_modes(output: &Output, modes: &[WlMode], preferred: Option<WlMode>) -> bool {
+    let old = output.modes();
+    let changed = old.len() != modes.len()
+        || old.iter().any(|mode| !modes.contains(mode))
+        || output.preferred_mode() != preferred;
+    for mode in old {
+        if !modes.contains(&mode) {
+            output.delete_mode(mode);
+        }
+    }
+    for mode in modes {
+        output.add_mode(*mode);
+    }
+    if let Some(mode) = preferred {
+        output.set_preferred(mode);
+    }
+    changed
+}
+
+fn automatic_mode<M: Copy>(
+    output: &Output,
+    modes: &[(WlMode, M)],
+    wanted_enabled: bool,
+    enabled: bool,
+) -> Option<M> {
+    if !wanted_enabled || enabled {
+        return None;
+    }
+    output
+        .current_mode()
+        .or_else(|| output.preferred_mode())
+        .and_then(|mode| resolve_connector_mode(modes, mode, false))
 }
 
 /// The x coordinate just right of every enabled output: where a newly
@@ -950,36 +1065,23 @@ pub(crate) fn right_edge_of_outputs(state: &MindeState) -> Point<i32, Logical> {
     (x, 0).into()
 }
 
-/// Creates the [`Output`] for a freshly connected connector -- identity
-/// from EDID, the full mode list, preferred mode -- registers it as a
-/// (still disabled) head with wlr-output-management and stores the
-/// [`HeadEntry`]. Returns the preferred DRM mode, `None` if the connector
-/// is unusable (no modes).
-fn create_head(
+/// Refresh connector metadata and retry desired heads that have become
+/// usable. Keep mode-less heads registered so an explicit disable can
+/// cancel automatic setup before a later scan supplies modes.
+fn refresh_connector(
     state: &mut MindeState,
     node: DrmNode,
     info: &connector::Info,
     crtc: crtc::Handle,
-) -> Option<control::Mode> {
-    let udev = state.udev_data.as_mut().unwrap();
-    let device = udev.devices.get_mut(&node)?;
-
-    let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
-    info!(?crtc, %output_name, "setting up connector as a head");
-
-    let mode_id = info
+    mut restore: Option<HeadSettings>,
+) -> bool {
+    let preferred = info
         .modes()
         .iter()
-        .position(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
-        .unwrap_or(0);
-    let Some(&drm_mode) = info.modes().get(mode_id) else {
-        warn!(%output_name, "connector reports no modes");
-        return None;
-    };
-    let wl_mode = wl_mode_from_drm(drm_mode);
-
-    // Every non-interlaced connector mode, deduplicated on the advertised
-    // (size, refresh) pair; the first DRM mode wins for a given WlMode.
+        .filter(|m| !m.flags().contains(ModeFlags::INTERLACE))
+        .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
+        .copied()
+        .map(wl_mode_from_drm);
     let mut modes: Vec<(WlMode, control::Mode)> = Vec::new();
     for &m in info.modes() {
         if m.flags().contains(ModeFlags::INTERLACE) {
@@ -991,66 +1093,111 @@ fn create_head(
         }
     }
 
+    let preferred = preferred.or_else(|| modes.first().map(|(wl, _)| *wl));
+    let device = &state.udev_data.as_ref().unwrap().devices[&node];
     let edid = read_edid(device.drm_output_manager.device(), info.handle());
     let (make, model, serial) = match &edid {
         Some(e) => (e.make.clone(), e.model.clone(), e.serial.clone()),
         None => ("Unknown".into(), "Unknown".into(), "Unknown".into()),
     };
-    info!(
-        %output_name, %make, %model, %serial,
-        modes = modes.len(), preferred = ?wl_mode,
-        "output identity and mode list"
-    );
-
     let (phys_w, phys_h) = info.size().unwrap_or((0, 0));
-    let output = Output::new(
-        output_name.clone(),
-        PhysicalProperties {
-            size: (phys_w as i32, phys_h as i32).into(),
-            subpixel: Subpixel::from(info.subpixel()),
-            make,
-            model,
-            serial_number: serial,
-        },
-    );
-    if let Some(edid) = edid {
-        // Smithay's description string is fixed at construction; the EDID
-        // identity lives in user data so protocol handlers can build the
-        // wlroots-style "Make Model Serial" description (crate::edid).
-        output.user_data().insert_if_missing(|| edid);
-    }
-    for (wl, _) in &modes {
-        output.add_mode(*wl);
-    }
-    output.set_preferred(wl_mode);
-
-    // A previous entry on this CRTC (should not happen: DrmScanner reports
-    // a disconnect first) is torn down so its CRTC is free.
-    if device.heads.contains_key(&crtc) {
-        warn!(?crtc, "replacing an existing head on this crtc");
-        disable_head(state, node, crtc);
+    let physical = PhysicalProperties {
+        size: (phys_w as i32, phys_h as i32).into(),
+        subpixel: Subpixel::from(info.subpixel()),
+        make,
+        model,
+        serial_number: serial,
+    };
+    if let Some(entry) = device.heads.get(&crtc)
+        && !same_monitor(&entry.output, &physical, edid.as_ref())
+    {
+        // Smithay's physical identity and EDID user data are immutable.
+        // Replace the protocol head, retaining the connector's layout/id.
+        restore = Some(HeadSettings::of(entry));
+        disable_head_inner(state, node, crtc, true);
         remove_head(state, node, crtc);
     }
-    let udev = state.udev_data.as_mut().unwrap();
-    let device = udev.devices.get_mut(&node)?;
-    device.heads.insert(
-        crtc,
-        HeadEntry {
-            output: output.clone(),
-            connector: info.handle(),
-            modes,
-            global: None,
-            surface: None,
-            power: PowerState::On,
-            vrr_support: VrrSupport::NotSupported,
-            vrr: false,
-            gamma_reapply: false,
-        },
-    );
-    // Assign the stable head id now so it survives disable/enable cycles.
-    state.output_id(&output);
-    state.output_management_add_output(&output);
-    Some(drm_mode)
+    let fresh = !state.udev_data.as_ref().unwrap().devices[&node]
+        .heads
+        .contains_key(&crtc);
+    let mut changed = fresh;
+    if fresh {
+        let name = format!("{}-{}", info.interface().as_str(), info.interface_id());
+        info!(?crtc, output = %name, modes = modes.len(), ?preferred, "registering connector head");
+        let output = Output::new(name, physical);
+        if let Some(edid) = edid {
+            output.user_data().insert_if_missing(|| edid);
+        }
+        if let Some(saved) = &restore {
+            MindeState::inherit_output_layout(&saved.output, &output);
+            if let Some(mode) = saved.output.current_mode()
+                && modes.iter().any(|(wl, _)| *wl == mode)
+            {
+                output.change_current_state(Some(mode), None, None, None);
+            }
+        } else {
+            output.change_current_state(None, None, None, Some(right_edge_of_outputs(state)));
+        }
+        state.output_id(&output);
+        state
+            .udev_data
+            .as_mut()
+            .unwrap()
+            .devices
+            .get_mut(&node)
+            .unwrap()
+            .heads
+            .insert(
+                crtc,
+                HeadEntry {
+                    output,
+                    connector: info.handle(),
+                    modes: Vec::new(),
+                    global: None,
+                    surface: None,
+                    power: restore.as_ref().map_or(PowerState::On, |s| s.power),
+                    vrr_support: VrrSupport::NotSupported,
+                    vrr: restore.as_ref().is_some_and(|s| s.vrr),
+                    gamma_reapply: false,
+                    wanted_enabled: restore.as_ref().is_none_or(|s| s.wanted_enabled),
+                },
+            );
+    }
+    let entry = &state.udev_data.as_ref().unwrap().devices[&node].heads[&crtc];
+    if entry.enabled()
+        && !modes
+            .iter()
+            .any(|(wl, _)| Some(*wl) == entry.output.current_mode())
+    {
+        disable_head_inner(state, node, crtc, true);
+        changed = true;
+    }
+    let entry = state
+        .udev_data
+        .as_mut()
+        .unwrap()
+        .devices
+        .get_mut(&node)
+        .unwrap()
+        .heads
+        .get_mut(&crtc)
+        .unwrap();
+    let output = entry.output.clone();
+    let advertised: Vec<_> = modes.iter().map(|(wl, _)| *wl).collect();
+    changed |= set_connector_modes(&output, &advertised, preferred);
+    entry.modes = modes;
+    let mode = automatic_mode(&output, &entry.modes, entry.wanted_enabled, entry.enabled());
+    let power = entry.power;
+    if fresh {
+        state.output_management_add_output(&output);
+    }
+    if let Some(mode) = mode {
+        match enable_head_with_power(state, node, crtc, mode, output.current_location(), power) {
+            Ok(()) => changed = true,
+            Err(err) => warn!(?node, ?crtc, %err, "head setup failed; will retry on a later scan"),
+        }
+    }
+    changed
 }
 
 /// Enables a known head: creates its `wl_output` global, sets `mode` and
@@ -1069,6 +1216,19 @@ pub(crate) fn enable_head(
     mode: control::Mode,
     position: Point<i32, Logical>,
 ) -> Result<(), String> {
+    enable_head_with_power(state, node, crtc, mode, position, PowerState::On)
+}
+
+/// A metadata refresh must preserve DPMS Off without briefly lighting the
+/// connector. An explicit enable still defaults to power On.
+fn enable_head_with_power(
+    state: &mut MindeState,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    mode: control::Mode,
+    position: Point<i32, Logical>,
+    power: PowerState,
+) -> Result<(), String> {
     let dh = state.display_handle.clone();
     let handle = state.handle.clone();
     let udev = state.udev_data.as_mut().ok_or("no udev backend")?;
@@ -1084,17 +1244,18 @@ pub(crate) fn enable_head(
     if entry.global.is_none() {
         entry.global = Some(output.create_global::<MindeState>(&dh));
     }
-    entry.power = PowerState::On;
+    entry.power = power;
     let prev_mode = output.current_mode();
     let prev_location = output.current_location();
     output.change_current_state(Some(wl_mode), None, None, Some(position));
     state.space.map_output(&output, position);
 
-    if let Err(err) = init_surface(udev, &mut state.gamma_controls, node, crtc, mode) {
+    if power == PowerState::On
+        && let Err(err) = init_surface(udev, &mut state.gamma_controls, node, crtc, mode)
+    {
         // Back to fully disabled: no global (that is what `enabled()`
-        // means), not mapped, and the just-failed mode/position off the
-        // Output again -- an "enable without a mode" falls back to the
-        // current mode and must not retry the one that failed.
+        // means), not mapped, and restore the previous mode/position when
+        // known. Automatic setup retains its intent for a later scan.
         if let Some(global) = udev
             .devices
             .get_mut(&node)
@@ -1111,21 +1272,15 @@ pub(crate) fn enable_head(
         return Err(err);
     }
 
-    let first_output = !udev.started;
-    udev.started = true;
-
     state.space.refresh();
     if !state.applying_output_config {
         state.update_usable_area();
         state.update_fractional_scales();
         state.absolute_pointer_motion.reset();
         state.pointer_location = state.clamp_to_outputs(state.pointer_location);
+        state.start_udev_if_ready();
+        state.render_now(node, crtc);
     }
-    if first_output {
-        guile::on_startup();
-    }
-
-    state.render_now(node, crtc);
     Ok(())
 }
 
@@ -1236,9 +1391,21 @@ fn retire_output_global(
 /// [`OutputSurface`]), the output leaves the space and every surface, and
 /// its `wl_output` global is removed like wlroots does. The [`HeadEntry`]
 /// (and the Output with its stable id) stays, so the head remains
-/// advertised to wlr-output-management clients and can be re-enabled. A
-/// no-op for a head that is already disabled.
+/// advertised to wlr-output-management clients and can be re-enabled.
+/// Desired enable state is committed separately after a configuration
+/// succeeds, so rollback cannot cancel pending automatic setup.
 pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Handle) {
+    disable_head_inner(state, node, crtc, false);
+}
+
+/// Replacing an obsolete mode temporarily disables the head but must not
+/// change its power state or send a false DPMS wake event.
+fn disable_head_inner(
+    state: &mut MindeState,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    preserve_power: bool,
+) {
     let dh = state.display_handle.clone();
     let handle = state.handle.clone();
     let Some(udev) = state.udev_data.as_mut() else {
@@ -1261,7 +1428,9 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
         surface.redraw.park(&handle);
     }
     let was_powered_off = entry.power == PowerState::Off;
-    entry.power = PowerState::On;
+    if !preserve_power {
+        entry.power = PowerState::On;
+    }
 
     let output = entry.output.clone();
     let global = entry.global.take();
@@ -1269,7 +1438,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
 
     // The Output and its controls survive disable/enable. Report the reset
     // even though this head no longer participates in wake-on-input.
-    if was_powered_off {
+    if was_powered_off && !preserve_power {
         state.output_power_notify(&output, true);
     }
 
@@ -1340,18 +1509,6 @@ fn remove_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Handle) {
     state.output_management_remove_output(&entry.output);
 }
 
-fn connector_disconnected(
-    state: &mut MindeState,
-    node: DrmNode,
-    info: &connector::Info,
-    crtc: crtc::Handle,
-) {
-    let output_name = format!("{}-{}", info.interface().as_str(), info.interface_id());
-    info!(?crtc, %output_name, "connector disconnected; removing its head");
-    disable_head(state, node, crtc);
-    remove_head(state, node, crtc);
-}
-
 fn device_changed(state: &mut MindeState, node: DrmNode) {
     let has_device = state
         .udev_data
@@ -1388,6 +1545,33 @@ fn device_removed(state: &mut MindeState, node: DrmNode) {
 }
 
 impl MindeState {
+    /// Hardware realization can fail and roll back. Change automatic retry
+    /// intent only after the entire explicit configuration succeeds.
+    pub(crate) fn commit_udev_enable_intent(&mut self, changes: &[HeadChange]) {
+        if let Some(udev) = self.udev_data.as_mut() {
+            for entry in udev.devices.values_mut().flat_map(|d| d.heads.values_mut()) {
+                if let Some(change) = changes.iter().find(|c| c.output == entry.output) {
+                    entry.wanted_enabled = change.enabled;
+                }
+            }
+        }
+    }
+
+    /// Run startup only after the first successful layout is published,
+    /// including an enable performed inside a batched output configuration.
+    pub(crate) fn start_udev_if_ready(&mut self) {
+        if let Some(udev) = self.udev_data.as_mut()
+            && !udev.started
+            && udev
+                .devices
+                .values()
+                .any(|d| d.heads.values().any(HeadEntry::enabled))
+        {
+            udev.started = true;
+            guile::on_startup();
+        }
+    }
+
     pub(crate) fn output_can_render(&self, output: &Output) -> bool {
         match self.udev_data.as_ref() {
             Some(udev) => udev.can_render(output),
@@ -1782,9 +1966,7 @@ impl MindeState {
             .ok_or("head is not driven by the udev backend")?;
         let enabled = self.output_enabled(output);
         if !change.enabled {
-            if enabled {
-                disable_head(self, node, crtc);
-            }
+            disable_head(self, node, crtc);
             return Ok(());
         }
         if enabled {
@@ -2411,6 +2593,97 @@ impl MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn monitor() -> Output {
+        Output::new(
+            "DP-1".into(),
+            PhysicalProperties {
+                size: (600, 340).into(),
+                subpixel: Subpixel::Unknown,
+                make: "TST".into(),
+                model: "Monitor".into(),
+                serial_number: "1".into(),
+            },
+        )
+    }
+
+    #[test]
+    fn late_modes_and_preferred_changes_preserve_valid_current_modes() {
+        let output = monitor();
+        let first = wl(1920, 1080, 60_000);
+        let second = wl(2560, 1440, 60_000);
+        assert!(!set_connector_modes(&output, &[], None));
+        assert!(set_connector_modes(&output, &[first], Some(first)));
+        output.change_current_state(Some(first), None, None, None);
+        assert!(set_connector_modes(&output, &[first, second], Some(second)));
+        assert_eq!(output.current_mode(), Some(first));
+        assert_eq!(output.preferred_mode(), Some(second));
+        assert!(!set_connector_modes(
+            &output,
+            &[second, first],
+            Some(second)
+        ));
+        assert!(!set_connector_modes(
+            &output,
+            &[second, first],
+            Some(second)
+        ));
+        assert!(set_connector_modes(&output, &[second], Some(second)));
+        assert_eq!(output.current_mode(), None);
+        assert_eq!(output.modes(), vec![second]);
+        output.change_current_state(Some(second), None, None, None);
+        assert!(set_connector_modes(&output, &[], None));
+        assert_eq!(output.current_mode(), None);
+        assert_eq!(output.preferred_mode(), None);
+        assert!(output.modes().is_empty());
+    }
+
+    #[test]
+    fn automatic_setup_retries_late_modes_but_respects_explicit_disable() {
+        let output = monitor();
+        let first = wl(1920, 1080, 60_000);
+        let second = wl(2560, 1440, 60_000);
+        let modes = [(first, 1), (second, 2)];
+        assert_eq!(automatic_mode::<u8>(&output, &[], true, false), None);
+        set_connector_modes(&output, &[first, second], Some(second));
+        // Repeated scans after failed setup must offer the preferred mode.
+        for _ in 0..3 {
+            assert_eq!(automatic_mode(&output, &modes, true, false), Some(2));
+        }
+        output.change_current_state(Some(first), None, None, None);
+        assert_eq!(automatic_mode(&output, &modes, true, false), Some(1));
+        assert_eq!(automatic_mode(&output, &modes, true, true), None);
+        assert_eq!(automatic_mode(&output, &modes, false, false), None);
+        // Even losing the current mode cannot override an explicit disable.
+        set_connector_modes(&output, &[second], Some(second));
+        assert_eq!(automatic_mode(&output, &modes[1..], false, false), None);
+        assert_eq!(automatic_mode(&output, &modes[1..], true, false), Some(2));
+    }
+
+    #[test]
+    fn identity_changes_are_detected_even_with_unchanged_modes() {
+        let output = monitor();
+        let physical = output.physical_properties();
+        assert!(same_monitor(&output, &physical, None));
+        let edid = EdidInfo {
+            make: physical.make.clone(),
+            model: physical.model.clone(),
+            serial: physical.serial_number.clone(),
+        };
+        assert!(!same_monitor(&output, &physical, Some(&edid)));
+        output.user_data().insert_if_missing(|| edid.clone());
+        assert!(same_monitor(&output, &physical, Some(&edid)));
+        assert!(!same_monitor(&output, &physical, None));
+        let mut replacement = edid.clone();
+        replacement.serial = "2".into();
+        assert!(!same_monitor(&output, &physical, Some(&replacement)));
+        let mut replacement = physical.clone();
+        replacement.size = (700, 400).into();
+        assert!(!same_monitor(&output, &replacement, Some(&edid)));
+        let mut replacement = physical.clone();
+        replacement.subpixel = Subpixel::HorizontalRgb;
+        assert!(!same_monitor(&output, &replacement, Some(&edid)));
+    }
 
     #[test]
     fn explicit_sync_releases_only_its_owning_device() {

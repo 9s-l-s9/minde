@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- DRM connector scans retry outputs when modes or a display controller become
+  available, including hotplug while the session was paused. Connected heads
+  refresh their modes and monitor identity while retaining layout, explicit
+  disable and power state. Removed dock connectors release their controller
+  assignments (#69, #70, #71).
 - DRM device setup failures and removal release the libseat lease, event
   registration and GPU resources, including cached renderers. Explicit sync
   belongs to the successfully initialized primary GPU and is withdrawn when

@@ -53,6 +53,31 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+Connector recovery (udev, requires physical monitors/docks):
+
+- Connect a monitor whose initial scan has no usable modes, then let EDID
+  settle or switch the KVM to it. A later hotplug notification must bring
+  it up without replugging. Check updated modes, preferred mode, physical
+  size and make/model/serial with `wlr-randr`.
+- Switch a connected KVM to a different monitor. Preserve a supported current
+  mode and configured position, scale and transform; fall back to a usable
+  preferred mode when the old mode disappears. Repeat while the head is
+  explicitly disabled and while powered off: neither condition may light it.
+- Switch away to another VT, attach a monitor or dock, then return. The new
+  monitor must appear after activation. Repeat with an already connected head
+  explicitly disabled: resume must keep that head disabled.
+- With more connectors than available display controllers, attach a surplus
+  monitor. Expect a waiting-for-controller diagnostic. Unplug an active
+  monitor in a later event: the waiting monitor must take its freed controller
+  without another replug. Include removing a USB-C dock whose connector
+  disappears entirely from the kernel resource list.
+- Repeat a mode or identity change while locked. Outputs must remain covered
+  by the lock surface or black until the locker supplies a replacement.
+
+Automated tests cover controller allocation and retirement, mode-list refresh
+and monitor identity comparisons without taking control of a seat. Actual
+hotplug timing, modesets and libseat pause/resume still require these checks.
+
 DRM device ownership (udev, requires a removable GPU):
 
 - Keep the primary GPU connected and repeatedly attach/remove a secondary
