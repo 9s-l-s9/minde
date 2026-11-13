@@ -343,6 +343,11 @@ IDs and group names, including a trailing ellipsis when shortened. Invalid
 field types still fail validation, and the overall input and provider-request
 size limits still apply.
 
+Malformed HTTP status lines, empty replies, and truncated response bodies
+produce a `provider-unavailable` JSON error and exit status 1 for `select`.
+`evaluate` records each failed case and continues, writing the complete
+report to stdout and any `--output` file; any case error makes it exit 1.
+
 The optional Jev provider uses `TYPESAFE_API_KEY`, pins `jev-1.13.0` by
 default, and requires a caller-supplied `--threshold`. Choosing this provider
 sends the request and selected window IDs, titles, app IDs, and group names externally.

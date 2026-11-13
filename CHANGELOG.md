@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Malformed provider HTTP replies produce structured transport errors.
+  Evaluation retains failed cases and continues writing the full report,
+  including successful cases before and after a failure (#118).
 - Long window titles, app IDs, and group names no longer prevent desktop
   selection. Provider descriptions are shortened while local matching and
   action arguments retain their full values (#117).

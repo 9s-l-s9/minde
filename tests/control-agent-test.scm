@@ -2,7 +2,7 @@
 ;;; Offline selector contracts, independent of model accuracy or credentials.
 (use-modules (minde agent) (minde commands) (minde command-catalog)
              (minde control) (minde control-json) (json)
-             (ice-9 rdelim) (ice-9 binary-ports) (rnrs bytevectors)
+             (ice-9 rdelim) (ice-9 textual-ports) (ice-9 binary-ports) (rnrs bytevectors)
              (srfi srfi-1) (srfi srfi-13) (srfi srfi-64))
 (test-begin "control-agent")
 (define corpus (read-json "tests/fixtures/control-agent/corpus.json"))
@@ -210,7 +210,10 @@
    (test-equal "loopback only" "invalid-local-endpoint"
      (code (lambda () (provider-select "request" candidates 0.8 "local" #:endpoint endpoint)))))
  '("https://example.com" "http://evil.test" "http://user:pass@localhost" "http://localhost/#fragment"))
-(define (http-case status body expected)
+(define (http-response status body)
+  (format #f "HTTP/1.1 ~a Test\r\nContent-Length: ~a\r\nConnection: close\r\n\r\n~a"
+          status (bytevector-length (string->utf8 body)) body))
+(define (with-http-responses responses call)
   (let ((listener (socket AF_INET SOCK_STREAM 0)) (child #f))
     (dynamic-wind
       (lambda () #t)
@@ -223,36 +226,122 @@
           (sigaction SIGPIPE SIG_IGN)
           (catch #t
             (lambda ()
-              (unless (pair? (car (select (list listener) '() '() 5))) (error "no provider request"))
-              (let ((connection (car (accept listener))))
-                (read-line connection)
-                (let loop ((length #f))
-                  (let ((line (string-trim-right (read-line connection) #\return)))
-                    (if (string-null? line)
-                        (let ((payload (load-json (utf8->string (get-bytevector-n connection length)))))
-                          (unless (equal? (ref payload "model") %model) (error "wrong model")))
-                        (begin
-                          (when (string-prefix-ci? "authorization:" line) (error "local credential leak"))
-                          (loop (if (string-prefix-ci? "content-length:" line)
-                                    (string->number (string-trim-both (substring line 15))) length))))))
-                (format connection "HTTP/1.1 ~a Test\r\nContent-Length: ~a\r\nConnection: close\r\n\r\n~a"
-                        status (bytevector-length (string->utf8 body)) body)
-                (force-output connection) (close-port connection))
+              (for-each
+               (lambda (response)
+                 (unless (pair? (car (select (list listener) '() '() 5))) (error "no provider request"))
+                 (let ((connection (car (accept listener))))
+                   (read-line connection)
+                   (let loop ((length #f))
+                     (let ((line (string-trim-right (read-line connection) #\return)))
+                       (if (string-null? line)
+                           (let ((payload (load-json (utf8->string (get-bytevector-n connection length)))))
+                             (unless (equal? (ref payload "model") %model) (error "wrong model")))
+                           (begin
+                             (when (string-prefix-ci? "authorization:" line) (error "local credential leak"))
+                             (loop (if (string-prefix-ci? "content-length:" line)
+                                       (string->number (string-trim-both (substring line 15))) length))))))
+                   (display response connection)
+                   (force-output connection) (close-port connection))) responses)
               (primitive-exit 0))
             (lambda _ (primitive-exit 1))))
         (let ((endpoint (format #f "http://127.0.0.1:~a/select" (sockaddr:port (getsockname listener)))))
-          (test-equal "real HTTP transport" expected
-            (catch 'agent-error
-              (lambda () (ref (provider-select "focus browser" candidates 0.8 "local" #:endpoint endpoint) "choice"))
-              (lambda (_ code) code))))
+          (call endpoint))
         (test-equal "HTTP request contract" 0 (status:exit-val (cdr (waitpid child))))
         (set! child #f))
       (lambda ()
         (when child (false-if-exception (kill child SIGKILL)) (false-if-exception (waitpid child)))
         (close-port listener)))))
+(define (http-case status body expected)
+  (with-http-responses (list (http-response status body))
+    (lambda (endpoint)
+      (test-equal "real HTTP transport" expected
+        (catch 'agent-error
+          (lambda () (ref (provider-select "focus browser" candidates 0.8 "local" #:endpoint endpoint) "choice"))
+          (lambda (_ code) code))))))
 (http-case 200 (scm->json-string (response)) "c0")
 (http-case 302 (scm->json-string (response)) "provider-redirect")
 (http-case 200 "{\"answers\":false}" "malformed-provider-response")
+
+;; Exercise framing failures through curl, then through the actual CLI.
+(define bad-http "garbage\r\n\r\n")
+(for-each
+ (lambda (raw)
+   (with-http-responses (list raw)
+     (lambda (endpoint)
+       (test-equal "invalid HTTP is a provider transport error" "provider-unavailable"
+         (code (lambda () (provider-select "focus browser" candidates 0.8 "local" #:endpoint endpoint)))))))
+ (list bad-http "" "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{}"))
+(let* ((directory (mkdtemp (string-copy "/tmp/minde-agent-http-XXXXXX")))
+       (desktop-file (string-append directory "/desktop.json"))
+       (catalog-file (string-append directory "/catalog.json"))
+       (corpus-file (string-append directory "/corpus.json"))
+       (report-file (string-append directory "/report.json"))
+       (output (string-append directory "/stdout"))
+       (errors (string-append directory "/stderr")))
+  (define (save path value)
+    (call-with-output-file path (lambda (port) (display (scm->json-string value) port))))
+  (define (run endpoint arguments)
+    (let ((status
+           (call-with-output-file output
+             (lambda (out)
+               (call-with-output-file errors
+                 (lambda (err)
+                   (parameterize ((current-output-port out) (current-error-port err))
+                     (apply system* "timeout" "--signal=KILL" "10" "sh" "scripts/minde-agent"
+                            (append arguments (list "--provider" "local" "--endpoint" endpoint
+                                                    "--model" %model "--threshold" "0.8" "--timeout" "1"))))))))))
+      (test-equal "provider failure gives CLI exit 1" 1 (status:exit-val status))
+      (test-assert "provider failure has no backtrace"
+        (not (string-contains (call-with-input-file errors get-string-all) "Backtrace")))
+      (read-json output)))
+  (define (check-evaluation cases responses expected-statuses)
+    (save corpus-file (replace corpus "cases" cases))
+    (with-http-responses responses
+      (lambda (endpoint)
+        (let* ((report (run endpoint (list "evaluate" "--corpus" corpus-file "--output" report-file)))
+               (rows (vector->list (ref report "cases")))
+               (results (map (lambda (row) (ref row "result")) rows)))
+          (test-equal "evaluation retains all case IDs in order"
+            (map (lambda (case) (ref case "id")) (vector->list cases))
+            (map (lambda (row) (ref row "case")) rows))
+          (test-equal "evaluation continues after a transport error" expected-statuses
+            (map (lambda (result) (ref result "status")) results))
+          (test-equal "evaluation counts transport errors"
+            (count (lambda (status) (equal? status "error")) expected-statuses)
+            (ref (ref report "metrics") "errors"))
+          (test-equal "evaluation metrics cover every case" (vector-length cases)
+            (ref (ref report "metrics") "cases"))
+          (test-equal "successful results survive transport errors"
+            (count (lambda (status) (equal? status "dry-run")) expected-statuses)
+            (ref (ref report "metrics") "correct"))
+          (test-equal "each failed case has a transport error"
+            (filter-map (lambda (status) (and (equal? status "error") "provider-unavailable")) expected-statuses)
+            (filter-map (lambda (result) (ref result "error")) results))
+          (test-assert "evaluation writes the complete stdout report to disk"
+            (json-equal? report (read-json report-file)))
+          (test-equal "evaluation never executes" "disabled" (ref report "execution"))))))
+  (dynamic-wind
+    (lambda () #t)
+    (lambda ()
+      (save desktop-file snapshot)
+      (save catalog-file catalog)
+      (with-http-responses (list bad-http)
+        (lambda (endpoint)
+          (test-assert "select returns the JSON transport error"
+            (json-equal? '(("status" . "error") ("error" . "provider-unavailable"))
+              (run endpoint (list "select" "focus my browser" "--snapshot" desktop-file "--catalog" catalog-file))))))
+      (check-evaluation (ref corpus "cases")
+                        (make-list (vector-length (ref corpus "cases")) bad-http)
+                        (make-list (vector-length (ref corpus "cases")) "error"))
+      (let ((good (http-response 200 (scm->json-string (response)))))
+        (check-evaluation
+         (list->vector (map (lambda (id) (replace (vector-ref (ref corpus "cases") 0) "id" id))
+                           '("before-error" "transport-error" "after-error")))
+         (list good bad-http good) '("dry-run" "error" "dry-run"))))
+    (lambda ()
+      (for-each (lambda (path) (when (file-exists? path) (delete-file path)))
+                (list desktop-file catalog-file corpus-file report-file output errors))
+      (rmdir directory))))
 (let ((runner (test-runner-current)))
   (test-end "control-agent")
   (exit (zero? (+ (test-runner-fail-count runner) (test-runner-xpass-count runner)))))
