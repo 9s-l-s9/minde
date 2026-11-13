@@ -357,14 +357,13 @@ fn render_frame(
         let _ = state.display_handle.flush_clients();
     }
 
-    state.space.elements().for_each(|window| {
-        window.send_frame(
-            output,
-            state.start_time.elapsed(),
-            Some(Duration::ZERO),
-            |_, _| Some(output.clone()),
-        )
+    let now = state.start_time.elapsed();
+    let frames = crate::frame_callbacks::FrameCallbacks::new(&state.space, output, |o| {
+        state.output_can_render(o)
     });
+    if frames.send_visible(output, now) {
+        state.parked_frames.schedule(&state.handle, now);
+    }
 
     // Layer surfaces need frame callbacks too, or clients
     // like fuzzel draw once and then never repaint.

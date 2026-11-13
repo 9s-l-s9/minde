@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Hidden windows receive pending frame callbacks at most once per second,
+  with one shared timer that also works on an idle desktop. Visible windows
+  retain normal pacing, and revealing a window bypasses its hidden delay.
+  Lock, output power and unmap suppress pending hidden callbacks (#139).
 - Parked windows receive DRM frame callbacks from the first rendering output
   when an earlier output is powered off. Windows on the powered-off output
   itself remain paused; output disable and re-enable use the current layout

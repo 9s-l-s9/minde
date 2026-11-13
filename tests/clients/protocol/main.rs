@@ -4,6 +4,7 @@ mod capture;
 mod constraints;
 mod emergency;
 mod focus;
+mod frames;
 mod fullscreen;
 mod input;
 mod keyboard;
@@ -46,6 +47,7 @@ fn main() {
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
+        Some("frame-callbacks") => frames::run(),
         Some("window-fullscreen") => fullscreen::run(),
         Some("window-outputs") => window::outputs(),
         Some("xwayland-lifecycle") => xwayland::run(),

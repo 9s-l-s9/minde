@@ -57,8 +57,9 @@ Repaint recovery (udev):
 
 - With two monitors, park an animating window outside every output, then
   power off the first output. The hidden client's `wl_surface.frame` callbacks
-  must continue through the other output. A window confined to the powered-off
-  monitor must stop receiving callbacks until that monitor wakes.
+  must continue at the hidden-window rate through the other output. A window
+  confined to the powered-off monitor must stop receiving callbacks until that
+  monitor wakes.
 - With an animating client, change mode or adaptive sync while frames are in
   flight. Animation must continue without requiring pointer motion or another
   unrelated event to restart repainting.

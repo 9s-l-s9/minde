@@ -155,6 +155,13 @@ to the first output that can render, while windows confined to a powered-off
 output receive no callbacks. The tests check eligibility; physical DRM frame
 delivery remains a hardware check.
 
+`sh tests/frame-callbacks-e2e.sh` runs a native frame-paced raster client and
+records callback counts plus client/compositor CPU usage. It checks low-rate
+hidden updates on an idle desktop and during visible redraws, immediate
+recovery on reveal, lock and DPMS suspension, child-only requests and unmap.
+Both backends use the same callback selection and hidden timer; the nested
+suite does not measure a physical GPU or DRM presentation.
+
 ## Output configuration protocol
 
 `sh tests/output-management-e2e.sh` combines normal `wlr-randr` requests with

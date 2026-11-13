@@ -412,6 +412,18 @@ pub struct UdevBackendData {
 /// Linux-only DRM backend, so the value is fixed.
 const CLOCK_MONOTONIC: u32 = 1;
 
+impl UdevBackendData {
+    fn can_render(&self, output: &Output) -> bool {
+        !self.paused
+            && self.devices.values().any(|device| {
+                device
+                    .heads
+                    .values()
+                    .any(|head| head.output == *output && head.enabled() && head.surface.is_some())
+            })
+    }
+}
+
 /// Explicit-sync (`linux-drm-syncobj-v1`): Smithay's renderer picks the
 /// acquire/release sync points straight out of the surface's committed state,
 /// so all this handler has to expose is the state delegate. It is only `Some`
@@ -1308,6 +1320,13 @@ fn device_removed(state: &mut MindeState, node: DrmNode) {
 }
 
 impl MindeState {
+    pub(crate) fn output_can_render(&self, output: &Output) -> bool {
+        match self.udev_data.as_ref() {
+            Some(udev) => udev.can_render(output),
+            None => self.output_enabled(output) && !self.winit_powered_off,
+        }
+    }
+
     fn frame_finish(
         &mut self,
         node: DrmNode,
@@ -2057,12 +2076,7 @@ impl MindeState {
         };
         let frame_callbacks =
             crate::frame_callbacks::FrameCallbacks::new(&self.space, &output, |output| {
-                !udev.paused
-                    && udev.devices.values().any(|device| {
-                        device.heads.values().any(|head| {
-                            head.output == *output && head.enabled() && head.surface.is_some()
-                        })
-                    })
+                udev.can_render(output)
             });
 
         // Split borrows: the surface lives in `devices`, the renderer in
@@ -2274,13 +2288,9 @@ impl MindeState {
         }
 
         // Only the selected rendering output services parked windows.
-        for window in frame_callbacks.windows() {
-            window.send_frame(
-                &output,
-                self.start_time.elapsed(),
-                Some(Duration::ZERO),
-                |_, _| Some(output.clone()),
-            );
+        let now = self.start_time.elapsed();
+        if frame_callbacks.send_visible(&output, now) {
+            self.parked_frames.schedule(&self.handle, now);
         }
         // Layer surfaces need frame callbacks too, or clients like fuzzel
         // draw once and then wait forever before rendering typed input.

@@ -262,6 +262,7 @@ pub struct MindeState {
     /// a stable enumeration order. The reverse direction (window -> id) is
     /// O(1) via `WindowId` stashed in `Window::user_data()` (5.5).
     pub windows: std::collections::BTreeMap<u64, Window>,
+    pub(crate) parked_frames: crate::frame_callbacks::ParkedFrames,
     pub next_window_id: u64,
     /// Ids Scheme marked floating (`wm-set-floating`); gates the
     /// super+drag move/resize grabs in `input.rs`. Float geometry itself
@@ -728,6 +729,7 @@ impl MindeState {
             seat,
 
             windows: std::collections::BTreeMap::new(),
+            parked_frames: Default::default(),
             next_window_id: 0,
             floating_ids: std::collections::HashSet::new(),
             focused_window: None,

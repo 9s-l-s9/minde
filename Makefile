@@ -174,6 +174,7 @@ check-e2e:
 	sh tests/screencapture-e2e.sh
 	sh tests/clipboard-e2e.sh
 	sh tests/foreign-toplevel-e2e.sh
+	sh tests/frame-callbacks-e2e.sh
 	sh tests/event-subscribe-e2e.sh
 	sh tests/control-e2e.sh
 	sh tests/session-lock-e2e.sh

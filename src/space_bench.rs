@@ -91,7 +91,7 @@ fn parked_callbacks_follow_rendering_outputs_without_waking_powered_off_windows(
     let selected = |space: &Space<Element>, output: &Output, live: &[Output]| {
         FrameCallbacks::new(space, output, |o| live.contains(o))
             .windows()
-            .map(|window| window.0)
+            .map(|(window, _)| window.0)
             .collect::<Vec<_>>()
     };
     assert_eq!(selected(&space, &outputs[0], &outputs), vec![0, 1, 3]);
@@ -181,7 +181,7 @@ fn bench_frame_callback_selection() {
         if short_circuit {
             return FrameCallbacks::new(space, output, |_| true)
                 .windows()
-                .map(|window| window.0)
+                .map(|(window, _)| window.0)
                 .collect();
         }
         let output_geo = space.output_geometry(output).unwrap();

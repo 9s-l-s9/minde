@@ -185,17 +185,38 @@ surface, and only for windows that do not overlap that output. Powered-off
 outputs remain in the visibility check, so their windows do not become parked
 merely because the monitor is dark. Previously every window queried output
 geometry on every output pass, even when its callback eligibility was known.
-Hidden windows continue receiving callbacks through a rendering output.
+Hidden windows receive pending callbacks at most once per second through a
+single shared timer. It runs only when callbacks are pending and does not
+require another GPU render to wake an idle hidden client. Revealed windows
+resume normal callbacks immediately. The timer rechecks visibility, lock and
+output availability; windows on powered-off monitors remain paused.
+
+`tests/frame-callbacks-e2e.sh` measures a native 800×600 raster client whose
+drawing is paced by `wl_surface.frame`, including fresh buffer uploads. CPU
+figures come from `/proc` process counters as a percentage of one core. This
+is a private nested session with a four-second hidden sample, not a physical
+GPU benchmark or a measurement of a particular media player.
+
+| Hidden sample (4 s) | Before pacing | After pacing |
+| --- | ---: | ---: |
+| Frame callbacks | 238 | 3 |
+| Client CPU | 39.74% | 1.00% |
+| Compositor CPU | 7.50% | 0.50% |
+
+The first hidden callback waits up to one second, so this short sample contains
+three callbacks under the one-per-second limit. Visible animation delivered
+57 callbacks in the initial one-second sample and 59 after reveal. These are
+single-run measurements, not stable performance guarantees.
 
 The GPU-free `bench_frame_callback_selection` benchmark uses the production
 selector with real Smithay Space geometry and checks identical selected window
 IDs with all outputs on before timing 1,000 passes:
 
-| Windows, two outputs | Before (µs/pass) | After (µs/pass) |
+| Windows, two outputs | Full walk (µs/pass) | Current selector (µs/pass) |
 | --- | ---: | ---: |
-| 12 | 5.329 | 2.352 |
-| 100 | 45.983 | 22.195 |
-| 1,000 | 1176.266 | 921.091 |
+| 12 | 8.368 | 3.243 |
+| 100 | 47.904 | 22.689 |
+| 1,000 | 1253.085 | 923.603 |
 
 The fixture includes windows on each output, spanning both, and parked offscreen.
 Timing includes collecting selected IDs, but excludes client surface traversal
