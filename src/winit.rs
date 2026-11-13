@@ -169,7 +169,7 @@ pub fn init_winit(
                     // Re-derive the usable area from the new size (layer
                     // exclusive zones re-arranged inside).
                     state.invalidate_lock_presentation();
-                    state.reported_heads.clear();
+                    state.observed_heads.clear();
                     state.update_usable_area();
                     // Re-send preferred fractional scales (surface/output
                     // association may have shifted with the geometry).

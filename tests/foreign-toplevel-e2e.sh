@@ -6,7 +6,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-export MINDE_TEST_PROTOCOLS=1
+export MINDE_TEST_PROTOCOLS=1 MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1
 
 OUT=${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-/tmp/swm-ft-e2e}
 trap nested_stop EXIT HUP INT TERM
@@ -37,6 +37,12 @@ timeout 40 "$NESTED_PROTOCOL_CLIENT" window-lifecycle \
     exit 1
 }
 cat "$OUT/window-lifecycle.log"
+timeout 40 "$NESTED_PROTOCOL_CLIENT" window-outputs \
+    >"$OUT/window-outputs.log" 2>&1 || {
+    cat "$OUT/window-outputs.log" >&2
+    exit 1
+}
+cat "$OUT/window-outputs.log"
 
 # Map a real toplevel so the manager-bind path creates a handle for it.
 before=$(nested_window_count 2>/dev/null || printf '0')

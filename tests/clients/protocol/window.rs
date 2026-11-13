@@ -46,13 +46,15 @@ fn grabbed_popup(c: &mut Client, seat: u32, serial: u32) -> (u32, u32, u32) {
 pub struct Observer {
     pub c: Client,
     manager: u32,
+    output: u32,
 }
 impl Observer {
     pub fn new() -> Self {
         let mut c = Client::new("window lifecycle observer");
+        let output = c.bind("wl_output", 1);
         let manager = c.bind("zwlr_foreign_toplevel_manager_v1", 3);
         c.roundtrip();
-        Self { c, manager }
+        Self { c, manager, output }
     }
     pub fn live_handles(&mut self) -> Vec<u32> {
         self.c.roundtrip();
@@ -74,6 +76,132 @@ impl Observer {
             .unwrap_or_else(|| panic!("no foreign handle for {title}"))
             .object
     }
+    pub fn begin_output_change(&mut self) -> usize {
+        self.c.roundtrip();
+        self.c.events.len()
+    }
+    pub fn check_output_change(&mut self, handle: u32, start: usize, change: Option<u16>) {
+        if let Some(opcode) = change {
+            self.c
+                .wait(start, |e| e.is(handle, opcode) && e.word(0) == self.output);
+        }
+        self.c.roundtrip();
+        let events: Vec<_> = self.c.events[start..]
+            .iter()
+            .filter(|e| e.object == handle)
+            .collect();
+        let outputs: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e.opcode, 2 | 3))
+            .map(|e| (e.opcode, e.word(0)))
+            .collect();
+        assert_eq!(
+            outputs,
+            change
+                .map(|opcode| (opcode, self.output))
+                .into_iter()
+                .collect::<Vec<_>>()
+        );
+        if change.is_some() {
+            let output = events
+                .iter()
+                .rposition(|e| matches!(e.opcode, 2 | 3))
+                .unwrap();
+            assert!(
+                events[output + 1..].iter().any(|e| e.opcode == 5),
+                "output change lacks done"
+            );
+        } else {
+            assert!(
+                events.is_empty(),
+                "unchanged placement sent events: {events:?}"
+            );
+        }
+    }
+}
+
+pub fn outputs() {
+    let mut observer = Observer::new();
+    let mut client = Client::new("foreign output association");
+    client.toplevel(true);
+    let id = window_id(&client.name);
+    evaluate(
+        &format!("(begin (float-window! {id} '(100 100 300 200)) (sync-frames!) #t)"),
+        "#t",
+    );
+    client.roundtrip();
+    client.roundtrip();
+    let handle = observer.handle(&client.name);
+    observer.check_output_change(handle, 0, Some(2));
+    for (x, change) in [
+        (1500, Some(3)),
+        (1500, None),
+        (-300, None),
+        (-299, Some(2)),
+        (-300, Some(3)),
+        (100, Some(2)),
+    ] {
+        let start = observer.begin_output_change();
+        evaluate(&format!("(wm-place-float {id} {x} 100 300 200)"), "#t");
+        client.roundtrip();
+        observer.check_output_change(handle, start, change);
+    }
+    println!(
+        "ok - floating placement sends output enter/leave and suppresses unchanged associations"
+    );
+
+    // Configure sizes are proposals. Output membership changes only when
+    // the client commits its chosen size, including a client-initiated resize.
+    evaluate(&format!("(wm-place-float {id} -350 100 300 200)"), "#t");
+    client.roundtrip();
+    observer.c.roundtrip();
+    client.map_on_configure = false;
+    for (width, change) in [(600, 2), (100, 3)] {
+        let start = observer.begin_output_change();
+        evaluate(&format!("(wm-place-float {id} -350 100 {width} 200)"), "#t");
+        client.roundtrip();
+        observer.check_output_change(handle, start, None);
+        client.paint(client.surface, width, 200, 0xff00ff);
+        client.roundtrip();
+        observer.check_output_change(handle, start, Some(change));
+    }
+    let start = observer.begin_output_change();
+    client.paint(client.surface, 600, 200, 0xff00ff);
+    client.roundtrip();
+    observer.check_output_change(handle, start, Some(2));
+    println!("ok - committed sizes, not pending configures, determine foreign output membership");
+
+    client.map_on_configure = true;
+    evaluate(&format!("(wm-place-float {id} 1500 100 300 200)"), "#t");
+    client.roundtrip();
+    observer.c.roundtrip();
+    let start = observer.begin_output_change();
+    evaluate(&format!("(wm-set-fullscreen {id} #t)"), "#t");
+    client.roundtrip();
+    observer.check_output_change(handle, start, Some(2));
+    let start = observer.begin_output_change();
+    evaluate(
+        &format!("(begin (wm-set-fullscreen {id} #f) (wm-place-float {id} 1500 100 300 200))"),
+        "#t",
+    );
+    client.roundtrip();
+    observer.check_output_change(handle, start, Some(3));
+    println!("ok - fullscreen and restored floating geometry refresh output membership");
+
+    evaluate(&format!("(wm-place-float {id} 100 100 300 200)"), "#t");
+    client.roundtrip();
+    observer.c.roundtrip();
+    let mut output = super::outputs::Outputs::new("foreign output disable and enable");
+    for (enabled, change) in [(false, 3), (true, 2)] {
+        let start = observer.begin_output_change();
+        let (config, _) = output.configuration(Some(enabled));
+        output.result(config, 2, 0);
+        client.roundtrip();
+        observer.check_output_change(handle, start, Some(change));
+    }
+    drop(client);
+    observer.c.event(handle, 6);
+    println!("ok - disabling and restoring the last output clears and restores associations");
 }
 pub fn run() {
     focus();

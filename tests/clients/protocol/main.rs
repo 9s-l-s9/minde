@@ -44,6 +44,7 @@ fn main() {
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
+        Some("window-outputs") => window::outputs(),
         Some("xwayland-lifecycle") => xwayland::run(),
         Some("x11-metadata") => xwayland::metadata(),
         Some("selection-transfer") => selection::run(),

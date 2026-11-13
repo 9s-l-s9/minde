@@ -24,6 +24,7 @@
 
 use std::collections::HashMap;
 
+use smithay::desktop::{Space, Window};
 use smithay::output::Output;
 use smithay::reexports::{
     wayland_protocols_wlr::foreign_toplevel::v1::server::{
@@ -37,6 +38,7 @@ use smithay::reexports::{
         backend::{ClientId, GlobalId},
     },
 };
+use smithay::utils::{Logical, Rectangle};
 
 use crate::MindeState;
 
@@ -95,6 +97,24 @@ fn encode_states(states: &[HandleState]) -> Vec<u8> {
         bytes.extend_from_slice(&(*s as u32).to_ne_bytes());
     }
     bytes
+}
+
+fn outputs_for_geometry(
+    space: &Space<Window>,
+    geometry: Option<Rectangle<i32, Logical>>,
+) -> Vec<Output> {
+    let Some(geometry) = geometry else {
+        return Vec::new();
+    };
+    space
+        .outputs()
+        .filter(|output| {
+            space
+                .output_geometry(output)
+                .is_some_and(|bounds| bounds.overlaps(geometry))
+        })
+        .cloned()
+        .collect()
 }
 
 impl MindeState {
@@ -215,68 +235,62 @@ impl MindeState {
     }
 
     /// Recomputes the output association for every tracked toplevel and emits
-    /// output_enter/output_leave (plus `done`) for the changes. Cheap enough
-    /// to call whenever geometry changes (`update_usable_area`, window
-    /// placement).
+    /// output_enter/output_leave (plus `done`) after an output layout change.
     pub fn refresh_foreign_toplevel_outputs(&mut self) {
         let ids: Vec<u64> = self.foreign_toplevel.toplevels.keys().copied().collect();
         for id in ids {
-            let new_outputs = self.foreign_outputs_for(id);
-            let Some(entry) = self.foreign_toplevel.toplevels.get(&id) else {
-                continue;
-            };
-            let old = entry.outputs.clone();
-            let entered: Vec<Output> = new_outputs
-                .iter()
-                .filter(|o| !old.contains(o))
-                .cloned()
-                .collect();
-            let left: Vec<Output> = old
-                .iter()
-                .filter(|o| !new_outputs.contains(o))
-                .cloned()
-                .collect();
-            if entered.is_empty() && left.is_empty() {
-                continue;
-            }
-            let entry = self.foreign_toplevel.toplevels.get_mut(&id).unwrap();
-            entry.outputs = new_outputs;
-            for h in &entry.handles {
-                let Some(client) = h.client() else { continue };
-                for output in &entered {
-                    for wl_output in output.client_outputs(&client) {
-                        h.output_enter(&wl_output);
-                    }
+            self.refresh_foreign_toplevel_output(id);
+        }
+    }
+
+    /// Refresh just the window whose committed geometry changed. This also
+    /// runs during pointer dispatch, so it must not call Scheme or grab input.
+    pub(crate) fn refresh_foreign_toplevel_output(&mut self, id: u64) {
+        let new_outputs = self.foreign_outputs_for(id);
+        let Some(entry) = self.foreign_toplevel.toplevels.get_mut(&id) else {
+            return;
+        };
+        if entry.outputs == new_outputs {
+            return;
+        }
+        let entered: Vec<_> = new_outputs
+            .iter()
+            .filter(|o| !entry.outputs.contains(o))
+            .cloned()
+            .collect();
+        let left: Vec<_> = entry
+            .outputs
+            .iter()
+            .filter(|o| !new_outputs.contains(o))
+            .cloned()
+            .collect();
+        entry.outputs = new_outputs;
+        if entered.is_empty() && left.is_empty() {
+            return;
+        }
+        for h in &entry.handles {
+            let Some(client) = h.client() else { continue };
+            for output in &entered {
+                for wl_output in output.client_outputs(&client) {
+                    h.output_enter(&wl_output);
                 }
-                for output in &left {
-                    for wl_output in output.client_outputs(&client) {
-                        h.output_leave(&wl_output);
-                    }
-                }
-                h.done();
             }
+            for output in &left {
+                for wl_output in output.client_outputs(&client) {
+                    h.output_leave(&wl_output);
+                }
+            }
+            h.done();
         }
     }
 
     /// The compositor outputs a window currently overlaps, by intersecting its
     /// mapped geometry with each output's geometry.
     fn foreign_outputs_for(&self, id: u64) -> Vec<Output> {
-        let Some(window) = self.windows.get(&id).cloned() else {
+        let Some(window) = self.windows.get(&id) else {
             return Vec::new();
         };
-        let Some(geo) = self.space.element_geometry(&window) else {
-            return Vec::new();
-        };
-        self.space
-            .outputs()
-            .filter(|o| {
-                self.space
-                    .output_geometry(o)
-                    .map(|og| og.overlaps(geo))
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect()
+        outputs_for_geometry(&self.space, self.space.element_geometry(window))
     }
 }
 
@@ -434,6 +448,92 @@ impl MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::{
+        output::{Mode, PhysicalProperties, Scale, Subpixel},
+        utils::Transform,
+    };
+
+    fn outputs() -> (Space<Window>, [Output; 2]) {
+        let mut space = Space::default();
+        let outputs = [0, 1].map(|i| {
+            let output = Output::new(
+                format!("head-{i}"),
+                PhysicalProperties {
+                    size: (0, 0).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "test".into(),
+                    model: "test".into(),
+                    serial_number: i.to_string(),
+                },
+            );
+            let (size, scale) = if i == 0 {
+                ((1280, 800), 1.0)
+            } else {
+                ((1920, 1200), 1.5)
+            };
+            output.change_current_state(
+                Some(Mode {
+                    size: size.into(),
+                    refresh: 60_000,
+                }),
+                None,
+                Some(Scale::Fractional(scale)),
+                None,
+            );
+            space.map_output(&output, (i * 1280, 0));
+            output
+        });
+        (space, outputs)
+    }
+
+    fn rectangle(x: i32, width: i32) -> Option<Rectangle<i32, Logical>> {
+        Some(Rectangle::new((x, 100).into(), (width, 200).into()))
+    }
+
+    #[test]
+    fn floating_fullscreen_and_committed_resize_follow_two_output_overlap() {
+        let (space, [left, right]) = outputs();
+        for (geometry, expected) in [
+            (rectangle(100, 300), vec![left.clone()]),
+            (rectangle(1400, 300), vec![right.clone()]),
+            (rectangle(1200, 200), vec![left.clone(), right.clone()]),
+            // Fullscreen selects one output; restoring a spanning float
+            // then reports both again, regardless of deferred Space membership.
+            (
+                Some(Rectangle::new((1280, 0).into(), (1280, 800).into())),
+                vec![right.clone()],
+            ),
+            (rectangle(1200, 200), vec![left.clone(), right.clone()]),
+            (rectangle(1100, 180), vec![left.clone()]),
+            (rectangle(1100, 181), vec![left.clone(), right]),
+            (rectangle(100, 300), vec![left]),
+            (rectangle(3000, 300), vec![]),
+            (None, vec![]),
+        ] {
+            assert_eq!(outputs_for_geometry(&space, geometry), expected);
+        }
+    }
+
+    #[test]
+    fn transformed_negative_output_and_removal_change_associations() {
+        let (mut space, [left, right]) = outputs();
+        right.change_current_state(None, Some(Transform::_90), None, None);
+        space.map_output(&right, (-800, 0));
+        let spanning = rectangle(-100, 200);
+        assert_eq!(
+            outputs_for_geometry(&space, spanning),
+            [left.clone(), right.clone()]
+        );
+        space.unmap_output(&left);
+        assert_eq!(
+            outputs_for_geometry(&space, spanning),
+            std::slice::from_ref(&right)
+        );
+        space.unmap_output(&right);
+        assert!(outputs_for_geometry(&space, spanning).is_empty());
+        space.map_output(&right, (-800, 0));
+        assert_eq!(outputs_for_geometry(&space, spanning), [right]);
+    }
 
     #[test]
     fn encode_states_is_native_endian_u32_per_state() {

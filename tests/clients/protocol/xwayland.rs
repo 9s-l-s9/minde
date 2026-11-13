@@ -322,6 +322,7 @@ pub fn run() {
     anchor.mapped(700);
     let pointer = anchor.virtual_pointer();
     let mut target = X11Client::new(&executable, "x11-lifecycle-target");
+    output_associations(&mut observer, &target);
     spawn_display(out, "ready", &xdisplay);
     let cases = env::var("MINDE_XWAYLAND_CASES").unwrap_or_else(|_| "unmap loss".into());
     if cases.split_whitespace().any(|s| s == "unmap") {
@@ -453,4 +454,35 @@ pub fn run() {
         );
         println!("ok - failed Xwayland clears status and DISPLAY in newly spawned children");
     }
+}
+
+fn output_associations(observer: &mut Observer, target: &X11Client) {
+    let id = target.window_id;
+    let handle = observer.handle(&target.title);
+    observer.check_output_change(handle, 0, Some(2));
+    evaluate(
+        &format!("(begin (float-window! {id} '(100 100 300 200)) (sync-frames!) #t)"),
+        "#t",
+    );
+    for (x, change) in [
+        (1500, Some(3)),
+        (100, Some(2)),
+        (100, None),
+        (1500, Some(3)),
+    ] {
+        let start = observer.begin_output_change();
+        evaluate(&format!("(wm-place-float {id} {x} 100 300 200)"), "#t");
+        observer.check_output_change(handle, start, change);
+    }
+    let start = observer.begin_output_change();
+    evaluate(&format!("(wm-set-fullscreen {id} #t)"), "#t");
+    observer.check_output_change(handle, start, Some(2));
+    let start = observer.begin_output_change();
+    evaluate(
+        &format!("(begin (wm-set-fullscreen {id} #f) (wm-place-float {id} 1500 100 300 200))"),
+        "#t",
+    );
+    observer.check_output_change(handle, start, Some(3));
+    evaluate(&format!("(wm-place-float {id} 100 100 300 200)"), "#t");
+    println!("ok - X11 floating moves and fullscreen update foreign output associations");
 }

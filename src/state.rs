@@ -283,9 +283,9 @@ pub struct MindeState {
     /// global logical position -> rasterized label. Accumulated via
     /// `wm-add-overlay`, dropped via `wm-clear-overlays`.
     pub overlays: Vec<(Point<i32, Logical>, crate::render::MessageState)>,
-    /// Last head list (usable rects) sent to Scheme, to avoid
-    /// re-announcing unchanged geometry on every commit.
-    pub reported_heads: Vec<guile::HeadInfo>,
+    /// Last observed usable-head list. Record empty lists too, even though
+    /// Scheme retains its last nonempty layout while every output is disabled.
+    pub observed_heads: Vec<guile::HeadInfo>,
     /// Set while `apply_output_configuration` runs its per-head loop
     /// (and revert), so `enable_head`/`disable_head` defer their
     /// notifications: a half-applied layout must not reach Scheme or
@@ -738,7 +738,7 @@ impl MindeState {
             message: None,
             message_generation: 0,
             overlays: Vec::new(),
-            reported_heads: Vec::new(),
+            observed_heads: Vec::new(),
             applying_output_config: false,
             next_output_id: 0,
             border_color: crate::render::BORDER_COLOR,
@@ -1092,9 +1092,6 @@ impl MindeState {
         self.space.map_element(window.clone(), rect.loc, false);
         self.update_window_fractional_scale(&window);
         self.publish_window_geometry(id);
-        if tiled {
-            self.refresh_foreign_toplevel_outputs();
-        }
         self.schedule_redraw();
         true
     }
@@ -1579,9 +1576,10 @@ impl MindeState {
         visible.then_some([rect.loc.x, rect.loc.y, rect.size.w, rect.size.h])
     }
 
-    /// Update the off-thread inspection mirror with committed window bounds.
+    /// Publish committed bounds to inspection and foreign output associations.
     /// Placement, commit, and drag paths call this after updating the Space.
-    pub(crate) fn publish_window_geometry(&self, id: u64) {
+    pub(crate) fn publish_window_geometry(&mut self, id: u64) {
+        self.refresh_foreign_toplevel_output(id);
         let geometry = self.window_geometry(id);
         if crate::automation_observe::set_window_geometry(id, geometry) {
             let line = match geometry {
@@ -2727,9 +2725,11 @@ impl MindeState {
         // With every head disabled (test-only, see
         // output_management::ALLOW_NO_HEADS_ENV) or none yet, Scheme keeps
         // its last head list.
-        if heads != self.reported_heads && !heads.is_empty() {
-            self.reported_heads = heads.clone();
-            guile::on_heads_changed(heads);
+        if heads != self.observed_heads {
+            self.observed_heads = heads.clone();
+            if !heads.is_empty() {
+                guile::on_heads_changed(heads);
+            }
             // Window/output association may have shifted with the geometry.
             self.refresh_foreign_toplevel_outputs();
         }

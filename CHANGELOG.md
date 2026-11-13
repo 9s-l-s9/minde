@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Foreign-toplevel output associations follow floating placement, fullscreen,
+  drag movement and committed resize geometry for Wayland and X11 windows.
+  Disabling the last output clears its associations; unchanged membership
+  does not emit duplicate enter/leave events (#43).
 - X11 title and class changes update foreign-toplevel handles and Scheme
   metadata hooks without requiring a repaint. Repeated values are ignored,
   and remapped windows begin with their current metadata (#42).

@@ -269,3 +269,12 @@ It covers repeated values, title precedence, deleted properties and remapping.
 It verifies window and menu cleanup, foreign handles, failed runtime status,
 child `DISPLAY`, and continued native input. Automatic Xwayland restart
 remains unimplemented.
+
+`tests/foreign-toplevel-e2e.sh` checks actual output enter/leave and done
+events after floating moves, edge overlap, fullscreen and output disable/enable.
+Delayed buffer commits distinguish configured sizes from committed geometry;
+unchanged associations must stay silent. The fullscreen/pointer gate covers
+the corresponding X11 placement and fullscreen paths. Unit tests cover
+overlap across two outputs with different scales, spanning-window resize,
+fullscreen bounds, rotation, negative origins and removal. Physical
+multi-monitor dragging remains a hardware check.
