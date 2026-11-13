@@ -154,6 +154,13 @@ nested_start "$OUT/allow-no-heads" "${MINDE_OUTPUT_MGMT_E2E_DISPLAY:-:99}" || {
     exit 1
 }
 
+nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" output-power-lifecycle \
+    >"$OUT/power-lifecycle.log" 2>&1 || {
+    cat "$OUT/power-lifecycle.log" >&2
+    exit 1
+}
+cat "$OUT/power-lifecycle.log"
+
 nested_wayland timeout 15 wlr-randr --output winit --off \
     >"$OUT/off.log" 2>&1 || {
     echo "error: disabling the head failed with $ALLOW_ENV=1" >&2

@@ -156,6 +156,12 @@ raw protocol clients. Binding a second manager must preserve the first
 client's serial and pending configuration; a real layout change must notify
 both clients and cancel configurations using the old serial.
 
+Long-lived power controllers must receive the reset to `on` when a powered-off
+head is disabled. Configuration tests and unchanged power states must not
+notify, and controllers must remain usable after re-enable and agree with a
+fresh binding. The nested backend exercises this lifecycle; actual DRM power
+switching remains a hardware check.
+
 Malformed requests are checked for the exact error object and code: invalid
 scale, transform, custom mode and adaptive-sync values; repeated properties;
 mixed advertised/custom modes; a mode advertised for a different head

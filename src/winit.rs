@@ -50,7 +50,9 @@ pub fn realize_head(
     if !change.enabled {
         // Like udev's disable_head: DPMS state is forgotten on disable so
         // a re-enabled head always lights up.
-        state.winit_powered_off = false;
+        if std::mem::take(&mut state.winit_powered_off) {
+            state.output_power_notify(output, true);
+        }
     }
     state.schedule_redraw();
     Ok(())

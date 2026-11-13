@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Disabling a powered-off output reports the power reset to existing
+  controllers on both DRM and nested backends. Controllers remain usable
+  after re-enable; unchanged power states do not send extra notifications
+  (#76).
 - DRM display completions preserve pending repaint timers and idle callbacks.
   Paused sessions defer forced renders, and failed renders retry with a bounded
   delay and rate-limited diagnostics instead of running at refresh rate

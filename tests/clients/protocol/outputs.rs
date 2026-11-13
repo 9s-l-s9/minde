@@ -87,6 +87,80 @@ fn serials() {
     );
 }
 type Requests = Vec<(u32, u16, Vec<u8>)>;
+
+/// Keep a power controller alive across output-management changes. A short
+/// query client cannot catch a missed notification when it binds anew.
+pub fn power_lifecycle() {
+    let mut o = Outputs::new("power controller across head disable");
+    let output = o.c.bind("wl_output", 4);
+    let manager = o.c.bind("zwlr_output_power_manager_v1", 1);
+    for initially_on in [false, true] {
+        let power = o.c.alloc();
+        o.c.send(manager, 0, &words(&[power, output]));
+        o.c.roundtrip();
+        let mut modes = vec![1];
+        assert_power_modes(&o.c, power, &modes);
+        if !initially_on {
+            o.c.send(power, 0, &words(&[0]));
+            o.c.roundtrip();
+            modes.push(0);
+            assert_power_modes(&o.c, power, &modes);
+        }
+
+        // Testing a configuration must neither reset power nor notify.
+        let (config, _) = o.configuration(Some(false));
+        o.result(config, 3, 0);
+        assert_power_modes(&o.c, power, &modes);
+
+        let (config, _) = o.configuration(Some(false));
+        o.result(config, 2, 0);
+        if !initially_on {
+            modes.push(1);
+        }
+        assert_power_modes(&o.c, power, &modes);
+
+        // Repeated disables and re-enabling an already-on output must not
+        // send another power-mode transition.
+        let (config, _) = o.configuration(Some(false));
+        o.result(config, 2, 0);
+        assert_power_modes(&o.c, power, &modes);
+        let (config, _) = o.configuration(Some(true));
+        o.result(config, 2, 0);
+        assert_power_modes(&o.c, power, &modes);
+
+        // The old controller remains usable after re-enable.
+        o.c.send(power, 0, &words(&[0]));
+        o.c.send(power, 0, &words(&[1]));
+        o.c.roundtrip();
+        modes.extend([0, 1]);
+        assert_power_modes(&o.c, power, &modes);
+        o.c.send(power, 1, &[]);
+
+        // A fresh controller must agree with the long-lived one's last mode.
+        let fresh = o.c.alloc();
+        o.c.send(manager, 0, &words(&[fresh, output]));
+        o.c.roundtrip();
+        assert_power_modes(&o.c, fresh, &[1]);
+        o.c.send(fresh, 1, &[]);
+        o.c.roundtrip();
+    }
+    println!("ok - power controls track disable resets and remain usable after re-enable");
+}
+
+fn assert_power_modes(c: &Client, power: u32, expected: &[u32]) {
+    assert!(
+        !c.events.iter().any(|e| e.is(power, 1)),
+        "power control failed"
+    );
+    let modes: Vec<_> = c
+        .events
+        .iter()
+        .filter(|e| e.is(power, 0))
+        .map(|e| e.word(0))
+        .collect();
+    assert_eq!(modes, expected, "long-lived power controller modes");
+}
+
 fn invalid(
     name: &str,
     enabled: Option<bool>,

@@ -23,6 +23,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("output-management") => outputs::management(&args[1..]),
+        Some("output-power-lifecycle") => outputs::power_lifecycle(),
         Some("output-mode") => outputs::mode_limits(),
         Some("session-lock") => lock::run(),
         Some("emergency-exit") => lock::emergency_exit(),

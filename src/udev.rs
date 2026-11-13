@@ -1178,11 +1178,18 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     if let Some(surface) = surface.as_mut() {
         surface.redraw.park(&handle);
     }
+    let was_powered_off = entry.power == PowerState::Off;
     entry.power = PowerState::On;
 
     let output = entry.output.clone();
     let global = entry.global.take();
     info!(?crtc, output = %output.name(), "disabling head");
+
+    // The Output and its controls survive disable/enable. Report the reset
+    // even though this head no longer participates in wake-on-input.
+    if was_powered_off {
+        state.output_power_notify(&output, true);
+    }
 
     // Void any gamma control on this output before its CRTC goes away
     // (no restore possible once the surface is gone).
