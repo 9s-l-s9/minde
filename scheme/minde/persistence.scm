@@ -22,8 +22,14 @@
       (if (= ENOENT (system-error-errno args)) #f
           (apply throw 'system-error args)))))
 
-(define (read-state path kind valid?)
-  (let ((saved (read-versioned-datum-file path kind %persistent-state-version)))
+(define (read-state path kind valid? version migrate)
+  (let* ((datum (read-datum-file path))
+         (_ (unless (and (list? datum) (= (length datum) 3)
+                         (eq? (car datum) kind) (exact-integer? (cadr datum)))
+              (error "invalid persistent state format" path kind)))
+         (saved (cond ((= (cadr datum) version) (caddr datum))
+                      (migrate (migrate (cadr datum) (caddr datum)))
+                      (else (error "unsupported persistent state version" path kind)))))
     (unless (valid? saved) (error "invalid persistent state payload" path kind))
     saved))
 
@@ -48,21 +54,24 @@
       (set! %pending-errors '())
       (echo (string-join messages "\n")))))
 
-(define (load-persistent-state! path kind valid? publish)
-  "Validates the complete version-1 file at PATH before calling PUBLISH.
+(define* (load-persistent-state! path kind valid? publish
+                                 #:key (version %persistent-state-version) (migrate #f))
+  "Validates the complete file at PATH before calling PUBLISH.
+VERSION defaults to 1; MIGRATE may convert an older version and payload.
 Missing files leave memory unchanged. Errors preserve the file and block
 saving until a successful reload or removal; diagnostics are logged and shown."
   (catch #t
     (lambda ()
       (when (state-file-exists? path)
-        (publish (read-state path kind valid?)))
+        (publish (read-state path kind valid? version migrate)))
       (clear-state-error! path)
       #t)
     (lambda (key . args)
       (set! %failed-loads (cons path (delete path %failed-loads)))
       (report-state-error! 'load path kind key args))))
 
-(define (save-persistent-state! path kind valid? update)
+(define* (save-persistent-state! path kind valid? update
+                                 #:key (version %persistent-state-version) (migrate #f))
   "Passes validated saved state (or an empty list) to UPDATE and atomically
 writes its validated result. Returns that result, or #f on failure. An
 unreadable file is never replaced, including when it changed after loading."
@@ -76,7 +85,7 @@ unreadable file is never replaced, including when it changed after loading."
                       (error "reload the preserved file before saving" path))
                     ;; An external edit can invalidate a file after startup.
                     (catch #t
-                      (lambda () (read-state path kind valid?))
+                      (lambda () (read-state path kind valid? version migrate))
                       (lambda args
                         (set! %failed-loads (cons path (delete path %failed-loads)))
                         (apply throw args))))
@@ -85,7 +94,7 @@ unreadable file is never replaced, including when it changed after loading."
         (unless (valid? candidate) (error "invalid state to save" path kind))
         (let ((dir (dirname path)))
           (unless (file-exists? dir) (mkdir dir)))
-        (write-versioned-datum-file path kind %persistent-state-version candidate)
+        (write-versioned-datum-file path kind version candidate)
         (clear-state-error! path)
         candidate))
     (lambda (key . args)

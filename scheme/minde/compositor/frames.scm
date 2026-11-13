@@ -161,6 +161,7 @@
             dump-layout-spec
             set-sync-hook!
             window-title
+            window-client-title
             remember-window-title!
             update-window-title!
             forget-window-title!
@@ -771,6 +772,12 @@ falling back to remembered client metadata (tests, REPL thread)."
                (car pair))))
      (e (if (string-null? (car e)) (cdr e) (car e)))
      (else (format #f "window ~a" id)))))
+
+(define (window-client-title id)
+  "Returns window ID's client title, or #f if unknown, without display
+renames or app-id fallback. An explicitly empty title stays empty."
+  (let ((e (or (client-title id) (hash-ref %window-titles id))))
+    (and e (car e))))
 
 (define (window-app-id id)
   "The window's app-id (X11 class), or #f if unknown."

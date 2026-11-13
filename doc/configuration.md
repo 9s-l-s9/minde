@@ -588,13 +588,65 @@ It is an escape hatch for established configurations, not a compatibility
 promise before 1.0. Its modal and utility commands are also available through
 the portable command palette and declarative bindings.
 
+## Placement rules
+
+Placement rules select a group, frame, or floating policy for new windows.
+Use `#:app-id` for an exact, case-sensitive application identifier and
+`#:title` for a case-sensitive title substring. Both predicates must match
+when supplied together. At least one nonempty matcher is required.
+Title predicates use the client's actual title; display-name overrides and
+the app-id shown for an empty title do not participate in matching.
+
+```scheme
+(add-placement-rule! #:app-id "foot" #:group "II")
+(add-placement-rule! #:app-id "firefox" #:title "Picture-in-Picture"
+                     #:float? #t)
+```
+
+Rules run in order; put specific rules before broader ones. `#:lock? #f`
+restricts a rule to `place-existing-windows!`, which reapplies rules to
+already mapped windows. Locked rules also run when an initially empty app-id
+first arrives. Float rules can react to a newly matching title; ordinary
+retitles do not continually move windows between groups.
+
+The deprecated positional string matches the app-id exactly. It falls back
+to a title substring only when the window has no app-id. Convert title rules
+to `#:title` explicitly, including old Picture-in-Picture rules.
+
+`remember!` saves an exact app-id rule for the focused window's current group
+and frame. It refuses windows without an app-id, displaying an explanation.
+`forget!` removes rules whose predicates actually match the focused window;
+an app-id rule never matches an unrelated application's title.
+
+Check saved rules without starting a compositor:
+
+```sh
+scripts/mindectl check-config ~/.config/minde/rules.scm
+```
+
+Validation reports malformed matchers and the positions of rules shadowed
+for initial placement by an earlier, broader rule, returning a failing exit
+status. Rules added or loaded in a running session also log shadow warnings.
+Unlocked rules do not shadow later locked rules at map time.
+
 ## Persistent data
 
 Layouts and placement rules use versioned Scheme data and atomic replacement.
 The defaults are under `~/.config/minde/`; tests override them with
 `MINDE_LAYOUTS_FILE` and `MINDE_RULES_FILE`. Desktop dumps are explicit
-user-requested files. Before the first release, incompatible old state is
-intentionally rejected rather than migrated silently.
+user-requested files. Layout files use version 1. Placement files use version
+2, with each rule shaped as `(matcher group frame follow? lock? float?)`:
+
+```scheme
+(minde-placement-rules 2
+  ((((app-id . "foot")) "II" 0 #f #t #f)
+   (((title . "Picture-in-Picture")) #f 0 #f #t #t)))
+```
+
+Version-1 placement rules migrate in memory to the deprecated single-string
+semantics, represented by `((legacy . "matcher"))`, with missing flags filled
+in. Loading preserves the original file; the next successful save writes
+version 2. Other unsupported versions are rejected.
 
 `save-layout!` writes the named snapshot and retains earlier saved snapshots;
 it does not copy other configuration presets into the file. Definitions made

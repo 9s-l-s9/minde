@@ -220,14 +220,14 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
         (if live?
             (ipc-request path
                          (scheme-string
-                          `(begin ((@ (minde config) validate-configuration)
+                          `(begin ((@ (minde config) check-configuration-datum)
                                    ',datum)
                                   #t))
                          #:timeout-ms timeout-ms)
             (begin
               ((@ (minde command-catalog) register-builtin-command-schemas!))
               ((@ (minde control) register-control-commands!))
-              (validate-configuration datum)
+              (check-configuration-datum datum)
               '(ok #t)))))
     (lambda (key . args)
       `(error invalid-configuration ()

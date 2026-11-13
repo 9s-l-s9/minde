@@ -191,7 +191,7 @@
             (offscreen? (hash-ref %placements 4)))
 
 ;; By title, with #:follow?: switches to the target group and shows it.
-(add-placement-rule! "follow-me" #:group "III" #:follow? #t)
+(add-placement-rule! #:title "follow-me" #:group "III" #:follow? #t)
 (handle-window-map! 5 "follow-me notes" "someapp")
 (check "follow rule switched to group III" (current-group-name) " III ")
 (check "followed window is in group III" (group-has-window? " III " 5) #t)

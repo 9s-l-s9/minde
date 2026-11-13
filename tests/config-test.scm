@@ -10,6 +10,36 @@
 
 (register-builtin-command-schemas!)
 (register-control-commands!)
+
+;; Placement files can be checked offline without loading compositor state.
+(define (rule matcher . flags)
+  (list matcher #f 0 #f (if (pair? flags) (car flags) #t) #f))
+(define (rule-check rules)
+  (catch #t
+    (lambda () (check-configuration-datum `(minde-placement-rules 2 ,rules)))
+    (lambda (key . args) (format #f "~s" args))))
+(let* ((app (rule '((app-id . "firefox"))))
+       (specific (rule '((app-id . "firefox") (title . "Picture-in-Picture"))))
+       (title (rule '((title . "Picture"))))
+       (narrow-title (rule '((title . "Picture-in-Picture"))))
+       (legacy (rule '((legacy . "firefox")))))
+  (for-each
+   (lambda (rules)
+     (let ((result (rule-check rules)))
+       (check "broader earlier rule is reported by index"
+              (and (string? result)
+                   (string-contains result "rule 2 is shadowed")
+                   (string-contains result "earlier rule 1") #t) #t)))
+   (list (list app specific) (list title narrow-title) (list title specific)
+         (list legacy app)))
+  (for-each
+   (lambda (rules) (check "reachable rules pass validation" (rule-check rules) #t))
+   (list (list specific app) (list narrow-title title) (list app legacy)
+         (list app title) (list legacy title)
+         (list (rule '((app-id . "firefox")) #f) specific)
+         (list app (rule '((app-id . "zen")))))))
+(check "check-config accepts version-1 rules and migration"
+       (check-configuration-datum '(minde-placement-rules 1 (("foot" #f 0 #f)))) #t)
 (register-command! 'personal-noop! (lambda () (error "validation invoked a command"))
                    #:category 'test #:summary "Check without invoking a command.")
 (define (candidate command)

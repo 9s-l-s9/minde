@@ -1,8 +1,7 @@
 # Changelog
 
 All notable user-visible changes will be recorded here. This project has not
-yet made a public release, so breaking changes do not receive compatibility
-shims or migration notes.
+yet made a public release; breaking changes remain possible before 1.0.
 
 ## Unreleased
 
@@ -21,6 +20,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Placement rules separate exact app IDs from title substrings and combine
+  explicit predicates with AND. Remember refuses windows without an app ID;
+  forget no longer removes app rules because an unrelated title contains
+  their text. Version-1 rules migrate to version 2 with the deprecated
+  single-string semantics, and `check-config` reports shadowed rules (#159).
 - Reconnecting an output restores each group's frame layout, window stacks
   and selections. Windows remain available on a surviving head while it is
   absent; closed, floated or deliberately moved windows stay out of the

@@ -76,6 +76,9 @@ grep -q "status-schema-version $MINDE_STATUS_SCHEMA" scheme/minde/status.scm ||
 grep -q "(define %persistent-state-version $MINDE_PERSISTENT_SCHEMA)" \
     scheme/minde/persistence.scm ||
     fail "persistent state schema differs from the frozen contract"
+grep -q "(define placement-rules-version $MINDE_PLACEMENT_SCHEMA)" \
+    scheme/minde/placement.scm ||
+    fail "placement rules schema differs from the frozen contract"
 grep -q "report_schema_version=$MINDE_REPORT_SCHEMA" scripts/mindectl ||
     fail "diagnostic report differs from the frozen contract"
 
@@ -90,7 +93,7 @@ keymap_hash=$(sha256sum doc/generated/keybindings.md | cut -d ' ' -f 1)
 grep -q '^Status and diagnostic schemas: `1`\.$' doc/releasing.md ||
     fail "release guide does not record the external schema version"
 # shellcheck disable=SC2016
-grep -q '^Persistent state formats: `1`\.$' doc/releasing.md ||
+grep -q '^Persistent state formats: layouts `1`, placement rules `2`\.$' doc/releasing.md ||
     fail "release guide does not record the persistent schema version"
 
 for file in src/state.rs src/winit.rs src/input.rs src/render.rs src/udev.rs \

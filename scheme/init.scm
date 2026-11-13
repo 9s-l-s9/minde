@@ -1032,7 +1032,7 @@ refresh)."
 ;; instead (#:float? rules match on retitle too, since Wayland clients
 ;; set the title only after mapping). After load-placement-rules!, which
 ;; replaces the rule list wholesale.
-(add-placement-rule! "Picture-in-Picture" #:float? #t)
+(add-placement-rule! #:title "Picture-in-Picture" #:float? #t)
 
 ;; ---------------------------------------------------------------------
 ;; Keys & help parity (StumpWM parity)

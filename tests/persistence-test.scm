@@ -40,7 +40,7 @@
 
 ;; Both failures occur before the first Rust output exists.
 (put %layouts "(minde-layouts 2 ((\"old\" . leaf)))\n")
-(put %rules "(minde-placement-rules 2 ())\n")
+(put %rules "(minde-placement-rules 3 ())\n")
 (check "unsupported layout version rejected" (load-layouts!) #f)
 (check "unsupported rules version rejected" (load-placement-rules!) #f)
 (check "boot errors wait for an output" %messages '())
@@ -92,13 +92,20 @@
    (check "failed rule operations preserve file bytes" (bytes %rules) text)
    (check-true "failed forget does not claim success"
                (string-contains (car %messages) "could not save")))
- '("(minde-placement-rules 2 ())\n"
+ '("(minde-placement-rules 3 ())\n"
    "(minde-placement-rules 1 ("
    "(minde-placement-rules 1 ()) trailing\n"
    "(minde-placement-rules 1 ((\"partial\" #f 0 #f) (\"bad\")))\n"
    "(minde-placement-rules 1 ((\"bad\" #f 1.5 #f)))\n"
    "(minde-placement-rules 1 ((\"bad\" #f -1 #f)))\n"
    "(minde-placement-rules 1 ((\"bad\" #f 0 yes)))\n"
+   "(minde-placement-rules 2 ((() #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((app-id . \"foot\") (title . #f)) #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((app-id . \"foot\") (app-id . \"code\")) #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((legacy . \"foot\") (title . \"notes\")) #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((unknown . \"foot\")) #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((app-id . \"\")) #f 0 #f #t #f)))\n"
+   "(minde-placement-rules 2 ((((app-id . \"foot\")) #f 0 #f)))\n"
    "(minde-placement-rules 1 not-a-list)\n"))
 
 ;; Repairing a file must be followed by an explicit successful reload.
@@ -106,7 +113,7 @@
 (check "repaired layout still requires reload" (save-layout! "retry") #f)
 (check "repaired layout loads" (load-layouts!) #t)
 (check "reload re-enables layout saves" (save-layout! "retry") #t)
-(write-versioned-datum-file %rules 'minde-placement-rules 1 %original-rules)
+(write-versioned-datum-file %rules 'minde-placement-rules 2 %original-rules)
 (check "repaired rules still require reload" (remember!) #f)
 (check "repaired rules load" (load-placement-rules!) #t)
 (check "reload re-enables rule saves" (remember!) #t)
@@ -155,8 +162,16 @@
    ("Picture-in-Picture" #f 0 #f #t #t)))
 (check "legacy rules load" (load-placement-rules!) #t)
 (check "equivalent legacy rules deduplicate without merging policies" (rules)
-       '(("foot" #f 0 #f #t #f) ("foot" "II" 0 #f #t #f)
-         ("Picture-in-Picture" #f 0 #f #t #t)))
+       '((((legacy . "foot")) #f 0 #f #t #f) (((legacy . "foot")) "II" 0 #f #t #f)
+         (((legacy . "Picture-in-Picture")) #f 0 #f #t #t)))
+(check "migration does not overwrite the old file during load"
+       (cadr (read-datum-file %rules)) 1)
+(check "migrated rules can be saved" (save-placement-rules!) #t)
+(check "next save upgrades to version 2" (cadr (read-datum-file %rules)) 2)
+(let ((saved (rules)))
+  (clear-placement-rules!)
+  (check "version 2 reload succeeds" (load-placement-rules!) #t)
+  (check "version 2 round-trip preserves migrated policy" (rules) saved))
 
 (let ((cycle (list 'hsplit 1/2 'leaf 'leaf)))
   (set-car! (cddr cycle) cycle)

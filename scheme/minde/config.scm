@@ -7,9 +7,11 @@
   #:use-module (minde foundation serialization)
   #:use-module (minde commands)
   #:use-module (minde keysyms)
+  #:use-module (minde placement)
   #:export (read-configuration
             validate-configuration
             validate-configuration-file
+            check-configuration-datum
             configuration-prefix-modifiers
             configuration-prefix-key
             configuration-emergency-exit
@@ -141,6 +143,14 @@
 
 (define (read-configuration path)
   (with-fluids ((read-eval? #f)) (read-datum-file path)))
+(define (check-configuration-datum datum)
+  "Checks declarative configuration or a saved placement-rules file.
+Reports rules shadowed during initial placement without applying any state."
+  (if (and (pair? datum) (eq? (car datum) 'minde-placement-rules))
+      (let ((warnings (placement-rule-warnings (placement-rules-from-datum datum))))
+        (unless (null? warnings) (error (string-join warnings "; "))))
+      (validate-configuration datum))
+  #t)
 (define (validate-configuration-file path)
   (validate-configuration (read-configuration path)))
 (define (configuration-prefix-modifiers config) (cadr (field 'prefix config)))

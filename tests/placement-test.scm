@@ -5,6 +5,7 @@
 ;;;   guile -L scheme tests/placement-test.scm
 
 (use-modules (srfi srfi-1)
+             (minde placement)
              (minde foundation serialization))
 
 ;; ---------------------------------------------------------------------
@@ -15,6 +16,8 @@
 (define %float-places (make-hash-table)) ; id -> (x y w h), wm-place-float
 (define %focused #f)
 (define %overlays '())
+(define %messages '())
+(define (wm-message text . _) (set! %messages (cons text %messages)))
 (define %client-titles (make-hash-table))
 (define (wm-window-title id) (hash-ref %client-titles id))
 
@@ -61,6 +64,31 @@
 
 (define (check-true name got)
   (check name (if got #t #f) #t))
+
+;; App identifiers are identities; titles are independent substring predicates.
+(for-each
+ (lambda (case)
+   (let ((matcher (list-ref case 0)) (title (list-ref case 1))
+         (app (list-ref case 2)) (expected (list-ref case 3)))
+     (check (format #f "matcher ~s against ~s / ~s" matcher title app)
+            (placement-rule-matches? (list matcher #f 0 #f #t #f) title app)
+            expected)))
+ '((((app-id . "code")) "editor" "code" #t)
+   (((app-id . "code")) "editor" "code-oss" #f)
+   (((app-id . "code")) "editor" "barcode-reader" #f)
+   (((app-id . "foot")) "football results" "browser" #f)
+   (((app-id . "foot")) "foot" "" #f)
+   (((legacy . "foot")) "football results" "browser" #f)
+   (((legacy . "foot")) "terminal" "foot-extra" #f)
+   (((legacy . "foot")) "terminal" "foot" #t)
+   (((legacy . "foot")) "football results" "" #t)
+   (((legacy . "foot")) "football results" #f #t)
+   (((legacy . "foot")) #f #f #f)
+   (((title . "Picture-in-Picture")) "Picture-in-Picture — video" "firefox" #t)
+   (((title . "Picture-in-Picture")) "video" "Picture-in-Picture" #f)
+   (((app-id . "firefox") (title . "Picture")) "Picture-in-Picture" "firefox" #t)
+   (((app-id . "firefox") (title . "Picture")) "Picture-in-Picture" "zen" #f)
+   (((app-id . "firefox") (title . "Picture")) "homepage" "firefox" #f)))
 
 (update-output-geometry! 0 0 1280 720)
 
@@ -184,7 +212,7 @@
 ;; clients do (Firefox Picture-in-Picture maps with empty strings).
 ;; ---------------------------------------------------------------------
 
-(add-placement-rule! "Picture-in-Picture" #:float? #t)
+(add-placement-rule! #:title "Picture-in-Picture" #:float? #t)
 (handle-window-map! 12 "Picture-in-Picture" "firefox")
 (check-true "float rule floats at map" (window-floating? 12))
 (check-true "float-rule window is in no frame"
@@ -252,10 +280,10 @@
 (remember!)
 (check-true "remember! wrote the rules file" (file-exists? %rules-path))
 (define %saved-rules
-  (read-versioned-datum-file %rules-path 'minde-placement-rules 1))
+  (read-versioned-datum-file %rules-path 'minde-placement-rules 2))
 (check "remembered rule pins foot to the original group and frame"
-       (find (lambda (rule) (string=? (car rule) "foot")) %saved-rules)
-       '("foot" "I" 0 #f #t #f))
+       (find (lambda (rule) (equal? (car rule) '((app-id . "foot")))) %saved-rules)
+       '(((app-id . "foot")) "I" 0 #f #t #f))
 (clear-placement-rules!)
 (check "rules cleared before reload" (@@ (minde groups) %placement-rules) '())
 (load-placement-rules!)
@@ -265,10 +293,10 @@
  (lambda (boot)
    (clear-placement-rules!)
    (load-placement-rules!)
-   (add-placement-rule! "Picture-in-Picture" #:float? #t)
+   (add-placement-rule! #:title "Picture-in-Picture" #:float? #t)
    (remember!)
    (check (format #f "restart ~a keeps identical rules and order" boot)
-          (read-versioned-datum-file %rules-path 'minde-placement-rules 1)
+          (read-versioned-datum-file %rules-path 'minde-placement-rules 2)
           %saved-rules))
  '(1 2 3))
 ;; New matching windows must be placed by the restored rule, even when the
@@ -284,9 +312,9 @@
 (forget!)
 (check-true "forget! removed the remembered rule, keeping the others"
             (let ((rules (read-versioned-datum-file
-                          %rules-path 'minde-placement-rules 1)))
+                          %rules-path 'minde-placement-rules 2)))
               (and (= (length rules) 3) ; term + zen + the float rule
-                   (not (find (lambda (r) (string=? (car r) "foot")) rules)))))
+                   (not (find (lambda (r) (equal? (car r) '((app-id . "foot")))) rules)))))
 
 ;; ---------------------------------------------------------------------
 ;; dump-desktop-to-file / restore-from-file
@@ -370,6 +398,67 @@
 (check-true "follow places the new float visibly"
             (let ((r (hash-ref %float-places 146))) (and r (>= (car r) 0))))
 (check "follow focuses the new float" %focused 146)
+
+;; Exercise independent matchers through real routing and remember/forget.
+(clear-placement-rules!)
+(create-group! "exact-source")
+(create-group-in-background! "exact-target")
+(add-placement-rule! #:app-id "code" #:title "notes" #:group "exact-target")
+(add-placement-rule! #:app-id "foot" #:group "exact-target")
+(handle-window-map! 160 "notes" "code")
+(handle-window-map! 161 "notes" "barcode-reader")
+(handle-window-map! 162 "other document" "code")
+(handle-window-map! 163 "football results" "browser")
+(check-true "AND match routes to the target" (group-has-window? "exact-target" 160))
+(for-each (lambda (id) (check-true "unrelated window stays in source"
+                                  (group-has-window? "exact-source" id))) '(161 162 163))
+(focus-window-by-id! 163)
+(forget!)
+(check "forget on a browser title preserves the terminal rule"
+       (length (@@ (minde groups) %placement-rules)) 2)
+(handle-window-map! 164 "terminal" "foot")
+(check-true "terminal still uses its rule" (group-has-window? "exact-target" 164))
+(switch-to-group! "exact-target")
+(focus-window-by-id! 164)
+(forget!)
+(check "forget removes only the actual matching rule"
+       (map car (@@ (minde groups) %placement-rules))
+       '(((app-id . "code") (title . "notes"))))
+(handle-window-map! 165 "transient README title" "")
+(focus-window-by-id! 165)
+(let ((before (read-datum-file %rules-path))
+      (rules (@@ (minde groups) %placement-rules)))
+  (check "remember refuses an empty app-id" (remember!) #f)
+  (check "refused remember preserves the file" (read-datum-file %rules-path) before)
+  (check "refused remember preserves the registry" (@@ (minde groups) %placement-rules) rules)
+  (check-true "remember explains the missing app-id"
+              (any (lambda (text) (string-contains text "no app-id")) %messages)))
+(delete-file %rules-path)
+
+;; Display names may fall back to app IDs or be renamed. Neither is a title
+;; reported by the client, and neither may influence explicit title rules.
+(clear-placement-rules!)
+(create-group! "raw-title-source")
+(handle-window-map! 166 "" "title-token")
+(handle-window-map! 167 "actual title" "browser")
+(focus-window-by-id! 167)
+(rename-window! "title-token")
+(add-placement-rule! #:title "title-token" #:group "exact-target" #:lock? #f)
+(forget!)
+(check "forget ignores a display-title override"
+       (length (@@ (minde groups) %placement-rules)) 1)
+(add-placement-rule! #:title "title-token" #:group "exact-target" #:lock? #f)
+(handle-window-map! 168 "title-token" "browser")
+(focus-window-by-id! 168)
+(rename-window! "different display name")
+(place-existing-windows!)
+(check-true "title rule ignores an app-id display fallback"
+            (group-has-window? "raw-title-source" 166))
+(check-true "title rule ignores a display-title override"
+            (group-has-window? "raw-title-source" 167))
+(check-true "title rule uses the client title even after renaming"
+            (group-has-window? "exact-target" 168))
+(delete-file %rules-path)
 
 ;; ---------------------------------------------------------------------
 

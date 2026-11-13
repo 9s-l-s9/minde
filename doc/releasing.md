@@ -5,7 +5,7 @@ changelog, CLI, Smithay vendor configuration, and documented schema versions
 are checked together by `make check-docs`.
 
 Status and diagnostic schemas: `1`.
-Persistent state formats: `1`.
+Persistent state formats: layouts `1`, placement rules `2`.
 
 ## Tagged source releases
 

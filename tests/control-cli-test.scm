@@ -202,8 +202,24 @@
       (let ((result (run-client (list "check-config" file "--live" "--scheme") '("(ok #t)"))))
         (test-equal "live validation success" 0 (vector-ref result 0))
         (test-equal "live validation serializes quoted data"
-          `(begin ((@ (minde config) validate-configuration) ',datum) #t)
+          `(begin ((@ (minde config) check-configuration-datum) ',datum) #t)
           (call-with-input-string (car (sent result)) read)))
+      (for-each
+       (lambda (rules)
+         (save rules)
+         (let ((result (run-client (list "check-config" file "--scheme") '())))
+           (test-equal "offline placement validation" 0 (vector-ref result 0))
+           (test-equal "placement validation needs no session" '() (sent result))))
+       '((minde-placement-rules 1 (("foot" #f 0 #f)))
+         (minde-placement-rules 2 ((((app-id . "foot")) #f 0 #f #t #f)))))
+      (save '(minde-placement-rules 2
+               ((((app-id . "firefox")) #f 0 #f #t #f)
+                (((app-id . "firefox") (title . "Picture")) #f 0 #f #t #t))))
+      (let ((result (run-client (list "check-config" file) '())))
+        (test-equal "shadowed placement rule fails validation" 1 (vector-ref result 0))
+        (test-assert "shadow diagnostic identifies both rule positions"
+          (string-contains (vector-ref result 2)
+                           "rule 2 is shadowed for initial placement by earlier rule 1")))
       (for-each
        (lambda (command)
          (save `(minde-config (version 1) (prefix (ctrl) "t") (bindings ("d" ,command))))

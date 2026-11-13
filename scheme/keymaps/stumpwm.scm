@@ -196,9 +196,9 @@
 ;; substring when they map (StumpWM define-frame-preference). Examples:
 ;; ---------------------------------------------------------------------
 
-;; (add-placement-rule! "zen" #:group "II" #:frame 0)
-;; (add-placement-rule! "emacs" #:frame 1 #:follow? #t)
-;; (add-placement-rule! "Picture-in-Picture" #:float? #t)
+;; (add-placement-rule! #:app-id "zen" #:group "II" #:frame 0)
+;; (add-placement-rule! #:app-id "emacs" #:frame 1 #:follow? #t)
+;; (add-placement-rule! #:title "Picture-in-Picture" #:float? #t)
 
 ;; Miscellaneous built-in operations. Personal launchers and desktop policy
 ;; belong in a user configuration layered over this optional map.

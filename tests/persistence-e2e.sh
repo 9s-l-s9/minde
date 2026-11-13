@@ -9,7 +9,7 @@ OUT=${MINDE_PERSISTENCE_E2E_OUT:-/tmp/minde-persistence-e2e}
 nested_install_cleanup nested_stop
 mkdir -p "$OUT"
 printf '%s\n' '(minde-layouts 2 (("preserved" . leaf)))' >"$OUT/layouts.scm"
-printf '%s\n' '(minde-placement-rules 2 (("foot" "II" 0 #f)))' >"$OUT/rules.scm"
+printf '%s\n' '(minde-placement-rules 3 (("foot" "II" 0 #f)))' >"$OUT/rules.scm"
 cp "$OUT/layouts.scm" "$OUT/layouts.original"
 cp "$OUT/rules.scm" "$OUT/rules.original"
 nested_start "$OUT" "${MINDE_PERSISTENCE_E2E_DISPLAY:-:93}" || {

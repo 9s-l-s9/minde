@@ -226,7 +226,7 @@
 (check "rename-window! overrides the title" (window-title 1) "my-editor")
 
 ;; place-existing-windows! re-applies rules to mapped windows.
-(add-placement-rule! "two" #:group " II ")
+(add-placement-rule! #:title "two" #:group " II ")
 (place-existing-windows!)
 (check-false "rule moved window 2 out of I" (group-has-window? " I " 2))
 (check-true "window 2 now tracked by II" (group-has-window? " II " 2))

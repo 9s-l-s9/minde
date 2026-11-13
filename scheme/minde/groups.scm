@@ -21,6 +21,7 @@
   #:use-module (minde compositor rust)
   #:use-module (minde foundation serialization)
   #:use-module (minde persistence)
+  #:use-module (minde placement)
   #:re-export (focus-next-head! focus-previous-head!)
   #:export (switch-to-group!
             switch-to-last-group!
@@ -719,33 +720,42 @@ retile)."
 ;; ---------------------------------------------------------------------
 
 ;; Each rule: (matcher group-name frame-index follow? lock? float?). MATCHER
-;; is a string matched as a substring against the window's app-id, then
-;; its title. GROUP-NAME is compared trimmed (" II " and "II" both
+;; contains separate exact app-id and substring title predicates, combined
+;; with AND. GROUP-NAME is compared trimmed (" II " and "II" both
 ;; work); #f means "the current group". FRAME-INDEX is 0-based in tree
 ;; order, clamped to the existing leaves. First matching rule wins.
 ;; LOCK? #t (the default, StumpWM's :lock) applies the rule when the
 ;; window maps; #f rules only fire through place-existing-windows!.
 (define %placement-rules '())
 
-(define* (add-placement-rule! matcher #:key (group #f) (frame 0)
+(define* (add-placement-rule! #:optional (matcher #f)
+                              #:key (app-id #f) (title #f) (group #f) (frame 0)
                               (follow? #f) (raise? #f) (lock? #t)
                               (float? #f))
   "Appends a placement rule unless an equivalent rule already exists.
+#:app-id matches exactly; #:title is a case-sensitive substring. When both
+are supplied, both must match. The deprecated positional string matches
+an exact app-id, falling back to a title substring only without an app-id.
 #:float? #t makes matching windows float instead of joining a frame --
 e.g. Firefox's Picture-in-Picture player, which would otherwise hijack
 the current frame and push the browser window offscreen."
   ;; #:raise? is StumpWM's name for what our #:follow? does.
-  (let ((rule (list matcher group frame (or follow? raise?) lock? float?)))
+  (let ((rule (list (make-placement-matcher matcher app-id title)
+                    group frame (or follow? raise?) lock? float?)))
+    (unless (valid-placement-rules? (list rule)) (error "invalid placement rule" rule))
     (unless (member rule %placement-rules)
-      (set! %placement-rules (append %placement-rules (list rule))))))
+      (let* ((candidate (append %placement-rules (list rule)))
+             (new-warnings (lset-difference string=?
+                            (placement-rule-warnings candidate)
+                            (placement-rule-warnings %placement-rules))))
+        (set! %placement-rules candidate)
+        (for-each (lambda (warning) (rust-call-if-bound 'wm-log warning)) new-warnings)))))
 
 (define (rule-lock? rule)
-  ;; Rules loaded from an old 4-element file default to locked.
-  (or (< (length rule) 5) (list-ref rule 4)))
+  (list-ref rule 4))
 
 (define (rule-float? rule)
-  ;; Rules from files predating #:float? are 5 elements and never float.
-  (and (>= (length rule) 6) (list-ref rule 5)))
+  (list-ref rule 5))
 
 (define (clear-placement-rules!)
   "Removes every in-memory placement rule without writing the rules file."
@@ -761,30 +771,14 @@ the current frame and push the browser window offscreen."
   (or (getenv "MINDE_RULES_FILE")
       (string-append (or (getenv "HOME") ".") "/.config/minde/rules.scm")))
 
-(define (valid-placement-rules? rules)
-  (and (list? rules)
-       (every (lambda (rule)
-                (and (list? rule) (<= 4 (length rule) 6)
-                     (string? (car rule))
-                     (or (not (cadr rule)) (string? (cadr rule)))
-                     (exact-integer? (caddr rule)) (>= (caddr rule) 0)
-                     (every boolean? (cdddr rule))))
-              rules)))
-
-(define (normalize-placement-rules rules)
-  ;; Preserve first-match order and different policies for the same matcher.
-  (delete-duplicates
-   (map (lambda (rule)
-          (append (take rule 4) (list (rule-lock? rule) (rule-float? rule))))
-        rules)))
-
 (define (persist-placement-rules! candidate)
   (let ((saved (save-persistent-state!
                 (rules-file) 'minde-placement-rules valid-placement-rules?
                 (lambda (_)
                   (unless (valid-placement-rules? candidate)
                     (error "invalid placement rules" candidate))
-                  (normalize-placement-rules candidate)))))
+                  (normalize-placement-rules candidate))
+                #:version placement-rules-version #:migrate migrate-placement-rules)))
     (and saved (begin (set! %placement-rules saved) #t))))
 
 (define (save-placement-rules!)
@@ -793,32 +787,39 @@ preserving unreadable files and leaving the in-memory rules unchanged."
   (persist-placement-rules! %placement-rules))
 
 (define (load-placement-rules!)
-  "Loads fully validated rules, normalizing legacy flags and duplicates.
+  "Loads fully validated rules, migrating version 1 and deduplicating.
+Migration uses exact app-id matches with title fallback only without an
+app-id. The file is upgraded to version 2 on the next successful save.
 Missing files are ignored. Invalid files preserve memory and block saves
 until a successful reload or removal. Returns #t on success."
   (load-persistent-state!
    (rules-file) 'minde-placement-rules valid-placement-rules?
    (lambda (saved)
-     (set! %placement-rules (normalize-placement-rules saved)))))
+     (set! %placement-rules (normalize-placement-rules saved))
+     (for-each (lambda (warning) (rust-call-if-bound 'wm-log warning))
+               (placement-rule-warnings %placement-rules)))
+   #:version placement-rules-version #:migrate migrate-placement-rules))
 
 (define (remember!)
-  "Adds a persistent placement rule pinning the focused window's
-app-id (or title) to its current group and frame (StumpWM remember)."
+  "Pins the focused window's exact app-id to its current group and frame.
+Refuses windows without an app-id instead of remembering a transient title."
   (let ((id (focused-window-id)))
     (if (not id)
         (echo "no window")
-        (let ((matcher (or (window-app-id id) (window-title id)))
+        (let ((app-id (window-app-id id))
               (frame-idx (or (list-index (lambda (f) (eq? f (current-frame)))
                                          (frame-leaves (current-tree)))
                              0)))
-          (and (persist-placement-rules!
+          (if (not (and (string? app-id) (not (string-null? app-id))))
+              (begin (echo "cannot remember: window has no app-id") #f)
+              (and (persist-placement-rules!
                 (append %placement-rules
-                        (list (list matcher (string-trim-both (current-group-name))
+                        (list (list `((app-id . ,app-id)) (string-trim-both (current-group-name))
                                     frame-idx #f #t #f))))
                (begin
                  (echo (format #f "remembered: ~a ->~a frame ~a"
-                               matcher (current-group-name) frame-idx))
-                 #t))))))
+                               app-id (current-group-name) frame-idx))
+                 #t)))))))
 
 (define (forget!)
   "Drops every placement rule matching the focused window and persists
@@ -826,7 +827,7 @@ app-id (or title) to its current group and frame (StumpWM remember)."
   (let ((id (focused-window-id)))
     (if (not id)
         (echo "no window")
-        (let* ((title (window-title id))
+        (let* ((title (window-client-title id))
                (app (window-app-id id))
                (before (length %placement-rules)))
           (and (persist-placement-rules!
@@ -845,9 +846,7 @@ app-id (or title) to its current group and frame (StumpWM remember)."
        (group-all-trees (current-group))))
 
 (define (rule-matches? rule title app-id)
-  (let ((m (car rule)))
-    (or (and (string? app-id) (string-contains app-id m))
-        (and (string? title) (string-contains title m)))))
+  (placement-rule-matches? rule title app-id))
 
 (define (find-group-loose name)
   (and name
@@ -892,7 +891,7 @@ Affected dynamic groups retile every head immediately."
     (for-each
      (lambda (id)
        (unless (window-floating? id)
-         (let* ((title (window-title id))
+         (let* ((title (window-client-title id))
                 (rule (find (lambda (r)
                               (rule-matches? r title (window-app-id id)))
                             %placement-rules)))
