@@ -34,6 +34,9 @@ for tool in ffmpeg ffprobe foot import jq xdotool; do
     }
 done
 
+SCENARIO_LIST=$(mktemp /tmp/minde-demo-scenarios.XXXXXX)
+scripts/generate-demo-manifest.scm --tsv >"$SCENARIO_LIST"
+
 mkdir -p "$OUT"
 export MINDE_NESTED_CONFIG="$PWD/scheme/default-config.scm"
 nested_start "$OUT/runtime" "$DISPLAY_NUMBER" || {
@@ -60,8 +63,6 @@ launch_demo_window 2
 xdotool search --name Smithay windowfocus >/dev/null
 
 tab=$(printf '\t')
-SCENARIO_LIST=$(mktemp /tmp/minde-demo-scenarios.XXXXXX)
-scripts/generate-demo-manifest.scm --tsv >"$SCENARIO_LIST"
 while IFS="$tab" read -r id title trigger input_events setup action scenario_cleanup; do
     video="$OUT/$id.webm"
     poster="$OUT/$id.png"

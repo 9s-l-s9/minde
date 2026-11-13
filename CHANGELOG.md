@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Demo manifests reject empty fields and embedded record separators before
+  capture starts. Setup, action, and cleanup cannot shift columns during
+  shell parsing; `#t` remains the explicit no-op expression (#119).
 - Malformed provider HTTP replies produce structured transport errors.
   Evaluation retains failed cases and continues writing the full report,
   including successful cases before and after a failure (#118).

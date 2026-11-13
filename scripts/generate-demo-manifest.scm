@@ -5,6 +5,7 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
 
 (use-modules (ice-9 match)
              (srfi srfi-1)
+             (srfi srfi-13)
              (minde commands)
              (minde command-catalog))
 
@@ -29,6 +30,11 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
   (error "unsupported demo scenario schema" data))
 
 (define scenarios (cddr data))
+(define (demo-text? value)
+  ;; Capture reads tab-separated records with shell read. Empty columns and
+  ;; embedded delimiters would shift setup, action and cleanup into each other.
+  (and (string? value) (not (string-null? value))
+       (not (string-any (lambda (character) (memv character '(#\tab #\newline #\return))) value))))
 (for-each
  (lambda (scenario)
    (unless (and (list? scenario) (eq? (car scenario) 'scenario))
@@ -36,12 +42,12 @@ exec guile --no-auto-compile -L scheme -s "$0" "$@"
    (unless (symbol? (field 'id scenario))
      (error "demo id must be a symbol" scenario))
    (for-each (lambda (name)
-               (unless (string? (field name scenario))
-                 (error "demo field must be a string" name scenario)))
+               (unless (demo-text? (field name scenario))
+                 (error "demo field must be nonempty text without tabs or line breaks" name scenario)))
              '(title trigger setup action cleanup))
    (unless (and (list? (field 'input scenario))
-                (every string? (field 'input scenario)))
-     (error "demo input must be a list of xdotool key names" scenario)))
+                (every demo-text? (field 'input scenario)))
+     (error "demo input must be a list of nonempty xdotool key names without tabs or line breaks" scenario)))
  scenarios)
 
 (define ids (map (lambda (scenario) (field 'id scenario)) scenarios))

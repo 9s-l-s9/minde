@@ -6,6 +6,12 @@ demo IDs, [`demos/scenarios.scm`](../demos/scenarios.scm) supplies deterministic
 setup/action/cleanup expressions, and `scripts/capture-demos` performs the
 capture in one isolated nested compositor session.
 
+Titles, trigger labels, and setup/action/cleanup strings must be nonempty
+and contain no tabs or line breaks. Use `#t` for a Scheme step that does
+nothing. The input list may be empty, but individual key names follow the
+same text restrictions. Manifest validation runs before the nested session
+starts, so malformed fields cannot shift actions into the wrong capture step.
+
 ## Resource policy
 
 - Capture is opt-in: `make check-docs` never starts a compositor or encoder.

@@ -11,6 +11,7 @@ GUILE := $(GUILE_ENV) guile --no-auto-compile -L scheme
 SCHEME_TESTS := \
 	tests/foundation-test.scm \
 	tests/property-test.scm \
+	tests/demo-manifest-test.scm \
 	tests/ui-prompt-test.scm \
 	tests/config-test.scm \
 	tests/status-test.scm \
