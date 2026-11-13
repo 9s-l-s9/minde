@@ -54,7 +54,7 @@ Every target below is declared `.PHONY` in `Makefile`. Run
 | `make check-control` | Real Unix-socket clients and offline selector contracts, without a desktop or provider credentials. The real compositor scenario is a separate gate. |
 | `make check-control-e2e` | - |
 | `make check-static` | - |
-| `make compile-scheme` | Compile scheme/**/*.scm (modules, init.scm and the files it loads) to $(CCACHE); only sources newer than their .go are rebuilt. The Guix package does the same into lib/guile/3.0/site-ccache (guix.scm, compile-scheme phase). default-config.scm is data read by the validator, not code. |
+| `make compile-scheme` | Compile scheme/**/*.scm (modules, init.scm and the files it loads) to $(CCACHE). Rebuild the entire cache when Scheme contents, paths or the compiler change, or an output is missing/outdated; unchanged trees are reused. default-config.scm is data read by the validator, not code. |
 | `make bench-scheme` | Timing of the frame-sync hot path against stubbed primitives; prints numbers, asserts nothing. Arguments: windows, iterations. Set `MINDE_BENCH_STATUS=1` to include status generation and per-event file writes in a temporary runtime directory. |
 | `make check-scheme` | - |
 | `make check-api` | - |

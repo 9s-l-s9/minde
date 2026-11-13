@@ -45,6 +45,13 @@ sccache/mold are deliberately not part of the default toolchain. For Scheme,
 Geiser or another Guile-aware client works against a normal `guile -L
 scheme` REPL; see `doc/debugging.md#editor-setup` and `#interactive-scheme-debugging`.
 
+`make compile-scheme` reuses unchanged development bytecode. Any Scheme
+content change, including a dependency edit or deleted file, rebuilds the
+whole cache because Guile can inline across modules. The compiler and driver
+also participate in cache invalidation; failed builds retain the previous
+complete cache and fail the invoking check. `tests/scheme-cache-test.sh`
+exercises this behavior with real Guile compilation in a temporary tree.
+
 ## Continuous integration
 
 Hosted development checks use `scripts/ci`, the same entry point you can run

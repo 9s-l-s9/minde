@@ -78,6 +78,7 @@ check-static:
 	sh tests/make-gates-test.sh
 	sh tests/ci-release-test.sh
 	sh tests/release-notes-test.sh
+	sh tests/scheme-cache-test.sh
 	sh tests/lint-borrows.sh
 	sh tests/lint-hook-borrows.sh
 	sh tests/nested-harness-test.sh
@@ -88,25 +89,14 @@ check-static:
 		scripts/minde-msg scripts/mindectl scripts/minde-agent \
 		scripts/create-release-archives scripts/check-guix-package \
 		scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-bootstrap-guix \
-		scripts/hardware-report scripts/release scripts/run-nested
+		scripts/hardware-report scripts/release scripts/run-nested scripts/compile-scheme
 
 # Compile scheme/**/*.scm (modules, init.scm and the files it loads) to
-# $(CCACHE); only sources newer than their .go are rebuilt. The Guix package
-# does the same into lib/guile/3.0/site-ccache (guix.scm, compile-scheme
-# phase). default-config.scm is data read by the validator, not code.
+# $(CCACHE). Rebuild the entire cache when Scheme contents, paths or the
+# compiler change, or an output is missing/outdated; unchanged trees are
+# reused. default-config.scm is data read by the validator, not code.
 compile-scheme:
-	@set -eu; \
-	for src in $$(find scheme -name '*.scm' ! -name default-config.scm | LC_ALL=C sort); do \
-		go="$(CCACHE)/$${src#scheme/}"; go="$${go%.scm}.go"; \
-		if [ ! -e "$$go" ] || [ "$$src" -nt "$$go" ]; then \
-			mkdir -p "$$(dirname "$$go")"; \
-			case $$src in \
-				scheme/minde/*) warn= ;; \
-				*) warn=-W0 ;; \
-			esac; \
-			$(GUILE_ENV) guild compile $$warn -L scheme -o "$$go" "$$src" >/dev/null; \
-		fi; \
-	done
+	@sh scripts/compile-scheme "$(CCACHE)"
 
 # Timing of the frame-sync hot path against stubbed primitives; prints
 # numbers, asserts nothing. Arguments: windows, iterations.

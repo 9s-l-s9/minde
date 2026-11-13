@@ -1,0 +1,70 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Guile inlines across modules: the development cache is one compilation
+# unit, even though each source is compiled in a separate process.
+set -eu
+cd -P "$(dirname "$0")/.."
+cache=$(realpath -m "${1:-build/ccache}")
+case $cache in
+    "$PWD"/build/*) ;;
+    *) echo 'error: Scheme cache must be beneath build/' >&2; exit 2 ;;
+esac
+guile_binary=$(command -v guile)
+guile_binary=$(readlink -f "$guile_binary")
+fingerprint() {
+    # Separate commands retain failures from find/checksum reads. Include
+    # paths, the compiler and this driver as well as all Scheme contents.
+    source_hashes=$(find scheme -type f -name '*.scm' -exec sha256sum {} +) || return
+    driver_hash=$(sha256sum scripts/compile-scheme) || return
+    printf '%s\n' "$PWD" "$guile_binary" "${GUILE_LOAD_PATH:-}" \
+        "$driver_hash" "$source_hashes" | LC_ALL=C sort | sha256sum
+}
+signature=$(fingerprint)
+sources=$(find scheme -type f -name '*.scm' ! -name default-config.scm)
+sources=$(printf '%s\n' "$sources" | LC_ALL=C sort)
+current=yes
+[ "$(cat "$cache/.inputs" 2>/dev/null)" = "$signature" ] || current=no
+while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    go="$cache/${src#scheme/}"
+    go="${go%.scm}.go"
+    if [ ! -f "$go" ] || [ -n "$(find "$src" -newer "$go" -print)" ]; then
+        current=no
+        break
+    fi
+done <<EOF
+$sources
+EOF
+[ "$current" = no ] || exit 0
+
+# Keep the last complete cache until every source compiles successfully.
+# The fresh directory also removes bytecode for deleted or renamed files.
+mkdir -p "$(dirname "$cache")"
+fresh=$(mktemp -d "$cache.XXXXXX")
+trap 'if [ -n "$fresh" ]; then rm -rf "$fresh"; fi' EXIT
+trap 'exit 1' HUP INT TERM
+while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    go="$fresh/${src#scheme/}"
+    go="${go%.scm}.go"
+    mkdir -p "$(dirname "$go")"
+    case $src in scheme/minde/*) warn= ;; *) warn=-W0 ;; esac
+    # Exclude inherited project bytecode AND Guile's per-user fallback.
+    # AUTO_COMPILE=0 alone still permits loading old compiled dependencies.
+    GUILE_LOAD_COMPILED_PATH="$fresh" GUILE_AUTO_COMPILE=0 \
+        "$guile_binary" -q --no-auto-compile -c '
+          (use-modules ((scripts compile) #:prefix guild:))
+          (set! %compile-fallback-path #f)
+          (apply guild:compile (cdr (command-line)))' \
+        $warn -L scheme -o "$go" "$src" >/dev/null
+done <<EOF
+$sources
+EOF
+[ "$(fingerprint)" = "$signature" ] || {
+    echo 'error: Scheme inputs changed during compilation; retry' >&2
+    exit 1
+}
+printf '%s\n' "$signature" >"$fresh/.inputs"
+rm -rf "$cache"
+mv "$fresh" "$cache"
+fresh=

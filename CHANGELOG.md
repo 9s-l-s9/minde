@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Development Scheme caches rebuild together when inputs change, so callers
+  cannot retain inlined values from older dependencies. Rebuilds ignore
+  inherited and user bytecode caches, discard removed outputs, and detect
+  content edits even when source timestamps are preserved (#125).
 - Verification targets propagate archive build/comparison and hardware-report
   failures. Static checks require ShellCheck and include `scripts/run-nested`
   and `scripts/minde-agent`, so omitted tooling or launchers cannot silently
