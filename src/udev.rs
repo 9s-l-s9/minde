@@ -154,9 +154,61 @@ enum RedrawState {
     /// watchdog timer fires if the vblank never comes (VT switch mid-flip,
     /// driver hiccup) so the loop cannot get stuck here.
     WaitingForVblank { watchdog: RegistrationToken },
-    /// The last render produced no damage or failed, so no vblank is
-    /// expected; rate-limit the next render to the refresh interval.
+    /// No vblank is expected. Wait one refresh interval after an undamaged
+    /// render, or the retry delay after a failure.
     WaitingForTimer { token: RegistrationToken },
+}
+
+impl RedrawState {
+    /// Consume only the watchdog belonging to the completed flip. A forced
+    /// repaint may already have replaced it with a timer or idle callback.
+    fn finish_vblank(&mut self) -> Option<RegistrationToken> {
+        let Self::WaitingForVblank { watchdog } = self else {
+            return None;
+        };
+        let watchdog = *watchdog;
+        *self = Self::Idle;
+        Some(watchdog)
+    }
+
+    /// Cancel pending timers before a forced render, pause or teardown.
+    fn park<Data>(&mut self, handle: &smithay::reexports::calloop::LoopHandle<'_, Data>) {
+        match std::mem::replace(self, Self::Idle) {
+            Self::WaitingForVblank { watchdog: token } | Self::WaitingForTimer { token } => {
+                handle.remove(token);
+            }
+            Self::Idle | Self::Scheduled => {}
+        }
+    }
+}
+
+/// Per-output recovery pacing. Keep trying without needing a new client
+/// commit, but never spin at the display's refresh rate on a broken device.
+#[derive(Default)]
+struct RenderRetry {
+    delay: Duration,
+    log_after: Duration,
+}
+
+impl RenderRetry {
+    fn failed(&mut self, interval: Duration, now: Duration) -> (Duration, bool) {
+        self.delay = if self.delay.is_zero() {
+            interval
+        } else {
+            self.delay.saturating_mul(2)
+        }
+        .clamp(Duration::from_millis(100), Duration::from_secs(1));
+        let log = now >= self.log_after;
+        if log {
+            self.log_after = now.saturating_add(Duration::from_secs(10));
+        }
+        (self.delay, log)
+    }
+
+    fn succeeded(&mut self) {
+        self.delay = Duration::ZERO;
+        // Intermittent failures must not defeat the diagnostic rate limit.
+    }
 }
 
 /// The render-side half of an enabled head: the DRM output driving the
@@ -174,6 +226,7 @@ struct OutputSurface {
     /// Something on this output changed since the last render.
     dirty: bool,
     redraw: RedrawState,
+    retry: RenderRetry,
     /// Bumped for every queued frame and stamped into its
     /// [`FrameUserData`], so `frame_finish` can ignore the late vblank of
     /// a flip [`MindeState::vblank_watchdog_fired`] already gave up on
@@ -205,21 +258,6 @@ fn presentation_refresh(mode: Option<WlMode>, vrr: bool) -> Refresh {
             }
         }
         None => Refresh::Unknown,
-    }
-}
-
-impl OutputSurface {
-    /// Cancels any pending repaint timer and returns the loop to `Idle`
-    /// (keeping `dirty` as is). Precedes every render and a session pause.
-    fn park_redraw(
-        &mut self,
-        handle: &smithay::reexports::calloop::LoopHandle<'static, MindeState>,
-    ) {
-        match std::mem::replace(&mut self.redraw, RedrawState::Idle) {
-            RedrawState::WaitingForVblank { watchdog: token }
-            | RedrawState::WaitingForTimer { token } => handle.remove(token),
-            RedrawState::Idle | RedrawState::Scheduled => {}
-        }
     }
 }
 
@@ -535,7 +573,7 @@ pub fn init_udev(
                         // in flight may never arrive.
                         for head in device.heads.values_mut() {
                             if let Some(surface) = head.surface.as_mut() {
-                                surface.park_redraw(&handle);
+                                surface.redraw.park(&handle);
                             }
                         }
                     }
@@ -1072,6 +1110,7 @@ fn init_surface(
         border_buffers: BorderBuffers::default(),
         dirty: true,
         redraw: RedrawState::Idle,
+        retry: RenderRetry::default(),
         flip_generation: 0,
     });
     entry.gamma_reapply = true;
@@ -1137,7 +1176,7 @@ pub(crate) fn disable_head(state: &mut MindeState, node: DrmNode, crtc: crtc::Ha
     // Cancel any pending watchdog/rate-limit timer for this surface so a
     // stale token cannot fire into a disabled head.
     if let Some(surface) = surface.as_mut() {
-        surface.park_redraw(&handle);
+        surface.redraw.park(&handle);
     }
     entry.power = PowerState::On;
 
@@ -1369,9 +1408,7 @@ impl MindeState {
         let Some(surface) = self.output_surface_mut(node, crtc) else {
             return;
         };
-        if let RedrawState::WaitingForVblank { watchdog } =
-            std::mem::replace(&mut surface.redraw, RedrawState::Idle)
-        {
+        if let Some(watchdog) = surface.redraw.finish_vblank() {
             handle.remove(watchdog);
         } else {
             // A vblank for a frame we did not account for (forced repaint
@@ -1573,7 +1610,7 @@ impl MindeState {
             // the CRTC (Drop for DrmOutput); with no surface the damage
             // loop simply stays idle for this head.
             if let Some(mut surface) = entry.surface.take() {
-                surface.park_redraw(&handle);
+                surface.redraw.park(&handle);
                 drop(surface);
             }
             return Ok(());
@@ -1912,53 +1949,58 @@ impl MindeState {
 
     /// Renders one output now and arms the follow-up: the vblank (plus a
     /// watchdog) when a frame was queued, a refresh-interval timer when
-    /// nothing was (no damage, or an error -- the error case keeps `dirty`
-    /// so the timer retries, matching the old fixed-interval behaviour).
+    /// nothing changed, or a bounded retry timer after a render failure.
+    /// Paused sessions keep their damage until resume forces a new render.
     fn render_now(&mut self, node: DrmNode, crtc: crtc::Handle) {
         let handle = self.handle.clone();
         // A disabled or vanished head has no surface to render to; the
         // damage loop simply ends here.
-        let Some(output) = self
-            .udev_data
-            .as_ref()
-            .and_then(|u| u.devices.get(&node))
-            .and_then(|d| d.heads.get(&crtc))
-            .filter(|entry| entry.enabled())
-            .map(|entry| entry.output.clone())
-        else {
+        let Some((output, paused)) = self.udev_data.as_ref().and_then(|udev| {
+            let entry = udev.devices.get(&node)?.heads.get(&crtc)?;
+            entry.enabled().then(|| (entry.output.clone(), udev.paused))
+        }) else {
             return;
         };
         let Some(surface) = self.output_surface_mut(node, crtc) else {
             return;
         };
-        surface.park_redraw(&handle);
+        surface.redraw.park(&handle);
+        if paused {
+            surface.dirty = true;
+            return;
+        }
         surface.dirty = false;
         let interval = refresh_interval(&output);
 
         let started = std::time::Instant::now();
         let rendered = self.render_surface(node, crtc);
         crate::timing::record(crate::timing::Probe::Render, started);
-        let queued = match rendered {
-            Ok(queued) => queued,
-            Err(err) => {
-                match err {
-                    // Expected while the session is paused or the device is
-                    // mid-hotplug; the resume path repaints.
-                    SwapBuffersError::TemporaryFailure(_) => {
-                        debug!(%err, "temporary failure rendering udev output")
-                    }
-                    _ => warn!(%err, "error rendering udev output"),
-                }
-                if let Some(surface) = self.output_surface_mut(node, crtc) {
-                    surface.dirty = true;
-                }
-                false
-            }
-        };
-
+        let now = self.start_time.elapsed();
         let Some(surface) = self.output_surface_mut(node, crtc) else {
             return;
         };
+        let (queued, delay) = match rendered {
+            Ok(queued) => {
+                surface.retry.succeeded();
+                (queued, interval)
+            }
+            Err(err) => {
+                surface.dirty = true;
+                let (delay, log) = surface.retry.failed(interval, now);
+                if log {
+                    match err {
+                        SwapBuffersError::TemporaryFailure(_) => {
+                            debug!(%err, ?node, ?crtc, retry_after = ?delay,
+                                "temporary failure rendering udev output")
+                        }
+                        _ => warn!(%err, ?node, ?crtc, retry_after = ?delay,
+                            "error rendering udev output"),
+                    }
+                }
+                (false, delay)
+            }
+        };
+
         let redraw = if queued {
             // Vblanks normally arrive within one interval; give the driver
             // generous slack before assuming the flip was lost.
@@ -1972,7 +2014,7 @@ impl MindeState {
                 .map(|watchdog| RedrawState::WaitingForVblank { watchdog })
         } else {
             handle
-                .insert_source(Timer::from_duration(interval), move |_, _, state| {
+                .insert_source(Timer::from_duration(delay), move |_, _, state| {
                     state.redraw_timer_fired(node, crtc);
                     TimeoutAction::Drop
                 })
@@ -2288,6 +2330,158 @@ impl MindeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_renders_keep_retrying_without_refresh_rate_spinning() {
+        for interval in [
+            Duration::from_millis(3),
+            Duration::from_millis(16),
+            Duration::from_secs(2),
+        ] {
+            let mut retry = RenderRetry::default();
+            let mut now = Duration::ZERO;
+            let mut attempts = 0;
+            let mut diagnostics = Vec::new();
+            // Simulate a minute of persistent device failure without any
+            // new client commits, at fast and slow monitor refresh rates.
+            while now < Duration::from_secs(60) {
+                let (delay, log) = retry.failed(interval, now);
+                assert!((Duration::from_millis(100)..=Duration::from_secs(1)).contains(&delay));
+                if log {
+                    diagnostics.push(now);
+                }
+                now += delay;
+                attempts += 1;
+            }
+            assert!(
+                (60..=65).contains(&attempts),
+                "{attempts} attempts for {interval:?}"
+            );
+            assert_eq!(diagnostics.first(), Some(&Duration::ZERO));
+            assert!(diagnostics.len() <= 6);
+            assert!(
+                diagnostics
+                    .windows(2)
+                    .all(|pair| pair[1] - pair[0] >= Duration::from_secs(10))
+            );
+        }
+    }
+
+    #[test]
+    fn successful_render_resets_retry_delay_but_not_diagnostic_throttle() {
+        let interval = Duration::from_millis(16);
+        let mut retry = RenderRetry::default();
+        let (first_delay, log) = retry.failed(interval, Duration::ZERO);
+        assert!(log);
+        let mut now = first_delay;
+        let mut previous = first_delay;
+        for _ in 0..8 {
+            let (delay, _) = retry.failed(interval, now);
+            assert!(delay >= previous);
+            now += delay;
+            previous = delay;
+        }
+        assert_eq!(previous, Duration::from_secs(1));
+        // Another output starts with its own retry and diagnostic budget.
+        assert_eq!(
+            RenderRetry::default().failed(interval, now),
+            (first_delay, true)
+        );
+        retry.succeeded();
+        assert_eq!(retry.failed(interval, now), (first_delay, false));
+        // Rapid alternating successes and failures must not flood the log.
+        for _ in 0..100 {
+            retry.succeeded();
+            assert_eq!(retry.failed(interval, now), (first_delay, false));
+        }
+        assert!(retry.failed(interval, Duration::from_secs(10)).1);
+    }
+
+    #[test]
+    fn parking_cancels_repaint_and_watchdog_timers() {
+        for waiting_for_vblank in [false, true] {
+            let mut event_loop = EventLoop::<usize>::try_new().unwrap();
+            let handle = event_loop.handle();
+            let token = handle
+                .insert_source(Timer::from_duration(Duration::ZERO), |_, _, calls| {
+                    *calls += 1;
+                    TimeoutAction::Drop
+                })
+                .unwrap();
+            let mut state = if waiting_for_vblank {
+                RedrawState::WaitingForVblank { watchdog: token }
+            } else {
+                RedrawState::WaitingForTimer { token }
+            };
+            state.park(&handle);
+            assert!(matches!(state, RedrawState::Idle));
+            state.park(&handle);
+            let mut calls = 0;
+            event_loop.dispatch(Duration::ZERO, &mut calls).unwrap();
+            assert_eq!(
+                calls, 0,
+                "parked work must not fire into a paused or removed output"
+            );
+        }
+    }
+
+    #[test]
+    fn unexpected_vblank_preserves_scheduled_repaint() {
+        let mut event_loop = EventLoop::<(RedrawState, usize)>::try_new().unwrap();
+        let handle = event_loop.handle();
+        handle.insert_idle(|(state, repaints)| {
+            if matches!(state, RedrawState::Scheduled) {
+                *state = RedrawState::Idle;
+                *repaints += 1;
+            }
+        });
+        let mut data = (RedrawState::Scheduled, 0);
+        assert!(data.0.finish_vblank().is_none());
+        event_loop.dispatch(Duration::ZERO, &mut data).unwrap();
+        assert_eq!(data.1, 1, "the dirty output must still repaint");
+    }
+
+    #[test]
+    fn unexpected_vblank_preserves_repaint_timer() {
+        let mut event_loop = EventLoop::<(RedrawState, usize)>::try_new().unwrap();
+        let handle = event_loop.handle();
+        let token = handle
+            .insert_source(
+                Timer::from_duration(Duration::ZERO),
+                |_, _, (state, repaints)| {
+                    if matches!(state, RedrawState::WaitingForTimer { .. }) {
+                        *state = RedrawState::Idle;
+                        *repaints += 1;
+                    }
+                    TimeoutAction::Drop
+                },
+            )
+            .unwrap();
+        let mut data = (RedrawState::WaitingForTimer { token }, 0);
+        assert!(data.0.finish_vblank().is_none());
+        assert!(matches!(data.0, RedrawState::WaitingForTimer { token: saved } if saved == token));
+        event_loop.dispatch(Duration::ZERO, &mut data).unwrap();
+        assert_eq!(data.1, 1, "the dirty output must still repaint");
+    }
+
+    #[test]
+    fn expected_vblank_retires_its_watchdog_once() {
+        let mut event_loop = EventLoop::<usize>::try_new().unwrap();
+        let handle = event_loop.handle();
+        let watchdog = handle
+            .insert_source(Timer::from_duration(Duration::ZERO), |_, _, calls| {
+                *calls += 1;
+                TimeoutAction::Drop
+            })
+            .unwrap();
+        let mut state = RedrawState::WaitingForVblank { watchdog };
+        handle.remove(state.finish_vblank().unwrap());
+        assert!(matches!(state, RedrawState::Idle));
+        assert!(state.finish_vblank().is_none());
+        let mut calls = 0;
+        event_loop.dispatch(Duration::ZERO, &mut calls).unwrap();
+        assert_eq!(calls, 0, "a completed flip must cancel its watchdog");
+    }
 
     fn wl(w: i32, h: i32, refresh: i32) -> WlMode {
         WlMode {

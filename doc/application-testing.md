@@ -139,6 +139,16 @@ the desktop, lock surfaces, lock confirmation, output disable and DPMS off,
 and verifies clean shutdown after context loss during rendering or swapping.
 It runs in `make check-e2e`; no fault-injection code is built into Minde.
 
+## DRM repaint scheduling
+
+The Rust unit gate checks unexpected display completions against real calloop
+idle callbacks and timers: pending repaint work must survive, while an expected
+completion cancels only its own watchdog. It also checks bounded render-failure
+retries, recovery, diagnostic throttling and timer cancellation. These checks
+exercise scheduling without a DRM device; they do not emulate KMS or libseat.
+Physical presentation and VT switching still require the
+[hardware validation checklist](hardware-validation.md).
+
 ## Output configuration protocol
 
 `sh tests/output-management-e2e.sh` combines normal `wlr-randr` requests with

@@ -53,6 +53,19 @@ Validate:
 - VT switch away and back;
 - clean exit to the console.
 
+Repaint recovery (udev):
+
+- With an animating client, change mode or adaptive sync while frames are in
+  flight. Animation must continue without requiring pointer motion or another
+  unrelated event to restart repainting.
+- Switch away from Minde's VT and request an output configuration change over
+  IPC. There must be no recurring render attempts during the pause. On return,
+  the desktop must repaint with the latest configuration.
+- If a driver failure can be reproduced, retain the debug log. Persistent
+  render failures must slow to one attempt per second, with at most one render
+  failure diagnostic per output every ten seconds. Once the device recovers,
+  repainting must resume without requiring a new client commit.
+
 Absolute input mapping (udev, requires a touchscreen or tablet and two outputs):
 
 - Connect the external display before starting the compositor. Verify that

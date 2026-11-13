@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- DRM display completions preserve pending repaint timers and idle callbacks.
+  Paused sessions defer forced renders, and failed renders retry with a bounded
+  delay and rate-limited diagnostics instead of running at refresh rate
+  (#72, #73).
 - Decoration objects created after the initial xdg configure receive their
   server-side mode immediately, allowing clients waiting for that reply to
   attach their first buffer and map (#68).
