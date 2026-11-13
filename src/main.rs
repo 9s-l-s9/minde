@@ -2,7 +2,7 @@
 //! spawning, etc.) lives in embedded Guile Scheme, StumpWM-style.
 //!
 //! The compositor core (state.rs, handlers/, grabs/, winit.rs, input.rs) is
-//! adapted from Smithay's `smallvil` example; see README.md for credit and
+//! adapted from Smithay's `smallvil` example; see NOTICE for credit and
 //! the exact upstream revision used.
 
 mod absolute_input;

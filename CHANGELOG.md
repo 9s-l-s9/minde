@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Documentation links to the current session-locking commands, personal
+  configuration load order and upstream provenance. The README and testing
+  guide distinguish Wayland sessions, Xwayland compatibility and Xvfb test
+  hosting (#151).
 - IPC helpers, `mindectl` and status publication agree on the private
   `${TMPDIR:-/tmp}/minde-UID` fallback, treating empty runtime and temporary
   directory values as unset. Fallback compatibility status also stays in

@@ -59,8 +59,8 @@ inspection remains mandatory before sharing diagnostic material.
 ## Session locking
 
 `ext-session-lock-v1` backs `(minde session)`'s `lock-screen!`
-(`Print s l`), which spawns a configurable external locker (default
-`swaylock -f`, `%lock-command`). `suspend!` (`Print s z`) does not suspend
+(`C-t s l` with the portable prefix), which spawns a configurable external locker
+(default `swaylock -f`, `%lock-command`). `suspend!` (`C-t s z`) does not suspend
 until the compositor confirms that locked content has replaced the desktop
 (`wm-on-session-lock` / `wm-session-lock-confirmed?`), and refuses to suspend at all if that confirmation
 times out (`%lock-timeout-ms`), so a suspend cannot silently wake the machine

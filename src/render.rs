@@ -3,7 +3,7 @@
 //! Shared render-element plumbing used by both the winit (nested) and udev
 //! (DRM/TTY) backends: the `MindeRenderElements` enum, the
 //! focused-window border builder, and a small cursor element helper
-//! (adapted from Smithay's `anvil` example; see README for the exact
+//! (adapted from Smithay's `anvil` example; see NOTICE for the exact
 //! upstream revision).
 
 use smithay::{

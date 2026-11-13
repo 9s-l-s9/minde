@@ -188,7 +188,7 @@ fn screenshot_output_index(
 }
 
 /// Compositor state. Adapted from Smithay's `smallvil` example
-/// (https://github.com/Smithay/Smithay, MIT licensed); see README for details.
+/// (https://github.com/Smithay/Smithay, MIT licensed); see NOTICE for details.
 pub struct MindeState {
     pub(crate) transfers: crate::transfer::Transfers,
     owned_selections: [Option<crate::transfer::Payload>; 2],

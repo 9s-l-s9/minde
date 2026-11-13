@@ -3,7 +3,7 @@
 //! Standalone DRM/udev/libinput backend: owns a VT via libseat, scans the
 //! primary GPU for the first usable connector, and renders via GBM/EGL.
 //! Adapted from Smithay's `anvil` example (`anvil/src/udev.rs`); see
-//! README for the exact upstream revision this mirrors.
+//! NOTICE for the exact upstream revision this mirrors.
 //!
 //! Trimmed vs. anvil, per this compositor's needs:
 //! - multi-output: every connected connector becomes a head

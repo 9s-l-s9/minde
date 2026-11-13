@@ -4,6 +4,14 @@ The test layout separates the small always-run compatibility gate from heavyweig
 toolkit/browser checks. Tests never require every application in one Guix
 environment.
 
+Minde is a Wayland compositor. These tests host its nested backend under
+Xvfb, a virtual X server, so they can run without using the live desktop.
+Native Wayland clients connect to the nested compositor's Wayland socket;
+X11 clients connect to its separate Xwayland server. `MINDE_NO_XWAYLAND=1`
+disables that compatibility server for native-only scenarios, but Xvfb is
+still required by the harness. Suites that explicitly test Xwayland need it
+enabled.
+
 Raw Wayland protocol regressions share the Rust client in
 `tests/clients/protocol/`, built with `cargo build --example protocol-client`.
 The nested test scripts build it automatically and select the required

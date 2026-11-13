@@ -19,8 +19,9 @@ swaybg and fuzzel have automated layer-shell scenarios. `ext-session-lock-v1`
 is implemented and drives `(minde session)`'s `lock-screen!`/`suspend!`,
 so modern lockers such as swaylock are supported as the external
 `%lock-command`; see [`capability-matrix.md`](capability-matrix.md) for the
-current experimental/verified status and README's "Session management"
-section for the interactive commands.
+current experimental/verified status, [session locking](security.md#session-locking)
+for the interactive commands, and [keybindings](generated/keybindings.md)
+for the portable defaults.
 
 ## Before reporting
 

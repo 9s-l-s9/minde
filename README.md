@@ -48,6 +48,11 @@ before 1.0.
 The [capability matrix](doc/capability-matrix.md) distinguishes supported features
 from experimental protocols and hardware paths.
 
+Minde's standalone session uses Wayland. Experimental Xwayland support lets
+X11 applications run inside that session; set `MINDE_NO_XWAYLAND=1` before
+starting Minde to disable it. The nested backend can run in either a Wayland
+or X11 host session.
+
 ## Trying it
 
 The nested backend runs in a window and does not touch DRM or the
@@ -62,9 +67,11 @@ doc/generated/keybindings.md for the complete key map.
 
 ## Configuration
 
-The entry point is scheme/init.scm; scheme/default-config.scm is a
-versioned data expression.  Configuration is validated and reloaded
-atomically:
+The bundled entry point is `scheme/init.scm`; `scheme/default-config.scm` is a
+versioned data expression. Keep personal code in `~/.config/minde/init.scm`
+(or select it with `MINDE_INIT`) and select personal configuration data with
+`MINDE_CONFIG`; see [configuration load order](doc/configuration.md#load-order).
+Configuration is validated and reloaded atomically:
 
     scripts/mindectl check-config scheme/default-config.scm
     scripts/mindectl eval '(reload-configuration!)'
@@ -94,6 +101,10 @@ before committing.  It runs Rust builds, unit tests and Clippy, plus Scheme,
 API, configuration, keymap, and documentation gates; `./check --help` lists the optional
 deeper suites.  Anything touching DRM, libinput, or VT switching needs
 real hardware; see doc/hardware-validation.md.
+
+Graphical tests use Xvfb, a virtual X server, to host an isolated nested
+compositor, including for native Wayland tests. Separate X11 client scenarios
+exercise Xwayland compatibility. See [application testing](doc/application-testing.md).
 
 Two Scheme libraries are usable outside the compositor:
 guile-minde-foundation (geometry, trees, hooks, key notation) and

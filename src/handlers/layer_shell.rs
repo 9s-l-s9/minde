@@ -4,7 +4,7 @@
 //! lockers (swaylock). Layer surfaces live in each output's `LayerMap`,
 //! not in the window `Space`; exclusive zones shrink the usable area the
 //! Scheme frame tree tiles into (see `MindeState::update_usable_area`).
-//! Adapted from Smithay's `anvil` example (see README for the revision).
+//! Adapted from Smithay's `anvil` example (see NOTICE for the revision).
 
 use smithay::{
     backend::renderer::utils::with_renderer_surface_state,
