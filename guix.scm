@@ -5,7 +5,7 @@
 ;;; rather than imported crate-by-crate. One-time step after dependency
 ;;; changes, from the repo root:
 ;;;
-;;;     guix shell -m manifest.scm -- cargo vendor vendor
+;;;     guix shell -m manifest.scm -- cargo vendor --locked vendor
 ;;;
 ;;; then:
 ;;;
@@ -116,7 +116,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
         (add-after 'unpack 'check-vendor
           (lambda _
             (unless (file-exists? "vendor")
-              (error "vendor/ missing -- run: guix shell -m manifest.scm -- cargo vendor vendor"))))
+              (error "vendor/ missing -- run: guix shell -m manifest.scm -- cargo vendor --locked vendor"))))
         (replace 'build
           (lambda _
             (setenv "HOME" (getcwd)) ; cargo wants a writable home

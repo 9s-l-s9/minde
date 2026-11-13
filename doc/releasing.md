@@ -121,12 +121,16 @@ make release-archives VERSION=1.0.0-rc1
 Archive order, owner/group, timestamps, tar format, and gzip metadata are
 normalized. The check creates each archive twice, compares the bytes, rejects
 workspace-only paths, and resolves the complete locked Cargo graph offline.
+Resolution uses the extracted vendor tree and an empty Cargo home, so a host
+cache cannot hide missing or incompatible crates. A regression test in
+`cargo test` exercises complete, incomplete, version-mismatched and unlocked
+fixture archives without network access.
 Either archive build failing, either byte comparison differing, or the final
 verification failing stops `make check-release-archives` with an error.
 Changing dependencies requires refreshing the ignored mirror first:
 
 ```sh
-guix shell -m manifest.scm -- cargo vendor vendor
+guix shell -m manifest.scm -- cargo vendor --locked vendor
 ```
 
 Do not commit `vendor/`.
@@ -185,7 +189,7 @@ Then disconnect networking, extract the vendored archive, and run:
 ```sh
 mkdir -p .cargo
 cp guix/cargo-config.toml .cargo/config.toml
-cargo metadata --locked --offline --no-deps --format-version 1
+cargo metadata --locked --offline --format-version 1
 ```
 
 Inspect the Guix store path printed during the release. Confirm that

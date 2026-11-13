@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Vendored release archives must resolve the complete locked Cargo graph
+  offline using their extracted sources and an empty cache. Missing or
+  incompatible crates and outdated lockfiles fail validation; CI vendoring
+  also uses `--locked` (#93).
 - Generated-document checks compare the testing reference in a temporary
   directory instead of overwriting `doc/testing.md` before comparison.
   Stale text and changed command inventories now fail validation while

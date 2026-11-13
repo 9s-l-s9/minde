@@ -22,6 +22,9 @@
    "guile-json"
    "curl"
    "coreutils"
+   ;; Release-archive regression tests use real tar/gzip and offline Cargo.
+   "tar"
+   "gzip"
    ;; Smithay native deps -- required by the compositor and unit-test binaries.
    "wayland"
    "wayland-protocols"

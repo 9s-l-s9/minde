@@ -26,6 +26,8 @@ Entered with `guix shell -m manifest.scm`:
 - `guile-json`
 - `curl`
 - `coreutils`
+- `tar`
+- `gzip`
 - `guile-readline`
 - `wayland`
 - `wayland-protocols`

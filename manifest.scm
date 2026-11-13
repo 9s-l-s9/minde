@@ -13,6 +13,9 @@
    "guile-json"
    "curl"
    "coreutils"
+   ;; Release archives and their offline-resolution regression tests.
+   "tar"
+   "gzip"
    ;; mindectl repl's history and completion.
    "guile-readline"
    ;; Smithay native deps

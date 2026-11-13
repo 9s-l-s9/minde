@@ -70,7 +70,11 @@ It composes the development gate (`./check`, which includes documentation and
 static analysis) and the release-metadata check. On version tags the
 hosted workflow additionally runs `scripts/ci --release-artifacts`, which builds
 the deterministic source and vendored archives, verifies they are
-byte-reproducible, and writes them with `SHA256SUMS` to `build/ci/artifacts`.
+byte-reproducible and satisfy the complete locked dependency graph offline,
+and writes them with `SHA256SUMS` to `build/ci/artifacts`.
+Vendoring uses `--locked`; archive validation resolves dependencies from the
+extracted mirror with an empty Cargo home. Rust integration tests reject
+incomplete mirrors, wrong crate versions and outdated lockfiles.
 No gate logic lives in `.github/workflows/ci.yml`; if a hosted run disagrees
 with a local one, the bug is in `scripts/ci`. Nested/e2e, application, demo, and
 soak gates stay out of CI because headless runners cannot support them; run them

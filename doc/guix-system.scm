@@ -9,7 +9,7 @@
 
 ;; (define minde
 ;;   ;; Load the package definition straight from the checkout. Remember the
-;;   ;; one-time `guix shell -m manifest.scm -- cargo vendor vendor` step in
+;;   ;; one-time `guix shell -m manifest.scm -- cargo vendor --locked vendor` step in
 ;;   ;; the repo before reconfiguring (see guix.scm header).
 ;;   (load "/path/to/minde/guix.scm"))
 

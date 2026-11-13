@@ -43,8 +43,10 @@ mkdir -p "$tmp/$prefix/.cargo"
 cp "$tmp/$prefix/guix/cargo-config.toml" "$tmp/$prefix/.cargo/config.toml"
 (
     cd "$tmp/$prefix"
-    CARGO_HOME="$tmp/cargo-home" cargo metadata --locked --offline --no-deps \
+    # Resolve every dependency from the extracted archive with an empty cache.
+    # --no-deps would inspect only the workspace, accepting partial vendor trees.
+    CARGO_HOME="$tmp/cargo-home" cargo metadata --locked --offline \
         --format-version 1 >/dev/null
 )
 
-echo "release archives: structure and offline Cargo metadata passed"
+echo "release archives: structure and complete locked offline Cargo graph passed"
