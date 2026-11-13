@@ -237,15 +237,17 @@ When REDACT? is true, window titles and application identifiers are omitted."
     (let ((state (state-with-header %pending-body %sequence
                                     (current-time-milliseconds)
                                     %pending-runtime)))
-      (set! %pending-body #f)
-      (set! %pending-runtime #f)
       (catch #t
         (lambda ()
           (atomic-write-file (status-file-path)
                              (lambda (port) (write-json state port)))
           (atomic-write-file (legacy-status-file-path)
                              (lambda (port)
-                               (display (current-status-text) port))))
+                               (display (current-status-text) port)))
+          ;; A failure in either file keeps this sequence pending for the
+          ;; next publication, without scheduling a retry loop.
+          (set! %pending-body #f)
+          (set! %pending-runtime #f))
         (lambda (key . arguments)
           (rust-call-if-bound
            'wm-log
@@ -261,8 +263,10 @@ When REDACT? is true, window titles and application identifiers are omitted."
 
 (define (publish-status!)
   "Atomically publishes status.json and the compatibility text status file.
-Unchanged compositor state is not rewritten; the sequence number advances
-per change even when several changes coalesce into one write. Errors are
+Unchanged compositor state is not rewritten after a successful publication;
+the sequence advances per change even when several changes coalesce into one
+write. Failed writes remain pending for the next publication, which retries
+without advancing the sequence unless the state changed. Errors are
 logged and swallowed so a missing runtime directory cannot interrupt window
 management. Before any output is configured there is nothing meaningful to
 report (and no head geometry to describe), so the call returns immediately
@@ -281,6 +285,6 @@ hook's own state build only ever runs after the first output exists."
           (set! %last-fingerprint fingerprint)
           (set! %sequence (+ %sequence 1))
           (set! %pending-body body)
-          (set! %pending-runtime runtime)
-          (schedule-status-write!)))))
+          (set! %pending-runtime runtime))
+        (when %pending-body (schedule-status-write!)))))
   %sequence)

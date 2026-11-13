@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Failed status-file writes remain pending and retry on the next publication,
+  even without a desktop change. Retries preserve the sequence number, and
+  newer state replaces the pending state before a deferred write (#110).
 - Control snapshots retain fullscreen state for hidden groups. Fullscreen
   setters affect the target's own group, preserve unrelated fullscreen
   owners, and leave focus unchanged when disabling or repeating a satisfied

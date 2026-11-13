@@ -14,7 +14,8 @@
   (set! %output-queries (+ %output-queries 1))
   '((7 0 0 1280 720 "eDP-1")))
 (define (wm-runtime-info) '("winit" "ready" 2 1234))
-(define (wm-log . arguments) #t)
+(define %logs '())
+(define (wm-log message) (set! %logs (cons message %logs)) #t)
 
 (use-modules (minde compositor frames)
              (minde groups)
@@ -90,7 +91,13 @@
 ;; With the compositor's timer wrapper available, a burst of publications
 ;; coalesces into one deferred write carrying the latest sequence.
 (define %deferred '())
-(define (wm-run-after ms thunk) (set! %deferred (cons thunk %deferred)) #t)
+(define %defer? #t)
+(define (wm-run-after ms thunk)
+  (and %defer? (begin (set! %deferred (cons thunk %deferred)) #t)))
+(define (run-deferred!)
+  (let ((callbacks %deferred))
+    (set! %deferred '())
+    (for-each (lambda (callback) (callback)) callbacks)))
 (define (published-sequence)
   (call-with-input-file test-path
     (lambda (port)
@@ -104,11 +111,71 @@
 (check "second change in the burst advances again" (= (publish-status!) 5))
 (check "one timer is armed for the burst" (= (length %deferred) 1))
 (check "files are untouched until the timer fires" (= (published-sequence) 3))
-((car %deferred))
+(run-deferred!)
 (check "the deferred write carries the latest sequence" (= (published-sequence) 5))
 (check "the deferred write carries the latest state"
        (call-with-input-file test-path
          (lambda (port) (string-contains (read-string port) "44"))))
+
+;; An existing directory at a file destination makes rename fail even when
+;; the test runs with elevated permissions. Repair that same destination and
+;; retry without a desktop change, in both immediate and deferred modes.
+(define (contents path) (call-with-input-file path read-string))
+(for-each
+ (lambda (spec)
+   (let* ((defer? (car spec)) (blocked-name (cadr spec)) (newer? (caddr spec))
+          (label (format #f "retry-~a-~a-~a" defer? blocked-name newer?))
+          (directory (string-append test-directory "/" label))
+          (json-path (string-append directory "/status.json"))
+          (legacy-path (string-append directory "/minde-status"))
+          (blocked (string-append directory "/" blocked-name))
+          (logged (length %logs)))
+     (mkdir directory #o700)
+     (mkdir blocked #o700)
+     (setenv "XDG_RUNTIME_DIR" directory)
+     (setenv "MINDE_STATUS_PATH" json-path)
+     (set! %defer? defer?)
+     (update-window-title! 42 label "secret.app")
+     (let ((sequence (publish-status!)))
+       (run-deferred!)
+       (check "write failure is logged and swallowed" (= (length %logs) (+ logged 1)))
+       (check "failed write does not arm a retry loop" (null? %deferred))
+       (check "retry while still blocked retains the sequence" (= (publish-status!) sequence))
+       (run-deferred!)
+       (check "a persistent failure is retried on publication" (= (length %logs) (+ logged 2)))
+       (rmdir blocked)
+       (check "unchanged retry retains the failed sequence" (= (publish-status!) sequence))
+       (when newer?
+         (set! label (string-append label "-newer"))
+         (update-window-title! 42 label "secret.app")
+         (check "newer pending state advances once" (= (publish-status!) (+ sequence 1)))
+         (set! sequence (+ sequence 1)))
+       (check "repeated pending publication keeps its sequence" (= (publish-status!) sequence))
+       (when defer? (check "retry burst uses one timer" (= (length %deferred) 1)))
+       (run-deferred!)
+       (check "structured status recovers at the repaired path" (file-exists? json-path))
+       (check "legacy status recovers at the repaired path" (file-exists? legacy-path))
+       (when (file-exists? json-path)
+         (check "recovery writes the latest state" (string-contains (contents json-path) label))
+         (check "recovery writes the correct sequence"
+                (string-contains (contents json-path) (format #f "\"sequence\":~a," sequence))))
+       (when (file-exists? legacy-path)
+         (check "legacy recovery writes the latest state" (string-contains (contents legacy-path) label)))
+       (when (and (file-exists? json-path) (file-exists? legacy-path))
+         (let ((inodes (map (lambda (path) (stat:ino (stat path))) (list json-path legacy-path))))
+           (check "successful retry restores unchanged-state suppression" (= (publish-status!) sequence))
+           (check "successful retry leaves no timer armed" (null? %deferred))
+           (check "unchanged success does not replace either file"
+                  (equal? inodes (map (lambda (path) (stat:ino (stat path))) (list json-path legacy-path)))))))
+     (for-each
+      (lambda (path)
+        (when (file-exists? path) (delete-file path))
+        (let ((temporary (string-append path ".tmp." (number->string (getpid)))))
+          (when (file-exists? temporary) (delete-file temporary))))
+      (list json-path legacy-path))
+     (rmdir directory)))
+ '((#f "status.json" #f) (#f "minde-status" #f)
+   (#t "status.json" #f) (#t "minde-status" #f) (#t "minde-status" #t)))
 
 (when (file-exists? test-path) (delete-file test-path))
 (let ((legacy-path (string-append test-directory "/minde-status")))

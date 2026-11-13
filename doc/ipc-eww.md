@@ -172,8 +172,14 @@ directory owned by another user or accessible to group/other users, and never
 unlinks a non-socket entry or an active compositor's socket found at a socket
 path.
 
-Unchanged state is not rewritten. New consumers should use the JSON query or
-subscription interfaces. Schema details and redaction guarantees are in
+After a successful publication, unchanged state is not rewritten. If either
+status-file write fails, the next publication retries both files even when
+the desktop state is unchanged, retaining the same sequence number. Newer
+state replaces the pending state and advances the sequence as usual. Failures
+are logged without interrupting window management or starting a retry loop.
+
+New consumers should use the JSON query or subscription interfaces.
+Schema details and redaction guarantees are in
 [`diagnostics.md`](diagnostics.md).
 
 ## Eww example
