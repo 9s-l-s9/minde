@@ -25,6 +25,22 @@ actual=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
 revision=$(git rev-parse --verify HEAD)
 output=build/release/$version
 
+# Validate before entering Guix, running gates, or replacing earlier output.
+# Preserve this exact text for the notes produced after the build succeeds.
+changes=$(awk '
+    /^## Unreleased[[:space:]]*$/ { sections++; copy=1; next }
+    /^##[[:space:]]/ { copy=0 }
+    copy {
+        print
+        if ($0 !~ /^[[:space:]]*$/ && $0 !~ /^[[:space:]]*#+([[:space:]]|$)/ &&
+            $0 !~ /^Target version:/) content=1
+    }
+    END { if (sections != 1 || !content) exit 1 }
+' CHANGELOG.md) || {
+    echo 'release: CHANGELOG.md must contain exactly one nonempty ## Unreleased section' >&2
+    exit 1
+}
+
 if [ "${MINDE_RELEASE_ENV:-0}" != 1 ]; then
     exec guix shell -m manifest.scm xorg-server xdotool imagemagick jq \
         util-linux foot xterm wl-clipboard ffmpeg shellcheck -- \
@@ -59,7 +75,7 @@ MINDE_BUILD_REVISION=$revision \
     # shellcheck disable=SC2016
     printf 'Revision: `%s`\n\n' "$revision"
     printf '## Changes\n\n'
-    awk '/^## Unreleased/{copy=1; next} copy && /^## /{exit} copy{print}' CHANGELOG.md
+    printf '%s\n' "$changes"
     printf '\n## Artifacts\n\n'
     # shellcheck disable=SC2016
     printf -- '- `minde-%s.tar.gz`: source without vendored dependencies\n' "$version"

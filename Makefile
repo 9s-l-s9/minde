@@ -74,6 +74,7 @@ check-control-e2e:
 
 check-static:
 	sh tests/ci-release-test.sh
+	sh tests/release-notes-test.sh
 	sh tests/lint-borrows.sh
 	sh tests/lint-hook-borrows.sh
 	sh tests/nested-harness-test.sh

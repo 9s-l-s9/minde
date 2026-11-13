@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Local releases reject missing, empty, or duplicate Unreleased changelog
+  sections before builds or output cleanup. Release notes retain the
+  validated changes and previous artifacts survive validation failures (#122).
 - Pages CI pins actions and Guix inputs, uses the verified bootstrap and
   filtered TLS roots, and grants Pages/OIDC write permissions only to the
   deployment job. Checkout credentials are not retained (#121).

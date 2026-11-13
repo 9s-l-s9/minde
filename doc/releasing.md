@@ -147,6 +147,12 @@ clean worktree:
 make release VERSION=1.0.0-rc1
 ```
 
+Keep exactly one `## Unreleased` section in `CHANGELOG.md`, with actual change
+text. Blank sections, subsection headings, and the target-version line alone
+do not count as changes. The runner validates and captures this section before
+entering its environment or replacing previous output; missing or ambiguous
+sections stop the release before any build gates run.
+
 The release runner executes gates sequentially to bound memory use. Its normal
 gate set is `check`, nested E2E, the bounded core application matrix,
 documentation, scripted video generation and validation, and the local Guix
