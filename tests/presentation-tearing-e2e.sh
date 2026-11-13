@@ -5,7 +5,7 @@
 #
 # Backend coverage (see doc/capability-matrix.md):
 #   - wp_tearing_control_manager_v1 : both backends (advisory only). Asserted
-#     here via wayland-info against the nested winit compositor.
+#     here via wayland-info and raw ownership/error requests against winit.
 #   - wp_presentation               : udev-only (needs real vblank clocks).
 #     The nested winit backend deliberately does NOT advertise it, so we assert
 #     its ABSENCE to lock in the honest udev-only split.
@@ -17,6 +17,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_PRESENTATION_E2E_OUT:-/tmp/swm14h}
 nested_install_cleanup nested_stop
@@ -44,6 +45,12 @@ printf '%s' "$info" | grep -q "wp_tearing_control_manager_v1" || {
     exit 1
 }
 echo "ok - wp_tearing_control_manager_v1 advertised (both backends, advisory)"
+
+timeout 30 "$NESTED_PROTOCOL_CLIENT" tearing-control >"$OUT/tearing.log" 2>&1 || {
+    cat "$OUT/tearing.log" >&2
+    exit 1
+}
+cat "$OUT/tearing.log"
 
 # wp_presentation is udev-only; assert it is NOT served on the winit backend so
 # the documented split stays honest.

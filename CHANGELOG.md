@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Tearing control rejects duplicate objects on a surface with the required
+  manager error, including requests through another manager binding.
+  Destroying a control permits replacement; destroying its surface leaves
+  the control inert. Nested protocol tests cover these lifetimes (#90).
 - Placement rules separate exact app IDs from title substrings and combine
   explicit predicates with AND. Remember refuses windows without an app ID;
   forget no longer removes app rules because an unrelated title contains

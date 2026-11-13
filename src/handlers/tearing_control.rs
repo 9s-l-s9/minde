@@ -32,9 +32,11 @@ use smithay::reexports::{
         wp_tearing_control_v1::{self, WpTearingControlV1},
     },
     wayland_server::{
-        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, WEnum, backend::GlobalId,
+        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum, Weak,
+        backend::GlobalId, protocol::wl_surface::WlSurface,
     },
 };
+use smithay::wayland::compositor::with_states;
 
 use crate::state::MindeState;
 
@@ -48,10 +50,16 @@ pub fn init_tearing_control_manager(display: &DisplayHandle) -> GlobalId {
 /// Userdata for a `wp_tearing_control_v1` object: the last presentation hint
 /// the client requested. Kept purely for inspection/logging (see module docs);
 /// nothing consumes it, because the DRM backend cannot honour it.
-#[derive(Default)]
 pub struct TearingControlData {
+    surface: Weak<WlSurface>,
     async_requested: Mutex<bool>,
 }
+
+/// The association belongs to the surface, independent of manager bindings.
+/// A weak resource stops being live at protocol destruction, so a new control
+/// can immediately replace it without retaining old objects or their userdata.
+#[derive(Default)]
+struct SurfaceTearingControl(Mutex<Option<Weak<WpTearingControlV1>>>);
 
 impl GlobalDispatch<WpTearingControlManagerV1, ()> for MindeState {
     fn bind(
@@ -70,19 +78,48 @@ impl Dispatch<WpTearingControlManagerV1, ()> for MindeState {
     fn request(
         _state: &mut Self,
         _client: &Client,
-        _manager: &WpTearingControlManagerV1,
+        manager: &WpTearingControlManagerV1,
         request: wp_tearing_control_manager_v1::Request,
         _data: &(),
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wp_tearing_control_manager_v1::Request::GetTearingControl { id, surface: _ } => {
-                // Advisory only: we do not track per-surface controls or raise
-                // the `tearing_control_exists` error, since the hint is never
-                // acted upon. Well-behaved clients create exactly one per
-                // surface.
-                data_init.init(id, TearingControlData::default());
+            wp_tearing_control_manager_v1::Request::GetTearingControl { id, surface } => {
+                let exists = with_states(&surface, |states| {
+                    states
+                        .data_map
+                        .get::<SurfaceTearingControl>()
+                        .is_some_and(|slot| {
+                            slot.0.lock().unwrap().as_ref().is_some_and(Weak::is_alive)
+                        })
+                });
+                if exists {
+                    manager.post_error(
+                        wp_tearing_control_manager_v1::Error::TearingControlExists,
+                        "the surface already has a tearing control object",
+                    );
+                    return;
+                }
+                let control = data_init.init(
+                    id,
+                    TearingControlData {
+                        surface: surface.downgrade(),
+                        async_requested: Mutex::new(false),
+                    },
+                );
+                with_states(&surface, |states| {
+                    states
+                        .data_map
+                        .insert_if_missing_threadsafe(SurfaceTearingControl::default);
+                    *states
+                        .data_map
+                        .get::<SurfaceTearingControl>()
+                        .unwrap()
+                        .0
+                        .lock()
+                        .unwrap() = Some(control.downgrade());
+                });
             }
             wp_tearing_control_manager_v1::Request::Destroy => {}
             _ => unreachable!(),
@@ -102,6 +139,9 @@ impl Dispatch<WpTearingControlV1, TearingControlData> for MindeState {
     ) {
         match request {
             wp_tearing_control_v1::Request::SetPresentationHint { hint } => {
+                if !data.surface.is_alive() {
+                    return;
+                }
                 let wants_async = matches!(
                     hint,
                     WEnum::Value(wp_tearing_control_v1::PresentationHint::Async)

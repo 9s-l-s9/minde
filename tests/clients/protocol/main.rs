@@ -16,6 +16,7 @@ mod popup;
 mod render;
 mod scene;
 mod selection;
+mod tearing;
 mod virtual_pointer;
 mod window;
 mod wire;
@@ -57,6 +58,7 @@ fn main() {
         Some("x11-metadata") => xwayland::metadata(),
         Some("x11-fullscreen") => xwayland::fullscreen_requests(),
         Some("selection-transfer") => selection::run(),
+        Some("tearing-control") => tearing::run(),
         _ => panic!("select a protocol test scenario"),
     }
 }
