@@ -150,6 +150,17 @@ Requests made while a pointer grab or button press is active report
 `cancelled` before moving the pointer or injecting input. Existing clicks,
 client drags and compositor move/resize grabs continue normally.
 
+`(wm-screenshot path [window-id])` creates a new PNG below the directory
+returned by `(wm-screenshot-directory)`. Set `MINDE_SCREENSHOT_DIR` before
+starting Minde to choose another absolute directory; the default is
+`minde/screenshots` inside the private runtime directory. Existing files,
+symlinks and `..` traversal are rejected. The writer publishes a complete
+mode-0600 file atomically and never replaces an existing entry, even if
+another capture creates it after the request was accepted. Subdirectories
+inside the capture directory must already exist. Invalid destinations return
+`#f`; accepted requests return a token whose `(wm-automation-status token)`
+becomes `(screenshot done)` or `(screenshot failed)`.
+
 ## Status
 
 `(minde status)` exports `status-schema-version`, `current-state`,

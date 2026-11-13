@@ -221,7 +221,16 @@ Null denotes unavailable information. Locking forces content redaction."
   (or (window-group id) (fail 'unknown-window `((window . ,id)))))
 
 (define (require-group name)
-  (or (group-by-name name) (fail 'unknown-group `((group . ,name)))))
+  (or (find (lambda (g) (string=? (string-trim-both name)
+                                (string-trim-both (group-name g)))) (groups))
+      (fail 'unknown-group `((group . ,name)))))
+
+(define (screenshot-path-valid? path)
+  (let ((directory (rust-call-if-bound 'wm-screenshot-directory)))
+    (and (string? directory) (string-prefix? "/" directory)
+         (string-prefix? (string-append (string-trim-right directory #\/) "/") path)
+         (not (member ".." (string-split path #\/)))
+         (not (string-index path #\nul)))))
 
 (define (focus-target! id)
   (let ((g (require-window id)))
@@ -242,7 +251,7 @@ Null denotes unavailable information. Locking forces content redaction."
     (sync-frames!)
     (unless (eq? (require-window id) to)
       (fail 'postcondition-failed `((window . ,id))))
-    `((window . ,id) (group . ,name))))
+    `((window . ,id) (group . ,(group-name to)))))
 
 (define (float-target! id enabled)
   (require-window id)
@@ -304,7 +313,7 @@ Null denotes unavailable information. Locking forces content redaction."
                (not (layout:layout-spec (assq-ref arguments 'layout))))
       (fail 'unknown-layout))
     (when (eq? name 'screenshot)
-      (unless (string-prefix? "/" (assq-ref arguments 'path)) (fail 'invalid-path))
+      (unless (screenshot-path-valid? (assq-ref arguments 'path)) (fail 'invalid-path))
       (when (and window (not (rust-call-if-bound 'wm-window-geometry window)))
         (fail 'target-unavailable)))))
 
@@ -321,7 +330,7 @@ Null denotes unavailable information. Locking forces content redaction."
     (unless (and (eq? g (current-group)) (= head (current-head-id))
                  (= (+ before 1) (length (frame-leaves (current-tree)))))
       (fail 'postcondition-failed))
-    `((group . ,name) (head . ,head) (frame-count . ,(+ before 1)))))
+    `((group . ,(group-name g)) (head . ,head) (frame-count . ,(+ before 1)))))
 
 (define (layout-target! name head layout)
   (unless (layout:layout-spec layout) (fail 'unknown-layout `((layout . ,layout))))
@@ -331,7 +340,7 @@ Null denotes unavailable information. Locking forces content redaction."
     (unless (and (eq? g (current-group)) (= head (current-head-id))
                  (equal? wanted (native-tree-spec (current-tree))))
       (fail 'postcondition-failed)))
-  `((group . ,name) (head . ,head) (layout . ,layout)))
+  `((group . ,(current-group-name)) (head . ,head) (layout . ,layout)))
 
 (define (close-target! id)
   (require-window id)
@@ -340,7 +349,7 @@ Null denotes unavailable information. Locking forces content redaction."
   `((window . ,id) (completion . window-disappeared)))
 
 (define (screenshot-target! path window)
-  (unless (string-prefix? "/" path) (fail 'invalid-path `((path . ,path))))
+  (unless (screenshot-path-valid? path) (fail 'invalid-path `((path . ,path))))
   (when window
     (require-window window)
     (unless (rust-call-if-bound 'wm-window-geometry window)
@@ -377,12 +386,12 @@ Loading this module has no compositor side effects; call after legacy setup."
               (let ((g (require-group name)))
                 (switch-to-group! g)
                 (unless (eq? g (current-group)) (fail 'postcondition-failed))
-                `((group . ,name))))
-            (list group) 'group '(focus group) 'immediate "Switch to an existing group by its exact name."
-            '(perform-action! 'switch-group! '((group . " II "))))
+                `((group . ,(group-name g)))))
+            (list group) 'group '(focus group) 'immediate "Switch to an existing group, ignoring surrounding whitespace. Returns its stored name."
+            '(perform-action! 'switch-group! '((group . "II"))))
   (register 'move-window-to-group! move-target! (list window group) 'window
             '(placement focus) 'immediate "Move a window to an existing group without following."
-            '(perform-action! 'move-window-to-group! '((window . 42) (group . " II "))))
+            '(perform-action! 'move-window-to-group! '((window . 42) (group . "II"))))
   (register 'set-window-floating! float-target! (list window enabled) 'window
             '(floating placement focus group) 'immediate "Set floating state; focus the target when changing it."
             '(perform-action! 'set-window-floating! '((window . 42) (enabled . #t))))
@@ -393,19 +402,20 @@ Loading this module has no compositor side effects; call after legacy setup."
             (list group head '((name . frame) (type . integer) (minimum . 0))
                   '((name . direction) (type . (enum horizontal vertical))))
             'frame '(layout focus group head) 'immediate "Split an explicitly selected manual frame."
-            '(perform-action! 'split-frame! '((group . " I ") (head . 0) (frame . 0) (direction . horizontal))))
+            '(perform-action! 'split-frame! '((group . "I") (head . 0) (frame . 0) (direction . horizontal))))
   (register 'apply-layout! layout-target!
             (list group head '((name . layout) (type . string) (min-length . 1)))
             'head '(layout focus group head) 'immediate "Apply a named layout to a manual group's head."
-            '(perform-action! 'apply-layout! '((group . " I ") (head . 0) (layout . "wide"))))
+            '(perform-action! 'apply-layout! '((group . "I") (head . 0) (layout . "wide"))))
   (register 'close-window! close-target! (list window) 'window '(close)
             'window-disappeared "Request a client close; completion means its window disappeared."
             '(perform-action! 'close-window! '((window . 42))))
   (register 'screenshot screenshot-target!
             (list '((name . path) (type . string) (min-length . 1))
                   '((name . window) (type . (maybe integer)) (default . #f)))
-            'desktop '(file) 'automation "Queue a PNG capture. Observe completion with action-status or mindectl wait using the returned request-id."
-            '(perform-action! 'screenshot '((path . "/tmp/minde.png")))))
+            'desktop '(file) 'automation "Queue a new PNG below wm-screenshot-directory. Reject symlinks and existing files; publish atomically. Observe completion with action-status or mindectl wait."
+            '(perform-action! 'screenshot
+                              `((path . ,(string-append (wm-screenshot-directory) "/minde.png"))))))
 
 (define (result id status value error)
   `((schema-version . 1) (session . ,%session) (request-id . ,(or id 'null))

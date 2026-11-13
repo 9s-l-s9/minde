@@ -2456,8 +2456,8 @@ hook's own state build only ever runs after the first output exists.&quot;
   %sequence)</code></pre></template></article><article id="b228" class="abr-binding" data-label="(minde status) status-file-path  ·  scheme/minde/status.scm lines 45-48"><h3><code>status-file-path</code><span class="kind">procedure</span></h3><p class="sig"><code>(status-file-path)</code></p><p class="desc">Returns the path of the atomically published structured status file.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/status.scm#L45">View on GitHub: scheme/minde/status.scm:45</a></p><button class="abr-show-source" data-id="b228">View source</button><template><pre><code>(define (status-file-path)
   &quot;Returns the path of the atomically published structured status file.&quot;
   (or (nonempty-environment &quot;MINDE_STATUS_PATH&quot;)
-      (string-append (runtime-directory) &quot;/status.json&quot;)))</code></pre></template></article><article id="b229" class="abr-binding" data-label="(minde status) status-schema-version"><h3><code>status-schema-version</code><span class="kind">value</span></h3><p class="sig"><code>status-schema-version</code></p><p class="desc">The integer schema version emitted by the structured status API.</p><p class="extra"><b>Demonstration:</b> non-visual</p><button class="abr-show-source" data-id="b229">View source</button></article></section><section><h2>(minde control)</h2><article id="b230" class="abr-binding" data-label="(minde control) action-status  ·  scheme/minde/control.scm lines 473-505"><h3><code>action-status</code><span class="kind">procedure</span></h3><p class="sig"><code>(action-status id #:key (session %session))</code></p><p class="desc">Returns a stored action result, refreshing asynchronous completion.
-An expired receipt or missing automation token reports outcome-unknown.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L473">View on GitHub: scheme/minde/control.scm:473</a></p><button class="abr-show-source" data-id="b230">View source</button><template><pre><code>(define* (action-status id #:key (session %session))
+      (string-append (runtime-directory) &quot;/status.json&quot;)))</code></pre></template></article><article id="b229" class="abr-binding" data-label="(minde status) status-schema-version"><h3><code>status-schema-version</code><span class="kind">value</span></h3><p class="sig"><code>status-schema-version</code></p><p class="desc">The integer schema version emitted by the structured status API.</p><p class="extra"><b>Demonstration:</b> non-visual</p><button class="abr-show-source" data-id="b229">View source</button></article></section><section><h2>(minde control)</h2><article id="b230" class="abr-binding" data-label="(minde control) action-status  ·  scheme/minde/control.scm lines 483-515"><h3><code>action-status</code><span class="kind">procedure</span></h3><p class="sig"><code>(action-status id #:key (session %session))</code></p><p class="desc">Returns a stored action result, refreshing asynchronous completion.
+An expired receipt or missing automation token reports outcome-unknown.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L483">View on GitHub: scheme/minde/control.scm:483</a></p><button class="abr-show-source" data-id="b230">View source</button><template><pre><code>(define* (action-status id #:key (session %session))
   &quot;Returns a stored action result, refreshing asynchronous completion.
 An expired receipt or missing automation token reports outcome-unknown.&quot;
   (refresh-revision!)
@@ -2501,8 +2501,8 @@ Null denotes unavailable information. Locking forces content redaction.&quot;
      `((schema-version . 1) (session . ,%session) (revision . ,%revision)
       (event-sequence . ,(or (rust-call-if-bound 'wm-event-cursor) 0))
       (redacted . ,(and redact? #t))
-      ,@(if redact? (redacted-desktop-body body) body)))))</code></pre></template></article><article id="b232" class="abr-binding" data-label="(minde control) events-since  ·  scheme/minde/control.scm lines 617-646"><h3><code>events-since</code><span class="kind">procedure</span></h3><p class="sig"><code>(events-since sequence #:key (session %session) (redact? #f))</code></p><p class="desc">Returns sequenced journal events or an explicit resynchronization gap.
-Query-time lock redaction also applies to events recorded before locking.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L617">View on GitHub: scheme/minde/control.scm:617</a></p><button class="abr-show-source" data-id="b232">View source</button><template><pre><code>(define* (events-since sequence #:key (session %session) (redact? #f))
+      ,@(if redact? (redacted-desktop-body body) body)))))</code></pre></template></article><article id="b232" class="abr-binding" data-label="(minde control) events-since  ·  scheme/minde/control.scm lines 627-656"><h3><code>events-since</code><span class="kind">procedure</span></h3><p class="sig"><code>(events-since sequence #:key (session %session) (redact? #f))</code></p><p class="desc">Returns sequenced journal events or an explicit resynchronization gap.
+Query-time lock redaction also applies to events recorded before locking.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L627">View on GitHub: scheme/minde/control.scm:627</a></p><button class="abr-show-source" data-id="b232">View source</button><template><pre><code>(define* (events-since sequence #:key (session %session) (redact? #f))
   &quot;Returns sequenced journal events or an explicit resynchronization gap.
 Query-time lock redaction also applies to events recorded before locking.&quot;
   (unless (and (exact-integer? sequence) (&gt;= sequence 0))
@@ -2531,9 +2531,9 @@ Query-time lock redaction also applies to events recorded before locking.&quot;
                                  `((sequence . ,(car entry)) (name . ,name)
                                    (arguments . ,(list-&gt;vector payload))))))
                         (lambda _ #f)))
-                    (or events '())))))))</code></pre></template></article><article id="b233" class="abr-binding" data-label="(minde control) new-action-request  ·  scheme/minde/control.scm lines 459-471"><h3><code>new-action-request</code><span class="kind">procedure</span></h3><p class="sig"><code>(new-action-request)</code></p><p class="desc">Allocates a server-issued receipt ID and returns session/revision preconditions.
+                    (or events '())))))))</code></pre></template></article><article id="b233" class="abr-binding" data-label="(minde control) new-action-request  ·  scheme/minde/control.scm lines 469-481"><h3><code>new-action-request</code><span class="kind">procedure</span></h3><p class="sig"><code>(new-action-request)</code></p><p class="desc">Allocates a server-issued receipt ID and returns session/revision preconditions.
 The last 256 allocations are retained. Older IDs remain recognizably expired;
-they cannot execute again. Allocate before transmitting a retryable action.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L459">View on GitHub: scheme/minde/control.scm:459</a></p><button class="abr-show-source" data-id="b233">View source</button><template><pre><code>(define (new-action-request)
+they cannot execute again. Allocate before transmitting a retryable action.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L469">View on GitHub: scheme/minde/control.scm:469</a></p><button class="abr-show-source" data-id="b233">View source</button><template><pre><code>(define (new-action-request)
   &quot;Allocates a server-issued receipt ID and returns session/revision preconditions.
 The last 256 allocations are retained. Older IDs remain recognizably expired;
 they cannot execute again. Allocate before transmitting a retryable action.&quot;
@@ -2549,12 +2549,12 @@ they cannot execute again. Allocate before transmitting a retryable action.&quot
 This counter also detects a supported change followed by its inverse.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L41">View on GitHub: scheme/minde/control.scm:41</a></p><button class="abr-show-source" data-id="b234">View source</button><template><pre><code>(define (note-desktop-change! . ignored)
   &quot;Invalidates observed revisions after a policy synchronization or event.
 This counter also detects a supported change followed by its inverse.&quot;
-  (note-policy-change!))</code></pre></template></article><article id="b235" class="abr-binding" data-label="(minde control) perform-action!  ·  scheme/minde/control.scm lines 507-615"><h3><code>perform-action!</code><span class="kind">procedure</span></h3><p class="sig"><code>(perform-action! name arguments #:key (session %session) (if-revision #f) (request-id #f))</code></p><p class="desc">Validates and executes a typed action, returning a versioned receipt.
+  (note-policy-change!))</code></pre></template></article><article id="b235" class="abr-binding" data-label="(minde control) perform-action!  ·  scheme/minde/control.scm lines 517-625"><h3><code>perform-action!</code><span class="kind">procedure</span></h3><p class="sig"><code>(perform-action! name arguments #:key (session %session) (if-revision #f) (request-id #f))</code></p><p class="desc">Validates and executes a typed action, returning a versioned receipt.
 Use new-action-request before sending if transport retries are needed. Raw
 eval remains separate. Rejected requests consume their receipt too. A request
 that cannot fit a bounded fingerprint stays observably rejected; subsequent
 submissions with its ID conflict, so inspect action-status for that rejection.
-This procedure never waits or silently retries.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L507">View on GitHub: scheme/minde/control.scm:507</a></p><button class="abr-show-source" data-id="b235">View source</button><template><pre><code>(define* (perform-action! name arguments #:key (session %session)
+This procedure never waits or silently retries.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L517">View on GitHub: scheme/minde/control.scm:517</a></p><button class="abr-show-source" data-id="b235">View source</button><template><pre><code>(define* (perform-action! name arguments #:key (session %session)
                           (if-revision #f) (request-id #f))
   &quot;Validates and executes a typed action, returning a versioned receipt.
 Use new-action-request before sending if transport retries are needed. Raw
@@ -2662,8 +2662,8 @@ This procedure never waits or silently retries.&quot;
           (when (and entry reserved?)
             (vector-set! entry 1 (freeze-result response))
             (vector-set! entry 2 #f))
-          response)))))</code></pre></template></article><article id="b236" class="abr-binding" data-label="(minde control) register-control-commands!  ·  scheme/minde/control.scm lines 353-408"><h3><code>register-control-commands!</code><span class="kind">procedure</span></h3><p class="sig"><code>(register-control-commands!)</code></p><p class="desc">Registers the typed desktop control surface in the ordinary command registry.
-Loading this module has no compositor side effects; call after legacy setup.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L353">View on GitHub: scheme/minde/control.scm:353</a></p><button class="abr-show-source" data-id="b236">View source</button><template><pre><code>(define (register-control-commands!)
+          response)))))</code></pre></template></article><article id="b236" class="abr-binding" data-label="(minde control) register-control-commands!  ·  scheme/minde/control.scm lines 362-418"><h3><code>register-control-commands!</code><span class="kind">procedure</span></h3><p class="sig"><code>(register-control-commands!)</code></p><p class="desc">Registers the typed desktop control surface in the ordinary command registry.
+Loading this module has no compositor side effects; call after legacy setup.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L362">View on GitHub: scheme/minde/control.scm:362</a></p><button class="abr-show-source" data-id="b236">View source</button><template><pre><code>(define (register-control-commands!)
   &quot;Registers the typed desktop control surface in the ordinary command registry.
 Loading this module has no compositor side effects; call after legacy setup.&quot;
   (define (register name procedure parameters scope effects completion summary example)
@@ -2690,12 +2690,12 @@ Loading this module has no compositor side effects; call after legacy setup.&quo
               (let ((g (require-group name)))
                 (switch-to-group! g)
                 (unless (eq? g (current-group)) (fail 'postcondition-failed))
-                `((group . ,name))))
-            (list group) 'group '(focus group) 'immediate &quot;Switch to an existing group by its exact name.&quot;
-            '(perform-action! 'switch-group! '((group . &quot; II &quot;))))
+                `((group . ,(group-name g)))))
+            (list group) 'group '(focus group) 'immediate &quot;Switch to an existing group, ignoring surrounding whitespace. Returns its stored name.&quot;
+            '(perform-action! 'switch-group! '((group . &quot;II&quot;))))
   (register 'move-window-to-group! move-target! (list window group) 'window
             '(placement focus) 'immediate &quot;Move a window to an existing group without following.&quot;
-            '(perform-action! 'move-window-to-group! '((window . 42) (group . &quot; II &quot;))))
+            '(perform-action! 'move-window-to-group! '((window . 42) (group . &quot;II&quot;))))
   (register 'set-window-floating! float-target! (list window enabled) 'window
             '(floating placement focus group) 'immediate &quot;Set floating state; focus the target when changing it.&quot;
             '(perform-action! 'set-window-floating! '((window . 42) (enabled . #t))))
@@ -2706,19 +2706,20 @@ Loading this module has no compositor side effects; call after legacy setup.&quo
             (list group head '((name . frame) (type . integer) (minimum . 0))
                   '((name . direction) (type . (enum horizontal vertical))))
             'frame '(layout focus group head) 'immediate &quot;Split an explicitly selected manual frame.&quot;
-            '(perform-action! 'split-frame! '((group . &quot; I &quot;) (head . 0) (frame . 0) (direction . horizontal))))
+            '(perform-action! 'split-frame! '((group . &quot;I&quot;) (head . 0) (frame . 0) (direction . horizontal))))
   (register 'apply-layout! layout-target!
             (list group head '((name . layout) (type . string) (min-length . 1)))
             'head '(layout focus group head) 'immediate &quot;Apply a named layout to a manual group's head.&quot;
-            '(perform-action! 'apply-layout! '((group . &quot; I &quot;) (head . 0) (layout . &quot;wide&quot;))))
+            '(perform-action! 'apply-layout! '((group . &quot;I&quot;) (head . 0) (layout . &quot;wide&quot;))))
   (register 'close-window! close-target! (list window) 'window '(close)
             'window-disappeared &quot;Request a client close; completion means its window disappeared.&quot;
             '(perform-action! 'close-window! '((window . 42))))
   (register 'screenshot screenshot-target!
             (list '((name . path) (type . string) (min-length . 1))
                   '((name . window) (type . (maybe integer)) (default . #f)))
-            'desktop '(file) 'automation &quot;Queue a PNG capture. Observe completion with action-status or mindectl wait using the returned request-id.&quot;
-            '(perform-action! 'screenshot '((path . &quot;/tmp/minde.png&quot;)))))</code></pre></template></article></section></main><aside class="abr-source" id="abr-source"><div class="abr-source-empty">Select a binding to view its source.</div></aside></div><script>
+            'desktop '(file) 'automation &quot;Queue a new PNG below wm-screenshot-directory. Reject symlinks and existing files; publish atomically. Observe completion with action-status or mindectl wait.&quot;
+            '(perform-action! 'screenshot
+                              `((path . ,(string-append (wm-screenshot-directory) &quot;/minde.png&quot;))))))</code></pre></template></article></section></main><aside class="abr-source" id="abr-source"><div class="abr-source-empty">Select a binding to view its source.</div></aside></div><script>
 document.addEventListener('click', function (event) {
   var trigger = event.target.closest('[data-id]');
   if (!trigger) return;

@@ -277,13 +277,13 @@ This inventory enumerates the live exports of the public modules. It currently c
 
 | Binding | Kind | Signature | Description | Demonstration | Source |
 |---|---|---|---|---|---|
-| `action-status` | procedure | `(action-status id #:key (session %session))` | Returns a stored action result, refreshing asynchronous completion. An expired receipt or missing automation token reports outcome-unknown. | `non-visual` | [`scheme/minde/control.scm:473`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L473) |
+| `action-status` | procedure | `(action-status id #:key (session %session))` | Returns a stored action result, refreshing asynchronous completion. An expired receipt or missing automation token reports outcome-unknown. | `non-visual` | [`scheme/minde/control.scm:483`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L483) |
 | `desktop-snapshot` | procedure | `(desktop-snapshot #:key (redact? #f))` | Returns schema-v1 desktop facts across all groups, a session epoch, revision, and event cursor. Objects are alists; collections are vectors. Null denotes unavailable information. Locking forces content redaction. | `non-visual` | [`scheme/minde/control.scm:205`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L205) |
-| `events-since` | procedure | `(events-since sequence #:key (session %session) (redact? #f))` | Returns sequenced journal events or an explicit resynchronization gap. Query-time lock redaction also applies to events recorded before locking. | `non-visual` | [`scheme/minde/control.scm:617`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L617) |
-| `new-action-request` | procedure | `(new-action-request)` | Allocates a server-issued receipt ID and returns session/revision preconditions. The last 256 allocations are retained. Older IDs remain recognizably expired; they cannot execute again. Allocate before transmitting a retryable action. | `non-visual` | [`scheme/minde/control.scm:459`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L459) |
+| `events-since` | procedure | `(events-since sequence #:key (session %session) (redact? #f))` | Returns sequenced journal events or an explicit resynchronization gap. Query-time lock redaction also applies to events recorded before locking. | `non-visual` | [`scheme/minde/control.scm:627`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L627) |
+| `new-action-request` | procedure | `(new-action-request)` | Allocates a server-issued receipt ID and returns session/revision preconditions. The last 256 allocations are retained. Older IDs remain recognizably expired; they cannot execute again. Allocate before transmitting a retryable action. | `non-visual` | [`scheme/minde/control.scm:469`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L469) |
 | `note-desktop-change!` | procedure | `(note-desktop-change! . ignored)` | Invalidates observed revisions after a policy synchronization or event. This counter also detects a supported change followed by its inverse. | `non-visual` | [`scheme/minde/control.scm:41`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L41) |
-| `perform-action!` | procedure | `(perform-action! name arguments #:key (session %session) (if-revision #f) (request-id #f))` | Validates and executes a typed action, returning a versioned receipt. Use new-action-request before sending if transport retries are needed. Raw eval remains separate. Rejected requests consume their receipt too. A request that cannot fit a bounded fingerprint stays observably rejected; subsequent submissions with its ID conflict, so inspect action-status for that rejection. This procedure never waits or silently retries. | `non-visual` | [`scheme/minde/control.scm:507`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L507) |
-| `register-control-commands!` | procedure | `(register-control-commands!)` | Registers the typed desktop control surface in the ordinary command registry. Loading this module has no compositor side effects; call after legacy setup. | `non-visual` | [`scheme/minde/control.scm:353`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L353) |
+| `perform-action!` | procedure | `(perform-action! name arguments #:key (session %session) (if-revision #f) (request-id #f))` | Validates and executes a typed action, returning a versioned receipt. Use new-action-request before sending if transport retries are needed. Raw eval remains separate. Rejected requests consume their receipt too. A request that cannot fit a bounded fingerprint stays observably rejected; subsequent submissions with its ID conflict, so inspect action-status for that rejection. This procedure never waits or silently retries. | `non-visual` | [`scheme/minde/control.scm:517`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L517) |
+| `register-control-commands!` | procedure | `(register-control-commands!)` | Registers the typed desktop control surface in the ordinary command registry. Loading this module has no compositor side effects; call after legacy setup. | `non-visual` | [`scheme/minde/control.scm:362`](https://github.com/9s-l-s9/minde/blob/main/scheme/minde/control.scm#L362) |
 
 ## Registered commands
 
@@ -350,7 +350,7 @@ This inventory enumerates the live exports of the public modules. It currently c
 | `restore-desktop-prompt!` | `()` | `persistence` | Restore the desktop from a chosen file. | `non-visual` |
 | `run-prompt!` | `()` | `prompt` | Run a command. | `non-visual` |
 | `save-layout-prompt!` | `()` | `persistence` | Save the current layout under a name. | `non-visual` |
-| `screenshot` | `(path window)` | `control` | Queue a PNG capture. Observe completion with action-status or mindectl wait using the returned request-id. | `non-visual` |
+| `screenshot` | `(path window)` | `control` | Queue a new PNG below wm-screenshot-directory. Reject symlinks and existing files; publish atomically. Observe completion with action-status or mindectl wait. | `non-visual` |
 | `select-floating-window!` | `()` | `window` | Choose a floating window. | `non-visual` |
 | `select-window-by-name!` | `()` | `window` | Choose a window by name. | `non-visual` |
 | `select-window-by-number!` | `(number)` | `window` | Select a numbered window. | `non-visual` |
@@ -363,7 +363,7 @@ This inventory enumerates the live exports of the public modules. It currently c
 | `split-frame-horizontal!` | `()` | `frame` | Split the frame into columns. | `frame-split-horizontal` |
 | `split-frame-vertical!` | `()` | `frame` | Split the frame into rows. | `frame-split-vertical` |
 | `suspend!` | `()` | `session` | Suspend after the session locks. | `non-visual` |
-| `switch-group!` | `(group)` | `control` | Switch to an existing group by its exact name. | `non-visual` |
+| `switch-group!` | `(group)` | `control` | Switch to an existing group, ignoring surrounding whitespace. Returns its stored name. | `non-visual` |
 | `switch-to-last-group!` | `()` | `group` | Return to the last focused group. | `group-last` |
 | `switch-to-next-group!` | `()` | `group` | Focus the next group. | `group-next` |
 | `switch-to-previous-group!` | `()` | `group` | Focus the previous group. | `group-previous` |

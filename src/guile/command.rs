@@ -93,7 +93,7 @@ pub enum WmCommand {
     /// Deferred screenshot (PNG); completion via the automation-result
     /// registry under `token`, like drop-files.
     Screenshot {
-        path: String,
+        destination: crate::screenshot::Destination,
         window_id: Option<u64>,
         token: u64,
     },

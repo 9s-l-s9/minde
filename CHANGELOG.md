@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Screenshots stay below `MINDE_SCREENSHOT_DIR` (by default the runtime
+  directory's `minde/screenshots` child), reject symlinks and existing files,
+  and publish complete PNGs without overwriting concurrent captures. Typed
+  group actions accept unpadded names and return the stored group name (#161).
 - Surface commits redraw their affected outputs; hidden windows keep their
   throttled frame callbacks without waking the renderer. Surface ownership
   is cached across commits and cleared on unmap. Content-only layer commits

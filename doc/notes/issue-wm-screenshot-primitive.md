@@ -31,6 +31,12 @@ direkt wiederverwenden.
   umgesetzt: `wm-pointer-position`, `wm-window-geometry`).
 
 ## Status: IMPLEMENTIERT (2026-08-31)
+Aktuelle Pfadregeln (2026-11-13): Neue Dateien müssen unter
+`(wm-screenshot-directory)` liegen; `MINDE_SCREENSHOT_DIR` überschreibt
+den Standard im privaten Laufzeitverzeichnis. Vorhandene Dateien,
+Symlinks und `..` werden abgelehnt. Die obigen freien `/tmp`-Pfade gehören
+zum ursprünglichen Entwurf. Siehe [API](../api.md#low-level-automation-primitives).
+
 `(wm-screenshot path [window-id])` liefert Token; Abschluss via
 `(wm-automation-status token)` → `(screenshot done|failed)` + Eventzeile.
 Render über die bestehende Capture-Queue (`CaptureFrame::File`,

@@ -22,6 +22,7 @@ mod logging;
 mod png;
 mod render;
 mod runtime_dir;
+mod screenshot;
 #[cfg(test)]
 mod space_bench;
 mod state;

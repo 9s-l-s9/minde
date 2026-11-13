@@ -323,7 +323,9 @@ impl Image {
     }
 }
 fn file_capture(name: &str, then: &str) -> String {
-    let path = format!("{}/{name}", env::var("XDG_RUNTIME_DIR").unwrap());
+    let directory = env::var("MINDE_SCREENSHOT_DIR")
+        .unwrap_or_else(|_| format!("{}/minde/screenshots", env::var("XDG_RUNTIME_DIR").unwrap()));
+    let path = format!("{directory}/{name}");
     let id = token(&ipc(&format!(
         "(let ((token (wm-screenshot {path:?}))) {then} token)"
     )));

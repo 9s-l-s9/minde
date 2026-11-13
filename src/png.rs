@@ -7,8 +7,6 @@
 //! output but decode everywhere; screenshots are throwaway verification
 //! artifacts, not archival images.
 
-use std::io::Write;
-
 /// Byte-indexed lookup table for the reflected CRC-32 polynomial
 /// (0xEDB88320), built at compile time.
 const CRC32_TABLE: [u32; 256] = {
@@ -85,15 +83,12 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Writes `rgba` (row-major, 4 bytes/pixel, `width * height * 4` long) as a
-/// PNG to `path`.
-pub fn write_rgba(
-    path: &std::path::Path,
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-) -> std::io::Result<()> {
-    let expected = width as usize * height as usize * 4;
+/// Encodes `rgba` (row-major, 4 bytes/pixel) as a complete PNG.
+pub fn encode_rgba(width: u32, height: u32, rgba: &[u8]) -> std::io::Result<Vec<u8>> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or_else(|| std::io::Error::other("png: pixel buffer size overflow"))?;
     if rgba.len() < expected || width == 0 || height == 0 {
         return Err(std::io::Error::other("png: pixel buffer size mismatch"));
     }
@@ -118,9 +113,7 @@ pub fn write_rgba(
     chunk(&mut out, b"IDAT", &zlib_stored(&raw));
     chunk(&mut out, b"IEND", &[]);
 
-    let mut file = std::fs::File::create(path)?;
-    file.write_all(&out)?;
-    file.flush()
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -141,24 +134,20 @@ mod tests {
 
     #[test]
     fn writes_decodable_structure() {
-        let dir = std::env::temp_dir().join("minde-png-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("t.png");
         let px = [
             255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 255,
         ];
-        write_rgba(&path, 2, 2, &px).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
+        let bytes = encode_rgba(2, 2, &px).unwrap();
         assert_eq!(
             &bytes[..8],
             &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']
         );
         assert!(bytes.windows(4).any(|w| w == b"IEND"));
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
     fn rejects_short_buffer() {
-        assert!(write_rgba(std::path::Path::new("/nonexistent/x.png"), 2, 2, &[0; 4]).is_err());
+        assert!(encode_rgba(2, 2, &[0; 4]).is_err());
+        assert!(encode_rgba(u32::MAX, u32::MAX, &[0; 4]).is_err());
     }
 }

@@ -574,6 +574,7 @@ connector name (`n=eDP-1`) on such builds. See
 | `MINDE_INIT` | Scheme entry point |
 | `MINDE_SCHEME_DIR` | bundled module search directory |
 | `MINDE_CONFIG` | declarative configuration file |
+| `MINDE_SCREENSHOT_DIR` | absolute directory for new PNG captures; default: `minde/screenshots` below the private runtime directory |
 | `MINDE_FULL_KEYMAP` | set to `1` to load the optional historical map |
 | `MINDE_LOG_FORMAT` | `human` or newline-delimited `json` |
 | `MINDE_UNSAFE_REPL` | opt into the unsafe threaded development REPL |

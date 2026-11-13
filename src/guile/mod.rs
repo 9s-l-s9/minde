@@ -945,6 +945,8 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
 /// largest-overlap output's scene and scale. Returns an
 /// automation token; completion via `(wm-automation-status token)` ->
 /// `(screenshot done|failed)` plus an `automation-result` event line.
+/// PATH must name a new file below wm-screenshot-directory. Symlinks are
+/// rejected, and publication never overwrites an existing directory entry.
 unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
     let window_id = if window_id == ffi::SCM_UNDEFINED {
         None
@@ -955,16 +957,30 @@ unsafe extern "C" fn wm_screenshot(path: Scm, window_id: Scm) -> Scm {
     if !path.starts_with('/') || path.contains('\0') {
         return from_bool(false);
     }
+    let destination = match crate::screenshot::Destination::prepare(std::path::Path::new(&path)) {
+        Ok(destination) => destination,
+        Err(error) => {
+            tracing::warn!(%error, %path, "wm-screenshot destination rejected");
+            return from_bool(false);
+        }
+    };
     let token = crate::automation_dnd::automation_results()
         .allocate(crate::automation_dnd::AutomationOperation::Screenshot);
     if send_command(WmCommand::Screenshot {
-        path,
+        destination,
         window_id,
         token,
     }) {
         from_i64(token as i64)
     } else {
         from_bool(false)
+    }
+}
+
+unsafe extern "C" fn wm_screenshot_directory() -> Scm {
+    match crate::screenshot::directory() {
+        Ok(path) => from_str(&path.to_string_lossy()),
+        Err(_) => from_bool(false),
     }
 }
 
@@ -1705,6 +1721,12 @@ fn register_primitives() {
         );
         register_gsubr("wm-paste", 0, 0, gsubr!(wm_paste_key, 0));
         register_gsubr("wm-screenshot", 1, 1, gsubr!(wm_screenshot, 2));
+        register_gsubr(
+            "wm-screenshot-directory",
+            0,
+            0,
+            gsubr!(wm_screenshot_directory, 0),
+        );
         register_gsubr("wm-scroll", 2, 0, gsubr!(wm_scroll, 2));
         register_gsubr("wm-set-key-repeat", 1, 0, gsubr!(wm_set_key_repeat, 1));
         register_gsubr("wm-idle-ms", 0, 0, gsubr!(wm_idle_ms, 0));

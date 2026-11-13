@@ -73,7 +73,7 @@ pub enum CaptureFrame {
     /// `wm-screenshot`: render to an offscreen buffer and write a PNG.
     /// Completion is reported through the automation-result registry.
     File {
-        path: std::path::PathBuf,
+        destination: crate::screenshot::Destination,
         token: crate::automation_dnd::AutomationToken,
     },
 }
@@ -691,7 +691,7 @@ pub fn satisfy_output_captures<R>(
                     fill_capture_buffer(renderer, &elements, &pending.buffer, capture.size, scale);
                 pending.complete(outcome, time.into());
             }
-            CaptureFrame::File { path, token } => {
+            CaptureFrame::File { destination, token } => {
                 use crate::automation_dnd::{
                     AutomationOperation, AutomationStatus, record_and_publish,
                 };
@@ -702,15 +702,14 @@ pub fn satisfy_output_captures<R>(
                         // thread-safe, see `record_and_publish`).
                         let size = capture.size;
                         std::thread::spawn(move || {
-                            let status = match crate::png::write_rgba(
-                                &path,
+                            let status = match destination.write_rgba(
                                 size.w as u32,
                                 size.h as u32,
                                 &pixels,
                             ) {
                                 Ok(()) => AutomationStatus::Done,
                                 Err(err) => {
-                                    tracing::warn!(%err, path = %path.display(), "wm-screenshot failed");
+                                    tracing::warn!(%err, path = %destination.path().display(), "wm-screenshot failed");
                                     AutomationStatus::Failed
                                 }
                             };
@@ -718,7 +717,7 @@ pub fn satisfy_output_captures<R>(
                         });
                     }
                     Err(err) => {
-                        tracing::warn!(%err, path = %path.display(), "wm-screenshot render failed");
+                        tracing::warn!(%err, path = %destination.path().display(), "wm-screenshot render failed");
                         record_and_publish(
                             token,
                             AutomationOperation::Screenshot,

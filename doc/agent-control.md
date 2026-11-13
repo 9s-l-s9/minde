@@ -116,6 +116,10 @@ snapshot and must be used with its revision. Operations also recheck their
 targets after user hooks; an execution failure can therefore follow earlier
 effects such as a group switch.
 
+Group arguments ignore surrounding whitespace: `"II"` selects the stored
+`" II "` group. Responses return the stored name used by snapshots. Matching
+remains case-sensitive.
+
 Fullscreen ownership is independent in each group, including hidden groups.
 The snapshot reports that ownership even when the window is not visible.
 Enabling fullscreen replaces only the target group's previous owner and
@@ -197,10 +201,21 @@ make the outcome unknown. Receipts are not durable across restarts and do
 not provide exactly-once semantics for arbitrary `eval`.
 
 ```sh
+mindectl eval '(wm-screenshot-directory)' --json
+# Use the returned absolute directory in the path below.
 mindectl call screenshot \
-  '((path . "/tmp/minde-window.png") (window . 42))' --json
+  '((path . "/run/user/1000/minde/screenshots/window.png") (window . 42))' --json
 mindectl wait REQUEST-ID --session SESSION --timeout-ms 10000 --json
 ```
+
+Screenshot paths must be below `MINDE_SCREENSHOT_DIR`, which defaults to
+`minde/screenshots` inside the private runtime directory. The default directory
+is created when needed. A configured directory must be absolute; directories
+within it must already exist. Parent traversal, symlinks in any path component,
+and existing destination entries are rejected. Files have mode 0600 and appear
+only after the complete PNG is written. Concurrent captures cannot overwrite
+one another. An unavailable destination rejects the request; a write or
+capture failure after queuing is reported by the receipt.
 
 Use the receipt returned by the call in the wait command. Waiting blocks on
 the event socket in the client, then rechecks the receipt; it never blocks

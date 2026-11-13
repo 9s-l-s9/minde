@@ -125,7 +125,9 @@
     (wm-scroll "(wm-scroll dx dy)"
      "Scroll DX/DY wheel notches (1 = one wheel click) at the current pointer position; sends discrete value120 plus continuous values.")
     (wm-screenshot "(wm-screenshot path [window-id])"
-     "Write a deferred PNG to absolute PATH. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full window rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token; completion via wm-automation-status.")
+     "Publish a new PNG below wm-screenshot-directory; reject symlinks, traversal and existing files. The complete file appears atomically. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token or #f; completion via wm-automation-status.")
+    (wm-screenshot-directory "(wm-screenshot-directory)"
+     "The absolute screenshot directory: MINDE_SCREENSHOT_DIR or the private runtime directory's minde/screenshots child. Returns #f for invalid configuration.")
     (wm-warp-pointer-relative "(wm-warp-pointer-relative dx dy)"
      "Warp the pointer by a relative delta DX,DY.")
     (wm-set-key-repeat "(wm-set-key-repeat spec)"

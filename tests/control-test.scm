@@ -46,6 +46,7 @@
   (set! %captures (cons (cons path window) %captures))
   (hash-set! %automation %next-token '(screenshot pending))
   %next-token)
+(define (wm-screenshot-directory) "/tmp/minde-control-screenshots")
 (define (wm-automation-status token) (hash-ref %automation token))
 
 (use-modules (minde commands) (minde control) (minde compositor frames)
@@ -119,7 +120,7 @@
        (status (act 'focus-window! '((window . 0)))) 'unchanged)
 (check "zero ID actually retains keyboard focus" %focused 0)
 (check "zero window ID is accepted by targeted screenshot"
-       (status (act 'screenshot '((path . "/tmp/zero-window.png") (window . 0)))) 'pending)
+       (status (act 'screenshot '((path . "/tmp/minde-control-screenshots/zero-window.png") (window . 0)))) 'pending)
 (check "zero window ID is accepted by close"
        (status (act 'close-window! '((window . 0)))) 'pending)
 (check "native close receives zero without substitution" %closed '(0))
@@ -320,7 +321,7 @@
 ;; Screenshot completion, failure, and eviction all have finite outcomes.
 (for-each
  (lambda (terminal expected)
-   (let* ((reply (act 'screenshot '((path . "/tmp/minde-control-test.png"))))
+   (let* ((reply (act 'screenshot '((path . "/tmp/minde-control-screenshots/control.png"))))
           (id (assq-ref reply 'request-id))
           (token (assq-ref (assq-ref reply 'value) 'token)))
      (check "screenshot starts pending" (status reply) 'pending)
@@ -662,6 +663,20 @@
          (assq-ref (vector-ref (assq-ref (desktop-snapshot) 'outputs) 0) 'name) "renamed-output")
   (check-true "native output metadata invalidates receipt preconditions"
               (> (assq-ref (new-action-request) 'revision) revision)))
+
+(let ((g (create-group-in-background! " typed target ")))
+  (let ((reply (act 'switch-group! '((group . "typed target")))))
+    (check "typed group names ignore display padding" (status reply) 'applied)
+    (check "typed group responses use the stored name"
+           (assq-ref (assq-ref reply 'value) 'group) (group-name g)))
+  (check "typed group names trim surrounding whitespace"
+         (status (act 'switch-group! '((group . "\ttyped target\n")))) 'applied))
+(for-each
+ (lambda (path)
+   (check "typed screenshots reject paths outside their directory"
+          (code (act 'screenshot `((path . ,path)))) 'invalid-path))
+ '("/tmp/outside.png" "/tmp/minde-control-screenshots-other/x.png"
+   "/tmp/minde-control-screenshots/../outside.png"))
 
 (format #t "control-test: ~a checks, ~a failures~%" checks failures)
 (unless (zero? failures) (exit 1))

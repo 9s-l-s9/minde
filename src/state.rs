@@ -976,10 +976,10 @@ impl MindeState {
             }
             WmCommand::Drop { x, y, source } => self.start_automation_dnd(x, y, source),
             WmCommand::Screenshot {
-                path,
+                destination,
                 window_id,
                 token,
-            } => self.queue_screenshot(path, window_id, token),
+            } => self.queue_screenshot(destination, window_id, token),
             WmCommand::ReapplyInputConfig => self.reapply_input_config(),
             WmCommand::SetKeyboardLayout { spec } => self.set_keyboard_layout(spec),
             WmCommand::ConfigureOutput { name, spec } => {
@@ -1351,7 +1351,12 @@ impl MindeState {
     /// the full rectangle of `window_id` using that window's output. A window
     /// spanning outputs uses the scene/scale of its largest intersection.
     /// Completion lands in the automation-result registry after writing PNG.
-    fn queue_screenshot(&mut self, path: String, window_id: Option<u64>, token: u64) {
+    fn queue_screenshot(
+        &mut self,
+        destination: crate::screenshot::Destination,
+        window_id: Option<u64>,
+        token: u64,
+    ) {
         use crate::automation_dnd::{AutomationOperation, AutomationStatus, record_and_publish};
         let fail = |token| {
             record_and_publish(
@@ -1406,10 +1411,7 @@ impl MindeState {
         self.pending_captures
             .push(crate::handlers::screencopy::PendingCapture::new(
                 output,
-                crate::handlers::screencopy::CaptureFrame::File {
-                    path: path.into(),
-                    token,
-                },
+                crate::handlers::screencopy::CaptureFrame::File { destination, token },
                 false,
                 origin,
                 size,
