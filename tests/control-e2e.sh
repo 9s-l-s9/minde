@@ -17,17 +17,17 @@ control_cleanup() {
     done
     nested_stop
 }
-trap control_cleanup EXIT HUP INT TERM
+nested_install_cleanup control_cleanup
 nested_start "$control_out" "${MINDE_CONTROL_E2E_DISPLAY:-:87}" || {
     echo "error: control compositor failed; inspect $control_out" >&2
     exit 1
 }
-nested_wayland timeout 90 foot --app-id=control-one --title='Same title' sh -c 'sleep 80' \
+nested_wayland_exec timeout 90 foot --app-id=control-one --title='Same title' sh -c 'sleep 80' \
     >"$control_out/first.log" 2>&1 &
 control_first=$!
 nested_wait_for_window_after 0 20
 scripts/mindectl call switch-group! '((group . " II "))' --json >"$control_out/switch.json"
-nested_wayland timeout 90 foot --app-id=control-two --title='Same title' sh -c 'sleep 80' \
+nested_wayland_exec timeout 90 foot --app-id=control-two --title='Same title' sh -c 'sleep 80' \
     >"$control_out/second.log" 2>&1 &
 control_second=$!
 nested_wait_for_window_after 1 20

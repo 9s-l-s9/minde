@@ -14,61 +14,35 @@
 # TTY changes still need a live `./debug-tty.sh` run from a spare VT.
 set -eu
 cd "$(dirname "$0")/.."
+. tests/lib/nested-compositor.sh
 
 OUT="${E2E_OUT:-/tmp/minde-e2e}"
-RT=/tmp/minde-e2e-rt
-LOG="$OUT/e2e.log"
-mkdir -p "$OUT" "$RT"
-chmod 700 "$RT"
+LOG="$OUT/compositor.log"
+SWAYLOCK_PID=
+cleanup() {
+  if [ -n "$SWAYLOCK_PID" ]; then
+    kill "$SWAYLOCK_PID" 2>/dev/null || true
+    wait "$SWAYLOCK_PID" 2>/dev/null || true
+    SWAYLOCK_PID=
+  fi
+  nested_stop
+}
+nested_install_cleanup cleanup
 
 fail() {
   echo "FAIL - $1"
   [ -f "$LOG" ] && tail -5 "$LOG"
-  for pid in "${WM_PID:-}" "${XVFB_PID:-}"; do
-    [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
-  done
   exit 1
 }
 ok() { echo "ok - $1"; }
 # tracing writes ANSI color codes even into the redirected log; strip
 # them before matching or patterns like "cmd=foot" never hit.
-ESC=$(printf '\033')
-loggrep() { sed "s/$ESC\[[0-9;]*m//g" "$LOG" | grep -aq "$1"; }
+loggrep() { nested_log_has "$1"; }
 
-Xvfb :97 -screen 0 1280x800x24 &
-XVFB_PID=$!
-sleep 2
-
-export DISPLAY=:97 XDG_RUNTIME_DIR="$RT" XKB_DEFAULT_LAYOUT=us
-# Do not combine the deterministic US test layout with a host-specific
-# variant such as the author's "bone". That produces an invalid us(bone)
-# keymap and makes the compositor panic before the test can start.
-unset XKB_DEFAULT_VARIANT XKB_DEFAULT_OPTIONS XKB_DEFAULT_MODEL XKB_DEFAULT_RULES
-# This guard belongs to one compositor process. A developer may launch the
-# test from a live minde session where it is already set; inheriting it
-# would suppress a test compositor's legacy unsafe REPL socket.
-unset MINDE_REPL_STARTED
-export LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-/nonexistent}/lib"
-# Note "scheme" is its own tracing target (wm-log); filtering only
-# minde=debug would hide every Scheme-side line the asserts rely on.
-export RUST_LOG=minde=debug,scheme=info
-unset WAYLAND_DISPLAY
-
-cargo build 2>/dev/null || fail "cargo build"
-MINDE_INIT="$PWD/scheme/init.scm" MINDE_SCHEME_DIR="$PWD/scheme" \
-  MINDE_CONFIG="$PWD/tests/e2e-config.scm" MINDE_E2E_LEGACY_KEYMAP=1 \
-  MINDE_RULES_FILE="$OUT/rules.scm" MINDE_LAYOUTS_FILE="$OUT/layouts.scm" \
-  ./target/debug/minde --winit > "$LOG" 2>&1 &
-WM_PID=$!
-
-# Startup can take a while when Guile recompiles modules; wait up to 60s.
-i=0
-until loggrep "minde scheme layer loaded"; do
-  i=$((i + 1))
-  [ "$i" -le 60 ] || fail "scheme layer did not load within 60s"
-  kill -0 "$WM_PID" 2>/dev/null || fail "compositor died at startup"
-  sleep 1
-done
+export MINDE_NESTED_LEGACY_KEYMAP=1
+nested_start "$OUT" "${E2E_DISPLAY:-:97}" || fail "nested compositor startup"
+RT=$NESTED_RT
+WM_PID=$NESTED_WM_PID
 sleep 1
 ok "compositor up, scheme layer loaded"
 
@@ -108,6 +82,8 @@ grep -q '"schema_version":1' "$REPORT/state.json" || fail "report state"
 grep -q '"title"\|"app_id"' "$REPORT/state.json" && fail "report leaked window metadata"
 grep -q '^(' "$REPORT/timing.txt" || fail "report timing"
 [ "$(cat "$REPORT/drift.txt")" = "()" ] || fail "policy mirrors drifted from the compositor: $(cat "$REPORT/drift.txt")"
+# The test driver's HOME deliberately differs from the compositor's private one.
+# shellcheck disable=SC2031
 grep -q "$HOME" "$REPORT"/* && fail "report leaked an absolute home path"
 ok "redacted diagnostic report"
 
@@ -436,20 +412,19 @@ else
   echo "skip: wayland-info not in the shell environment; global check skipped"
 fi
 # The full lock flow needs a real locker. Skips (does not fail) when
-# swaylock is absent or cannot start at all -- sandboxes without PAM
-# make it exit immediately.
+# swaylock is absent or reports an identified PAM/account startup failure.
 if command -v swaylock >/dev/null 2>&1; then
-  WAYLAND_DISPLAY="$WLD" swaylock -f 2>>"$OUT/swaylock.log" &
+  nested_wayland_exec swaylock >"$OUT/swaylock.log" 2>&1 &
   SWAYLOCK_PID=$!
   n=0
   until loggrep "session locked (ext-session-lock)"; do
     n=$((n + 1))
     if [ "$n" -gt 25 ]; then
-      if kill -0 "$SWAYLOCK_PID" 2>/dev/null; then
-        fail "swaylock is running but the session never locked"
+      if ! kill -0 "$SWAYLOCK_PID" 2>/dev/null && nested_locker_unavailable "$OUT/swaylock.log"; then
+        echo "skip: swaylock PAM/account startup failed; inspect $OUT/swaylock.log"
+        break
       fi
-      echo "skip: swaylock could not start here (no PAM?); lock e2e skipped"
-      break
+      fail "swaylock did not confirm the session lock; inspect $OUT/swaylock.log"
     fi
     sleep 0.2
   done
@@ -459,14 +434,16 @@ if command -v swaylock >/dev/null 2>&1; then
     # The WM prefix key must be dead on the lock screen: Print shift+r
     # reloaded earlier in this script, so a new "reloaded" line now
     # would mean keys still reach the Scheme keybinding layer.
-    reloads_before=$(sed "s/$ESC\[[0-9;]*m//g" "$LOG" | grep -ac "reloaded " || true)
+    reloads_before=$(nested_plain_log <"$LOG" | grep -ac "reloaded " || true)
     xdotool key Print; sleep 0.2; xdotool key shift+r; sleep 1
-    reloads_after=$(sed "s/$ESC\[[0-9;]*m//g" "$LOG" | grep -ac "reloaded " || true)
+    reloads_after=$(nested_plain_log <"$LOG" | grep -ac "reloaded " || true)
     [ "$reloads_before" = "$reloads_after" ] \
       || fail "Print R reached Scheme while locked"
     import -window root "$OUT/locked.png"
     # Abandon case: the locker dying must NOT unlock the session.
-    kill "$SWAYLOCK_PID" 2>/dev/null || true
+    kill "$SWAYLOCK_PID" || fail "locker exited before the death check"
+    wait "$SWAYLOCK_PID" 2>/dev/null || true
+    SWAYLOCK_PID=
     sleep 1
     loggrep "session unlocked (ext-session-lock)" \
       && fail "locker death unlocked the session"
@@ -478,5 +455,4 @@ else
   echo "skip: swaylock not in the shell environment; lock e2e skipped"
 fi
 
-kill "$WM_PID" "$XVFB_PID" 2>/dev/null || true
 echo "e2e: all checks passed"

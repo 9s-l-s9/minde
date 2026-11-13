@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_FRACTIONAL_E2E_OUT:-/tmp/swm14c}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 for tool in wayland-info wlr-randr foot; do
     command -v "$tool" >/dev/null 2>&1 || {
@@ -88,7 +88,7 @@ echo "ok - wlr-randr applied Scale=1.5 and the compositor reflected it and lives
 
 # --- a real client at the fractional scale --------------------------------
 before=$(nested_window_count 2>/dev/null || printf '0')
-nested_wayland foot sh -c 'sleep 6' >"$OUT/foot.log" 2>&1 &
+nested_wayland_exec foot sh -c 'sleep 6' >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!
 
 if nested_wait_for_window_after "$before" 20; then

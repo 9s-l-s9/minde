@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
 OUT=${MINDE_PERSISTENCE_E2E_OUT:-/tmp/minde-persistence-e2e}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 mkdir -p "$OUT"
 printf '%s\n' '(minde-layouts 2 (("preserved" . leaf)))' >"$OUT/layouts.scm"
 printf '%s\n' '(minde-placement-rules 2 (("foot" "II" 0 #f)))' >"$OUT/rules.scm"

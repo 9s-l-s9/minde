@@ -72,6 +72,7 @@ check-control-e2e:
 check-static:
 	sh tests/lint-borrows.sh
 	sh tests/lint-hook-borrows.sh
+	sh tests/nested-harness-test.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -x check debug-tty.sh tests/*.sh tests/lib/*.sh \
 			scripts/capture-demos scripts/generate-docs scripts/generate-testing-reference \
@@ -162,6 +163,8 @@ check-e2e:
 		echo "error: wlopm is required by the output-power scenario" >&2; exit 127; }
 	@command -v swayidle >/dev/null 2>&1 || { \
 		echo "error: swayidle is required by the idle scenario" >&2; exit 127; }
+	sh tests/nested-harness-test.sh display
+	sh tests/nested-harness-test.sh scenario
 	sh tests/init-bytecode-e2e.sh
 	sh tests/init-recovery-e2e.sh
 	sh tests/winit-errors-e2e.sh

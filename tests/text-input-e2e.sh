@@ -27,7 +27,7 @@ cleanup() {
     fi
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 command -v wayland-info >/dev/null 2>&1 || {
     echo "error: wayland-info is required (add wayland-utils)" >&2
@@ -64,7 +64,7 @@ done
 # provoke a protocol error. foot binds zwp_text_input_v3 and, with no IME
 # bound, the compositor discards its text-input requests silently.
 before=$(nested_window_count 2>/dev/null || printf '0')
-nested_wayland timeout 20 foot sh -c 'printf hello; sleep 6' \
+nested_wayland_exec timeout 20 foot sh -c 'printf hello; sleep 6' \
     >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!
 

@@ -17,7 +17,7 @@ mkdir -p "$OUT"
 cleanup() {
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 command -v foot >/dev/null 2>&1 || {
     echo "error: foot is required for the map/unmap soak cycle" >&2
@@ -42,7 +42,7 @@ while :; do
     iteration_started=$(date +%s%3N)
     before=$(nested_window_count)
 
-    nested_wayland timeout 15 foot --app-id=minde-soak \
+    nested_wayland_exec timeout 15 foot --app-id=minde-soak \
         --title="minde soak $iteration" sh -c 'sleep 10' \
         >"$OUT/foot-$iteration.log" 2>&1 &
     client_pid=$!

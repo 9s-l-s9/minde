@@ -15,7 +15,7 @@ cleanup() {
     fi
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 command -v foot >/dev/null 2>&1 || {
     echo "error: foot is required for portable keymap e2e" >&2
@@ -32,7 +32,7 @@ nested_start "$OUT" "${MINDE_PORTABLE_E2E_DISPLAY:-:94}" || {
 }
 
 before=$(nested_window_count)
-nested_wayland timeout 30 foot --app-id=minde-portable-test \
+nested_wayland_exec timeout 30 foot --app-id=minde-portable-test \
     --title=minde-portable-test sh -c 'sleep 25' >"$OUT/foot.log" 2>&1 &
 CLIENT_PID=$!
 nested_wait_for_window_after "$before" 12 || {

@@ -10,10 +10,10 @@ cleanup() {
     [ -z "$FOOT_PID" ] || kill "$FOOT_PID" 2>/dev/null || true
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 nested_start "$OUT" "${MINDE_RESIZE_E2E_DISPLAY:-:93}"
 before=$(nested_window_count)
-nested_wayland env WAYLAND_DEBUG=1 foot -o resize-by-cells=no -o resize-keep-grid=no sh -c 'while :; do sleep 60; done' \
+nested_wayland_exec env WAYLAND_DEBUG=1 foot -o resize-by-cells=no -o resize-keep-grid=no sh -c 'while :; do sleep 60; done' \
     >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!
 nested_wait_for_window_after "$before" 15

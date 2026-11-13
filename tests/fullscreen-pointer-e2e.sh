@@ -16,7 +16,7 @@ cleanup() {
     done
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 mkdir -p "$OUT"
 protocols=$(pkg-config --variable=pkgdatadir wayland-protocols)
 # Use the protocol already pinned by Cargo, including vendored builds.
@@ -111,7 +111,7 @@ start_fifo() {
 }
 start_fifo
 CLIENT_LOG="$OUT/pointer.log"
-nested_wayland timeout 120 "$OUT/pointer-client" <"$OUT/commands" >"$CLIENT_LOG" 2>&1 &
+nested_wayland_exec timeout 120 "$OUT/pointer-client" <"$OUT/commands" >"$CLIENT_LOG" 2>&1 &
 CLIENT_PID=$!
 nested_wait_for_window_after 0 15
 wait_log "$CLIENT_LOG" 'size '
@@ -177,7 +177,7 @@ eval_wm '(begin (collapse-to-one-frame!) (wm-border-color "#00ff00"))' >/dev/nul
 rm -f "$OUT/panel-commands"
 mkfifo "$OUT/panel-commands"
 exec 4<>"$OUT/panel-commands"
-nested_wayland timeout 120 "$OUT/pointer-client" panel <"$OUT/panel-commands" >"$OUT/panel.log" 2>&1 &
+nested_wayland_exec timeout 120 "$OUT/pointer-client" panel <"$OUT/panel-commands" >"$OUT/panel.log" 2>&1 &
 PANEL_PID=$!
 wait_log "$OUT/panel.log" 'panel-ready'
 assert_pixel() {
@@ -199,7 +199,7 @@ for kind in native x11 initial-x11; do
     start_fifo
     CLIENT_LOG="$OUT/$kind.log"
     if [ "$kind" = native ]; then
-        nested_wayland timeout 90 "$OUT/pointer-client" <"$OUT/commands" >"$CLIENT_LOG" 2>&1 &
+        nested_wayland_exec timeout 90 "$OUT/pointer-client" <"$OUT/commands" >"$CLIENT_LOG" 2>&1 &
     elif [ "$kind" = x11 ]; then
         env DISPLAY="$xdisplay" timeout 90 "$OUT/x11-client" <"$OUT/commands" >"$CLIENT_LOG" 2>&1 &
     else
@@ -244,7 +244,7 @@ if [ "$kind" = native ]; then
     rm -f "$OUT/second-commands"
     mkfifo "$OUT/second-commands"
     exec 5<>"$OUT/second-commands"
-    nested_wayland timeout 60 "$OUT/pointer-client" <"$OUT/second-commands" >"$OUT/group-second.log" 2>&1 &
+    nested_wayland_exec timeout 60 "$OUT/pointer-client" <"$OUT/second-commands" >"$OUT/group-second.log" 2>&1 &
     SECOND_PID=$!
     nested_wait_for_window_after 0 15
     second_id=$(eval_wm '(focused-window-id)')

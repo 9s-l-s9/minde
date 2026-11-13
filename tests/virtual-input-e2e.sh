@@ -32,7 +32,7 @@ cleanup() {
     fi
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 command -v wayland-info >/dev/null 2>&1 || {
     echo "error: wayland-info is required (add wayland-utils)" >&2
@@ -82,7 +82,7 @@ TYPED="$OUT/typed.txt"
 rm -f "$TYPED"
 MARKER="swm14vk"
 before=$(nested_window_count 2>/dev/null || printf '0')
-nested_wayland timeout 30 foot sh -c \
+nested_wayland_exec timeout 30 foot sh -c \
     "while IFS= read -r l; do printf '%s\n' \"\$l\" >>'$TYPED'; done" \
     >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!

@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
 OUT=${MINDE_OUTPUT_POWER_E2E_OUT:-/tmp/swm-outpower-e2e}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 command -v wlopm >/dev/null 2>&1 || {
     echo "error: wlopm is required (wlr-output-power-management client)" >&2

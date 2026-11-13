@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_SCREENCAPTURE_E2E_OUT:-/tmp/swm-e2e}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 export MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1
 
 command -v grim >/dev/null 2>&1 || {

@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
 OUT=${MINDE_INPUT_CONFIG_E2E_OUT:-/tmp/swm14-input}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 nested_start "$OUT" "${MINDE_INPUT_CONFIG_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2

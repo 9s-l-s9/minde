@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 OUT=${MINDE_OUTPUT_SCHEME_E2E_OUT:-/tmp/swm-outscheme-e2e}
 unset MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 command -v wlr-randr >/dev/null 2>&1 || {
     echo "error: wlr-randr is required (wlr-output-management client)" >&2

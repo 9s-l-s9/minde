@@ -2,32 +2,78 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Shared nested-compositor lifecycle used by application and soak scenarios.
 
+# Ownership belongs to this driver, never to an inherited shell environment.
+NESTED_WM_PID='' NESTED_XVFB_PID='' NESTED_RT='' NESTED_WAYLAND_DISPLAY=''
+
+nested_install_cleanup() {
+    # Capture the caller's cleanup function now, before positional args change.
+    # shellcheck disable=SC2064
+    trap "${1:-nested_stop}" EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
+nested_plain_log() {
+    sed "s/$(printf '\033')\[[0-9;]*m//g"
+}
+
 nested_log_has() {
-    sed "s/$(printf '\033')\[[0-9;]*m//g" "$NESTED_LOG" | grep -aq "$1"
+    nested_plain_log <"$NESTED_LOG" | grep -aq "$1"
+}
+
+nested_locker_unavailable() {
+    # A protocol failure or an unexplained exit is a test failure, not a skip.
+    grep -Eq 'pam_start failed|getpwuid failed' "$1"
 }
 
 nested_stop() {
-    for pid in "${NESTED_WM_PID:-}" "${NESTED_XVFB_PID:-}"; do
-        if [ -n "$pid" ]; then
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
+    set -- "${NESTED_WM_PID:-}" "${NESTED_XVFB_PID:-}"
+    NESTED_WM_PID='' NESTED_XVFB_PID=''
+    for nested_pid do
+        if [ -n "$nested_pid" ]; then
+            kill "$nested_pid" 2>/dev/null || true
+            wait "$nested_pid" 2>/dev/null || true
         fi
     done
     if [ -n "${NESTED_RT:-}" ] && [ -d "$NESTED_RT" ]; then
         rm -rf "$NESTED_RT"
     fi
+    NESTED_RT='' NESTED_WAYLAND_DISPLAY=''
+}
+
+nested_start_xvfb() {
+    # Only our server can acknowledge readiness through this descriptor.
+    # A socket probe could instead reach an existing server on a busy display.
+    : >"$NESTED_OUT/xvfb-ready" || return 1
+    Xvfb "$NESTED_DISPLAY" -displayfd 3 -screen 0 1280x800x24 \
+        3>"$NESTED_OUT/xvfb-ready" >"$NESTED_OUT/xvfb.log" 2>&1 &
+    NESTED_XVFB_PID=$!
+    nested_attempt=0
+    while :; do
+        kill -0 "$NESTED_XVFB_PID" 2>/dev/null || return 1
+        if [ -s "$NESTED_OUT/xvfb-ready" ]; then
+            read -r nested_actual_display <"$NESTED_OUT/xvfb-ready" || return 1
+            # Check the server's own display number before exporting DISPLAY.
+            [ ":$nested_actual_display" = "$NESTED_DISPLAY" ] || return 1
+            return 0
+        fi
+        nested_attempt=$((nested_attempt + 1))
+        [ "$nested_attempt" -le 20 ] || return 1
+        sleep 0.1
+    done
 }
 
 nested_start() {
     NESTED_OUT=$1
     NESTED_DISPLAY=$2
-    NESTED_RT=$(mktemp -d /tmp/minde-nested-runtime.XXXXXX)
+    NESTED_RT=$(mktemp -d "${TMPDIR:-/tmp}/minde-nested-runtime.XXXXXX") || return 1
     NESTED_LOG="$NESTED_OUT/compositor.log"
-    mkdir -p "$NESTED_OUT"
+    mkdir -p "$NESTED_OUT" || return 1
     mkdir -p "$NESTED_RT/home" "$NESTED_RT/cache" "$NESTED_RT/config" \
-        "$NESTED_RT/state"
-    chmod 700 "$NESTED_RT"
-    : >"$NESTED_LOG"
+        "$NESTED_RT/state" || return 1
+    chmod 700 "$NESTED_RT" || return 1
+    : >"$NESTED_LOG" || return 1
 
     if [ -z "${MINDE_NESTED_PACKAGE:-}" ] || [ "${MINDE_TEST_PROTOCOLS:-0}" = 1 ]; then
         command -v cargo >/dev/null 2>&1 || {
@@ -44,23 +90,7 @@ nested_start() {
         return 127
     }
 
-    Xvfb "$NESTED_DISPLAY" -screen 0 1280x800x24 >"$NESTED_OUT/xvfb.log" 2>&1 &
-    NESTED_XVFB_PID=$!
-    # Poll for Xvfb readiness instead of a fixed 2 s sleep; same 2 s overall
-    # budget, checked every 100 ms so a fast start doesn't pay the whole
-    # wait.
-    attempt=0
-    while :; do
-        if command -v xdpyinfo >/dev/null 2>&1; then
-            DISPLAY="$NESTED_DISPLAY" xdpyinfo >/dev/null 2>&1 && break
-        elif [ -S "/tmp/.X11-unix/X${NESTED_DISPLAY#:}" ]; then
-            break
-        fi
-        attempt=$((attempt + 1))
-        [ "$attempt" -le 20 ] || return 1
-        kill -0 "$NESTED_XVFB_PID" 2>/dev/null || return 1
-        sleep 0.1
-    done
+    nested_start_xvfb || return 1
 
     export DISPLAY="$NESTED_DISPLAY"
     export XDG_RUNTIME_DIR="$NESTED_RT"
@@ -100,7 +130,13 @@ nested_start() {
             export GUILE_AUTO_COMPILE=0
         fi
         # A host autocompile cache can hide a missing packaged init.go.
+        export HOME="$NESTED_RT/home"
         export XDG_CACHE_HOME="$NESTED_RT/cache"
+        export XDG_CONFIG_HOME="$NESTED_RT/config"
+        export XDG_STATE_HOME="$NESTED_RT/state"
+        if [ "${MINDE_NESTED_LEGACY_KEYMAP:-0}" = 1 ]; then
+            export MINDE_E2E_LEGACY_KEYMAP=1
+        fi
         export MINDE_INIT="${MINDE_NESTED_INIT:-$NESTED_SCHEME/init.scm}"
         export MINDE_SCHEME_DIR="$NESTED_SCHEME"
         export MINDE_CONFIG="${MINDE_NESTED_CONFIG:-$PWD/tests/e2e-config.scm}"
@@ -141,8 +177,11 @@ nested_start() {
     done
 }
 
-nested_wayland() {
-    env DISPLAY= WAYLAND_DISPLAY="$NESTED_WAYLAND_DISPLAY" \
+nested_wayland() ( nested_wayland_exec "$@"; )
+
+# Use this form for background clients so $! is the executable's PID.
+nested_wayland_exec() {
+    exec env DISPLAY= WAYLAND_DISPLAY="$NESTED_WAYLAND_DISPLAY" \
         XDG_RUNTIME_DIR="$NESTED_RT" HOME="$NESTED_RT/home" \
         XDG_CACHE_HOME="$NESTED_RT/cache" XDG_CONFIG_HOME="$NESTED_RT/config" \
         XDG_STATE_HOME="$NESTED_RT/state" "$@"
@@ -172,7 +211,7 @@ nested_wait_for_log_after() {
     limit=$3
     attempt=0
     while [ "$attempt" -lt "$limit" ]; do
-        tail -n "+$line" "$NESTED_LOG" | grep -aq "$pattern" && return 0
+        tail -n "+$line" "$NESTED_LOG" | nested_plain_log | grep -aq "$pattern" && return 0
         kill -0 "$NESTED_WM_PID" 2>/dev/null || return 1
         attempt=$((attempt + 1))
         sleep 1

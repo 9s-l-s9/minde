@@ -12,12 +12,12 @@ cleanup() {
     [ -z "$BACKGROUND_PID" ] || kill "$BACKGROUND_PID" 2>/dev/null || true
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 nested_start "$OUT" "${MINDE_GAPS_E2E_DISPLAY:-:92}"
-nested_wayland swaybg -c '#ff0000' >"$OUT/background.log" 2>&1 &
+nested_wayland_exec swaybg -c '#ff0000' >"$OUT/background.log" 2>&1 &
 BACKGROUND_PID=$!
 before=$(nested_window_count)
-nested_wayland env WAYLAND_DEBUG=1 foot -o resize-by-cells=no -o resize-keep-grid=no \
+nested_wayland_exec env WAYLAND_DEBUG=1 foot -o resize-by-cells=no -o resize-keep-grid=no \
     -o colors.background=000000 sh -c 'while :; do sleep 60; done' >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!
 nested_wait_for_window_after "$before" 15

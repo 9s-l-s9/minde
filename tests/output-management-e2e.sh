@@ -22,7 +22,7 @@ export MINDE_TEST_PROTOCOLS=1
 # The nested compositor inherits our environment; make sure the override is
 # off for the first (normal) run.
 unset MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 command -v wlr-randr >/dev/null 2>&1 || {
     echo "error: wlr-randr is required (wlr-output-management client)" >&2

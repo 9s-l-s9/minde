@@ -18,7 +18,10 @@ compositor.
   forced cleanup.
 - Each run receives an isolated temporary home, cache, config, state and
   Wayland runtime directory. The directory is removed when the compositor
-  stops.
+  stops, including on script failure or interruption. Repeated cleanup is safe.
+- Xvfb must acknowledge readiness on the requested display through its own
+  descriptor. An occupied display fails startup instead of attaching the test
+  to another server.
 - Client lifetime bounds log growth. The fixed scenario inventory creates at
   most one log and one screenshot per application, overwriting the same paths
   on the next run.
@@ -45,14 +48,27 @@ Do not assemble a monolithic application manifest.
 | SDL2/LÖVE | native Wayland | optional | SDL Wayland window maps |
 | swaybg | layer shell | optional | background namespace maps |
 | fuzzel | layer shell | optional | launcher namespace maps |
-| swaylock | session lock | manual/missing | reports the current protocol gap |
+| swaylock | session lock | manual | locked presentation is confirmed; runs last because locker death preserves the lock |
 | eww | layer shell | optional | bar namespace maps |
 
 Normal runs record unavailable optional scenarios as `skip`. Set
 `MINDE_APPS_STRICT=1` to turn a selected missing scenario into a failure.
+Swaylock may be unavailable because of an identified PAM/account startup
+failure; a running locker that never confirms, protocol errors and unexplained
+exits fail the scenario. The broad `tests/e2e.sh` suite also verifies that killing
+the actual foreground locker leaves the session locked.
 Machine-readable results are written to
 `/tmp/minde-applications/results.json`; JSONL, per-client logs and bounded
 screenshots remain beside it after failures.
+
+`tests/nested-harness-test.sh` runs headless checks in the default static gate:
+colored log fields, repeated teardown, filesystem failures, signal exits,
+background client PIDs and locker error classification. Its `display` and
+`scenario` modes run in `make check-e2e`, checking a real display collision and
+cleanup after an ordinary command failure or TERM in the main end-to-end script.
+Use `MINDE_HARNESS_DISPLAY` for these checks, `E2E_DISPLAY` for the broad suite,
+and `MINDE_APPS_DISPLAY` for the application matrix when selecting private
+display numbers.
 
 ## Small local batches
 

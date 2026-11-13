@@ -14,17 +14,19 @@ FILTER=${MINDE_APPS_FILTER:-all}
 FAILURES=0
 PASSES=0
 SKIPS=0
+SCENARIO_PID=
 mkdir -p "$OUT"
 : >"$RESULTS"
 : >"$SUMMARY"
 
 cleanup() {
+    scenario_stop
     if [ -n "${NESTED_WAYLAND_DISPLAY:-}" ]; then
-        nested_wayland eww --config "$PWD/doc/eww" kill >/dev/null 2>&1 || true
+        nested_wayland timeout 5 eww --config "$PWD/doc/eww" kill >/dev/null 2>&1 || true
     fi
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 record() {
     scenario=$1 toolkit=$2 protocol=$3 requirement=$4 status=$5 duration=$6 artifact=$7 reason=$8
@@ -59,11 +61,13 @@ scenario_start() {
 }
 
 scenario_stop() {
-    pid=$1
-    kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    scenario_pid=${SCENARIO_PID:-}
+    SCENARIO_PID=
+    [ -n "$scenario_pid" ] || return 0
+    kill -TERM "-$scenario_pid" 2>/dev/null || kill "$scenario_pid" 2>/dev/null || true
     sleep 1
-    kill -KILL "-$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    kill -KILL "-$scenario_pid" 2>/dev/null || true
+    wait "$scenario_pid" 2>/dev/null || true
 }
 
 skip_or_fail() {
@@ -89,7 +93,6 @@ run_toplevel() {
     started=$(date +%s%3N)
     output="$OUT/$scenario.log"
     scenario_start "$@" >"$output" 2>&1
-    pid=$SCENARIO_PID
     if nested_wait_for_log_after "$line" \
         'protocol="wayland".*managed toplevel mapped\|managed toplevel mapped.*protocol="wayland"' 12; then
         artifact="$OUT/$scenario.png"
@@ -104,7 +107,7 @@ run_toplevel() {
         FAILURES=$((FAILURES + 1))
         record "$scenario" "$toolkit" "$protocol" "$requirement" fail "$duration" "$artifact" "no managed window appeared"
     fi
-    scenario_stop "$pid"
+    scenario_stop
     sleep 1
 }
 
@@ -136,12 +139,10 @@ run_clipboard() {
         return
     fi
     started=$(date +%s%3N)
-    nested_wayland wl-copy --type text/plain minde-clipboard-check >"$OUT/wl-clipboard.log" 2>&1 &
-    copy_pid=$!
+    scenario_start wl-copy --foreground --type text/plain minde-clipboard-check >"$OUT/wl-clipboard.log" 2>&1
     sleep 1
     actual=$(nested_wayland timeout 5 wl-paste --no-newline 2>>"$OUT/wl-clipboard.log" || true)
-    kill "$copy_pid" 2>/dev/null || true
-    wait "$copy_pid" 2>/dev/null || true
+    scenario_stop
     if [ "$actual" = minde-clipboard-check ]; then
         PASSES=$((PASSES + 1))
         record wl-clipboard wlroots wayland required pass "$(($(date +%s%3N) - started))" "$OUT/wl-clipboard.log" ""
@@ -177,7 +178,6 @@ run_layer() {
     line=$(($(wc -l <"$NESTED_LOG") + 1))
     started=$(date +%s%3N)
     scenario_start "$@" >"$OUT/$scenario.log" 2>&1
-    pid=$SCENARIO_PID
     if nested_wait_for_log_after "$line" "layer surface mapped.*$namespace\|namespace.*$namespace.*layer surface mapped" 12; then
         artifact="$OUT/$scenario.png"
         nested_capture "$artifact"
@@ -189,7 +189,7 @@ run_layer() {
         FAILURES=$((FAILURES + 1))
         record "$scenario" "$toolkit" layer-shell "$requirement" fail "$(($(date +%s%3N) - started))" "$artifact" "layer namespace was not mapped"
     fi
-    scenario_stop "$pid"
+    scenario_stop
     sleep 1
 }
 
@@ -203,31 +203,22 @@ run_swaylock() {
     started=$(date +%s%3N)
     scenario_start swaylock --color 282828 >"$OUT/swaylock.log" 2>&1
     pid=$SCENARIO_PID
-    if nested_wait_for_log_after "$line" 'session lock surface mapped' 5; then
+    if nested_wait_for_log_after "$line" 'session locked (ext-session-lock)' 5; then
         artifact="$OUT/swaylock.png"
         nested_capture "$artifact"
         PASSES=$((PASSES + 1))
         record swaylock swaylock session-lock manual pass \
             "$(($(date +%s%3N) - started))" "$artifact" ""
-    elif grep -q 'Missing ext-session-lock-v1' "$OUT/swaylock.log"; then
-        if [ "$STRICT" = 1 ]; then
-            FAILURES=$((FAILURES + 1))
-            record swaylock swaylock session-lock manual fail \
-                "$(($(date +%s%3N) - started))" "$OUT/swaylock.log" \
-                "ext-session-lock-v1 is not implemented"
-        else
-            SKIPS=$((SKIPS + 1))
-            record swaylock swaylock session-lock manual skip \
-                "$(($(date +%s%3N) - started))" "$OUT/swaylock.log" \
-                "ext-session-lock-v1 is not implemented"
-        fi
+    elif ! kill -0 "$pid" 2>/dev/null && nested_locker_unavailable "$OUT/swaylock.log"; then
+        skip_or_fail swaylock swaylock session-lock manual \
+            "PAM/account startup failed; inspect $OUT/swaylock.log"
     else
         FAILURES=$((FAILURES + 1))
         record swaylock swaylock session-lock manual fail \
             "$(($(date +%s%3N) - started))" "$OUT/swaylock.log" \
-            "lock surface was not mapped"
+            "session lock was not confirmed"
     fi
-    scenario_stop "$pid"
+    scenario_stop
 }
 
 if ! nested_start "$OUT" "${MINDE_APPS_DISPLAY:-:96}"; then
@@ -271,10 +262,11 @@ run_layer swaybg swaybg optional swaybg wallpaper \
     swaybg -m fill -i "$OUT/background.png"
 run_layer fuzzel fuzzel optional fuzzel launcher \
     sh -c "printf 'one\ntwo\n' | fuzzel --dmenu"
-run_swaylock
 run_layer eww eww optional eww gtk-layer-shell \
     sh -c "eww --config '$PWD/doc/eww' daemon; sleep 2; eww --config '$PWD/doc/eww' open bar; sleep 15"
-nested_wayland eww --config "$PWD/doc/eww" kill >/dev/null 2>&1 || true
+nested_wayland timeout 5 eww --config "$PWD/doc/eww" kill >/dev/null 2>&1 || true
+# Killing a locker deliberately leaves the compositor locked. Run this last.
+run_swaylock
 
 jq -s '{schema_version:1,total:length,pass:map(select(.status=="pass"))|length,
        skip:map(select(.status=="skip"))|length,fail:map(select(.status=="fail"))|length,

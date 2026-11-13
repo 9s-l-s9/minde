@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_INIT_RECOVERY_E2E_OUT:-/tmp/minde-init-recovery}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 mkdir -p "$OUT/fixtures"
 printf '(\n' > "$OUT/fixtures/syntax.scm"
 printf ';; failing source location\n\n(minde-init-unbound-variable)\n' > "$OUT/fixtures/unbound.scm"

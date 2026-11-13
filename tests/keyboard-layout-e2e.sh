@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 OUT=${MINDE_KEYBOARD_LAYOUT_E2E_OUT:-/tmp/swm-kblayout-e2e}
 export NESTED_XKB_LAYOUT=de,us NESTED_XKB_VARIANT=bone,
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 nested_start "$OUT" "${MINDE_KEYBOARD_LAYOUT_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2

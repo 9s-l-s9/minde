@@ -29,7 +29,7 @@ cleanup() {
     fi
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 
 command -v wayland-info >/dev/null 2>&1 || {
     echo "error: wayland-info is required (add wayland-utils)" >&2
@@ -76,7 +76,7 @@ done
 # socket; the marker must appear within a bounded wait.
 MARKER="$OUT/idle-marker"
 rm -f "$MARKER"
-nested_wayland timeout 20 swayidle timeout 1 "touch $MARKER" \
+nested_wayland_exec timeout 20 swayidle timeout 1 "touch $MARKER" \
     >"$OUT/swayidle.log" 2>&1 &
 SWAYIDLE_PID=$!
 

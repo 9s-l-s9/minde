@@ -12,7 +12,7 @@ cleanup() {
     [ -z "$FOOT_PID" ] || kill "$FOOT_PID" 2>/dev/null || true
     nested_stop
 }
-trap cleanup EXIT HUP INT TERM
+nested_install_cleanup cleanup
 nested_start "$OUT" "${MINDE_GUILE_BOUNDARY_E2E_DISPLAY:-:99}"
 seval() { timeout 15 scripts/mindectl eval "$1"; }
 check() {
@@ -25,7 +25,7 @@ check() {
 }
 
 before=$(nested_window_count)
-nested_wayland foot -o resize-by-cells=no -o resize-keep-grid=no sleep 300 \
+nested_wayland_exec foot -o resize-by-cells=no -o resize-keep-grid=no sleep 300 \
     >"$OUT/foot.log" 2>&1 &
 FOOT_PID=$!
 nested_wait_for_window_after "$before" 15

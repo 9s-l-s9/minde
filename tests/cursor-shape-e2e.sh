@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
 OUT=${MINDE_CURSOR_SHAPE_E2E_OUT:-/tmp/swm14g}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 command -v wayland-info >/dev/null 2>&1 || {
     echo "error: wayland-info is required (add wayland-utils)" >&2

@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_CLIPBOARD_E2E_OUT:-/tmp/swm-clip-e2e}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 for tool in wl-copy wl-paste wayland-info; do
     command -v "$tool" >/dev/null 2>&1 || {

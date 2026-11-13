@@ -21,6 +21,14 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Nested tests clean up owned processes and fresh runtime directories on
+  failures and signals, reject occupied Xvfb displays, and match colored
+  log fields consistently. Repeated teardown does not signal retired PIDs
+  (#126, #127, #131).
+- Locker tests wait for actual lock confirmation and kill the foreground
+  swaylock process when checking abandonment. The application matrix runs
+  its locker last and distinguishes PAM/account startup failures from
+  protocol failures (#128, #168).
 - Suspend setup errors and early exits remove the pending confirmation hook,
   allowing a fresh attempt and preventing an unrelated later lock from
   suspending the machine. Failed timeout registration also cancels setup;

@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 OUT=${MINDE_INIT_E2E_OUT:-/tmp/minde-init-bytecode}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 if [ -z "${MINDE_NESTED_PACKAGE:-}" ]; then
     make compile-scheme
     # Child-only package overrides in nested_start are intentionally isolated.

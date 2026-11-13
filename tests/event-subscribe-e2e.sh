@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
 OUT=${MINDE_EVENT_SUBSCRIBE_E2E_OUT:-/tmp/swm15c}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 
 for tool in foot guile; do
     command -v "$tool" >/dev/null 2>&1 || {

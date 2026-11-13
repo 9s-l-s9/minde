@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_SESSION_LOCK_E2E_OUT:-/tmp/minde-session-lock-e2e}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 for tool in xdotool timeout; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "error: $tool is required for session-lock-e2e" >&2

@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 OUT=${MINDE_WINIT_ERRORS_E2E_OUT:-/tmp/minde-winit-errors}
-trap nested_stop EXIT HUP INT TERM
+nested_install_cleanup nested_stop
 mkdir -p "$OUT/lib"
 export MINDE_TEST_REAL_EGL
 MINDE_TEST_REAL_EGL=$(readlink -f "$(pkg-config --variable=libdir egl)/libEGL.so.1")
