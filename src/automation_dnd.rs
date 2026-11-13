@@ -73,16 +73,11 @@ pub fn record_and_publish(
     operation: AutomationOperation,
     status: AutomationStatus,
 ) {
-    automation_results().record(AutomationResult {
+    automation_results().record_and_publish(AutomationResult {
         token,
         operation,
         status,
     });
-    crate::events::publish_line(&format!(
-        "(automation-result {token} {} {})",
-        operation_name(operation),
-        status_name(status)
-    ));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +88,7 @@ pub struct AutomationResult {
 }
 
 /// Thread-safe, bounded completion history. Updating an existing token moves it
-/// to the newest position, which makes late terminal events authoritative.
+/// to the newest position. Individual producers own terminal-result semantics.
 #[derive(Debug, Clone)]
 pub struct AutomationResults {
     inner: Arc<Mutex<VecDeque<AutomationResult>>>,
@@ -156,6 +151,16 @@ impl AutomationResults {
             .iter()
             .find(|item| item.token == token)
             .copied()
+    }
+
+    fn record_and_publish(&self, result: AutomationResult) {
+        self.record(result);
+        crate::events::publish_line(&format!(
+            "(automation-result {} {} {})",
+            result.token,
+            operation_name(result.operation),
+            status_name(result.status)
+        ));
     }
 
     #[cfg(test)]
@@ -244,7 +249,6 @@ fn percent_encode_path(path: &Path) -> String {
 #[derive(Debug)]
 struct SourceState {
     selected_action: DndAction,
-    dropped: bool,
     terminal: bool,
 }
 
@@ -304,7 +308,6 @@ impl AutomationDndSource {
             results,
             state: Arc::new(Mutex::new(SourceState {
                 selected_action: DndAction::None,
-                dropped: false,
                 terminal: false,
             })),
         }
@@ -319,22 +322,24 @@ impl AutomationDndSource {
         self.token
     }
 
-    pub fn operation(&self) -> AutomationOperation {
-        self.operation
-    }
-
     pub fn selected_action(&self) -> DndAction {
         lock(&self.state).selected_action
     }
 
-    fn complete(&self, status: AutomationStatus) {
+    /// Publish the grab's terminal handoff decision once. Accepted payloads
+    /// remain available until the recipient finishes or cancels its offer.
+    /// Keep the guard in the source: the bounded result history may evict it
+    /// before a client finishes reading, or abandons the offer.
+    pub fn report_result(&self, status: AutomationStatus) {
+        if status != AutomationStatus::Accepted {
+            self.payload.cancel();
+        }
         let mut state = lock(&self.state);
         if state.terminal {
             return;
         }
         state.terminal = true;
-        self.payload.cancel();
-        self.results.record(AutomationResult {
+        self.results.record_and_publish(AutomationResult {
             token: self.token,
             operation: self.operation,
             status,
@@ -371,23 +376,16 @@ impl Source for AutomationDndSource {
         }
     }
 
-    fn drop_performed(&self) {
-        lock(&self.state).dropped = true;
-    }
+    fn drop_performed(&self) {}
 
     fn cancel(&self) {
-        self.complete(AutomationStatus::Cancelled);
+        // Smithay also calls this before the grab reports a rejected drop.
+        // Only the grab can distinguish rejection, no target and cancellation.
+        self.payload.cancel();
     }
 
     fn finished(&self) {
-        let state = lock(&self.state);
-        let accepted = state.dropped && state.selected_action == DndAction::Copy;
-        drop(state);
-        self.complete(if accepted {
-            AutomationStatus::Accepted
-        } else {
-            AutomationStatus::Rejected
-        });
+        self.payload.cancel();
     }
 }
 
@@ -504,6 +502,11 @@ mod tests {
         assert_eq!(metadata.dnd_actions.as_slice(), [DndAction::Copy]);
         source.choose_action(DndAction::Copy);
         source.drop_performed();
+        source.report_result(AutomationStatus::Accepted);
+        assert!(
+            source.alive(),
+            "acceptance must not stop the payload transfer"
+        );
         source.finished();
         assert!(!source.alive());
         assert_eq!(
@@ -514,6 +517,29 @@ mod tests {
         assert_eq!(
             results.get(token).unwrap().status,
             AutomationStatus::Accepted
+        );
+    }
+
+    #[test]
+    fn late_source_cleanup_cannot_republish_an_evicted_result() {
+        let results = AutomationResults::new(1);
+        let token = results.allocate(AutomationOperation::DropText);
+        let source = AutomationDndSource::text("payload".into(), token, results.clone());
+        source.report_result(AutomationStatus::Accepted);
+        let newer = results.allocate(AutomationOperation::Screenshot);
+        assert!(results.get(token).is_none());
+        let late = source.clone();
+        late.cancel();
+        late.finished();
+        late.report_result(AutomationStatus::Cancelled);
+        assert!(!source.alive());
+        assert!(
+            results.get(token).is_none(),
+            "late completion resurrected a result"
+        );
+        assert_eq!(
+            results.get(newer).unwrap().status,
+            AutomationStatus::Pending
         );
     }
 }

@@ -273,6 +273,15 @@ It verifies window and menu cleanup, foreign handles, failed runtime status,
 child `DISPLAY`, and continued native input. Automatic Xwayland restart
 remains unimplemented.
 
+`tests/clipboard-e2e.sh` checks large clipboard, primary-selection and drag
+payloads, bounded receive floods and stalled-transfer cleanup. Its raw drag
+target accepts text and file offers, finishes or destroys accepted offers,
+rejects an offer, and locks during a drag. The result registry must match
+exactly one terminal event for each token. Source unit tests also cover late
+cleanup after history eviction. Session-lock tests verify that cancelled drag
+timers cannot resume motion after unlock and that disappearing targets release
+their automation button.
+
 `tests/foreign-toplevel-e2e.sh` checks actual output enter/leave and done
 events after floating moves, edge overlap, fullscreen and output disable/enable.
 Delayed buffer commits distinguish configured sizes from committed geometry;

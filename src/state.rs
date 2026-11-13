@@ -330,10 +330,7 @@ pub struct MindeState {
     next_synthetic_sequence: u64,
     synthetic_keys: Vec<(u64, u32)>,
     pub(crate) pointer_buttons: PointerButtons,
-    pub(crate) active_automation_dnd: Option<(
-        crate::automation_dnd::AutomationToken,
-        crate::automation_dnd::AutomationOperation,
-    )>,
+    pub(crate) active_automation_dnd: Option<crate::automation_dnd::AutomationDndSource>,
 
     /// Pointer location in the global (logical) coordinate space. Updated
     /// by every pointer-motion input event (absolute in winit, relative in
@@ -1413,7 +1410,6 @@ impl MindeState {
 
         let source = source.with_transfers(self.transfers.clone());
         let token = source.token();
-        let operation = source.operation();
         let pointer = self.seat.get_pointer();
         // Replacing a client drag synchronously calls its cancellation hook.
         // Do not arm our token, warp, or press a button while another producer
@@ -1423,28 +1419,16 @@ impl MindeState {
             || self.pointer_buttons.any_pressed()
             || pointer.as_ref().is_some_and(|pointer| pointer.is_grabbed())
         {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::Cancelled,
-            );
+            source.report_result(crate::automation_dnd::AutomationStatus::Cancelled);
             return;
         }
         let Some(pointer) = pointer else {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::NoTarget,
-            );
+            source.report_result(crate::automation_dnd::AutomationStatus::NoTarget);
             return;
         };
         self.warp_pointer((x as f64, y as f64).into());
         let Some((target, _)) = self.surface_under(self.pointer_location) else {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::NoTarget,
-            );
+            source.report_result(crate::automation_dnd::AutomationStatus::NoTarget);
             return;
         };
         use smithay::reexports::wayland_server::Resource;
@@ -1458,11 +1442,7 @@ impl MindeState {
                     .is_some()
             });
         if is_xwayland {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::UnsupportedTarget,
-            );
+            source.report_result(crate::automation_dnd::AutomationStatus::UnsupportedTarget);
             return;
         }
         let time = self.start_time.elapsed().as_millis() as u32;
@@ -1476,14 +1456,10 @@ impl MindeState {
             self.release_pointer_buttons(|source| {
                 *source == PointerButtonSource::Automation(token)
             });
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::Cancelled,
-            );
+            source.report_result(crate::automation_dnd::AutomationStatus::Cancelled);
             return;
         };
-        self.active_automation_dnd = Some((token, operation));
+        self.active_automation_dnd = Some(source.clone());
         let grab = DnDGrab::new_pointer(
             &self.display_handle,
             start_data,
@@ -1518,7 +1494,11 @@ impl MindeState {
                 // A lock or another grab can cancel the drag between ticks.
                 // Its old timer must not move the pointer after unlocking.
                 if state.locked
-                    || state.active_automation_dnd.map(|(token, _)| token) != Some(source.token())
+                    || state
+                        .active_automation_dnd
+                        .as_ref()
+                        .map(|active| active.token())
+                        != Some(source.token())
                 {
                     state.release_pointer_buttons(|owner| {
                         *owner == PointerButtonSource::Automation(source.token())
@@ -1549,15 +1529,6 @@ impl MindeState {
                     TimeoutAction::ToDuration(DWELL)
                 }
             });
-    }
-
-    pub(crate) fn finish_automation_dnd(
-        &mut self,
-        token: crate::automation_dnd::AutomationToken,
-        operation: crate::automation_dnd::AutomationOperation,
-        status: crate::automation_dnd::AutomationStatus,
-    ) {
-        crate::automation_dnd::record_and_publish(token, operation, status);
     }
 
     /// Read current committed bounds, not the size of a pending configure.

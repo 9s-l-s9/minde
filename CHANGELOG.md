@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Automation drops publish one terminal result per token. Finishing or
+  destroying an accepted offer cleans up transfers without overwriting the
+  accepted handoff result or resurrecting evicted history entries (#51).
 - Application fullscreen requests affect their own Wayland or X11 window
   without changing the active group or keyboard focus. Hidden groups defer
   fullscreen until visited, invalid IDs do nothing, and taskbar requests

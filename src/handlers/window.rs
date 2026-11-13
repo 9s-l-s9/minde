@@ -40,7 +40,11 @@ impl MindeState {
                             .is_some_and(|grab| &grab.window == window)
                 })
                 .unwrap_or(false);
-            let automation = grabbed.then_some(self.active_automation_dnd).flatten();
+            let automation = self
+                .active_automation_dnd
+                .as_ref()
+                .filter(|_| grabbed)
+                .map(|source| source.token());
             if grabbed || pointer.current_focus().as_ref().is_some_and(owns) {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = self.start_time.elapsed().as_millis() as u32;
@@ -57,7 +61,7 @@ impl MindeState {
                     },
                 );
                 pointer.frame(self);
-                if let Some((token, _)) = automation {
+                if let Some(token) = automation {
                     // Release cancelled synthetic presses with no focused
                     // surface, before policy focuses the next desktop window.
                     self.release_pointer_buttons(|owner| {

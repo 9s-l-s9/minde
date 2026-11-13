@@ -223,7 +223,7 @@ impl DndGrabHandler for MindeState {
         _seat: Seat<Self>,
         _location: Point<f64, Logical>,
     ) {
-        if let Some((token, operation)) = self.active_automation_dnd.take() {
+        if let Some(source) = self.active_automation_dnd.take() {
             let status = if target.is_none() {
                 crate::automation_dnd::AutomationStatus::NoTarget
             } else if validated {
@@ -231,17 +231,13 @@ impl DndGrabHandler for MindeState {
             } else {
                 crate::automation_dnd::AutomationStatus::Rejected
             };
-            self.finish_automation_dnd(token, operation, status);
+            source.report_result(status);
         }
     }
 
     fn cancelled(&mut self, _seat: Seat<Self>, _location: Point<f64, Logical>) {
-        if let Some((token, operation)) = self.active_automation_dnd.take() {
-            self.finish_automation_dnd(
-                token,
-                operation,
-                crate::automation_dnd::AutomationStatus::Cancelled,
-            );
+        if let Some(source) = self.active_automation_dnd.take() {
+            source.report_result(crate::automation_dnd::AutomationStatus::Cancelled);
         }
     }
 }

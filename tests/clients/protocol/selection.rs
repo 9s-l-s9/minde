@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::{
-    input::{Input, evaluate},
+    input::{Input, evaluate, token},
     wire::*,
 };
 use std::{
@@ -192,6 +192,82 @@ impl Selection {
         self.flood(offer, 1, Finish::Send(offer, 3, vec![]), "drag payload");
         println!("ok - large drag payload survives partial writes");
     }
+    fn dnd_results(&mut self) {
+        let file = env::temp_dir().join(format!("minde-dnd-result-{}", std::process::id()));
+        fs::write(&file, b"drop fixture").unwrap();
+        for (operation, outcome) in [
+            ("drop-text", "destroy"),
+            ("drop-text", "finish"),
+            ("drop-text", "reject"),
+            ("drop-text", "cancel"),
+            ("drop-files", "destroy"),
+        ] {
+            self.c.point();
+            let start = self.c.events.len();
+            let cursor = token(&ipc("(wm-event-cursor)"));
+            let (payload, mime) = if operation == "drop-files" {
+                (
+                    format!("(list {:?})", file.to_str().unwrap()),
+                    "text/uri-list",
+                )
+            } else {
+                ("\"result\"".into(), MIME)
+            };
+            let id = token(&ipc(&format!(
+                "(wm-{operation} {} 180 {payload})",
+                self.c.x
+            )));
+            let enter = self.c.wait(start, |e| e.is(self.drag_device, 1));
+            let offer = enter.word(4);
+            let expected = match outcome {
+                "cancel" => {
+                    let mut owner = Client::new("cancel automation result");
+                    let lock = owner.lock(true);
+                    owner.send(lock, 2, &[]);
+                    owner.roundtrip();
+                    locked(false);
+                    "cancelled"
+                }
+                "reject" => {
+                    // A v3 target with no negotiated action receives leave,
+                    // not drop, when the dwell expires.
+                    self.c.wait(start, |e| e.is(self.drag_device, 2));
+                    "rejected"
+                }
+                _ => {
+                    self.c
+                        .send(offer, 0, &[words(&[enter.word(0)]), string(mime)].concat());
+                    self.c.send(offer, 4, &words(&[1, 1]));
+                    self.c.wait(start, |e| e.is(self.drag_device, 4));
+                    evaluate(
+                        &format!("(wm-automation-status {id})"),
+                        &format!("({operation} accepted)"),
+                    );
+                    if outcome == "finish" {
+                        self.c.send(offer, 3, &[]);
+                    }
+                    "accepted"
+                }
+            };
+            self.c.send(offer, 2, &[]);
+            self.c.roundtrip();
+            evaluate(
+                &format!("(wm-automation-status {id})"),
+                &format!("({operation} {expected})"),
+            );
+            evaluate(
+                &format!(
+                    "(filter (lambda (line) (string-prefix? \"(automation-result {id} \" line)) \
+                 (map cadr (assq-ref (wm-events-since {cursor}) 'events)))"
+                ),
+                &format!("(\"(automation-result {id} {operation} {expected})\")"),
+            );
+        }
+        fs::remove_file(file).unwrap();
+        println!(
+            "ok - drag results publish once and survive finish, offer destruction, rejection and lock cancellation"
+        );
+    }
     fn paste(&mut self) {
         // Drop prior keymap descriptors before collecting the source's pipes.
         self.c.received_fds.clear();
@@ -270,12 +346,13 @@ impl Selection {
 pub fn run() {
     let mut c = Selection::new();
     for name in env::var("MINDE_TRANSFER_CASES")
-        .unwrap_or_else(|_| "clipboard dnd paste".into())
+        .unwrap_or_else(|_| "clipboard dnd dnd-results paste".into())
         .split_whitespace()
     {
         match name {
             "clipboard" => c.clipboard(),
             "dnd" => c.dnd(),
+            "dnd-results" => c.dnd_results(),
             "paste" => c.paste(),
             _ => panic!("unknown transfer case {name}"),
         }
