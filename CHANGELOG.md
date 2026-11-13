@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Decoration objects created after the initial xdg configure receive their
+  server-side mode immediately, allowing clients waiting for that reply to
+  attach their first buffer and map (#68).
 - Enabling floating state rejects unknown or retired window IDs instead of
   leaving ghost entries or premarking future windows. Disabling remains a
   harmless cleanup operation for stale IDs (#59).

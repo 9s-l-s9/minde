@@ -298,3 +298,6 @@ IDs and explicit taskbar activation. Scheme tests cover stale float mirrors,
 fullscreen-owner replacement and removal of the separately focused window.
 Its lifecycle client checks that floating flags reject unknown, future and
 retired IDs, follow real map/unmap lifetimes, and leave other windows intact.
+Another client creates its decoration object after the initial xdg configure,
+checks the decoration mode arrives before the next xdg configure, then attaches
+its first buffer and maps. Client-side preferences retain server-side policy.

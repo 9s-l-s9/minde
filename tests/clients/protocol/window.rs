@@ -205,6 +205,7 @@ pub fn outputs() {
 }
 pub fn run() {
     floating_ids();
+    late_decoration();
     focus();
     metadata();
     placement_rules();
@@ -370,6 +371,53 @@ pub fn run() {
     evaluate("(length lifecycle-unmaps)", "7");
     assert!(observer.live_handles().is_empty());
     println!("ok - mapped and unmapped role destruction emit unmap exactly once");
+}
+
+fn late_decoration() {
+    let mut client = Client::new("late decoration");
+    client.toplevel(false); // Initial configure is acknowledged, with no buffer.
+    let manager = client.bind("zxdg_decoration_manager_v1", 1);
+    let decoration = client.alloc();
+    let start = client.events.len();
+    client.send(manager, 1, &words(&[decoration, client.toplevel_object]));
+    assert_eq!(client.wait(start, |e| e.is(decoration, 0)).word(0), 2);
+    let surface = client.xdg_surface;
+    client.wait(start, |e| e.is(surface, 0));
+    client.roundtrip();
+    let events = &client.events[start..];
+    let mode = events.iter().position(|e| e.is(decoration, 0)).unwrap();
+    let configure = events.iter().position(|e| e.is(surface, 0)).unwrap();
+    assert!(
+        mode < configure,
+        "decoration mode must precede its xdg configure"
+    );
+    evaluate("(all-window-ids)", "()");
+    client.map_on_configure = true;
+    client.paint(
+        client.surface,
+        client.configured_size.0,
+        client.configured_size.1,
+        0x00ff00,
+    );
+    client.roundtrip();
+    let id = window_id(&client.name);
+    evaluate(&format!("(and (wm-window-geometry {id}) #t)"), "#t");
+    client.send(decoration, 1, &words(&[1])); // Client-side preference is ignored.
+    client.send(decoration, 2, &[]);
+    client.roundtrip();
+    assert!(
+        client
+            .events
+            .iter()
+            .filter(|e| e.is(decoration, 0))
+            .all(|e| e.word(0) == 2)
+    );
+    drop(client);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "late-decorated client remained mapped",
+    );
+    println!("ok - a decoration created after initial configure receives its mode and can map");
 }
 
 fn floating_ids() {

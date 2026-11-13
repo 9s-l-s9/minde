@@ -13,9 +13,9 @@ use crate::MindeState;
 
 impl XdgDecorationHandler for MindeState {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(Mode::ServerSide);
-        });
+        // A client may create its decoration after the initial configure,
+        // then wait for the mode before attaching its first buffer.
+        self.request_mode(toplevel, Mode::ServerSide);
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, _requested: Mode) {
@@ -29,11 +29,6 @@ impl XdgDecorationHandler for MindeState {
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        toplevel.with_pending_state(|state| {
-            state.decoration_mode = Some(Mode::ServerSide);
-        });
-        if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
-        }
+        self.request_mode(toplevel, Mode::ServerSide);
     }
 }
