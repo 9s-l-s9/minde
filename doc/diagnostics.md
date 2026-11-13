@@ -19,9 +19,13 @@ socket still exists.
 
 The status file is mode `0600` at:
 
-- `$MINDE_STATUS_PATH`, when set;
+- `$MINDE_STATUS_PATH`, when nonempty;
 - otherwise `$XDG_RUNTIME_DIR/minde/status.json`;
-- otherwise `/tmp/minde-UID/status.json`.
+- otherwise `${TMPDIR:-/tmp}/minde-UID/status.json`.
+
+Empty environment values are treated as unset. The fallback directory has
+mode `0700` and also contains the IPC/event sockets and `minde-status`
+compatibility file; `mindectl` uses the same resolution rules.
 
 The historical `$XDG_RUNTIME_DIR/minde-status` one-line text file remains
 available for existing eww configurations.

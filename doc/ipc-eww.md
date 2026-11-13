@@ -174,8 +174,12 @@ the [snapshot/journal handoff](agent-control.md#watch-changes-and-recover-from-g
 - `$XDG_RUNTIME_DIR/minde-ipc.sock`: main-thread request socket;
 - `$XDG_RUNTIME_DIR/minde-events.sock`: read-only event push socket.
 
-The IPC path helpers also support the private fallback directory
-`/tmp/minde-UID` (mode `0700`) when `XDG_RUNTIME_DIR` is unavailable.
+The IPC helpers, `mindectl` and status writer share the private fallback
+directory `${TMPDIR:-/tmp}/minde-UID` (mode `0700`) when `XDG_RUNTIME_DIR`
+is unset or empty. Empty `TMPDIR` also means `/tmp`. In this fallback,
+`status.json` and the compatibility `minde-status` file both live directly
+inside the private directory, beside the sockets. A nonempty
+`XDG_RUNTIME_DIR` takes precedence over `TMPDIR`.
 Compositor startup itself requires `XDG_RUNTIME_DIR` for its Wayland
 listener and exits with an error when it is unset. Startup refuses a runtime
 directory owned by another user or accessible to group/other users, and never

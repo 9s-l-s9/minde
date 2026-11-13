@@ -9,7 +9,7 @@ GUILE=${MINDE_GUILE:-guile}
 # Single derivation of every runtime path; the Scheme clients below receive
 # them as arguments instead of re-deriving them. Mirrors src/runtime_dir.rs
 # (sockets) and scheme/minde/status.scm (status.json).
-runtime_dir=${XDG_RUNTIME_DIR:-/tmp/minde-$(id -u)}
+runtime_dir=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/minde-$(id -u)}
 socket_path=$runtime_dir/minde-ipc.sock
 events_socket_path=$runtime_dir/minde-events.sock
 if [ -n "${MINDE_STATUS_PATH:-}" ]; then

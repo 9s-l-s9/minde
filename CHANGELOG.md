@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- IPC helpers, `mindectl` and status publication agree on the private
+  `${TMPDIR:-/tmp}/minde-UID` fallback, treating empty runtime and temporary
+  directory values as unset. Fallback compatibility status also stays in
+  that private directory, and an empty status-path override is ignored (#94).
 - Vendored release archives must resolve the complete locked Cargo graph
   offline using their extracted sources and an empty cache. Missing or
   incompatible crates and outdated lockfiles fail validation; CI vendoring

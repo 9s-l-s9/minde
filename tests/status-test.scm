@@ -27,6 +27,35 @@
     (set! failures (+ failures 1))
     (format #t "FAIL - ~a~%" description)))
 
+;; Resolve paths without touching a live session or a shared /tmp file.
+(let* ((names '("XDG_RUNTIME_DIR" "TMPDIR" "MINDE_STATUS_PATH"))
+       (saved (map getenv names))
+       (fallback (format #f "/tmp/minde-~a" (geteuid)))
+       (temporary (format #f "/custom tmp/minde-~a" (geteuid))))
+  (define (environment! values)
+    (for-each (lambda (name value) (if value (setenv name value) (unsetenv name)))
+              names values))
+  (dynamic-wind
+    (lambda () #t)
+    (lambda ()
+      (for-each
+       (lambda (case)
+         (environment! (take case 3))
+         (check (format #f "status path for ~s" (take case 3))
+                (string=? (status-file-path) (list-ref case 3)))
+         (check (format #f "legacy path for ~s" (take case 3))
+                (string=? ((@@ (minde status) legacy-status-file-path))
+                          (list-ref case 4))))
+       (list
+        (list #f #f #f (string-append fallback "/status.json") (string-append fallback "/minde-status"))
+        (list "" "" "" (string-append fallback "/status.json") (string-append fallback "/minde-status"))
+        (list #f "/custom tmp" #f (string-append temporary "/status.json") (string-append temporary "/minde-status"))
+        (list "" "/custom tmp" "" (string-append temporary "/status.json") (string-append temporary "/minde-status"))
+        (list "/configured runtime" "/custom tmp" #f "/configured runtime/minde/status.json" "/configured runtime/minde-status")
+        (list "/configured runtime" "" "" "/configured runtime/minde/status.json" "/configured runtime/minde-status")
+        (list #f "/custom tmp" "/override/status.json" "/override/status.json" (string-append temporary "/minde-status")))))
+    (lambda () (environment! saved))))
+
 (define test-directory
   (string-append "/tmp/minde-status-test-" (number->string (getpid))))
 (define test-path (string-append test-directory "/status.json"))
@@ -176,6 +205,33 @@
      (rmdir directory)))
  '((#f "status.json" #f) (#f "minde-status" #f)
    (#t "status.json" #f) (#t "minde-status" #f) (#t "minde-status" #t)))
+
+;; Standalone publication uses the same private TMPDIR fallback as IPC,
+;; including the compatibility file, for both absent and empty runtime values.
+(let* ((temporary (string-append test-directory "/temporary files"))
+       (private (format #f "~a/minde-~a" temporary (geteuid)))
+       (json (string-append private "/status.json"))
+       (legacy (string-append private "/minde-status")))
+  (mkdir temporary #o700)
+  (setenv "TMPDIR" temporary)
+  (setenv "MINDE_STATUS_PATH" "")
+  (set! %defer? #f)
+  (for-each
+   (lambda (runtime)
+     (if runtime (setenv "XDG_RUNTIME_DIR" runtime) (unsetenv "XDG_RUNTIME_DIR"))
+     (update-window-title! 42 (if runtime "empty-runtime" "absent-runtime") "test")
+     (publish-status!)
+     (for-each
+      (lambda (path)
+        (check "fallback publication uses the private directory" (file-exists? path))
+        (when (file-exists? path)
+          (check "fallback status file is private" (= (stat:perms (stat path)) #o600))
+          (delete-file path)))
+      (list json legacy)))
+   '(#f ""))
+  (check "fallback directory is private" (= (stat:perms (stat private)) #o700))
+  (rmdir private)
+  (rmdir temporary))
 
 (when (file-exists? test-path) (delete-file test-path))
 (let ((legacy-path (string-append test-directory "/minde-status")))

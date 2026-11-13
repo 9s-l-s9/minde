@@ -27,20 +27,28 @@
 (define %pending-runtime #f)
 (define %write-scheduled? #f)
 
+(define (nonempty-environment name)
+  (let ((value (getenv name)))
+    (and value (not (string-null? value)) value)))
+
+(define (runtime-base-directory)
+  (or (nonempty-environment "XDG_RUNTIME_DIR")
+      (string-append (or (nonempty-environment "TMPDIR") "/tmp")
+                     "/minde-" (number->string (geteuid)))))
+
 (define (runtime-directory)
-  (let ((runtime (getenv "XDG_RUNTIME_DIR")))
+  (let ((runtime (nonempty-environment "XDG_RUNTIME_DIR")))
     (if runtime
         (string-append runtime "/minde")
-        (string-append "/tmp/minde-" (number->string (getuid))))))
+        (runtime-base-directory))))
 
 (define (status-file-path)
   "Returns the path of the atomically published structured status file."
-  (or (getenv "MINDE_STATUS_PATH")
+  (or (nonempty-environment "MINDE_STATUS_PATH")
       (string-append (runtime-directory) "/status.json")))
 
 (define (legacy-status-file-path)
-  (string-append (or (getenv "XDG_RUNTIME_DIR") "/tmp")
-                 "/minde-status"))
+  (string-append (runtime-base-directory) "/minde-status"))
 
 (define (current-time-milliseconds)
   (let ((now (gettimeofday)))

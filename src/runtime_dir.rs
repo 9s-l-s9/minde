@@ -14,10 +14,17 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-fn runtime_directory(runtime: Option<OsString>, temporary: &Path, uid: u32) -> PathBuf {
+fn runtime_directory(runtime: Option<OsString>, temporary: Option<OsString>, uid: u32) -> PathBuf {
     runtime
+        .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| temporary.join(format!("minde-{uid}")))
+        .unwrap_or_else(|| {
+            temporary
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(format!("minde-{uid}"))
+        })
 }
 
 fn validate_private_directory(path: &Path, metadata: &Metadata, uid: u32) -> Result<()> {
@@ -61,13 +68,25 @@ pub fn state_dir() -> PathBuf {
 }
 
 /// Returns a socket path beneath a private, current-user runtime directory.
-/// When XDG_RUNTIME_DIR is absent, creates `/tmp/minde-UID` with mode 0700
-/// instead of placing every user's sockets directly in the shared `/tmp`.
+/// When XDG_RUNTIME_DIR is absent or empty, creates `${TMPDIR:-/tmp}/minde-UID`
+/// with mode 0700. Empty TMPDIR also falls back to `/tmp`.
 pub fn socket_path(name: &str) -> Result<PathBuf> {
-    let uid = effective_uid();
-    let configured = std::env::var_os("XDG_RUNTIME_DIR");
-    let fallback = configured.is_none();
-    let directory = runtime_directory(configured, &std::env::temp_dir(), uid);
+    socket_path_for(
+        name,
+        std::env::var_os("XDG_RUNTIME_DIR"),
+        std::env::var_os("TMPDIR"),
+        effective_uid(),
+    )
+}
+
+fn socket_path_for(
+    name: &str,
+    configured: Option<OsString>,
+    temporary: Option<OsString>,
+    uid: u32,
+) -> Result<PathBuf> {
+    let fallback = configured.as_ref().is_none_or(|path| path.is_empty());
+    let directory = runtime_directory(configured, temporary, uid);
     if fallback {
         match fs::create_dir(&directory) {
             Ok(()) => fs::set_permissions(&directory, Permissions::from_mode(0o700))?,
@@ -119,18 +138,74 @@ mod tests {
 
     #[test]
     fn fallback_directory_is_scoped_by_uid() {
-        assert_eq!(
-            runtime_directory(None, Path::new("/tmp"), 1234),
-            PathBuf::from("/tmp/minde-1234")
-        );
+        for runtime in [None, Some(OsString::new())] {
+            for temporary in [None, Some(OsString::new()), Some(OsString::from("/tmp"))] {
+                assert_eq!(
+                    runtime_directory(runtime.clone(), temporary, 1234),
+                    PathBuf::from("/tmp/minde-1234")
+                );
+            }
+            assert_eq!(
+                runtime_directory(runtime, Some(OsString::from("/custom tmp")), 1234),
+                PathBuf::from("/custom tmp/minde-1234")
+            );
+        }
     }
 
     #[test]
     fn configured_runtime_directory_is_preserved() {
         assert_eq!(
-            runtime_directory(Some(OsString::from("/run/user/42")), Path::new("/tmp"), 42),
+            runtime_directory(
+                Some(OsString::from("/run/user/42")),
+                Some(OsString::from("/custom tmp")),
+                42
+            ),
             PathBuf::from("/run/user/42")
         );
+    }
+
+    #[test]
+    fn fallback_socket_paths_create_and_validate_a_private_directory() {
+        let root = std::env::temp_dir().join(format!("minde-runtime-paths-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let temporary = root.join("temporary files");
+        fs::create_dir(&temporary).unwrap();
+        let uid = effective_uid();
+        let private = temporary.join(format!("minde-{uid}"));
+        for runtime in [None, Some(OsString::new())] {
+            for name in ["minde-ipc.sock", "minde-events.sock"] {
+                assert_eq!(
+                    socket_path_for(name, runtime.clone(), Some(temporary.clone().into()), uid)
+                        .unwrap(),
+                    private.join(name)
+                );
+            }
+        }
+        assert_eq!(
+            fs::metadata(&private).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        fs::set_permissions(&private, Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            socket_path_for(
+                "test.sock",
+                Some(OsString::new()),
+                Some(temporary.into()),
+                uid
+            )
+            .unwrap_err()
+            .kind(),
+            ErrorKind::PermissionDenied
+        );
+        let configured = root.join("missing-configured");
+        assert_eq!(
+            socket_path_for("test.sock", Some(configured.clone().into()), None, uid)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::NotFound
+        );
+        assert!(!configured.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
