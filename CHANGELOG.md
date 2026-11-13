@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Long window titles, app IDs, and group names no longer prevent desktop
+  selection. Provider descriptions are shortened while local matching and
+  action arguments retain their full values (#117).
 - `urgent-window` is discoverable and remains available through both live
   subscriptions and journal replay while locked. Both paths share one
   redaction policy, including suppression of unknown events and redaction

@@ -10,6 +10,20 @@
 (define catalog (ref corpus "catalog"))
 (define candidates (candidates-from snapshot catalog %supported))
 (define (replace value key item) (acons key item (alist-delete key value)))
+(define (with-window-field key value)
+  (replace snapshot "windows"
+           (list->vector
+            (map (lambda (window)
+                   (if (= (ref window "id") 45) (replace window key value) window))
+                 (vector->list (ref snapshot "windows"))))))
+(define (with-group-name value)
+  (replace
+   (replace snapshot "groups"
+            (vector (vector-ref (ref snapshot "groups") 0) (object (cons "name" value))))
+   "windows"
+   (list->vector (map (lambda (window)
+                       (if (equal? (ref window "group") "chat") (replace window "group" value) window))
+                     (vector->list (ref snapshot "windows"))))))
 (define (code thunk)
   (catch 'agent-error (lambda () (thunk) #f) (lambda (_ name) name)))
 (define (response)
@@ -61,6 +75,79 @@
        (facts (ref (ref (ref question "criteria") "c0") "untrusted_descriptive_data")))
   (test-equal "titles remain data" 42 (ref facts "window-id"))
   (test-assert "no provider-supplied arguments" (not (string-contains (scm->json-string question) "arguments"))))
+
+;; Bound provider descriptions without changing local matching or targets.
+(for-each
+ (lambda (key limit)
+   (for-each
+    (lambda (size)
+      (let* ((value (make-string size #\λ))
+             (desktop (if (equal? key "group") (with-group-name value) (with-window-field key value)))
+             (built (catch 'agent-error (lambda () (candidates-from desktop catalog %supported))
+                           (lambda (_ error) error))))
+        (test-assert "long descriptive fields do not invalidate the desktop" (list? built))
+        (when (list? built)
+          (test-equal "all candidates remain available" (length candidates) (length built))
+          (test-equal "an unrelated browser remains selectable" 42
+            (ref (ref (select-action "focus my browser" desktop catalog) "arguments") "window"))
+          (test-equal "window IDs remain selectable despite long metadata" 45
+            (ref (ref (select-action "focus window 45" desktop catalog) "arguments") "window"))
+          (let* ((candidate (find (lambda (c) (equal? (ref (ref c "facts") "window-id") 45)) built))
+                 (criteria (ref (ref (ref (provider-request "focus browser" built) "questions") "selection") "criteria"))
+                 (description (ref (ref criteria (ref candidate "choice-id")) "untrusted_descriptive_data"))
+                 (shortened (if (> size limit) (string-append (substring value 0 (- limit 1)) "…") value)))
+            (test-equal "local metadata retains the original string" value (ref (ref candidate "facts") key))
+            (test-equal "provider description is bounded at character boundaries" shortened (ref description key))
+            (test-equal "bounded Unicode descriptions survive JSON" shortened
+              (ref (load-json (scm->json-string description)) key))
+            (when (equal? key "group")
+              (let ((group (find (lambda (c) (equal? (ref (ref c "arguments") "group") value)) built)))
+                (test-equal "provider group descriptions use the same bound" shortened
+                  (ref (ref (ref criteria (ref group "choice-id")) "untrusted_descriptive_data") "group")))))
+          (let* ((prefix (if (equal? key "group") "switch to group " "focus "))
+                 (selected (select-action (string-append prefix value) desktop catalog)))
+            (test-equal "full names remain exact local matches" "dry-run" (ref selected "status"))
+            (test-equal "selection preserves the exact action target" (if (equal? key "group") value 45)
+              (ref (ref selected "arguments") (if (equal? key "group") "group" "window")))
+            (when (> size limit)
+              (test-equal "a shortened prefix cannot alias a longer target" "none"
+                (ref (select-action (string-append prefix (substring value 0 limit)) desktop catalog) "reason")))))))
+    (list limit (+ limit 1) (+ limit 88))))
+ '("title" "app-id" "group") '(512 128 128))
+(for-each
+ (lambda (key)
+   (for-each
+    (lambda (bad)
+      (test-equal "wrong descriptive types still fail closed" "invalid-desktop-fact"
+        (code (lambda () (candidates-from (with-window-field key bad) catalog %supported)))))
+    (list #f 42 #() '(("nested" . "text")))))
+ '("title" "app-id" "group"))
+(test-equal "wrong group target types still fail closed" "invalid-desktop-target"
+  (code (lambda () (candidates-from (replace snapshot "groups" (vector (object (cons "name" #f)))) catalog %supported))))
+(test-equal "user request length remains bounded" "invalid-desktop-fact"
+  (code (lambda () (select-action (make-string 4097 #\x) snapshot catalog))))
+(let* ((directory (mkdtemp (string-copy "/tmp/minde-agent-text-XXXXXX")))
+       (desktop-file (string-append directory "/desktop.json"))
+       (catalog-file (string-append directory "/catalog.json")))
+  (dynamic-wind
+    (lambda () #t)
+    (lambda ()
+      (call-with-output-file desktop-file
+        (lambda (port) (display (scm->json-string (with-window-field "title" (make-string 600 #\文))) port)))
+      (call-with-output-file catalog-file (lambda (port) (display (scm->json-string catalog) port)))
+      (let* ((status #f)
+             (output (call-with-output-string
+                       (lambda (port)
+                         (parameterize ((current-output-port port))
+                           (set! status (agent-main (list "select" "focus my browser"
+                                                        "--snapshot" desktop-file "--catalog" catalog-file)))))))
+             (result (load-json output)))
+        (test-equal "CLI accepts a desktop with a long unrelated title" 0 status)
+        (test-equal "CLI keeps the requested target" 42 (ref (ref result "arguments") "window"))))
+    (lambda ()
+      (for-each (lambda (path) (when (file-exists? path) (delete-file path))) (list desktop-file catalog-file))
+      (rmdir directory))))
+
 (test-equal "valid provider response" "c0" (ref (parse-provider-response (response) candidates) "choice"))
 (for-each
  (lambda (entry)

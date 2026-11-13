@@ -336,6 +336,13 @@ an explicit action allowlist, a fresh server-issued receipt, and the original
 snapshot's session and revision. Results distinguish a submitted request
 from its nested observed outcome. There are no mutation retries.
 
+Long window titles, app IDs, and group names remain valid descriptions.
+Local matching and action arguments retain their full values. Descriptions
+sent to a provider are limited to 512 characters for titles and 128 for app
+IDs and group names, including a trailing ellipsis when shortened. Invalid
+field types still fail validation, and the overall input and provider-request
+size limits still apply.
+
 The optional Jev provider uses `TYPESAFE_API_KEY`, pins `jev-1.13.0` by
 default, and requires a caller-supplied `--threshold`. Choosing this provider
 sends the request and selected window IDs, titles, app IDs, and group names externally.
