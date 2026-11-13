@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `minde-msg` validates timeout syntax and bounds before IPC, rejects missing
+  arguments with usage status 2, and accepts `--` before literal message text.
+  Quoted text and trailing newlines are preserved (#114).
 - Diagnostic state queries and report requests use the bounded IPC client,
   returning transport status 3 without an uncaught backtrace. A failed initial
   state request no longer leaves an empty report directory, and concurrent

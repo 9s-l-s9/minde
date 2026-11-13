@@ -63,6 +63,7 @@ check-cli: check-rust
 # Real Unix-socket clients and offline selector contracts, without a desktop
 # or provider credentials. The real compositor scenario is a separate gate.
 check-control: compile-scheme
+	$(GUILE) tests/message-cli-test.scm
 	$(GUILE) tests/control-transport-test.scm
 	$(GUILE) tests/control-cli-test.scm
 	$(GUILE) tests/control-agent-test.scm

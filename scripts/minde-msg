@@ -1,10 +1,30 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shows TEXT in minde's message overlay:  minde-msg "hello world"
 # Optional second form:  minde-msg -t MS "text"  for a custom timeout.
+set -eu
+
+usage_error() {
+  echo 'usage: minde-msg [-t MILLISECONDS] [--] TEXT...' >&2
+  echo 'MILLISECONDS must be an integer from 0 to 9223372036854775807.' >&2
+  exit 2
+}
+
 timeout=""
-if [ "$1" = "-t" ]; then
-  timeout=" $2"
-  shift 2
-fi
-text=$(printf %s "$*" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+while getopts ':t:' option; do
+  case $option in
+    t)
+      case $OPTARG in ''|*[!0-9]*) usage_error ;; esac
+      # Match wm-message's signed 64-bit argument; reject overflow locally.
+      [ "$OPTARG" -le 9223372036854775807 ] 2>/dev/null || usage_error
+      timeout=" $OPTARG"
+      ;;
+    *) usage_error ;;
+  esac
+done
+shift "$((OPTIND - 1))"
+[ "$#" -gt 0 ] || usage_error
+# The sentinel preserves trailing newlines through command substitution.
+text=$(printf '%s.' "$*" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+text=${text%.}
 exec "$(dirname "$0")/minde-cmd" "(wm-message \"$text\"$timeout)"
