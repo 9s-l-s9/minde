@@ -334,7 +334,11 @@ surface is destroyed. Its keyboard filter scenario checks press/release pairs
 through prompts, menus, focus changes, shortcut inhibition and locking, plus
 held modifiers, keypad Enter and compositor repeat. VT suspension balances held
 physical keys and cancels repeat; actual VT switching still needs a hardware
-session. The fullscreen/pointer gate also unmaps X11 windows
+session. Its input-lifecycle scenario sends bursts of 500 move motions and
+500 resize commits, comparing bounded geometry traffic on the event socket
+and journal. It checks immediate inspection, pause/release delivery, the
+client's final resize size, lock cancellation and queued-event removal on
+unmap. The fullscreen/pointer gate also unmaps X11 windows
 during move/resize grabs and terminates only its private Xwayland child.
 Its Rust X11 client changes legacy and UTF-8 titles and WM_CLASS without
 repainting, checking Scheme hooks and foreign-toplevel property/done events.

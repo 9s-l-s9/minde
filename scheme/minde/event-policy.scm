@@ -13,6 +13,7 @@ and suppresses messages and unknown events."
      ;; Even a partial title payload must not retain its content fields.
      (and (pair? args) (list (car args) "" "")))
     ((focus-window focus-frame focus-group urgent-window destroy-window
-      session-lock session-unlock automation-result window-geometry)
+      session-lock session-unlock automation-result window-geometry
+      window-geometry-settled)
      args)
     (else #f)))

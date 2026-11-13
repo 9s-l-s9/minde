@@ -263,6 +263,7 @@ pub struct MindeState {
     /// O(1) via `WindowId` stashed in `Window::user_data()` (5.5).
     pub windows: std::collections::BTreeMap<u64, Window>,
     pub(crate) parked_frames: crate::frame_callbacks::ParkedFrames,
+    pub(crate) geometry_events: crate::geometry_events::GeometryEvents,
     pub next_window_id: u64,
     /// Ids Scheme marked floating (`wm-set-floating`); gates the
     /// super+drag move/resize grabs in `input.rs`. Float geometry itself
@@ -730,6 +731,7 @@ impl MindeState {
 
             windows: std::collections::BTreeMap::new(),
             parked_frames: Default::default(),
+            geometry_events: Default::default(),
             next_window_id: 0,
             floating_ids: std::collections::HashSet::new(),
             focused_window: None,
@@ -1553,24 +1555,6 @@ impl MindeState {
         visible.then_some([rect.loc.x, rect.loc.y, rect.size.w, rect.size.h])
     }
 
-    /// Publish committed bounds to inspection and foreign output associations.
-    /// Placement, commit, and drag paths call this after updating the Space.
-    pub(crate) fn publish_window_geometry(&mut self, id: u64) {
-        self.refresh_foreign_toplevel_output(id);
-        let geometry = self.window_geometry(id);
-        if crate::automation_observe::set_window_geometry(id, geometry) {
-            let line = match geometry {
-                Some([x, y, width, height]) => {
-                    format!("(window-geometry {id} ({x} {y} {width} {height}))")
-                }
-                None => format!("(window-geometry {id} #f)"),
-            };
-            // Direct journal publication is safe even during pointer dispatch;
-            // no Scheme callback can reenter a held input/renderer lock.
-            crate::events::publish_line(&line);
-        }
-    }
-
     /// Drops the active compositor-side key-repeat timer, if any.
     /// Switches the seat keyboard's active XKB layout group
     /// (`wm-set-keyboard-layout!`). Out-of-range indices are logged and
@@ -2255,6 +2239,7 @@ impl MindeState {
         self.windows.remove(&id)?;
         self.floating_ids.remove(&id);
         self.reported_titles.remove(&id);
+        self.forget_geometry_events(id);
         crate::automation_observe::set_window_geometry(id, None);
         self.foreign_toplevel_closed(id);
         Some(id)

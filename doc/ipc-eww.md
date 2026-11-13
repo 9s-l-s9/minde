@@ -116,6 +116,7 @@ line — the event name followed by its hook payload, matching the shapes in
 (new-window 42 "firefox" "org.mozilla.firefox")
 (window-title-changed 42 "New title" "org.mozilla.firefox")
 (window-geometry 42 (10 20 640 480))
+(window-geometry-settled 42 (10 20 640 480))
 (focus-window 42)
 (focus-frame 0 0 1280 760)
 (destroy-window 42)
@@ -132,10 +133,26 @@ payload value honors the same **writable-data guarantee** as the eval reply: a
 value that would print as `#<...>` is bounded to a string, so a subscriber's
 `read` never fails on a well-formed line.
 
-`automation-result` and `window-geometry` are native events written directly
-to this stream and the journal, rather than Scheme hooks. `window-geometry`
-reports committed client geometry, or `#f` when hidden or unavailable; this
-can differ from a requested resize while the client processes its configure.
+`automation-result`, `window-geometry` and `window-geometry-settled` are native
+events written directly to this stream and the journal, rather than Scheme
+hooks. Geometry events report committed client bounds, or `#f` when hidden or
+unavailable; these can differ from a requested resize while the client
+processes its configure.
+
+During an interactive move or resize, geometry changes are combined into
+one `window-geometry` event per window every 50 ms. The last pending position
+is delivered even if motion stops. Release flushes the current committed
+`window-geometry` immediately. A completed or cancelled grab also sends
+`window-geometry-settled` with the final committed bounds. Native resizes
+settle only after the client commits its final configure; X11 resizes settle
+on release and may report later client commits as ordinary geometry changes.
+Unmapping discards pending notifications before `destroy-window`. Other
+geometry changes are published immediately.
+
+Consumers interested only in completed drags can listen for
+`window-geometry-settled`. Direct geometry queries and `wm-geometry-revision`
+still reflect each committed change immediately, so action revision checks
+cannot accept a stale snapshot during a drag.
 
 **Privacy while locked.** When the session is locked (ext-session-lock),
 title- and content-bearing events are filtered, mirroring `status.json`'s
@@ -145,7 +162,8 @@ title- and content-bearing events are filtered, mirroring `status.json`'s
 - `message` events (arbitrary on-screen text) and unknown extension events
   are suppressed entirely;
 - id-only lifecycle and geometry events (`focus-window`, `urgent-window`, `destroy-window`,
-  `focus-frame`, `focus-group`, `window-geometry`, `session-lock`, `session-unlock`) keep flowing,
+  `focus-frame`, `focus-group`, `window-geometry`, `window-geometry-settled`,
+  `session-lock`, `session-unlock`) keep flowing,
   so an agent can still track focus and window churn while locked.
 
 Live subscriptions and `events-since` share this policy. Replay also redacts

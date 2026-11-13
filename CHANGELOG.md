@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Interactive move/resize geometry notifications are combined at 50 ms
+  intervals, with immediate updates on release and cancellation. A settled
+  event reports completion, waiting for native clients' final resize commit.
+  Inspection stays current, and unmapping discards queued notifications (#157).
 - Documentation links to the current session-locking commands, personal
   configuration load order and upstream provenance. The README and testing
   guide distinguish Wayland sessions, Xwayland compatibility and Xvfb test

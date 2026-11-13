@@ -305,6 +305,15 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                 Rectangle::new(loc, self.last_window_size),
                 final_serial,
             );
+            // Native clients settle on their acknowledged final commit.
+            // X11 has no corresponding configure serial to wait for.
+            if let Some(id) = data.id_for_window(&self.window) {
+                if final_serial.is_none() {
+                    data.finish_geometry_grab(id);
+                } else {
+                    data.flush_geometry_grab(id);
+                }
+            }
         }
     }
 
@@ -334,6 +343,9 @@ impl PointerGrab<MindeState> for ResizeSurfaceGrab {
                 xdg.send_pending_configure();
                 self.report_geometry(data, rect, None);
             }
+        }
+        if let Some(id) = data.id_for_window(&self.window) {
+            data.finish_geometry_grab(id);
         }
     }
 }
@@ -431,6 +443,7 @@ pub fn handle_commit(data: &mut MindeState, surface: &WlSurface) -> Option<()> {
         // The acknowledged final commit, rather than a size comparison, ends
         // the resize and supplies the authoritative floating rectangle.
         crate::guile::on_window_moved(id, new_loc.x, new_loc.y, size.w, size.h);
+        data.finish_geometry_grab(id);
     }
 
     Some(())

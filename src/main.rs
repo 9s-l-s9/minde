@@ -11,6 +11,7 @@ mod automation_observe;
 mod edid;
 mod events;
 mod frame_callbacks;
+mod geometry_events;
 mod guile;
 mod handlers;
 

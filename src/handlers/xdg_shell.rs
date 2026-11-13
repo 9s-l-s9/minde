@@ -144,6 +144,7 @@ impl XdgShellHandler for MindeState {
                 return;
             };
 
+            let id = self.id_for_window(&window);
             let grab = MoveSurfaceGrab {
                 start_data,
                 window,
@@ -151,6 +152,9 @@ impl XdgShellHandler for MindeState {
             };
 
             pointer.set_grab(self, grab, serial, Focus::Clear);
+            if let Some(id) = id {
+                self.begin_geometry_grab(id);
+            }
         }
     }
 
@@ -190,6 +194,7 @@ impl XdgShellHandler for MindeState {
 
             surface.send_pending_configure();
 
+            let id = self.id_for_window(&window);
             let grab = ResizeSurfaceGrab::start(
                 start_data,
                 window,
@@ -198,6 +203,9 @@ impl XdgShellHandler for MindeState {
             );
 
             pointer.set_grab(self, grab, serial, Focus::Clear);
+            if let Some(id) = id {
+                self.begin_geometry_grab(id);
+            }
         }
     }
 

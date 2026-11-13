@@ -1,5 +1,22 @@
 # Performance measurements
 
+## Interactive geometry notifications — 2026-11-13
+
+The nested input-lifecycle regression sends 500 virtual-pointer motions in
+one burst. Before coalescing, its subscriber had already received 278
+`window-geometry` events after 91 ms, when the rate assertion stopped the
+test. With coalescing, the same burst produced one update during an 80 ms
+pause, followed by one geometry update and one settled event on release.
+The replay journal retained the complete sequence without a gap. A second
+scenario covers 500 committed size changes during a native resize.
+
+One pending rectangle per dragged window replaces intermediate notifications;
+a shared 50 ms timer drains those rectangles. Release and cancellation flush
+immediately, and a native resize also flushes its final acknowledged commit.
+Direct geometry inspection and revision checks stay current on every change.
+This measures observation traffic, not rendering or input latency. Reproduce
+with the `geometry` input-lifecycle case in `tests/session-lock-e2e.sh`.
+
 ## Nested redraw scheduling — 2026-09-07
 
 The nested backend requested another redraw after every render, including

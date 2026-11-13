@@ -119,6 +119,8 @@
  '(((new-window 42 "secret title" "secret.app") (new-window 42 "" ""))
    ((window-title-changed 42 "new secret" "secret.app") (window-title-changed 42 "" ""))
    ((window-geometry 42 (1 2 3 4)) (window-geometry 42 (1 2 3 4)))
+   ((window-geometry-settled 42 (1 2 3 4)) (window-geometry-settled 42 (1 2 3 4)))
+   ((window-geometry-settled 42 #f) (window-geometry-settled 42 #f))
    ((destroy-window 42) (destroy-window 42))
    ((focus-window #f) (focus-window #f))
    ((focus-frame 1 2 3 4) (focus-frame 1 2 3 4))

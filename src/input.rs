@@ -809,6 +809,7 @@ impl MindeState {
                 self.space.raise_element(&window, true);
                 self.schedule_redraw();
                 if let Some(rect) = self.space.element_geometry(&window) {
+                    let id = self.id_for_window(&window);
                     if button == BTN_LEFT {
                         let grab = crate::grabs::MoveSurfaceGrab {
                             start_data,
@@ -824,6 +825,9 @@ impl MindeState {
                             rect,
                         );
                         pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                    }
+                    if let Some(id) = id {
+                        self.begin_geometry_grab(id);
                     }
                 }
                 pointer.button(

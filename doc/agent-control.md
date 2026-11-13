@@ -52,7 +52,11 @@ and records are alists.
 Window `geometry` uses committed client bounds, which may differ from a
 requested resize. `float-geometry` records the policy's floating placement.
 Native `window-geometry` journal notifications prompt a refresh after client
-commits; their counter also invalidates revisions for changes later reversed.
+commits. During move/resize grabs, they are combined at 50 ms intervals;
+`window-geometry-settled` marks release, cancellation or the final native
+resize commit. Geometry queries and the revision counter remain current
+between notifications, including changes later reversed. See
+[geometry event delivery](ipc-eww.md#event-subscription-push) for the details.
 
 Locking forces redaction of window titles and app IDs. These fields are
 omitted in redacted snapshots, and `redacted` is true. Scheme callers can

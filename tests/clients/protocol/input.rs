@@ -3,9 +3,11 @@ use super::{lock::inject_key, wire::*};
 use std::{
     cell::RefCell,
     env,
+    io::Read,
     ops::{Deref, DerefMut},
+    os::unix::net::UnixStream,
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub fn evaluate(expression: &str, expected: &str) {
@@ -340,6 +342,224 @@ fn resize_lock() {
     println!(
         "ok - lock cancellation sends a final resize configure and preserves committed geometry"
     );
+}
+
+// Observe both delivery paths: a coalesced socket alone would still leave the
+// journal flooded, and a coalesced journal alone would still evict subscribers.
+struct GeometryObserver {
+    stream: UnixStream,
+    bytes: Vec<u8>,
+    cursor: u32,
+    id: u32,
+    started: Instant,
+}
+impl GeometryObserver {
+    fn new(id: u32) -> Self {
+        let stream = UnixStream::connect(format!(
+            "{}/minde-events.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap()
+        ))
+        .unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut observer = Self {
+            stream,
+            bytes: Vec::new(),
+            cursor: 0,
+            id,
+            started: Instant::now(),
+        };
+        until(
+            || {
+                ipc("(wm-publish-event \"(geometry-test-ready)\")");
+                observer.read();
+                String::from_utf8_lossy(&observer.bytes).contains("(geometry-test-ready)\n")
+            },
+            "event subscriber was not accepted",
+        );
+        observer.bytes.clear();
+        observer.cursor = token(&ipc("(wm-event-cursor)"));
+        observer.started = Instant::now();
+        observer
+    }
+    fn read(&mut self) {
+        let mut bytes = [0; 8192];
+        loop {
+            match self.stream.read(&mut bytes) {
+                Ok(0) => panic!("geometry subscriber was disconnected"),
+                Ok(size) => self.bytes.extend_from_slice(&bytes[..size]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => panic!("event subscriber: {error}"),
+            }
+        }
+    }
+    fn check(&mut self, final_rect: Option<&[i32]>, settled: usize) {
+        self.read();
+        let plain_prefix = format!("(window-geometry {} ", self.id);
+        let settled_prefix = format!("(window-geometry-settled {} ", self.id);
+        let text = String::from_utf8_lossy(&self.bytes);
+        let plain: Vec<_> = text
+            .lines()
+            .filter(|line| line.starts_with(&plain_prefix))
+            .collect();
+        let final_lines: Vec<_> = text
+            .lines()
+            .filter(|line| line.starts_with(&settled_prefix))
+            .collect();
+        // A native resize flushes on release and again on its final commit.
+        let limit = self.started.elapsed().as_millis() / 50 + 2;
+        assert!(
+            plain.len() as u128 <= limit,
+            "{} geometry events in {:?}",
+            plain.len(),
+            self.started.elapsed()
+        );
+        assert_eq!(final_lines.len(), settled, "{text}");
+        evaluate(&format!(
+            "(let* ((page (wm-events-since {}))
+                    (rows (map (lambda (row) (call-with-input-string (cadr row) read)) (assq-ref page 'events)))
+                    (count-name (lambda (name) (count (lambda (row) (and (eq? (car row) name) (= (cadr row) {}))) rows))))
+               (and (not (assq-ref page 'gap))
+                    (= (count-name 'window-geometry) {})
+                    (= (count-name 'window-geometry-settled) {})))",
+            self.cursor, self.id, plain.len(), settled
+        ), "#t");
+        if let Some(rect) = final_rect {
+            let rect = rect
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(
+                plain.last().copied(),
+                Some(format!("{plain_prefix}({rect}))").as_str())
+            );
+            if settled > 0 {
+                assert_eq!(
+                    final_lines.last().copied(),
+                    Some(format!("{settled_prefix}({rect}))").as_str())
+                );
+            }
+        }
+        println!(
+            "ok - {} geometry events and {settled} settled events for window {} in {:?}",
+            plain.len(),
+            self.id,
+            self.started.elapsed()
+        );
+    }
+}
+
+fn geometry_events() {
+    let mut target = Resize::new("coalesced move");
+    target.point();
+    let start = target.events.len();
+    target.send(target.virtual_pointer, 2, &words(&[0, 272, 1]));
+    let press = target.button(272, 1, start);
+    target.send(
+        target.toplevel_object,
+        5,
+        &words(&[target.seat, press.word(0)]),
+    );
+    target.roundtrip();
+    let mut observer = GeometryObserver::new(target.window_id);
+    let revision = token(&ipc("(wm-geometry-revision)"));
+    let motions: Vec<_> = (0..500)
+        .map(|_| (target.virtual_pointer, 0, words(&[0, 256, 0])))
+        .collect();
+    target.send_batch(&motions);
+    target.roundtrip();
+    assert_eq!(
+        numbers(&ipc(&format!("(wm-window-geometry {})", target.window_id))),
+        [600, 100, 300, 250]
+    );
+    // Holding still must deliver the last position without another motion.
+    std::thread::sleep(Duration::from_millis(80));
+    observer.check(Some(&[600, 100, 300, 250]), 0);
+    assert!(token(&ipc("(wm-geometry-revision)")) >= revision + 500);
+    target.send(target.virtual_pointer, 0, &words(&[0, 256, 0]));
+    target.send(target.virtual_pointer, 2, &words(&[0, 272, 0]));
+    target.roundtrip();
+    observer.check(Some(&[601, 100, 300, 250]), 1);
+    std::thread::sleep(Duration::from_millis(80));
+    observer.check(Some(&[601, 100, 300, 250]), 1);
+    drop(target);
+
+    let mut target = Resize::new("coalesced committed resize");
+    target.start_resize(10);
+    let mut observer = GeometryObserver::new(target.window_id);
+    let commits: Vec<_> = (0..500)
+        .flat_map(|i| {
+            [
+                (target.xdg_surface, 3, words(&[0, 0, 200 + i % 100, 200])),
+                (target.surface, 6, vec![]),
+            ]
+        })
+        .collect();
+    target.send_batch(&commits);
+    target.roundtrip();
+    assert_eq!(
+        numbers(&ipc(&format!("(wm-window-geometry {})", target.window_id))),
+        [100, 100, 299, 200]
+    );
+    let start = target.configures.borrow().len();
+    target.send(target.virtual_pointer, 2, &words(&[0, 272, 0]));
+    let final_config = target.configured(false, start);
+    observer.check(Some(&[100, 100, 299, 200]), 0);
+    // The final client-selected rectangle is authoritative, even when it
+    // differs from the requested size and arrives after the button release.
+    target.send(target.xdg_surface, 3, &words(&[0, 0, 287, 241]));
+    target.commit(&final_config, Some((287, 241)));
+    observer.check(Some(&[100, 100, 287, 241]), 1);
+    std::thread::sleep(Duration::from_millis(80));
+    observer.check(Some(&[100, 100, 287, 241]), 1);
+    drop(target);
+
+    let mut target = Resize::new("geometry cancellation on lock");
+    target.start_resize(5);
+    let mut observer = GeometryObserver::new(target.window_id);
+    let start = target.configures.borrow().len();
+    evaluate("(wm-warp-pointer 220 190)", "#t");
+    let config = target.configured(true, start);
+    target.commit(&config, None);
+    let mut owner = Client::new("geometry lock owner");
+    let lock = owner.lock(true);
+    owner.lock_surface(lock, true);
+    observer.check(Some(&[120, 110, 280, 240]), 1);
+    owner.send(lock, 2, &[]);
+    owner.roundtrip();
+    target.send(target.virtual_pointer, 2, &words(&[0, 272, 0]));
+    target.roundtrip();
+    std::thread::sleep(Duration::from_millis(80));
+    observer.check(Some(&[120, 110, 280, 240]), 1);
+    drop(target);
+
+    // Unmap after release but before the final native resize commit. Its
+    // queued notification must never follow destroy-window or revive the id.
+    let mut target = Resize::new("geometry forgotten on unmap");
+    target.start_resize(10);
+    let observer = GeometryObserver::new(target.window_id);
+    target.send_batch(&[
+        (target.xdg_surface, 3, words(&[0, 0, 270, 220])),
+        (target.surface, 6, vec![]),
+        (target.virtual_pointer, 2, words(&[0, 272, 0])),
+        (target.xdg_surface, 3, words(&[0, 0, 269, 220])),
+        (target.surface, 6, vec![]),
+        (target.surface, 1, words(&[0, 0, 0])),
+        (target.surface, 6, vec![]),
+    ]);
+    target.roundtrip();
+    std::thread::sleep(Duration::from_millis(80));
+    evaluate(&format!(
+        "(let* ((page (wm-events-since {}))
+                (rows (map (lambda (row) (call-with-input-string (cadr row) read)) (assq-ref page 'events)))
+                (after (member '(destroy-window {}) rows)))
+           (and (not (assq-ref page 'gap)) after
+                (not (any (lambda (row) (and (memq (car row) '(window-geometry window-geometry-settled))
+                                             (= (cadr row) {}))) (cdr after)))
+                (not (wm-window-geometry {}))))",
+        observer.cursor, target.window_id, target.window_id, target.window_id
+    ), "#t");
+    println!("ok - unmapping discards geometry queued before the final resize commit");
 }
 fn typing(first: &mut Input, second: &mut Input) {
     for (operation, released) in [
@@ -723,7 +943,7 @@ pub fn run() {
     first.mapped(100);
     second.mapped(700);
     for name in env::var("MINDE_INPUT_LIFECYCLE_CASES")
-        .unwrap_or_else(|_| "typing pointer lock drag resize resize-lock".into())
+        .unwrap_or_else(|_| "typing pointer lock drag resize resize-lock geometry".into())
         .split_whitespace()
     {
         match name {
@@ -733,6 +953,7 @@ pub fn run() {
             "drag" => drag(&mut first, &mut second),
             "resize" => resize(),
             "resize-lock" => resize_lock(),
+            "geometry" => geometry_events(),
             _ => panic!("unknown input scenario {name}"),
         }
     }
