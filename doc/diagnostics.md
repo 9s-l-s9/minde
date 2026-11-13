@@ -56,7 +56,8 @@ Scheme callers can use `current-state`, `current-state-json`,
 Human tracing is the default. Set `MINDE_LOG_FORMAT=json` before startup for
 newline-delimited JSON containing `timestamp_ms`, `level`, `target`, and typed
 event fields. `RUST_LOG` continues to select targets and levels in either
-format.
+format. Non-finite floating-point fields use the strings `"NaN"`, `"inf"`
+and `"-inf"`; finite values remain JSON numbers.
 
 The packaged login wrapper retains six session generations:
 

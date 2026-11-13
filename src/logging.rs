@@ -94,7 +94,12 @@ impl Visit for JsonVisitor {
     }
 
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
-        self.number(field, value);
+        if value.is_finite() {
+            self.number(field, value);
+        } else {
+            // JSON has no non-finite numbers. Keep their diagnostic meaning.
+            self.string(field, &value.to_string());
+        }
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
@@ -139,5 +144,100 @@ mod tests {
     #[test]
     fn json_strings_escape_control_and_quote_characters() {
         assert_eq!(escape_json("a\n\"b\\c"), "a\\n\\\"b\\\\c");
+    }
+
+    #[test]
+    fn json_events_preserve_non_finite_floats_as_strings() {
+        use std::{
+            io::{Read, Write},
+            os::unix::net::UnixStream,
+            process::{Command, Stdio},
+            sync::Arc,
+            time::Duration,
+        };
+
+        let (mut reader, writer) = UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(Arc::new(writer))
+            .event_format(JsonEventFormat)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                target: "minde::logging::test",
+                nan = f64::NAN,
+                positive = f64::INFINITY,
+                negative = f64::NEG_INFINITY,
+                f32_nan = f32::NAN,
+                finite = -1.5_f64,
+                zero = -0.0_f64,
+                largest = f64::MAX,
+                smallest = f64::MIN,
+                subnormal = f64::from_bits(1),
+                signed = i64::MIN,
+                unsigned = u64::MAX,
+                boolean = true,
+                text = "quote\" newline\n backslash\\",
+            );
+            tracing::info!(target: "minde::logging::test", finite = 2.5_f64);
+        });
+        let mut lines = String::new();
+        reader.read_to_string(&mut lines).unwrap();
+        assert_eq!(lines.lines().count(), 2, "{lines}");
+
+        // Use the JSON parser already provided by the development and check
+        // manifests, keeping the compositor's dependency graph unchanged.
+        let mut parser = Command::new("guile")
+            .args([
+                "--no-auto-compile",
+                "-c",
+                r#"(use-modules (json) (ice-9 rdelim))
+                (define first (json-string->scm (read-line)))
+                (define fields (assoc-ref first "fields"))
+                (unless (and (integer? (assoc-ref first "timestamp_ms"))
+                             (string=? (assoc-ref first "level") "INFO")
+                             (string=? (assoc-ref first "target") "minde::logging::test"))
+                  (error "invalid event metadata" first))
+                (for-each
+                 (lambda (entry)
+                   (let ((actual (assoc-ref fields (car entry))) (expected (cdr entry)))
+                     (unless (if (number? expected)
+                                 (and (number? actual)
+                                      (= (if (inexact? expected) (exact->inexact actual) actual)
+                                         expected))
+                                 (equal? actual expected))
+                       (error "field did not round trip" entry actual))))
+                 '(("nan" . "NaN") ("positive" . "inf") ("negative" . "-inf")
+                   ("f32_nan" . "NaN") ("finite" . -1.5) ("zero" . 0)
+                   ("largest" . 1.7976931348623157e308)
+                   ("smallest" . -1.7976931348623157e308)
+                   ("subnormal" . 5e-324) ("signed" . -9223372036854775808)
+                   ("unsigned" . 18446744073709551615) ("boolean" . #t)
+                   ("text" . "quote\" newline\n backslash\\")))
+                (unless (= (assoc-ref (assoc-ref (json-string->scm (read-line)) "fields")
+                                      "finite") 2.5)
+                  (error "following event did not parse"))
+                (unless (eof-object? (read-line)) (error "unexpected trailing data"))"#,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        parser
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(lines.as_bytes())
+            .unwrap();
+        let output = parser.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{lines}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

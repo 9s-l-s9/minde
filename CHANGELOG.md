@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- JSON logs quote non-finite floating-point fields as `"NaN"`, `"inf"` or
+  `"-inf"`, preserving their diagnostic meaning without breaking parsers
+  (#145).
 - Scheme idle time uses a monotonic clock, advances before the first input,
   and resets when the DRM session resumes. Wall-clock adjustments no longer
   create or hide idle intervals (#146).
