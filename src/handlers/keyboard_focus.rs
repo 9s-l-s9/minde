@@ -95,6 +95,14 @@ impl KeyboardTarget<MindeState> for KeyboardFocusTarget {
         serial: Serial,
         time: u32,
     ) {
+        if key.raw_code().raw() == crate::unicode_input::KEYCODE
+            && let Some(stroke) = data.unicode_stroke.as_ref()
+        {
+            if state == KeyState::Pressed {
+                stroke.send(time);
+            }
+            return;
+        }
         self.target().key(seat, data, key, state, serial, time);
     }
 

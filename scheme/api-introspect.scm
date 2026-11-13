@@ -113,9 +113,9 @@
     (wm-set-floating "(wm-set-floating id floating?)"
      "Set whether window ID floats above the tiling layout.")
     (wm-send-string "(wm-send-string text [delay-ms])"
-     "Type TEXT through paced synthetic key events (20 ms between characters by default).")
+     "Type TEXT through paced synthetic key events (20 ms between characters by default). Unmapped characters use a temporary client keymap without changing the clipboard.")
     (wm-type "(wm-type text [delay-ms])"
-     "Reliably type TEXT through paced synthetic key events; chars the layout cannot produce fall back to clipboard+Ctrl+V in order.")
+     "Alias of wm-send-string: type TEXT through paced key events, using a temporary client keymap for unmapped characters without changing the clipboard.")
     (wm-click "(wm-click button [count])"
      "Click BUTTON COUNT times after a hover/settle motion; accepts left/middle/right symbols, 1/2/3, or evdev codes.")
     (wm-send-key "(wm-send-key mods keysym-name)"

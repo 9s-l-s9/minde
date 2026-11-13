@@ -565,7 +565,7 @@ fn typing(first: &mut Input, second: &mut Input) {
     for (operation, released) in [
         ("wm-send-string \"AAAA\" 0", vec![30, 42]),
         ("wm-send-key 4 \"v\"", vec![29]),
-        ("wm-send-string \"🦀\" 0", vec![47, 29]),
+        ("wm-send-string \"🦀🦀\" 50", vec![]),
     ] {
         first.focus();
         second.roundtrip();
@@ -592,7 +592,7 @@ fn typing(first: &mut Input, second: &mut Input) {
         second.key(44, 0, start);
         assert_eq!(second.modifiers(), [0; 3]);
     }
-    println!("ok - focus cancellation releases Shift, Ctrl and clipboard-fallback keys");
+    println!("ok - focus cancellation releases Shift/Ctrl and stops Unicode typing");
     first.focus();
     let start = first.events.len();
     command("xdotool", &["keydown", "Shift_L"]);

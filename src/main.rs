@@ -31,6 +31,7 @@ mod touch;
 mod transfer;
 mod udev;
 mod udev_input;
+mod unicode_input;
 mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};

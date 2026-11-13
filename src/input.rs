@@ -248,6 +248,7 @@ impl MindeState {
         }
         match event {
             InputEvent::Keyboard { event, .. } => {
+                self.restore_unicode_keymap();
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
                 let key_state = event.state();

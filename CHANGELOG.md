@@ -9,6 +9,9 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- `wm-send-string` and `wm-type` type characters outside the active layout
+  through temporary client keymaps. They preserve the clipboard and no longer
+  depend on a client's Ctrl+V binding (#144).
 - Portable bindings, including nested maps and global shortcuts, now come
   from validated configuration data. Typed command arguments and `#f` unbinding
   are supported. Return opens the run prompt; terminal, brightness and audio

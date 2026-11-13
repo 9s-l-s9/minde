@@ -122,7 +122,17 @@ frames: `wm-focus-window` and `wm-raise-window` only act on the currently shown
 compositor objects.
 
 `wm-send-string` and its alias `wm-type` pace characters at 20 ms by default
-and accept an optional delay in milliseconds. `wm-click` accepts
+and accept an optional delay in milliseconds. Characters unavailable in the
+active layout use a temporary client keymap, with a balanced press/release.
+Native clients receive the configured keymap and modifiers again in the same
+event-loop step. Xwayland restoration waits briefly for its X11 client to
+consume the keystroke; focus changes, physical or virtual keyboard input,
+layout changes and session locking restore the map before proceeding.
+Xwayland uses at least 30 ms for each unmapped character; a larger requested
+delay also applies to restoration after the final character.
+Typing does not read or replace either selection and does not send a paste
+shortcut. A focus change or session lock cancels the remaining text.
+`wm-click` accepts
 `left`/`middle`/`right`, 1/2/3, or evdev BTN_LEFT/BTN_MIDDLE/BTN_RIGHT codes;
 its optional count is sequenced as one multi-click gesture. `wm-set-clipboard`
 sets CLIPBOARD for Ctrl+V/`wm-paste`; `wm-set-primary` sets the middle-click

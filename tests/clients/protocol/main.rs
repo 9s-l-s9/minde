@@ -18,6 +18,7 @@ mod render;
 mod scene;
 mod selection;
 mod tearing;
+mod typing;
 mod virtual_pointer;
 mod window;
 mod wire;
@@ -34,6 +35,7 @@ fn main() {
         Some("emergency-config") => emergency::run(args.get(1).expect("locked or inhibited")),
         Some("input-lifecycle") => input::run(),
         Some("keyboard-filter") => keyboard::run(),
+        Some("unicode-typing") => typing::run(),
         Some("pointer-constraints") => constraints::run(),
         Some("pointer-focus") => focus::run(),
         Some("x11-focus-restore") => focus::restore_x11(),

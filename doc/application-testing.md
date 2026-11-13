@@ -117,7 +117,13 @@ guix shell -m manifest.scm xorg-server imagemagick jq util-linux \
 ## Virtual input
 
 `sh tests/virtual-input-e2e.sh` checks virtual keyboard typing and pointer
-protocol behavior in a private Xvfb/winit session. Rust clients exercise v1
+protocol behavior in a private Xvfb/winit session. It types Unicode into a
+terminal and verifies clipboard preservation. Raw keyboard clients decode
+temporary keymaps and check restoration, held modifiers, layout groups and
+focus and lock cancellation with both legacy and sealed keymap descriptors.
+When Xwayland is enabled, an xterm check verifies Unicode, subsequent ordinary
+typing and clipboard preservation through the compatibility server too.
+Rust clients exercise v1
 and v2 pointer creation, output-resource release, zero and oversized absolute
 extents, output position/scale/rotation changes, scroll frame boundaries and
 the exact protocol errors for invalid axes and sources. Rust unit tests map

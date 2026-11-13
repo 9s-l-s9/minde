@@ -47,6 +47,9 @@ impl MindeState {
     /// Keep selections, text input and shortcut inhibition in sync when focus
     /// is cleared: the pinned Smithay only calls `focus_changed` for Some.
     pub(crate) fn set_keyboard_focus(&mut self, focus: Option<WlSurface>, serial: Serial) {
+        if focus.as_ref() != self.keyboard_focus().as_ref() {
+            self.restore_unicode_keymap();
+        }
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
@@ -87,6 +90,7 @@ impl SeatHandler for MindeState {
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&KeyboardFocusTarget>) {
+        self.restore_unicode_keymap();
         let focused = focused.map(KeyboardFocusTarget::surface);
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());

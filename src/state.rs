@@ -49,9 +49,7 @@ enum SyntheticAction {
     Key { code: u32, pressed: bool },
     Button { code: u32, pressed: bool },
     Scroll { dx: f64, dy: f64 },
-    // Clipboard writes must happen in queue order so a per-char paste
-    // fallback (wm-type) doesn't clobber the clipboard early.
-    SetClipboard { text: String },
+    Unicode { ch: char },
     // Re-sends a motion frame at the current pointer position. Queued ahead
     // of clicks so hover-sensitive clients (custom React controls) see
     // hover->settle->press instead of a press out of nowhere.
@@ -375,6 +373,8 @@ pub struct MindeState {
     synthetic_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     next_synthetic_sequence: u64,
     synthetic_keys: Vec<(u64, u32)>,
+    pub(crate) unicode_stroke: Option<crate::unicode_input::UnicodeStroke>,
+    pending_unicode: Option<crate::unicode_input::UnicodeStroke>,
     pub(crate) pointer_buttons: PointerButtons,
     pub(crate) active_automation_dnd: Option<crate::automation_dnd::AutomationDndSource>,
 
@@ -797,6 +797,8 @@ impl MindeState {
             synthetic_timer: None,
             next_synthetic_sequence: 0,
             synthetic_keys: Vec::new(),
+            unicode_stroke: None,
+            pending_unicode: None,
             pointer_buttons: PointerButtons::default(),
             active_automation_dnd: None,
 
@@ -1614,6 +1616,7 @@ impl MindeState {
     /// ignored; the modifiers event Smithay broadcasts on exit tells the
     /// focused client about the new group.
     pub(crate) fn set_keyboard_layout(&mut self, spec: guile::KeyboardLayoutSpec) {
+        self.restore_unicode_keymap();
         use guile::KeyboardLayoutSpec;
         use smithay::input::keyboard::Layout;
         let Some(keyboard) = self.seat.get_keyboard() else {
@@ -1706,6 +1709,7 @@ impl MindeState {
     }
 
     fn advance_synthetic_input(&mut self) {
+        self.restore_unicode_keymap();
         if self.locked {
             self.cancel_synthetic_input();
             return;
@@ -1770,20 +1774,27 @@ impl MindeState {
                 }
                 self.pointer_axis_frame(frame);
             }
-            SyntheticAction::SetClipboard { text } => self.set_clipboard_text(text),
+            SyntheticAction::Unicode { ch } => self.synthetic_unicode(ch),
             SyntheticAction::Hover => {
                 let pos = self.pointer_location;
                 self.warp_pointer(pos);
             }
         }
 
-        if self.synthetic_actions.is_empty() {
+        let delay = if self.pending_unicode.is_some() {
+            // X11 clients look up keycodes in the server's current map.
+            // Let Xwayland and its client consume the stroke before restore.
+            queued.delay_after_ms.max(30)
+        } else {
+            queued.delay_after_ms
+        };
+        if self.synthetic_actions.is_empty() && self.pending_unicode.is_none() {
             self.synthetic_timer = None;
-        } else if queued.delay_after_ms == 0 {
+        } else if delay == 0 {
             self.advance_synthetic_input();
         } else {
             let timer = smithay::reexports::calloop::timer::Timer::from_duration(
-                Duration::from_millis(queued.delay_after_ms),
+                Duration::from_millis(delay),
             );
             match self.handle.insert_source(timer, |_, _, state| {
                 state.synthetic_timer = None;
@@ -1851,8 +1862,70 @@ impl MindeState {
         }
     }
 
+    fn synthetic_unicode(&mut self, ch: char) {
+        use smithay::{backend::input::KeyState, reexports::wayland_server::Resource};
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let Some(client) = self.keyboard_focus().and_then(|surface| surface.client()) else {
+            return;
+        };
+        let keyboards: Vec<_> = keyboard.client_keyboards(&client).collect();
+        let pressed = keyboard.pressed_keys();
+        let modifiers = keyboard.modifier_state().serialized;
+        let deferred = client
+            .get_data::<smithay::xwayland::XWaylandClientData>()
+            .is_some();
+        self.unicode_stroke = keyboard.with_xkb_state(self, |ctx| {
+            let guard = ctx.xkb().lock().unwrap();
+            // The keymap stays inside its owning guard throughout preparation.
+            let original = unsafe { guard.keymap() };
+            let keycode = (9..=255).find(|code| {
+                let code = xkb::Keycode::new(*code);
+                !pressed.contains(&code) && original.key_get_name(code).is_some()
+            })?;
+            crate::unicode_input::UnicodeStroke::new(
+                ch,
+                keycode,
+                original,
+                modifiers,
+                keyboards.clone(),
+                deferred,
+            )
+        });
+        if self.unicode_stroke.is_none() {
+            tracing::warn!(?ch, "cannot prepare Unicode keymap");
+            return;
+        }
+        // Pass through Smithay's normal forwarding/grab path first: it
+        // restores the seat keymap if a virtual keyboard was last active.
+        // KeyboardFocusTarget replaces this reserved stroke with the complete
+        // temporary-map transaction. No physical XKB state is updated.
+        for state in [KeyState::Pressed, KeyState::Released] {
+            keyboard.input_forward(
+                self,
+                xkb::Keycode::new(crate::unicode_input::KEYCODE),
+                state,
+                SERIAL_COUNTER.next_serial(),
+                self.start_time.elapsed().as_millis() as u32,
+                false,
+            );
+        }
+        let stroke = self.unicode_stroke.take();
+        if deferred {
+            self.pending_unicode = stroke;
+        }
+    }
+
+    pub(crate) fn restore_unicode_keymap(&mut self) {
+        if let Some(stroke) = self.pending_unicode.take() {
+            stroke.restore();
+        }
+    }
+
     /// Cancel queued automation and balance only the presses it owns.
     pub(crate) fn cancel_synthetic_input(&mut self) {
+        self.restore_unicode_keymap();
         self.synthetic_actions.clear();
         if let Some(timer) = self.synthetic_timer.take() {
             self.handle.remove(timer);
@@ -2058,47 +2131,18 @@ impl MindeState {
                     }
                 }
             }
-            let ctrl_key = modifier_keys
-                .get(&keymap.mod_get_index(xkb::MOD_NAME_CTRL))
-                .copied();
-            (table, ctrl_key)
+            table
         });
-        let (table, ctrl_key) = table;
-        // Fallback route for chars the keymap scan cannot resolve (e.g. AltGr
-        // symbols whose modifier mask has no real key): clipboard + Ctrl+V,
-        // queued in order so the clipboard write happens right before its paste.
-        let paste_combo = ctrl_key.zip(table.get(&'v').map(|(kc, _)| *kc));
 
         let mut actions = Vec::new();
         let chars: Vec<char> = text.chars().collect();
         for (index, ch) in chars.iter().copied().enumerate() {
             let Some((kc, modifiers)) = table.get(&ch) else {
-                let Some((ctrl, v)) = paste_combo else {
-                    tracing::warn!(
-                        ?ch,
-                        "wm-send-string: no key and no Ctrl+V fallback; dropped"
-                    );
-                    continue;
-                };
-                tracing::debug!(
-                    ?ch,
-                    "wm-send-string: no key in layout; pasting via clipboard"
-                );
-                let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };
-                actions.push((
-                    SyntheticAction::SetClipboard {
-                        text: ch.to_string(),
-                    },
-                    0,
-                ));
-                for (code, pressed, delay) in [
-                    (ctrl.raw(), true, 0),
-                    (v.raw(), true, 8),
-                    (v.raw(), false, 0),
-                    (ctrl.raw(), false, trailing.max(30)),
-                ] {
-                    actions.push((SyntheticAction::Key { code, pressed }, delay));
-                }
+                // Keep a timer boundary even at zero pacing: long runs of
+                // unmapped text must not recurse through the whole queue.
+                // The final character also keeps the requested delay when
+                // Xwayland needs deferred keymap restoration.
+                actions.push((SyntheticAction::Unicode { ch }, delay_ms.max(1)));
                 continue;
             };
             let trailing = if index + 1 < chars.len() { delay_ms } else { 0 };

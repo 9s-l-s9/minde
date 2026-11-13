@@ -1,5 +1,10 @@
 # Bug: `wm-type` / `wm-send-string` droppen Zeichen, die einen Modifier brauchen
 
+Historische Untersuchung. Der unten beschriebene Clipboard-Fallback wurde mit
+#144 entfernt: nicht auflösbare Zeichen verwenden jetzt eine temporäre
+Client-Keymap, ohne die Zwischenablage zu verändern. Aktuelles Verhalten:
+[API-Dokumentation](../api.md).
+
 ## Symptom
 Beim Tippen von Formularfeldern über `(wm-type "…")` fallen alle Zeichen weg, die
 einen Shift-/AltGr-Level brauchen — Buchstaben und `/` gehen, `@ :` (und vermutlich

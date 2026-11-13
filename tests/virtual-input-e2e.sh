@@ -23,29 +23,28 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
+export NESTED_XKB_LAYOUT=us,de
 
 OUT=${MINDE_VIRTUAL_INPUT_E2E_OUT:-/tmp/swm14g}
 FOOT_PID=""
+XTERM_PID=""
 cleanup() {
     if [ -n "$FOOT_PID" ]; then
         kill "$FOOT_PID" 2>/dev/null || true
+    fi
+    if [ -n "$XTERM_PID" ]; then
+        kill "$XTERM_PID" 2>/dev/null || true
     fi
     nested_stop
 }
 nested_install_cleanup cleanup
 
-command -v wayland-info >/dev/null 2>&1 || {
-    echo "error: wayland-info is required (add wayland-utils)" >&2
-    exit 127
-}
-command -v wtype >/dev/null 2>&1 || {
-    echo "error: wtype is required (virtual-keyboard client)" >&2
-    exit 127
-}
-command -v foot >/dev/null 2>&1 || {
-    echo "error: foot is required (focused text sink)" >&2
-    exit 127
-}
+for tool in wayland-info wtype foot wl-paste xdotool; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "error: $tool is required for virtual-input-e2e" >&2
+        exit 127
+    }
+done
 
 nested_start "$OUT" "${MINDE_VIRTUAL_INPUT_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
@@ -57,6 +56,14 @@ timeout 60 "$NESTED_PROTOCOL_CLIENT" virtual-pointer >"$OUT/pointer.log" 2>&1 ||
     exit 1
 }
 cat "$OUT/pointer.log"
+
+window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
+timeout 5 xdotool windowfocus "$window"
+timeout 30 "$NESTED_PROTOCOL_CLIENT" unicode-typing >"$OUT/typing.log" 2>&1 || {
+    cat "$OUT/typing.log" >&2
+    exit 1
+}
+cat "$OUT/typing.log"
 
 info=$(nested_wayland timeout 15 wayland-info 2>"$OUT/wayland-info.err") || {
     echo "error: wayland-info failed against the nested compositor" >&2
@@ -127,7 +134,8 @@ echo "ok - virtual keyboard (wtype) typed text into the focused client"
 # Exercise minde's compositor-owned paced queue too. The complete marker must
 # survive (including its first characters), and the Enter alias must finish the
 # shell's read rather than getting lost as the old immediate burst did.
-MARKER="minde-paced-a@b:c/d!e?f"
+MARKER="🦀-minde-paced-a@b:c/d!e?f-naïve-日本語-é"
+scripts/minde-cmd '(wm-set-clipboard "clipboard survives typing")' >/dev/null
 scripts/minde-cmd "(begin (wm-send-string \"$MARKER\" 12) (wm-send-key 0 \"Enter\"))" \
     >"$OUT/minde-type.log" 2>&1 || {
     echo "error: compositor-owned paced typing request failed" >&2
@@ -150,6 +158,63 @@ done
     exit 1
 }
 echo "ok - compositor paced typing and Enter alias delivered the exact line"
+clipboard=$(nested_wayland timeout 5 wl-paste --no-newline)
+[ "$clipboard" = 'clipboard survives typing' ] || {
+    echo "error: compositor typing replaced the clipboard: $clipboard" >&2
+    exit 1
+}
+echo "ok - Unicode typing leaves the clipboard unchanged"
+
+nested_wayland timeout 10 wtype swm14vk -k Return
+attempt=0
+until [ "$(grep -c '^swm14vk$' "$TYPED")" -eq 2 ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] || {
+        echo "error: virtual keyboard did not recover after Unicode typing" >&2
+        exit 1
+    }
+    sleep 1
+done
+echo "ok - external virtual keyboard still types correctly after Unicode typing"
+
+if [ -z "${MINDE_NO_XWAYLAND+x}" ]; then
+    command -v xterm >/dev/null 2>&1 || {
+        echo "error: xterm is required for Xwayland Unicode typing" >&2
+        exit 127
+    }
+    xdisplay=$(scripts/mindectl eval '(caddr (wm-runtime-info))')
+    before=$(nested_window_count)
+    : >"$OUT/x11-typed.txt"
+    # Variables in the quoted script expand in xterm's child shell.
+    # shellcheck disable=SC2016
+    env DISPLAY=":$xdisplay" MINDE_TYPE_RESULT="$OUT/x11-typed.txt" \
+        timeout 20 xterm -u8 -title minde-unicode-x11 -e sh -c \
+        'while IFS= read -r line; do printf "%s\n" "$line" >>"$MINDE_TYPE_RESULT"; done' \
+        >"$OUT/xterm.log" 2>&1 &
+    XTERM_PID=$!
+    nested_wait_for_window_after "$before" 10
+    sleep 1
+    scripts/mindectl eval '(begin (wm-type "🦀naïve-日本語-é" 40)
+                                 (wm-send-key 0 "Enter")
+                                 (wm-type "🦀" 100) (wm-send-key 0 "Enter")
+                                 (wm-type "restored" 0) (wm-send-key 0 "Enter"))' >/dev/null
+    printf '%s\n' '🦀naïve-日本語-é' '🦀' restored >"$OUT/x11-expected.txt"
+    attempt=0
+    until cmp -s "$OUT/x11-typed.txt" "$OUT/x11-expected.txt"; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 30 ] || {
+            echo "error: Xwayland Unicode or restored typing differs" >&2
+            cat "$OUT/x11-typed.txt" >&2 || true
+            exit 1
+        }
+        sleep 0.1
+    done
+    [ "$(nested_wayland timeout 5 wl-paste --no-newline)" = 'clipboard survives typing' ] || {
+        echo "error: Xwayland typing replaced the clipboard" >&2
+        exit 1
+    }
+    echo "ok - Xwayland terminal receives Unicode and subsequent ordinary typing"
+fi
 
 # Drive the hand-rolled virtual pointer. wlrctl is optional; when present, a
 # move plus a click must not crash the compositor or provoke a protocol error.

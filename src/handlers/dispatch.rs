@@ -10,6 +10,7 @@
 //! no changes to the untracked vendor tree are needed.
 
 use std::any::Any;
+use smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
 use smithay::{
     reexports::wayland_server::{
@@ -38,6 +39,11 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        // A virtual keyboard owns its own map; a pending restoration must
+        // finish first so its later timer cannot overwrite that map.
+        if (resource as &dyn Any).is::<ZwpVirtualKeyboardV1>() {
+            state.restore_unicode_keymap();
+        }
         state.tablet_clients.request(&client.id(), &request);
         state.track_pointer_constraint_request(client, &request, dhandle);
         if !state.pointer_constraint_request_allowed(&resource.id()) {
