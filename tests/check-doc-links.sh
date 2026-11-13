@@ -1,14 +1,26 @@
 #!/bin/sh
 set -eu
 
-links=$(mktemp)
-trap 'rm -f "$links"' EXIT HUP INT TERM
+command -v rg >/dev/null 2>&1 || {
+    echo "error: rg is required to validate documentation links" >&2
+    exit 127
+}
 
-find README.md doc -type f -name '*.md' -print |
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+trap 'exit 1' HUP INT TERM
+
+find README.md doc -type f -name '*.md' -print >"$scratch/documents"
 while IFS= read -r document; do
-    rg -o --no-filename '\]\([^)]+\)' "$document" 2>/dev/null |
-        sed 's/^](//; s/)$//' >"$links" || :
+    # Status 1 means no matches; any other failure invalidates the check,
+    # including errors after rg has already emitted some links.
+    rg --no-config -o --no-filename '\]\([^)]+\)' "$document" >"$scratch/links" || {
+        status=$?
+        [ "$status" -eq 1 ] || exit "$status"
+    }
     while IFS= read -r target; do
+        target=${target#']('}
+        target=${target%')'}
         case "$target" in
             http://*|https://*|mailto:*|'#'*) continue ;;
         esac
@@ -22,7 +34,7 @@ while IFS= read -r document; do
             echo "error: $document links to missing $target" >&2
             exit 1
         }
-    done <"$links"
-done
+    done <"$scratch/links"
+done <"$scratch/documents"
 
 echo "documentation links: ok"

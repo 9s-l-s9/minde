@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Documentation checks reject missing ripgrep and failed discovery/extraction
+  instead of reporting success. Demo checks reject nonnumeric or nonpositive
+  video durations and failed manifest extraction (#129, #130).
 - Development Scheme caches rebuild together when inputs change, so callers
   cannot retain inlined values from older dependencies. Rebuilds ignore
   inherited and user bytecode caches, discard removed outputs, and detect

@@ -25,7 +25,7 @@ cmp -s doc/generated/demo-manifest.json "$manifest" || {
 jq -e '.schema_version == 1 and (.scenarios | length > 0)' "$manifest" \
     >/dev/null
 
-jq -r '.scenarios[].demo_id' "$manifest" |
+ids=$(jq -r '.scenarios[].demo_id' "$manifest")
 while IFS= read -r id; do
     for extension in webm png txt; do
         [ -s "$out/$id.$extension" ] || {
@@ -35,10 +35,14 @@ while IFS= read -r id; do
     done
     duration=$(ffprobe -v error -show_entries format=duration \
         -of default=noprint_wrappers=1:nokey=1 "$out/$id.webm")
-    awk -v duration="$duration" 'BEGIN { exit !(duration > 0) }' || {
+    awk -v duration="$duration" 'BEGIN {
+        exit !(duration ~ /^[0-9]+([.][0-9]+)?$/ && duration + 0 > 0)
+    }' || {
         echo "error: $id.webm has no positive duration" >&2
         exit 1
     }
-done
+done <<EOF
+$ids
+EOF
 
 echo "demo artifacts: manifest, videos, posters, and transcripts valid"

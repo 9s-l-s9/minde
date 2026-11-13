@@ -76,6 +76,7 @@ check-static:
 	@command -v shellcheck >/dev/null 2>&1 || { \
 		echo "error: shellcheck is required; enter: guix shell -m manifest-scheme.scm" >&2; exit 127; }
 	sh tests/make-gates-test.sh
+	sh tests/document-gates-test.sh
 	sh tests/ci-release-test.sh
 	sh tests/release-notes-test.sh
 	sh tests/scheme-cache-test.sh

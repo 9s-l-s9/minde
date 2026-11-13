@@ -43,7 +43,9 @@ the nested compositor window. Commands without a direct portable sequence use
 the serialized main-thread IPC path and are labelled `command:` in the clip.
 
 `make check-demos` rejects a stale manifest, missing/empty artifact or a video
-without a positive duration. The fast `make check-docs` gate independently
+without a positive numeric duration; unknown (`N/A`), malformed and zero
+durations are rejected. Failed probes or manifest extraction also fail the
+check. The fast `make check-docs` gate independently
 checks that the committed manifest and generated references match their
 Scheme sources.
 
