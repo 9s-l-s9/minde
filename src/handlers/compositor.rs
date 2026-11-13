@@ -49,6 +49,10 @@ impl CompositorHandler for MindeState {
         self.update_surface_fractional_scale(surface);
     }
 
+    fn destroyed(&mut self, surface: &WlSurface) {
+        self.idle_surface_destroyed(surface);
+    }
+
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         let committed_window = if !is_sync_subsurface(surface) {

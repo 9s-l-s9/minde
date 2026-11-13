@@ -3,7 +3,7 @@
 # Bounded nested e2e gate for ext-idle-notify-v1 and the
 # zwp_idle_inhibit_manager_v1 (idle-inhibit) globals.
 #
-# Two layers:
+# Three layers:
 #   1. wayland-info asserts both manager globals are advertised (same client
 #      the clipboard/foreign-toplevel/pointer-constraints gates use).
 #   2. swayidle (an ext-idle-notify-v1 client) is started with a 1-second
@@ -11,11 +11,14 @@
 #      synthetic input, so the seat goes idle and the compositor must fire an
 #      `idled` notification; we assert the marker appears. This exercises the
 #      real notifier timer end to end, not just global advertisement.
+#   3. Rust protocol clients check shared-surface inhibitor counts, surface
+#      destruction, disconnect and SIGKILL without any synthetic input.
 #
 # Every client call is wrapped in `timeout`.
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
+export MINDE_TEST_PROTOCOLS=1
 
 OUT=${MINDE_IDLE_E2E_OUT:-/tmp/swm14d}
 SWAYIDLE_PID=""
@@ -87,6 +90,16 @@ done
     exit 1
 }
 echo "ok - ext-idle-notify-v1 fired an idle notification (swayidle)"
+
+# Raw clients keep multiple inhibitors alive and disconnect without input.
+# Optional case selection is intentionally split into separate arguments.
+# shellcheck disable=SC2086
+nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" idle-inhibit ${MINDE_IDLE_CASES:-} \
+    >"$OUT/inhibitors.log" 2>&1 || {
+    cat "$OUT/inhibitors.log" >&2
+    exit 1
+}
+cat "$OUT/inhibitors.log"
 
 kill -0 "$NESTED_WM_PID" 2>/dev/null || {
     echo "error: compositor died during the idle checks" >&2

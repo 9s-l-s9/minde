@@ -6,6 +6,7 @@ mod emergency;
 mod focus;
 mod frames;
 mod fullscreen;
+mod idle;
 mod input;
 mod keyboard;
 mod layer;
@@ -48,6 +49,8 @@ fn main() {
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
         Some("frame-callbacks") => frames::run(),
+        Some("idle-inhibit") => idle::run(&args[1..]),
+        Some("idle-inhibitor-holder") => idle::holder(args.get(1).expect("ready path")),
         Some("window-fullscreen") => fullscreen::run(),
         Some("window-outputs") => window::outputs(),
         Some("xwayland-lifecycle") => xwayland::run(),

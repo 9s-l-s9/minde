@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Idle inhibition lasts until every inhibitor on a surface is released.
+  Surface destruction and client disconnect, including SIGKILL, release
+  inhibition without waiting for user input (#85, #86).
 - Hidden windows receive pending frame callbacks at most once per second,
   with one shared timer that also works on an idle desktop. Visible windows
   retain normal pacing, and revealing a window bypasses its hidden delay.

@@ -108,6 +108,17 @@ scale and exclusive output edges. Nested host input keeps its window-relative
 coordinates despite the framebuffer's flip. Physical libinput association and
 touch/stylus delivery are covered by the hardware checklist.
 
+## Idle inhibition
+
+`sh tests/idle-e2e.sh` checks protocol advertisement and a real swayidle
+timeout, then runs native Rust clients with multiple inhibitors on one
+surface. Both destruction orders must preserve inhibition until the last
+inhibitor is gone. Surface destruction, disconnect and SIGKILL must release
+inhibition without input, while other clients' inhibitors remain effective.
+Input-only notifications prove that time passes while ordinary notifications
+are suppressed. Exact idle/resume histories also check that destroying stale
+inhibitor resources cannot cancel a replacement surface's inhibition.
+
 ## Fullscreen and pointer constraints
 
 `sh tests/fullscreen-pointer-e2e.sh` runs Rust and C protocol clients in a hidden

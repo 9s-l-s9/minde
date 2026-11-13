@@ -16,18 +16,14 @@
 //!
 //! Inhibit wiring: a client (fullscreen video, a call) creates a
 //! `zwp_idle_inhibitor_v1` on a surface to keep the screen awake. We track
-//! the set of surfaces holding a live inhibitor and, while that set is
-//! non-empty, mark the idle notifier inhibited so no `idled` event fires.
+//! the number of live inhibitors per surface and, while any remain, mark
+//! the idle notifier inhibited so no `idled` event fires.
 //!
-//! Visibility: we deliberately do NOT track per-surface visibility. An
-//! inhibitor takes effect as soon as it exists and stops when the client
-//! destroys it (or the surface/client is gone -- Smithay drops the inhibitor
-//! resource, calling `uninhibit`). In practice inhibitor clients create the
-//! inhibitor only while their inhibiting content is actually presented and
-//! destroy it otherwise (mpv, browsers, Zoom all do), so "any live
-//! inhibitor" tracks "a visible inhibiting surface" closely enough without
-//! the complexity of wiring inhibit state to map/unmap and focus changes.
-//! This is the simple, honest option sanctioned by the roadmap item.
+//! Visibility: inhibition follows resource lifetime, regardless of whether
+//! the surface is mapped or visible. Smithay calls `uninhibit` for explicit
+//! inhibitor destruction only. The compositor's surface-destruction callback
+//! releases all remaining counts on surface destruction or client disconnect,
+//! without waiting for input or generating artificial activity.
 //!
 //! No Scheme policy surface: idle policy (auto-lock, DPMS, dimming) is owned
 //! externally by a swayidle-style daemon that speaks `ext-idle-notify-v1`
@@ -50,37 +46,48 @@ impl IdleNotifierHandler for MindeState {
 
 impl IdleInhibitHandler for MindeState {
     fn inhibit(&mut self, surface: WlSurface) {
-        self.idle_inhibitors.insert(surface);
+        *self.idle_inhibitors.entry(surface).or_default() += 1;
         self.refresh_idle_inhibit();
     }
 
     fn uninhibit(&mut self, surface: WlSurface) {
-        self.idle_inhibitors.remove(&surface);
+        // The surface may already have been destroyed while its inhibitor
+        // resources are still alive. Their later destruction is harmless.
+        if let Some(count) = self.idle_inhibitors.get_mut(&surface) {
+            *count -= 1;
+            if *count == 0 {
+                self.idle_inhibitors.remove(&surface);
+            }
+        }
         self.refresh_idle_inhibit();
     }
 }
 
 impl MindeState {
+    /// Retire all inhibitors when their surface disappears, including on
+    /// client disconnect. This must run even when no user input follows.
+    pub(crate) fn idle_surface_destroyed(&mut self, surface: &WlSurface) {
+        if self.idle_inhibitors.remove(surface).is_some() {
+            self.refresh_idle_inhibit();
+        }
+    }
+
     /// Reset the per-seat idle timers on user activity. Called for every
     /// input event from `process_input_event`.
     pub fn notify_idle_activity(&mut self) {
-        // Opportunistically drop inhibitors whose client died without a clean
-        // Destroy (the vendored inhibitor does not run uninhibit on the
-        // destructor path), so a crashed inhibiting client cannot pin the
-        // screen awake indefinitely. Only pays the cost while inhibitors
-        // exist.
+        // Retain defensive liveness pruning alongside immediate teardown.
         if !self.idle_inhibitors.is_empty() {
             self.refresh_idle_inhibit();
         }
         self.idle_notifier_state.notify_activity(&self.seat);
     }
 
-    /// Recompute the notifier's inhibited flag from the set of surfaces that
+    /// Recompute the notifier's inhibited flag from the surfaces that
     /// currently hold a live idle inhibitor, pruning surfaces whose resource
     /// is no longer alive. `set_is_inhibited` is a no-op when the value is
     /// unchanged, so calling this on every inhibitor add/remove is cheap.
     fn refresh_idle_inhibit(&mut self) {
-        self.idle_inhibitors.retain(|surface| surface.alive());
+        self.idle_inhibitors.retain(|surface, _| surface.alive());
         let inhibited = !self.idle_inhibitors.is_empty();
         self.idle_notifier_state.set_is_inhibited(inhibited);
     }

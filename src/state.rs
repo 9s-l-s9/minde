@@ -432,13 +432,13 @@ pub struct MindeState {
     /// is active. See `handlers::idle`.
     pub idle_notifier_state: IdleNotifierState<Self>,
     /// `zwp_idle_inhibit_manager_v1` global state. Clients (fullscreen
-    /// video/calls) create per-surface inhibitors; we track the set of
+    /// video/calls) create per-surface inhibitors; we track the counts of
     /// surfaces with a live inhibitor and, while non-empty, mark the idle
     /// notifier inhibited. See `handlers::idle`.
     pub idle_inhibit_state: IdleInhibitManagerState,
-    /// Surfaces that currently hold an idle inhibitor. Non-empty means idle
-    /// notifications are suppressed. See `handlers::idle`.
-    pub idle_inhibitors: std::collections::HashSet<WlSurface>,
+    /// Number of live inhibitors per surface. Entries always have a positive
+    /// count; non-empty means idle notifications are suppressed.
+    pub idle_inhibitors: std::collections::HashMap<WlSurface, usize>,
     /// `wp_cursor_shape_manager_v1` global state. Kept alive so the global
     /// stays advertised; requests route to `SeatHandler::cursor_image`.
     pub cursor_shape_manager_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
@@ -780,7 +780,7 @@ impl MindeState {
             stylus_tip_emulated: false,
             idle_notifier_state,
             idle_inhibit_state,
-            idle_inhibitors: std::collections::HashSet::new(),
+            idle_inhibitors: std::collections::HashMap::new(),
             cursor_shape_manager_state,
             text_input_manager_state,
             input_method_manager_state,
