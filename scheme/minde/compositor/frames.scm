@@ -209,6 +209,81 @@
 (define %current-head-id 0)
 (define %last-head-id 0)
 
+;; group -> head id -> ((tree . current-frame) . returnable-window-ids).
+;; These trees are snapshots, not additional owners of their windows.
+;; Weak keys let deleted groups release their disconnected-head layouts.
+(define %parked-heads (make-weak-key-hash-table))
+
+(define (forget-head-return! id)
+  ;; An explicit placement (or close) overrides an old head assignment.
+  (hash-for-each
+   (lambda (g table)
+     (hash-for-each
+      (lambda (hid saved) (set-cdr! saved (delete id (cdr saved))))
+      table))
+   %parked-heads))
+
+(define (park-head-tree! g hid pair)
+  (let* ((table (or (hashq-ref %parked-heads g)
+                    (let ((new (make-hash-table)))
+                      (hashq-set! %parked-heads g new)
+                      new)))
+         ;; A window borrowed from another absent head must retain its
+         ;; original destination when this temporary host disappears too.
+         (borrowed (append-map cdr (hash-map->list (lambda (id saved) saved) table)))
+         (owned (filter (lambda (id) (not (member id borrowed)))
+                        (tree-window-ids (car pair)))))
+    (hash-set! table hid (cons pair owned))))
+
+(define (adopt-head-windows! target ids)
+  (for-each
+   (lambda (id)
+     (unless (member id (frame-window-ids target))
+       (set-frame-window-ids! target (append (frame-window-ids target) (list id)))))
+   ids)
+  (when (and (pair? ids) (not (frame-current-window target)))
+    (set-frame-current-window! target (car ids))))
+
+(define (restore-head-tree! g hid)
+  (let* ((table (hashq-ref %parked-heads g))
+         (saved (and table (hash-ref table hid))))
+    (when saved
+      (hash-remove! table hid)
+      ;; During head reconciliation the live globals still refer to the
+      ;; previous loaded tree. Use the already-updated group records here.
+      (let* ((trees (cons (group-tree g)
+                         (hash-map->list (lambda (id pair) (car pair)) (group-heads g))))
+             (live (tree-window-ids trees))
+             (returning (filter (lambda (id) (member id live)) (cdr saved)))
+             (pair (car saved)))
+        (for-each
+         (lambda (frame)
+           (let* ((current (frame-current-window frame))
+                  (keep (filter (lambda (id) (member id returning)) (frame-window-ids frame))))
+             (set-frame-window-ids! frame keep)
+             ;; Preserve an explicitly cleared frame; only replace a
+             ;; selected window that closed or was deliberately rehomed.
+             (when (and current (not (member current keep)))
+               (set-frame-current-window! frame (and (pair? keep) (car keep))))))
+         (frame-leaves (car pair)))
+        (for-each
+         (lambda (id)
+           (for-each (lambda (tree) (remove-window-from-tree-in! tree id)) trees))
+         returning)
+        (let* ((loaded? (eqv? hid (group-loaded-head g)))
+               (temporary (if loaded? (group-tree g)
+                              (let ((old (hash-ref (group-heads g) hid)))
+                                (and old (car old))))))
+          ;; A simultaneous disconnect may have donated other windows to
+          ;; the newly-created head already. Keep those available too.
+          (when temporary
+            (adopt-head-windows! (cdr pair) (tree-window-ids temporary)))
+          (if loaded?
+              (begin
+                (set-group-tree! g (car pair))
+                (set-group-current-frame! g (cdr pair)))
+              (hash-set! (group-heads g) hid pair)))))))
+
 (define (heads)
   "Returns the effective output heads as (id x y width height) lists."
   %heads)
@@ -434,8 +509,9 @@ becomes the live tree (StumpWM screen focus)."
   "The backend's head list changed (hotplug, resize, exclusive zones).
 RAW is ((id x y w h) ...) usable rects; GROUPS is every group (the
 active one may be omitted -- it is included automatically). New heads
-get lazy empty trees; removed heads' windows are adopted into each
-group's surviving current head; survivors are resized."
+get lazy empty trees. Removed heads retain their layouts while their
+windows are borrowed by a surviving head. Reconnected heads reclaim
+windows that were not closed or explicitly placed elsewhere."
   (unless (null? raw)
     (unless (equal? raw %raw-heads)
       ;; Real output changes must resize fullscreen too. Saved fullscreen
@@ -463,6 +539,7 @@ and 'span (one tree over the union of all monitors)."
   (forget-all-placements!)
   (let* ((old-ids (map car %heads))
          (new-ids (map car new))
+         (added (filter (lambda (i) (not (memv i old-ids))) new-ids))
          (removed (filter (lambda (i) (not (memv i new-ids))) old-ids))
          (all-groups (if (memq %active-group groups)
                          groups
@@ -484,17 +561,11 @@ and 'span (one tree over the union of all monitors)."
         (lambda (hid)
           (let ((pair (hash-ref (group-heads g) hid)))
             (when pair
+              (park-head-tree! g hid pair)
               (hash-remove! (group-heads g) hid)
-              (let ((ids (tree-window-ids (car pair)))
-                    (target (group-current-frame g)))
-                (for-each
-                 (lambda (id)
-                   (set-frame-window-ids!
-                    target (append (frame-window-ids target) (list id))))
-                 ids)
-                (when (and (pair? ids) (not (frame-current-window target)))
-                  (set-frame-current-window! target (car ids)))))))
+              (adopt-head-windows! (group-current-frame g) (tree-window-ids (car pair))))))
         removed)
+       (for-each (lambda (hid) (restore-head-tree! g hid)) added)
        ;; Resize every surviving tree to its head's (new) rect.
        (hash-for-each
         (lambda (hid pair)
@@ -926,6 +997,7 @@ ID must be an exact nonnegative integer."
   (unless (and (exact-integer? id) (>= id 0))
     (error "window id must be an exact nonnegative integer" id))
   (unless (member id (frame-window-ids frame))
+    (forget-head-return! id)
     (set-frame-window-ids! frame (append (frame-window-ids frame) (list id))))
   (set-frame-current-window! frame id))
 
@@ -2163,6 +2235,7 @@ next head in that direction if there is one."
 ;; Removes ID from FRAME's list, promoting the next window if it was
 ;; current. (The window is expected to be re-added elsewhere.)
 (define (take-window-out! frame id)
+  (forget-head-return! id)
   (set-frame-window-ids! frame (delete id (frame-window-ids frame)))
   (when (equal? (frame-current-window frame) id)
     (set-frame-current-window!

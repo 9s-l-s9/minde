@@ -55,6 +55,12 @@ Validate:
 
 Connector recovery (udev, requires physical monitors/docks):
 
+- On a laptop with an external monitor, create different splits and window
+  stacks on the external head in several groups. Unplug and reconnect it:
+  the same connector must regain its head ID, trees and surviving window
+  assignments. While undocked, move one window to another frame or group,
+  float another and close a third; those changes must survive reconnect.
+  Repeat with a dynamic group and with two monitors removed in sequence.
 - Connect a monitor whose initial scan has no usable modes, then let EDID
   settle or switch the KVM to it. A later hotplug notification must bring
   it up without replugging. Check updated modes, preferred mode, physical

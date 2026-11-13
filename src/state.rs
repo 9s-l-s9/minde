@@ -293,9 +293,9 @@ pub struct MindeState {
     /// wlr-output-management clients (the post-apply
     /// `output_configuration_applied` reports the final state once).
     pub(crate) applying_output_config: bool,
-    /// Monotonic source of stable per-output ids (stored in each
-    /// `Output`'s user data as `OutputId`).
-    pub next_output_id: u64,
+    /// IDs outlive individual Output objects so reconnecting a connector
+    /// restores its Scheme head instead of creating an empty workspace.
+    output_ids: OutputIds,
     /// Focus border color; Scheme flips it while the prefix key is armed
     /// (StumpWM's pointer-box equivalent).
     pub border_color: [f32; 4],
@@ -739,7 +739,7 @@ impl MindeState {
             overlays: Vec::new(),
             observed_heads: Vec::new(),
             applying_output_config: false,
-            next_output_id: 0,
+            output_ids: OutputIds::default(),
             border_color: crate::render::BORDER_COLOR,
             reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
@@ -2611,13 +2611,15 @@ impl MindeState {
 
     /// The stable id of OUTPUT, assigning the next free one on first use.
     pub fn output_id(&mut self, output: &smithay::output::Output) -> u64 {
-        if let Some(id) = output.user_data().get::<OutputId>() {
-            return id.0;
-        }
-        let id = self.next_output_id;
-        self.next_output_id += 1;
-        output.user_data().insert_if_missing(|| OutputId(id));
-        id
+        self.output_ids.assign(output, None)
+    }
+
+    pub(crate) fn connector_output_id(
+        &mut self,
+        output: &smithay::output::Output,
+        device: libc::dev_t,
+    ) -> u64 {
+        self.output_ids.assign(output, Some(device))
     }
 
     /// DPMS switch for `output` (wlr-output-power-management, and the
@@ -2800,10 +2802,42 @@ impl MindeState {
     }
 }
 
-/// Stable per-output id handed to Scheme, stored in the `Output`'s user
-/// data (survives as long as the output does; a re-plugged monitor gets
-/// a fresh id).
+/// Stable per-output id handed to Scheme, also cached by connector below.
 struct OutputId(u64);
+
+#[derive(Default)]
+struct OutputIds {
+    next: u64,
+    // Use connector names rather than kernel object handles, which can
+    // change when a dock re-enumerates. Device scope avoids collisions
+    // between e.g. two GPUs' DP-1 connectors. Layout follows the port,
+    // including monitor/EDID changes behind a KVM.
+    connectors: std::collections::HashMap<(libc::dev_t, String), u64>,
+}
+
+impl OutputIds {
+    fn assign(&mut self, output: &smithay::output::Output, device: Option<libc::dev_t>) -> u64 {
+        let key = device.map(|device| (device, output.name()));
+        let id = output
+            .user_data()
+            .get::<OutputId>()
+            .map(|id| id.0)
+            .or_else(|| {
+                key.as_ref()
+                    .and_then(|key| self.connectors.get(key).copied())
+            })
+            .unwrap_or_else(|| {
+                let id = self.next;
+                self.next += 1;
+                id
+            });
+        output.user_data().insert_if_missing(|| OutputId(id));
+        if let Some(key) = key {
+            self.connectors.insert(key, id);
+        }
+        id
+    }
+}
 
 /// Stable per-window id handed to Scheme, stashed in the `Window`'s user
 /// data at `register_window` time so `id_for_window` is O(1) instead of a
@@ -2861,6 +2895,45 @@ impl ClientData for ClientState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connector_ids_survive_output_destruction_and_monitor_changes() {
+        use smithay::output::{Output, PhysicalProperties, Subpixel};
+        let output = |name: &str, model: &str| {
+            Output::new(
+                name.into(),
+                PhysicalProperties {
+                    size: (600, 340).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "TST".into(),
+                    model: model.into(),
+                    serial_number: "1".into(),
+                },
+            )
+        };
+        let mut ids = OutputIds::default();
+        let first = output("DP-1", "Original");
+        let original = ids.assign(&first, Some(1));
+        let weak = first.downgrade();
+        drop(first);
+        assert!(
+            weak.upgrade().is_none(),
+            "the registry must not retain old Outputs"
+        );
+        let returned = output("DP-1", "Replacement");
+        assert_eq!(ids.assign(&returned, Some(1)), original);
+        assert_eq!(ids.assign(&returned, None), original);
+        let other_port = ids.assign(&output("DP-2", "Original"), Some(1));
+        let other_gpu = ids.assign(&output("DP-1", "Original"), Some(2));
+        let nested = ids.assign(&output("DP-1", "Original"), None);
+        assert_eq!([original, other_port, other_gpu, nested], [0, 1, 2, 3]);
+        let refreshed = output("DP-1", "Metadata refresh");
+        MindeState::inherit_output_layout(&returned, &refreshed);
+        assert_eq!(ids.assign(&refreshed, Some(1)), original);
+        drop(returned);
+        drop(refreshed);
+        assert_eq!(ids.assign(&output("DP-1", "Original"), Some(1)), original);
+    }
 
     #[test]
     fn replaced_monitor_keeps_layout_and_head_id_but_not_stale_modes() {

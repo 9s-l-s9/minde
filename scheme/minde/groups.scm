@@ -1150,16 +1150,27 @@ a sync since nothing hidden is on-screen)."
     (heads-changed! (list (list 0 x y width height)) %groups)
     (show-persistence-errors!)))
 
-(define (handle-heads-change! heads)
+(define (retile-changed-heads! before)
+  ;; Returning borrowed windows removes members from their temporary host.
+  ;; Dynamic groups must rebuild those frames, including hidden groups.
+  ;; Geometry-only changes already resize trees in heads-changed!.
+  (unless (lset= eqv? before (map car (heads)))
+    (for-each retile-group-heads! %groups)))
+
+(define (handle-heads-change! new-heads)
   "Multi-head backends report the full usable-rect list here:
 ((id x y w h) ...)."
-  (heads-changed! heads %groups)
-  (when (pair? heads) (show-persistence-errors!)))
+  (let ((before (map car (heads))))
+    (heads-changed! new-heads %groups)
+    (retile-changed-heads! before))
+  (when (pair? new-heads) (show-persistence-errors!)))
 
 (define (set-head-mode! mode)
   "'per-head (a frame tree per monitor, StumpWM style) or 'span (one
 tree over the union of all monitors)."
-  (set-heads-mode! mode %groups))
+  (let ((before (map car (heads))))
+    (set-heads-mode! mode %groups)
+    (retile-changed-heads! before)))
 
 ;; ---------------------------------------------------------------------
 ;; Output (monitor) configuration. Thin, keyword-argument wrappers over

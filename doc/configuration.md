@@ -485,6 +485,20 @@ relevant knobs, all exported by `(minde groups)`:
 - `(handle-output-configure-failed! name reason)` fires when a
   `configure-output!` request was rejected. The default logs it.
 
+Disconnecting or disabling a head saves its frame tree in every group and
+makes its windows available on a surviving head. Reconnecting restores the
+splits, window order, selected windows and selected frame. Windows explicitly
+moved, pulled into another frame, floated or closed while the head was absent
+keep that newer placement. Automatic tiling of the temporary head does not
+cancel their return; dynamic groups retile when head membership changes.
+
+Head IDs are retained for each DRM device and connector name for the lifetime
+of the compositor process. Layout follows the port across monitor or EDID
+changes; two GPUs' identically named connectors have distinct IDs. A different
+device or connector name is a new head. Reconnecting does not switch the
+active group or take focus from a surviving head. Use desktop persistence for
+layouts that must survive restarting the compositor.
+
 ```scheme
 (define (output-configuration-allowed?) #t)
 (define (handle-output-configured!)

@@ -379,6 +379,139 @@
  '(((10 0 0 400 600) (11 600 0 400 600))
    ((11 600 0 400 600) (10 0 0 400 600))))
 
+;; Reconnecting a known head restores its tree, stacks, selections and
+;; selected frame. Borrowed windows remain usable while it is absent.
+(define dock-heads '((10 0 0 1920 1080) (11 1920 0 1280 1024)))
+(define window-owner (@@ (minde groups) window-group))
+(handle-heads-change! dock-heads)
+(create-group! "dock-roundtrip")
+(define dock-group (current-group))
+(focus-head! 10)
+(handle-window-map! 2000 "internal" "dock-test")
+(focus-head! 11)
+(handle-window-map! 2001 "external one" "dock-test")
+(handle-window-map! 2002 "external two" "dock-test")
+(split-frame-vertical!)
+(focus-next-frame!)
+(handle-window-map! 2003 "external three" "dock-test")
+(clear-current-frame!)
+(define dock-saved (dump-frames))
+(for-each
+ (lambda (cycle)
+   (handle-heads-change! '((10 0 0 1920 1080)))
+   (check "undocking keeps every window available exactly once"
+          (sort (all-window-ids) <) '(2000 2001 2002 2003))
+   (handle-heads-change! dock-heads)
+   (check "reconnecting does not steal head focus" (current-head-id) 10)
+   (focus-head! 11)
+   (check "reconnecting restores splits, stacks, cleared selections and frame focus"
+          (dump-frames) dock-saved)
+   (check "repeated docking never duplicates group membership"
+          (group-window-count dock-group) 4))
+ '(1 2 3))
+
+;; Closing, moving, floating and moving between groups while undocked
+;; override the old assignment. Untouched windows still return.
+(handle-window-map! 2005 "external five" "dock-test")
+(handle-window-map! 2004 "external four" "dock-test")
+(handle-heads-change! '((10 0 0 1920 1080)))
+(handle-window-unmap! 2001)
+(split-frame-vertical!)
+(focus-next-frame!)
+(pull-window-by-id! 2002)
+(float-window! 2003)
+(focus-window-by-id! 2004)
+(move-window-to-next-group!)
+(define moved-group (window-owner 2004))
+(focus-window-by-id! 2005)
+(pull-window-by-id! 2005) ; already in this frame: selection is not a rehome
+(handle-heads-change! dock-heads)
+(focus-head! 11)
+(check "reconnect retains the old split after explicit window moves"
+       (length (frame-leaves (current-tree))) 2)
+(check "only untouched live windows return to their original leaves"
+       (map frame-window-ids (frame-leaves (current-tree))) '(() (2005)))
+(check "a surviving window replaces a closed or rehomed selection"
+       (map frame-current-window (frame-leaves (current-tree))) '(#f 2005))
+(check "a window moved to another group stays there" (window-owner 2004) moved-group)
+(check-true "a floated window stays floating" (window-floating? 2003))
+(focus-head! 10)
+(check-true "a deliberately moved window stays on its new head"
+            (member 2002 (append-map frame-window-ids (frame-leaves (current-tree)))))
+(check "a closed window is not resurrected" (window-owner 2001) #f)
+
+;; Hidden groups keep independent trees, and consecutive removals do not
+;; give a borrowed window two different return destinations.
+(create-group! "dock-hidden")
+(focus-head! 11)
+(handle-window-map! 2010 "hidden external" "dock-test")
+(split-frame-horizontal!)
+(focus-next-frame!)
+(define hidden-dock-saved (dump-frames))
+(switch-to-group! dock-group)
+(handle-heads-change! '((10 0 0 1920 1080)))
+(handle-heads-change! dock-heads)
+(check "hidden recovery keeps the active group" (current-group) dock-group)
+(switch-to-group! "dock-hidden")
+(focus-head! 11)
+(check "hidden groups recover their own tree and selected frame"
+       (dump-frames) hidden-dock-saved)
+
+(define cascade-heads '((10 0 0 800 600) (11 800 0 800 600) (12 1600 0 800 600)))
+(handle-heads-change! cascade-heads)
+(create-group! "dock-cascade")
+(focus-head! 10)
+(handle-window-map! 2100 "A" "dock-test")
+(focus-head! 12)
+(handle-window-map! 2102 "C" "dock-test")
+(focus-head! 11)
+(handle-window-map! 2101 "B" "dock-test")
+(handle-heads-change! '((10 0 0 800 600) (12 1600 0 800 600)))
+(handle-heads-change! '((12 1600 0 800 600)))
+(handle-heads-change! '((10 0 0 800 600) (12 1600 0 800 600)))
+(focus-head! 10)
+(check "a returning temporary host does not steal another absent head's window"
+       (current-frame-window-ids) '(2100))
+(focus-head! 12)
+(check-true "the still-absent head's window remains available"
+            (member 2101 (current-frame-window-ids)))
+(handle-heads-change! cascade-heads)
+(focus-head! 11)
+(check "a window returns to its original head after consecutive undocks"
+       (current-frame-window-ids) '(2101))
+(check "cascade recovery preserves unique membership" (group-window-count (current-group)) 3)
+
+(handle-heads-change! '((10 0 0 800 600) (12 1600 0 800 600)))
+(handle-heads-change! '((11 800 0 800 600)))
+(check "simultaneous removal and return keeps newly donated windows available"
+       (sort (current-frame-window-ids) <) '(2100 2101 2102))
+(handle-heads-change! cascade-heads)
+(for-each
+ (lambda (hid id)
+   (focus-head! hid)
+   (check "each original head reclaims its window after a simultaneous swap"
+          (current-frame-window-ids) (list id)))
+ '(10 11 12) '(2100 2101 2102))
+
+(create-dynamic-group! "dock-dynamic")
+(focus-head! 10)
+(handle-window-map! 2200 "dynamic A1" "dock-test")
+(handle-window-map! 2201 "dynamic A2" "dock-test")
+(focus-head! 11)
+(handle-window-map! 2210 "dynamic B1" "dock-test")
+(handle-window-map! 2211 "dynamic B2" "dock-test")
+(handle-heads-change! '((10 0 0 800 600) (12 1600 0 800 600)))
+(handle-window-map! 2202 "dynamic A3" "dock-test")
+(handle-heads-change! cascade-heads)
+(check "returning windows leave no empty dynamic frames on the temporary head"
+       (length (frame-leaves (current-tree))) 3)
+(check "automatic retiling does not rehome borrowed windows"
+       (sort (append-map frame-window-ids (frame-leaves (current-tree))) <)
+       '(2200 2201 2202))
+(focus-head! 11)
+(check "the returning dynamic head regains its own windows"
+       (sort (append-map frame-window-ids (frame-leaves (current-tree))) <) '(2210 2211))
+
 (if (zero? %failures)
     (begin (format #t "all tests passed~%") (exit 0))
     (begin (format #t "~a test(s) FAILED~%" %failures) (exit 1)))

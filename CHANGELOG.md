@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Reconnecting an output restores each group's frame layout, window stacks
+  and selections. Windows remain available on a surviving head while it is
+  absent; closed, floated or deliberately moved windows stay out of the
+  restored assignment. Connector IDs survive Output replacement, and dynamic
+  groups retile after borrowed windows return (#160).
 - DRM connector scans retry outputs when modes or a display controller become
   available, including hotplug while the session was paused. Connected heads
   refresh their modes and monitor identity while retaining layout, explicit

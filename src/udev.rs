@@ -1138,7 +1138,7 @@ fn refresh_connector(
         } else {
             output.change_current_state(None, None, None, Some(right_edge_of_outputs(state)));
         }
-        state.output_id(&output);
+        state.connector_output_id(&output, node.dev_id());
         state
             .udev_data
             .as_mut()
