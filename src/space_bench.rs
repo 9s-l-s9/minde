@@ -3,6 +3,7 @@
 //! used for DRM presentation feedback. Elements model window identities and
 //! geometry; timing excludes actual surface traversal and GPU work.
 
+use crate::frame_callbacks::FrameCallbacks;
 use smithay::{
     desktop::{Space, space::SpaceElement},
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -85,6 +86,43 @@ fn assert_same_members(space: &Space<Element>, outputs: &[Output]) {
 }
 
 #[test]
+fn parked_callbacks_follow_rendering_outputs_without_waking_powered_off_windows() {
+    let (mut space, outputs) = scene(4);
+    let selected = |space: &Space<Element>, output: &Output, live: &[Output]| {
+        FrameCallbacks::new(space, output, |o| live.contains(o))
+            .windows()
+            .map(|window| window.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(selected(&space, &outputs[0], &outputs), vec![0, 1, 3]);
+    assert_eq!(selected(&space, &outputs[1], &outputs), vec![1, 2]);
+
+    // DPMS leaves both outputs mapped. Window 0 remains on the dark output;
+    // only parked window 3 transfers to the second output's callback pass.
+    assert!(selected(&space, &outputs[0], &outputs[1..]).is_empty());
+    assert_eq!(selected(&space, &outputs[1], &outputs[1..]), vec![1, 2, 3]);
+    for output in &outputs {
+        assert!(selected(&space, output, &[]).is_empty());
+    }
+    assert_eq!(selected(&space, &outputs[0], &outputs[..1]), vec![0, 1, 3]);
+
+    // Disabling removes the first output's geometry, so window 0 is now
+    // parked too. Selection must use current geometry without a refresh.
+    space.unmap_output(&outputs[0]);
+    assert_eq!(
+        selected(&space, &outputs[1], &outputs[1..]),
+        vec![0, 1, 2, 3]
+    );
+    space.map_element(Element(0), (220, 0), false);
+    space.map_output(&outputs[0], (0, 0));
+    assert_eq!(selected(&space, &outputs[0], &outputs), vec![1]);
+    assert_eq!(selected(&space, &outputs[1], &outputs), vec![1, 2, 3, 0]);
+    space.unmap_output(&outputs[0]);
+    space.unmap_output(&outputs[1]);
+    assert!(selected(&space, &outputs[1], &outputs).is_empty());
+}
+
+#[test]
 fn output_iterator_preserves_membership_and_order_through_scene_changes() {
     let (mut space, outputs) = scene(12);
     assert_eq!(legacy_members(&space, &outputs[0]), vec![0, 1, 4, 5, 8, 9]);
@@ -140,6 +178,12 @@ fn bench_output_membership() {
 fn bench_frame_callback_selection() {
     use std::{hint::black_box, time::Instant};
     fn selected(space: &Space<Element>, output: &Output, short_circuit: bool) -> Vec<usize> {
+        if short_circuit {
+            return FrameCallbacks::new(space, output, |_| true)
+                .windows()
+                .map(|window| window.0)
+                .collect();
+        }
         let output_geo = space.output_geometry(output).unwrap();
         let first = space.outputs().next() == Some(output);
         space
@@ -147,15 +191,14 @@ fn bench_frame_callback_selection() {
             .filter(|window| {
                 let geo = space.element_geometry(window);
                 let on_this = geo.map(|g| g.overlaps(output_geo)).unwrap_or(false);
-                let parked = (!short_circuit || (first && !on_this))
-                    && geo
-                        .map(|g| {
-                            !space
-                                .outputs()
-                                .filter_map(|o| space.output_geometry(o))
-                                .any(|og| g.overlaps(og))
-                        })
-                        .unwrap_or(true);
+                let parked = geo
+                    .map(|g| {
+                        !space
+                            .outputs()
+                            .filter_map(|o| space.output_geometry(o))
+                            .any(|og| g.overlaps(og))
+                    })
+                    .unwrap_or(true);
                 on_this || (first && parked)
             })
             .map(|window| window.0)

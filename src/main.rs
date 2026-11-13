@@ -10,6 +10,7 @@ mod automation_dnd;
 mod automation_observe;
 mod edid;
 mod events;
+mod frame_callbacks;
 mod guile;
 mod handlers;
 

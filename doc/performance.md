@@ -180,19 +180,22 @@ or a latency measurement. Logs: `/tmp/minde-resize-before/foot.log` and
 
 ## DRM frame callback selection
 
-The parked-window check now runs only on the first output, and only for windows
-that do not overlap that output. Previously every window queried output geometry
-on every output pass, even when its callback eligibility was already known.
-Hidden windows still receive callbacks through the first output.
+The parked-window check runs only on the first output that has a live render
+surface, and only for windows that do not overlap that output. Powered-off
+outputs remain in the visibility check, so their windows do not become parked
+merely because the monitor is dark. Previously every window queried output
+geometry on every output pass, even when its callback eligibility was known.
+Hidden windows continue receiving callbacks through a rendering output.
 
-The GPU-free `bench_frame_callback_selection` benchmark uses real Smithay Space
-geometry and checks identical selected window IDs before timing 1,000 passes:
+The GPU-free `bench_frame_callback_selection` benchmark uses the production
+selector with real Smithay Space geometry and checks identical selected window
+IDs with all outputs on before timing 1,000 passes:
 
 | Windows, two outputs | Before (µs/pass) | After (µs/pass) |
 | --- | ---: | ---: |
-| 12 | 5.132 | 2.313 |
-| 100 | 46.150 | 21.726 |
-| 1,000 | 1182.632 | 923.064 |
+| 12 | 5.329 | 2.352 |
+| 100 | 45.983 | 22.195 |
+| 1,000 | 1176.266 | 921.091 |
 
 The fixture includes windows on each output, spanning both, and parked offscreen.
 Timing includes collecting selected IDs, but excludes client surface traversal

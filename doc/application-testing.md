@@ -149,6 +149,12 @@ exercise scheduling without a DRM device; they do not emulate KMS or libseat.
 Physical presentation and VT switching still require the
 [hardware validation checklist](hardware-validation.md).
 
+GPU-free layout tests exercise the production window selector across output
+power loss, disable, re-enable and placement changes. Parked windows transfer
+to the first output that can render, while windows confined to a powered-off
+output receive no callbacks. The tests check eligibility; physical DRM frame
+delivery remains a hardware check.
+
 ## Output configuration protocol
 
 `sh tests/output-management-e2e.sh` combines normal `wlr-randr` requests with

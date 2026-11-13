@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Parked windows receive DRM frame callbacks from the first rendering output
+  when an earlier output is powered off. Windows on the powered-off output
+  itself remain paused; output disable and re-enable use the current layout
+  when choosing callback recipients (#74).
 - Disabling a powered-off output reports the power reset to existing
   controllers on both DRM and nested backends. Controllers remain usable
   after re-enable; unchanged power states do not send extra notifications

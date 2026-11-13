@@ -24,6 +24,7 @@ The following files also contain code adapted from Smithay's `anvil` example:
 
   src/render.rs
   src/udev.rs
+  src/frame_callbacks.rs (extracted from src/udev.rs)
   src/handlers/layer_shell.rs
 
 Upstream project: https://github.com/Smithay/Smithay

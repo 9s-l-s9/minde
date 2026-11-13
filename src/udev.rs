@@ -2047,13 +2047,30 @@ impl MindeState {
             .ok_or(SwapBuffersError::AlreadySwapped)?;
         let primary_gpu = udev.primary_gpu;
 
+        let Some(output) = udev
+            .devices
+            .get(&node)
+            .and_then(|device| device.heads.get(&crtc))
+            .map(|entry| entry.output.clone())
+        else {
+            return Ok(false);
+        };
+        let frame_callbacks =
+            crate::frame_callbacks::FrameCallbacks::new(&self.space, &output, |output| {
+                !udev.paused
+                    && udev.devices.values().any(|device| {
+                        device.heads.values().any(|head| {
+                            head.output == *output && head.enabled() && head.surface.is_some()
+                        })
+                    })
+            });
+
         // Split borrows: the surface lives in `devices`, the renderer in
         // `gpus` -- disjoint fields of the same UdevBackendData.
         let UdevBackendData { gpus, devices, .. } = udev;
         let Some(entry) = devices.get_mut(&node).and_then(|d| d.heads.get_mut(&crtc)) else {
             return Ok(false);
         };
-        let output = entry.output.clone();
         let Some(output_surface) = entry.surface.as_mut() else {
             return Ok(false);
         };
@@ -2256,36 +2273,15 @@ impl MindeState {
             presentation_feedback.discarded();
         }
 
-        // Frame callbacks: windows on this output, plus -- from the first
-        // output's pass only -- windows parked offscreen (they overlap no
-        // output but must keep receiving callbacks or they stall while
-        // hidden). Avoids double-firing clients once per head.
-        let is_first_output = self.space.outputs().next() == Some(&output);
-        self.space.elements().for_each(|window| {
-            let geo = self.space.element_geometry(window);
-            let on_this = geo.map(|g| g.overlaps(output_geo)).unwrap_or(false);
-            // Only the first output services parked windows. Visible windows
-            // already qualify, so avoid output geometry queries for them too.
-            let needs_parked_callback = is_first_output
-                && !on_this
-                && geo
-                    .map(|g| {
-                        !self
-                            .space
-                            .outputs()
-                            .filter_map(|o| self.space.output_geometry(o))
-                            .any(|og| g.overlaps(og))
-                    })
-                    .unwrap_or(true);
-            if on_this || needs_parked_callback {
-                window.send_frame(
-                    &output,
-                    self.start_time.elapsed(),
-                    Some(Duration::ZERO),
-                    |_, _| Some(output.clone()),
-                );
-            }
-        });
+        // Only the selected rendering output services parked windows.
+        for window in frame_callbacks.windows() {
+            window.send_frame(
+                &output,
+                self.start_time.elapsed(),
+                Some(Duration::ZERO),
+                |_, _| Some(output.clone()),
+            );
+        }
         // Layer surfaces need frame callbacks too, or clients like fuzzel
         // draw once and then wait forever before rendering typed input.
         // NOTE: reuse the `layer_map` guard from above -- calling
