@@ -10,12 +10,44 @@ generation, and commands launched through `wm-spawn` execute with the session
 user's authority. Personal configuration is code and must be reviewed like any
 other executable program.
 
+## Wayland client trust
+
+Every process that can connect to Minde's Wayland socket must be trusted as
+a desktop component. The compositor exposes privileged Wayland interfaces
+to all connected clients, without per-client permission prompts or identity
+filters. Access to the separate control socket is not required for these
+capabilities:
+
+| Interface | Authority granted to a connected client |
+|---|---|
+| `wlr-screencopy-unstable-v1`, `ext-image-copy-capture-v1` and output capture sources | Capture output contents while the session is unlocked. |
+| `wlr-data-control-unstable-v1`, `ext-data-control-v1` | Read and replace clipboard and primary-selection contents without keyboard focus. |
+| `virtual-keyboard-unstable-v1`, `wlr-virtual-pointer-unstable-v1` | Inject keyboard and pointer input into the session. |
+| `input-method-unstable-v2` | Become the seat's input method, receive text context and insert text for participating applications; the first active instance owns the seat. |
+| `ext-session-lock-v1` | Lock the session; only the active lock object may unlock it. |
+| `wlr-gamma-control-unstable-v1` | Change an output's hardware gamma ramp on the DRM backend; one controller may own each output. This interface is absent from the nested backend. |
+| Foreign-toplevel, output-management and output-power interfaces | Enumerate/control windows and request output configuration or power changes. Output configuration remains subject to the configured policy predicate. |
+
+The session-lock, input-focus, output-availability and single-owner checks
+still apply to protocol requests. They do not establish per-application
+permissions. Using a screen-sharing portal likewise does not restrict a
+client's direct access to the capture interfaces.
+
+Minde does not implement `wp_security_context_v1`, the protocol for attaching
+sandbox identity to client connections, or filters that use such identity to
+restrict these interfaces. Do not give untrusted or sandboxed applications
+the compositor socket while relying on desktop isolation. For example, a
+Flatpak application's `--socket=wayland` access exposes these capabilities
+as well as ordinary window rendering. Supporting untrusted Wayland clients
+requires security-context support and per-interface authorization first.
+
 ## Control socket
 
 The main IPC socket is created with mode `0600` inside the user's runtime
 directory. Requests are Scheme evaluation, so access to that socket is full
 control of the compositor session. Do not proxy or expose it across users or
-machines.
+machines. Its `0600` permissions protect this IPC endpoint; the Wayland
+socket has the separate trust implications described above.
 
 ## Input, clipboard, and diagnostics
 

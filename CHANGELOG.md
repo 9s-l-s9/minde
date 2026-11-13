@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- The security model now states the existing trust requirement for every
+  connected Wayland client, lists privileged interfaces and their limits,
+  and explains why socket access does not isolate sandboxed apps (#133).
 - Documentation checks reject missing ripgrep and failed discovery/extraction
   instead of reporting success. Demo checks reject nonnumeric or nonpositive
   video durations and failed manifest extraction (#129, #130).
