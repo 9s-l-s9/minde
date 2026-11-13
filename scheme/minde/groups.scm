@@ -51,6 +51,8 @@
             dump-desktop-to-file
             restore-from-file
             handle-window-move!
+            handle-window-fullscreen!
+            handle-foreign-activate!
             rename-current-group!
             delete-current-group!
             move-window-to-next-group!
@@ -1094,6 +1096,22 @@ its group if needed."
             (unless (eq? g (current-group))
               (switch-to-group! g))
             (focus-window-by-id! id)))))))
+
+(define (handle-window-fullscreen! id on)
+  "Rust: an application requests fullscreen for ID without taking focus.
+Records hidden-group requests for the next activation; unknown IDs do nothing."
+  (let ((group (window-group id)))
+    (and group (set-group-fullscreen! group id on))))
+
+(define (handle-foreign-activate! id)
+  "Rust: a taskbar requests activation. Validate ID before changing groups."
+  (let ((group (window-group id)))
+    (and group (group-owns-window? group id)
+         (begin
+           (unless (eq? group (current-group)) (switch-to-group! group))
+           (when (and (fullscreen-window) (not (equal? (fullscreen-window) id)))
+             (fullscreen!))
+           (focus-window-by-id! id)))))
 
 (define (handle-window-unmap! id)
   "Removes ID from whichever group's tree currently holds it -- the active

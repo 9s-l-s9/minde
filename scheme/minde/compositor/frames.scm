@@ -57,6 +57,8 @@
             last-message
             fullscreen!
             fullscreen-window
+            set-group-fullscreen!
+            group-owns-window?
             clear-fullscreen-if-window!
             kill-current-window!
             ratwarp!
@@ -257,11 +259,13 @@
 ;; deleted groups disappear without retaining their records. The value does
 ;; not refer back to its key. Geometry is saved when the group is parked.
 (define-record-type <fullscreen-state>
-  (make-fullscreen-state id shown? geometry)
+  (make-fullscreen-state id shown? geometry focus)
   fullscreen-state?
   (id fullscreen-id)
   (shown? fullscreen-shown? set-fullscreen-shown?!)
-  (geometry fullscreen-geometry set-fullscreen-geometry!))
+  (geometry fullscreen-geometry set-fullscreen-geometry!)
+  ;; An application can fullscreen a window without activating it.
+  (focus fullscreen-focus set-fullscreen-focus!))
 (define %group-fullscreens (make-weak-key-hash-table))
 
 (define (current-group)
@@ -894,6 +898,7 @@ to run its own sync-frames!."
   (if (window-floating? id)
       (and (member id (group-floats %active-group))
            (begin
+             (select-fullscreen-focus! id)
              (set-group-floats! %active-group
                                 (cons id (delete id (group-floats %active-group))))
              (set! %focused-float id)
@@ -908,6 +913,7 @@ to run its own sync-frames!."
                               (frame-leaves %frame-tree))))
                  (and f
                       (begin
+                        (select-fullscreen-focus! id)
                         (clear-float-focus!)
                         (set! %current-frame f)
                         (set-frame-current-window! f id)
@@ -994,14 +1000,25 @@ sync."
     (hash-set! %floating id rect)))
 
 (define (focused-window-id)
-  "The effective focus: the displayed fullscreen window, otherwise the
-active group's focused float or the current frame's selected window."
+  "The effective focus: the selection retained while fullscreen is shown,
+otherwise the active group's focused float or current frame's selected window."
   (let ((full (hashq-ref %group-fullscreens %active-group)))
     (cond
-     ((and full (fullscreen-shown? full)) (fullscreen-id full))
+     ((and full (fullscreen-shown? full))
+      (let ((focus (fullscreen-focus full)))
+        (if (or (not focus) (group-owns-window? %active-group focus))
+            focus
+            (fullscreen-id full))))
      ((and %focused-float (member %focused-float (group-floats %active-group)))
       %focused-float)
      (else (current-frame-window)))))
+
+(define (select-fullscreen-focus! id)
+  ;; Selecting the fullscreen window explicitly may activate a previously
+  ;; unfocused requester. New windows mapped behind it still preserve focus.
+  (let ((full (hashq-ref %group-fullscreens %active-group)))
+    (when (and full (equal? id (fullscreen-id full)))
+      (set-fullscreen-focus! full id))))
 
 (define (clear-float-focus!)
   (set! %focused-float #f))
@@ -2525,7 +2542,8 @@ Returning to a fullscreen group restores its window and focus."
       (when restore?
         (parameterize ((%restoring-fullscreen? #t))
           (set-fullscreen-shown?! full #t)
-          (focus-window-by-id! (fullscreen-id full))))
+          (let ((focus (focused-window-id)))
+            (when focus (focus-window-by-id! focus)))))
       (sync-frames-now!)
       (when restore?
         (let ((id (fullscreen-id full)))
@@ -2534,7 +2552,7 @@ Returning to a fullscreen group restores its window and focus."
           ;; to the first output, even if it belonged to another monitor.
           (let ((rect (or (fullscreen-geometry full)
                           (and (window-floating? id) (float-geometry id))
-                          (frame-display-rect %current-frame))))
+                          (frame-display-rect (or (frame-of-window id) %current-frame)))))
             (apply (if (window-floating? id) rust-place-float! wm-place-window)
                    id rect))
           (rust-call 'wm-set-fullscreen id #t)
@@ -2545,7 +2563,9 @@ Returning to a fullscreen group restores its window and focus."
 ;; ---------------------------------------------------------------------
 
 (define (group-owns-window? group id)
-  (or (member id (group-floats group))
+  "Whether ID can be selected from GROUP's floating list or frame trees."
+  (if (window-floating? id)
+      (member id (group-floats group))
       (any (lambda (frame) (member id (frame-window-ids frame)))
            (append-map frame-leaves (group-all-trees group)))))
 
@@ -2570,25 +2590,46 @@ Returning to a fullscreen group restores its window and focus."
   (let ((full (hashq-ref %group-fullscreens %active-group)))
     (and full (fullscreen-id full))))
 
+(define* (set-group-fullscreen! group id on #:key (preserve-focus? #t))
+  "Sets GROUP's fullscreen owner by ID without activating the group or ID.
+Hidden groups defer geometry until activation. Returns #f for unresolved IDs."
+  (and (group-owns-window? group id)
+       (let* ((active? (eq? group %active-group))
+              (full (hashq-ref %group-fullscreens group))
+              (current (and full (fullscreen-id full)))
+              (focus (if active? (focused-window-id) id)))
+         (cond
+          ((and on (not (equal? current id)))
+           (when current
+             (rust-call 'wm-set-fullscreen current #f)
+             (forget-placement! current))
+           (hashq-set! %group-fullscreens group
+                       (make-fullscreen-state id #f #f focus))
+           (forget-placement! id)
+           (when active? (sync-frames!)))
+          ((and (not on) (equal? current id))
+           ;; Mapping behind fullscreen can change a frame's selection while
+           ;; effective keyboard focus stays put. Carry that focus back into
+           ;; the tiled/float selection before dropping the fullscreen state.
+           (when (and active? preserve-focus?)
+             (parameterize ((%restoring-fullscreen? #t))
+               (if focus
+                   (focus-window-by-id! focus)
+                   (begin (clear-float-focus!) (clear-current-frame!)))))
+           (rust-call 'wm-set-fullscreen id #f)
+           (forget-placement! id)
+           (hashq-remove! %group-fullscreens group)
+           (when active? (sync-frames!))))
+         #t)))
+
 (define (fullscreen!)
   "Toggles fullscreen on the active group's current window. Fullscreen
 survives group switches; other groups retain their own layout and focus.
 Toggling off restores this group's tiled or floating geometry."
-  (let ((id (fullscreen-window)))
+  (let* ((full (fullscreen-window)) (id (or full (focused-window-id))))
     (if id
-        (begin
-          (rust-call 'wm-set-fullscreen id #f)
-          (forget-placement! id)
-          (hashq-remove! %group-fullscreens %active-group)
-          (sync-frames!))
-        (let ((id (focused-window-id)))
-          (if id
-              (begin
-                (hashq-set! %group-fullscreens %active-group
-                            (make-fullscreen-state id #t #f))
-                (forget-placement! id)
-                (rust-call 'wm-set-fullscreen id #t))
-              (echo "No window to fullscreen"))))))
+        (set-group-fullscreen! %active-group id (not full) #:preserve-focus? #f)
+        (echo "No window to fullscreen"))))
 
 (define (clear-fullscreen-if-window! id)
   "Drops fullscreen state for unmapped window ID, including hidden groups.

@@ -54,6 +54,31 @@ fn popup_constraint_rect(
     Some(target)
 }
 
+fn latest_configure(surface: &ToplevelSurface) -> Option<Serial> {
+    with_states(surface.wl_surface(), |states| {
+        let attributes = states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()?
+            .lock()
+            .unwrap();
+        attributes
+            .pending_configures()
+            .last()
+            .or(attributes.last_acked.as_ref())
+            .map(|configure| configure.serial)
+    })
+}
+
+fn request_fullscreen(surface: &ToplevelSurface, id: u64, on: bool) {
+    let before = latest_configure(surface);
+    guile::on_window_fullscreen(id, on);
+    // xdg-shell requires a configure even when policy defers the request or
+    // the requested state already holds. Do not duplicate a layout reply.
+    if surface.is_initial_configure_sent() && latest_configure(surface) == before {
+        surface.send_configure();
+    }
+}
+
 impl XdgShellHandler for MindeState {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
@@ -242,18 +267,16 @@ impl XdgShellHandler for MindeState {
         }
     }
 
-    // Client (un)fullscreen requests route through the same Scheme path
-    // as taskbar requests (handle-foreign-fullscreen!), so the single-
-    // fullscreen model stays authoritative and the frame layout re-syncs
-    // on exit. Before mapping, preserve the request in the configure state;
-    // the first buffer commit applies it to the new managed window.
+    // Scheme owns fullscreen independently of activation. Before mapping,
+    // preserve the request in the configure state; the first buffer commit
+    // applies it to the new managed window.
     fn fullscreen_request(
         &mut self,
         surface: ToplevelSurface,
         _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
     ) {
         match self.id_for_toplevel(&surface) {
-            Some(id) => guile::on_foreign_fullscreen(id, true),
+            Some(id) => request_fullscreen(&surface, id, true),
             None => {
                 let size = self.output_rect_containing(None).size;
                 surface.with_pending_state(|state| {
@@ -269,7 +292,7 @@ impl XdgShellHandler for MindeState {
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
         match self.id_for_toplevel(&surface) {
-            Some(id) => guile::on_foreign_fullscreen(id, false),
+            Some(id) => request_fullscreen(&surface, id, false),
             None => {
                 surface.with_pending_state(|state| {
                     state.states.unset(xdg_toplevel::State::Fullscreen);
@@ -376,7 +399,7 @@ impl MindeState {
         let (title, app_id) = self.window_title(id).unwrap_or_default();
         guile::on_window_map(id, &title, &app_id);
         if fullscreen {
-            guile::on_foreign_fullscreen(id, true);
+            guile::on_window_fullscreen(id, true);
         }
         tracing::info!(
             component = "window",

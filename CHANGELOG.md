@@ -21,6 +21,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Application fullscreen requests affect their own Wayland or X11 window
+  without changing the active group or keyboard focus. Hidden groups defer
+  fullscreen until visited, invalid IDs do nothing, and taskbar requests
+  retain explicit activation. Repeated and deferred xdg requests still
+  receive configure replies (#41).
 - Foreign-toplevel output associations follow floating placement, fullscreen,
   drag movement and committed resize geometry for Wayland and X11 windows.
   Disabling the last output clears its associations; unchanged membership

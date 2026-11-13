@@ -54,6 +54,13 @@ and associated grabs and popups end. A subsequent map receives a fresh window
 ID, so stale selectors cannot address it. Initial title/app-id and fullscreen
 requests are applied when the first buffer maps.
 
+Application fullscreen requests address the requesting window through
+`handle-window-fullscreen!`. Each group's fullscreen state tracks its owner
+separately from keyboard focus; a hidden group applies the requested geometry
+when activated. Taskbar fullscreen combines validated activation with the same
+ownership operation. Invalid or unselectable IDs do not alter another window.
+Xdg requests receive a configure even when deferred or already satisfied.
+
 Interactive resize completion follows the final configure's acknowledgement
 on a surface commit. Older commits keep their opposite edges anchored until
 that acknowledgement arrives. Policy receives the requested final rectangle

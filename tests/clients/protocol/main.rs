@@ -4,6 +4,7 @@ mod capture;
 mod constraints;
 mod emergency;
 mod focus;
+mod fullscreen;
 mod input;
 mod keyboard;
 mod layer;
@@ -44,9 +45,11 @@ fn main() {
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
+        Some("window-fullscreen") => fullscreen::run(),
         Some("window-outputs") => window::outputs(),
         Some("xwayland-lifecycle") => xwayland::run(),
         Some("x11-metadata") => xwayland::metadata(),
+        Some("x11-fullscreen") => xwayland::fullscreen_requests(),
         Some("selection-transfer") => selection::run(),
         _ => panic!("select a protocol test scenario"),
     }

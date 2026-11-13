@@ -26,6 +26,7 @@
     (handle-window-map! . 3)
     (handle-window-title-change! . 3)
     (handle-window-unmap! . 1)
+    (handle-window-fullscreen! . 2)
     (handle-heads-change! . 1)
     (handle-output-geometry! . 4)
     (handle-timer! . 1)

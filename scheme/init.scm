@@ -647,32 +647,15 @@ Personal configuration may replace this hook to disable click-to-focus."
 ;; Foreign-toplevel management (wlr-foreign-toplevel-management): external
 ;; bars/switchers request actions on windows by their compositor id. Rust
 ;; (src/handlers/foreign_toplevel.rs) looks these up by plain top-level
-;; name, as with the other event entry points, so they live here as thin
-;; glue over the exported group/frame operations rather than as public
-;; module API. `close` is handled entirely in Rust (a shell close).
-(define (handle-foreign-activate! id)
-  "Rust: a taskbar/switcher asked to activate window ID. Switches to the
-group holding it (if any) and focuses it; a no-op if it has since vanished."
-  (let ((group (find (lambda (name) (group-has-window? name id)) (group-names))))
-    (when group
-      (unless (string=? group (current-group-name))
-        (switch-to-group! group))
-      (focus-window-by-id! id))))
-
+;; name, as with the other event entry points. Activation and application
+;; fullscreen policy come from (minde groups); taskbar fullscreen combines
+;; both operations here. `close` is handled entirely in Rust (a shell close).
 (define (handle-foreign-fullscreen! id on)
   "Rust: a taskbar asked to (un)fullscreen window ID. Activates the window,
 then drives the group's fullscreen model (fullscreen-window / fullscreen!)
 so at most one window per group is fullscreen and the layout re-syncs on exit."
-  (handle-foreign-activate! id)
-  (let ((current (fullscreen-window)))
-    (cond
-     ;; Want it fullscreen and it isn't: clear any other, then set this one.
-     ((and on (not (equal? current id)))
-      (when current (fullscreen!)) ; clears the currently-fullscreen window
-      (fullscreen!))               ; focused window is now ID -> fullscreen it
-     ;; Want it un-fullscreened and it currently is: toggle off.
-     ((and (not on) (equal? current id))
-      (fullscreen!)))))
+  (and (handle-foreign-activate! id)
+       (handle-window-fullscreen! id on)))
 
 (define (handle-foreign-minimize! id on)
   "Rust: a taskbar asked to (un)minimize window ID. minde's tiling model

@@ -158,7 +158,7 @@ impl XwmHandler for MindeState {
         let id = self.register_window(element);
         guile::on_window_map(id, &title, &class);
         if fullscreen {
-            guile::on_foreign_fullscreen(id, true);
+            guile::on_window_fullscreen(id, true);
         }
         tracing::info!(
             component = "window",
@@ -404,12 +404,12 @@ impl XwmHandler for MindeState {
     fn unmaximize_request(&mut self, _xwm: XwmId, _window: X11Surface) {}
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some((id, _)) = self.window_for_x11(&window) {
-            guile::on_foreign_fullscreen(id, true);
+            guile::on_window_fullscreen(id, true);
         }
     }
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some((id, _)) = self.window_for_x11(&window) {
-            guile::on_foreign_fullscreen(id, false);
+            guile::on_window_fullscreen(id, false);
         }
     }
     fn resize_request(

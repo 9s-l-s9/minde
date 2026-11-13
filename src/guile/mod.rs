@@ -468,6 +468,7 @@ static HANDLE_KEY: Hook = Hook::new("wm-handle-key");
 static WINDOW_MAP: Hook = Hook::new("handle-window-map!");
 static WINDOW_TITLE: Hook = Hook::new("handle-window-title-change!");
 static WINDOW_UNMAP: Hook = Hook::new("handle-window-unmap!");
+static WINDOW_FULLSCREEN: Hook = Hook::new("handle-window-fullscreen!");
 static POINTER_FOCUS: Hook = Hook::new("handle-pointer-focus!");
 static HEADS_CHANGE: Hook = Hook::new("handle-heads-change!");
 static OUTPUT_GEOMETRY: Hook = Hook::new("handle-output-geometry!");
@@ -1818,6 +1819,12 @@ pub fn on_window_title(id: u64, title: &str, app_id: &str) {
 /// Calls `(handle-window-unmap! id)` if bound.
 pub fn on_window_unmap(id: u64) {
     WINDOW_UNMAP.call(&[from_i64(id as i64)]);
+}
+
+/// Calls `(handle-window-fullscreen! id on)` for an application's own
+/// request, which changes fullscreen ownership without activating it.
+pub fn on_window_fullscreen(id: u64, on: bool) {
+    WINDOW_FULLSCREEN.call(&[from_i64(id as i64), from_bool(on)]);
 }
 
 /// Calls `(handle-pointer-focus! id)` for a clicked/tapped window. Scheme

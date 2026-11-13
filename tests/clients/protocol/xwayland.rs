@@ -288,6 +288,104 @@ pub fn metadata() {
     );
     println!("ok - X11 title precedence, property deletion and remap metadata stay synchronized");
 }
+pub fn fullscreen_requests() {
+    use super::{
+        fullscreen::{activated, selected},
+        lock::inject_key,
+        window::window_id,
+    };
+    let executable = PathBuf::from(env::var("MINDE_X11_TEST_CLIENT").unwrap());
+    let mut observer = Observer::new();
+    let mut anchor = Client::new("X11 fullscreen anchor");
+    anchor.toplevel(true);
+    let anchor_id = window_id(&anchor.name);
+    evaluate("(begin (create-group! \"X11 requests\") #t)", "#t");
+    let mut target = X11Client::new(&executable, "x11-fullscreen-requester");
+    let id = target.window_id;
+    // The C fixture's XSync only orders requests at the X server. Wait for
+    // Scheme to receive each request before checking its lack of activation.
+    let request = |target: &mut X11Client, on: bool| {
+        target.command(if on { "fullscreen" } else { "unfullscreen" });
+        let expected = if on {
+            format!("(ok {id})")
+        } else {
+            "(ok #f)".into()
+        };
+        until(
+            || {
+                ipc(&format!(
+                    "(let* ((g ((@@ (minde groups) window-group) {id})) \
+             (full (hashq-ref (@@ (minde compositor frames) %group-fullscreens) g))) \
+             (and full ((@@ (minde compositor frames) fullscreen-id) full)))"
+                )) == expected
+            },
+            "X11 fullscreen request never reached group policy",
+        );
+    };
+    evaluate("(begin (switch-to-group! \" I \") #t)", "#t");
+    for on in [true, false, true] {
+        request(&mut target, on);
+        selected(" I ", anchor_id);
+        evaluate(&format!("(wm-window-geometry {id})"), "#f");
+        activated(&mut observer, &anchor.name, true);
+        activated(&mut observer, &target.title, false);
+        inject_key(&mut anchor, &mut []);
+    }
+    evaluate("(begin (switch-to-group! \"X11 requests\") #t)", "#t");
+    selected("X11 requests", id);
+    until(
+        || ipc(&format!("(wm-window-geometry {id})")) == "(ok (0 0 1280 800))",
+        "X11 client did not commit the restored fullscreen size",
+    );
+    request(&mut target, false);
+    let mut peer = Client::new("X11 fullscreen focused peer");
+    peer.toplevel(true);
+    let peer_id = window_id(&peer.name);
+    request(&mut target, true);
+    selected("X11 requests", peer_id);
+    activated(&mut observer, &peer.name, true);
+    activated(&mut observer, &target.title, false);
+    evaluate("(begin (sync-frames!) #t)", "#t");
+    selected("X11 requests", peer_id);
+    inject_key(&mut peer, &mut [&mut anchor]);
+    request(&mut target, false);
+    selected("X11 requests", peer_id);
+    evaluate("(begin (switch-to-group! \" I \") #t)", "#t");
+    let handle = observer.handle(&target.title);
+    observer.c.send(handle, 8, &words(&[0]));
+    observer.c.roundtrip();
+    selected("X11 requests", id);
+    activated(&mut observer, &target.title, true);
+    evaluate("(fullscreen-window)", &id.to_string());
+    evaluate("(begin (switch-to-group! \" I \") #t)", "#t");
+    request(&mut target, false);
+    selected(" I ", anchor_id);
+    evaluate(&format!("(wm-window-geometry {id})"), "#f");
+    drop(target);
+    drop(peer);
+    until(
+        || {
+            ipc(&format!("(wm-window-title {id})")) == "(ok #f)"
+                && ipc(&format!("(wm-window-title {peer_id})")) == "(ok #f)"
+        },
+        "X11 fullscreen clients remained mapped",
+    );
+    evaluate(
+        "(begin (switch-to-group! \"X11 requests\") (delete-current-group!) \
+              (switch-to-group! \" I \") #t)",
+        "#t",
+    );
+    drop(anchor);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "X11 fullscreen anchor remained mapped",
+    );
+    println!(
+        "ok - X11 fullscreen requests preserve group, activation, keyboard delivery and parked geometry"
+    );
+    println!("ok - X11 taskbar fullscreen explicitly activates its requested window");
+}
+
 pub fn run() {
     struct ReleaseSuper;
     impl Drop for ReleaseSuper {

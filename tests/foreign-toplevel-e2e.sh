@@ -31,6 +31,13 @@ window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)
 }
 timeout 5 xdotool windowfocus "$window"
 
+timeout 45 "$NESTED_PROTOCOL_CLIENT" window-fullscreen \
+    >"$OUT/window-fullscreen.log" 2>&1 || {
+    cat "$OUT/window-fullscreen.log" >&2
+    exit 1
+}
+cat "$OUT/window-fullscreen.log"
+
 timeout 40 "$NESTED_PROTOCOL_CLIENT" window-lifecycle \
     >"$OUT/window-lifecycle.log" 2>&1 || {
     cat "$OUT/window-lifecycle.log" >&2

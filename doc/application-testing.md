@@ -121,6 +121,9 @@ regions; inactive hints; independent clients; and retired one-shot resources
 whose later requests must not affect a replacement lock. It also checks
 consecutive absolute-input lock deltas, warp resets, keyboard focus across
 fullscreen group switches and fullscreen resizing when output scaling changes.
+Application requests from X11 clients in hidden groups or behind a focused
+peer must preserve group selection, foreign activation and real keyboard
+delivery. Explicit taskbar fullscreen must still activate its target.
 It is part of `make check-e2e` and uses the normal development manifest; all
 client lifetimes are bounded. This does not
 replace testing an actual game on the DRM/libinput backend.
@@ -278,3 +281,9 @@ the corresponding X11 placement and fullscreen paths. Unit tests cover
 overlap across two outputs with different scales, spanning-window resize,
 fullscreen bounds, rotation, negative origins and removal. Physical
 multi-monitor dragging remains a hardware check.
+
+The foreign-toplevel gate also sends native xdg fullscreen requests from
+hidden groups and unfocused windows. It checks configure replies for deferred,
+repeated and cancelled requests, parked geometry, keyboard delivery, invalid
+IDs and explicit taskbar activation. Scheme tests cover stale float mirrors,
+fullscreen-owner replacement and removal of the separately focused window.

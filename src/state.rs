@@ -1218,7 +1218,7 @@ impl MindeState {
                 let _ = x11.configure(geo);
                 self.space.map_element(window.clone(), geo.loc, false);
                 self.update_window_fractional_scale(&window);
-                self.space.raise_element(&window, true);
+                self.space.raise_element(&window, false);
                 self.publish_window_geometry(id);
                 self.schedule_redraw();
             }
@@ -1235,7 +1235,7 @@ impl MindeState {
             toplevel.send_pending_configure();
             self.space.map_element(window.clone(), geo.loc, false);
             self.update_window_fractional_scale(&window);
-            self.space.raise_element(&window, true);
+            self.space.raise_element(&window, false);
             self.publish_window_geometry(id);
         } else {
             toplevel.with_pending_state(|state| {

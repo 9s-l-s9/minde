@@ -290,6 +290,12 @@ fi
     assert_pixel "$kind-panel-restored" 10 10 A02020
     stop_client
 done
+MINDE_X11_TEST_CLIENT="$OUT/x11-client" MINDE_X11_DISPLAY="$xdisplay" \
+    timeout 45 "$NESTED_PROTOCOL_CLIENT" x11-fullscreen >"$OUT/x11-fullscreen.log" 2>&1 || {
+    cat "$OUT/x11-fullscreen.log" >&2
+    fail 'X11 application fullscreen policy'
+}
+cat "$OUT/x11-fullscreen.log"
 MINDE_X11_DISPLAY="$xdisplay" \
     timeout 45 "$NESTED_PROTOCOL_CLIENT" x11-metadata >"$OUT/x11-metadata.log" 2>&1 || {
     cat "$OUT/x11-metadata.log" >&2
