@@ -23,6 +23,7 @@
 
 (define-module (minde hooks)
   #:use-module ((minde foundation hooks) #:prefix foundation:)
+  #:use-module (minde compositor revision)
   #:export (add-event-hook!
             remove-event-hook!
             run-event-hook!
@@ -66,9 +67,7 @@ via the wm-log subr (when present) and swallowed."
   ;; Invalidate control snapshots even when a change is later reversed before
   ;; the next read. Keep the foundation decoupled from the optional facade.
   (unless (eq? name 'message)
-    (let ((var (guile-user-variable 'note-desktop-change!)))
-      (when var
-        (catch #t (lambda () ((variable-ref var))) (lambda _ #f)))))
+    (note-policy-change!))
   ;; Mirror every firing to the read-only event push socket before running
   ;; user hooks. The mirror procedure (minde-mirror-event, defined in the
   ;; plain-loaded event-stream.scm) is resolved from guile-user so this module

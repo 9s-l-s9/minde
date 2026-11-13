@@ -62,6 +62,14 @@ Locking forces redaction of window titles and app IDs. These fields are
 omitted in redacted snapshots, and `redacted` is true. Scheme callers can
 also request `(desktop-snapshot #:redact? #t)`.
 
+Desktop facts are cached until a policy change, committed geometry change,
+lock transition or output change. Each group is traversed once to index its
+windows' frame locations. Replies contain detached data: editing a returned
+Scheme datum cannot alter the cache. Receipt allocation and status checks
+update revisions without gathering desktop facts. Extensions that directly
+modify private policy records must call `note-desktop-change!`; the supported
+policy operations invalidate their own changes.
+
 ## Call an action and check its result
 
 ```sh
@@ -194,8 +202,11 @@ mindectl call screenshot \
 mindectl wait REQUEST-ID --session SESSION --timeout-ms 10000 --json
 ```
 
-Use the receipt returned by the call in the wait command. Waiting polls
-from the client; it never blocks the compositor. The default observation
+Use the receipt returned by the call in the wait command. Waiting blocks on
+the event socket in the client, then rechecks the receipt; it never blocks
+the compositor. A two-second safety check covers missed notifications.
+Without an event socket, polling backs off from 50 ms to one second.
+The default observation
 deadline is 10 seconds, and ordinary command transport defaults to a total
 2-second deadline, including implicit receipt allocation before a call.
 `--timeout-ms` can override that transport deadline or the wait deadline.
@@ -224,8 +235,10 @@ mindectl watch --scheme --count 3
 mindectl events-since SEQUENCE --session SESSION --json
 ```
 
-`watch` first emits a desktop snapshot, then polls journal pages every
-200 ms. JSON records have `{"type":"desktop","data":...}` or
+`watch` first emits a desktop snapshot and the journal page after its cursor,
+then waits for event-socket activity before fetching more pages. A two-second
+safety check covers missed notifications. Without an event socket, polling
+backs off from 200 ms to one second. JSON records have `{"type":"desktop","data":...}` or
 `{"type":"events","data":...}`. Scheme records use
 `(ok ((type . desktop) (data . ...)))` and the corresponding `events` form.
 `--count` limits emitted records, including empty event pages; it does not

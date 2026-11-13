@@ -19,12 +19,13 @@
       (error "openpty failed"))
     (cons (bytevector-s32-native-ref master 0) (bytevector-s32-native-ref slave 0))))
 (define* (run-client arguments replies #:key (input "") (interactive? #f) (available? #t)
-                     (runtime-mode 'configured))
+                     (runtime-mode 'configured) (events #f))
   (let* ((directory (mkdtemp (string-copy "/tmp/minde-cli-XXXXXX")))
          (runtime (if (eq? runtime-mode 'configured) directory
                       (format #f "~a/minde-~a" directory (geteuid))))
          (socket-path (string-append runtime "/minde-ipc.sock"))
          (listener (socket AF_UNIX SOCK_STREAM 0))
+         (event-listener (and events (socket AF_UNIX SOCK_STREAM 0)))
          (requests (string-append directory "/requests"))
          (output (string-append directory "/stdout"))
          (errors (string-append directory "/stderr"))
@@ -43,6 +44,9 @@
         (when available?
           (bind listener AF_UNIX socket-path)
           (listen listener 8))
+        (when event-listener
+          (bind event-listener AF_UNIX (string-append runtime "/minde-events.sock"))
+          (listen event-listener 8))
         (call-with-output-file stdin (lambda (p) (display input p)))
         (force-output)
         (set! server (primitive-fork))
@@ -50,11 +54,20 @@
           (sigaction SIGPIPE SIG_IGN)
           (catch #t
             (lambda ()
+             (let ((event-port
+                    (and event-listener
+                         (begin
+                           (unless (pair? (car (select (list event-listener) '() '() 4)))
+                             (error "missing event subscription"))
+                           (car (accept event-listener)))))
+                   (next-timeout 4000000))
               (call-with-output-file requests
                 (lambda (p)
                   (for-each
-                   (lambda (reply)
-                     (unless (pair? (car (select (list listener) '() '() 4)))
+                   (lambda (reply wake)
+                     (unless (pair? (car (select (list listener) '() '()
+                                                (quotient next-timeout 1000000)
+                                                (modulo next-timeout 1000000))))
                        (error "missing CLI connection"))
                      (let* ((connection (car (accept listener)))
                             (text (if (eq? reply 'reset) 'reset (get-string-all connection)))
@@ -64,13 +77,28 @@
                        (unless (eq? reply 'reset)
                          (false-if-exception (display (if (pair? reply) (car reply) reply) connection))
                          (false-if-exception (force-output connection)))
-                       (false-if-exception (close-port connection)))) replies)))
+                       (false-if-exception (close-port connection)))
+                     (when wake
+                       ;; A connected event observer must remain quiet rather
+                       ;; than polling, then react promptly to bytes or EOF.
+                       (unless (null? (car (select (list listener) '() '()
+                                                  (quotient (car wake) 1000000)
+                                                  (modulo (car wake) 1000000))))
+                         (error "CLI polled while awaiting an event"))
+                       (case (cadr wake)
+                         ((close) (close-port event-port) (set! event-port #f))
+                         ((quiet) #t)
+                         (else (display (cadr wake) event-port) (force-output event-port)))
+                       (set! next-timeout 500000)))
+                   replies (or events (make-list (length replies) #f)))))
+              (when event-port (close-port event-port)))
               (primitive-exit 0))
             (lambda _ (primitive-exit 1))))
         (when interactive? (set! pty (open-pty)))
         (set! child (primitive-fork))
         (when (zero? child)
           (close-port listener)
+          (when event-listener (close-port event-listener))
           (setenv "TMPDIR" directory)
           (case runtime-mode
             ((configured) (setenv "XDG_RUNTIME_DIR" runtime))
@@ -126,6 +154,7 @@
                   (list child server))
         (when master (close-port master))
         (close-port listener)
+        (when event-listener (close-port event-listener))
         (system* "rm" "-rf" "--" directory)))))
 (define (json result) (load-json (vector-ref result 1)))
 (define (sent result) (vector-ref result 3))
@@ -318,6 +347,37 @@
   (test-equal "wait result" "applied" (ref (json result) "status"))
   (test-assert "wait does not re-execute" (every (lambda (r) (equal? r "(action-status \"s:1\" #:session \"s\")")) (sent result))))
 (for-each
+ (lambda (wake)
+   (let ((result (run-client '("wait" "s:1" "--json")
+                            '("(ok ((status . pending)))" "(ok ((status . applied)))")
+                            #:events (list (list 250000 wake) #f))))
+     (test-equal "wait wakes on event bytes or disconnect" 0 (vector-ref result 0))
+     (test-equal "event wake observes receipt once" 2 (length (sent result)))))
+ '("(automation-result 1 screenshot done)\n" "partial" close))
+(let ((result (run-client '("wait" "s:1" "--timeout-ms" "200" "--json")
+                         '("(ok ((status . pending)))")
+                         #:events '((300000 close)))))
+  (test-equal "event wait honors its observation deadline" 3 (vector-ref result 0))
+  (test-equal "event wait timeout has an observation error"
+              "observation-timeout" (ref (ref (json result) "error") "code"))
+  (test-equal "event wait never queries beyond its deadline" 1 (length (sent result))))
+(let ((result (run-client '("wait" "s:1" "--json")
+                         '("(ok ((status . pending)))" "(ok ((status . applied)))")
+                         #:events '((1700000 quiet) #f))))
+  (test-equal "safety observation recovers a missing event wakeup" 0 (vector-ref result 0)))
+(let ((previous #f) (attempt 0))
+  (define (reply)
+    (let ((now (get-internal-real-time)))
+      (when previous
+        (unless (>= (/ (- now previous) internal-time-units-per-second)
+                    (* 0.04 (expt 2 (- attempt 1))))
+          (error "fallback polling did not back off")))
+      (set! previous now)
+      (set! attempt (+ attempt 1))
+      (if (= attempt 5) "(ok ((status . applied)))" "(ok ((status . pending)))")))
+  (let ((result (run-client '("wait" "s:1" "--json") (make-list 5 reply))))
+    (test-equal "unavailable event socket uses bounded polling backoff" 0 (vector-ref result 0))))
+(for-each
  (lambda (reply)
    (let ((result (run-client '("eval" "(set! x 1)" "--json") (list reply))))
      (test-equal "malformed reply exit" 3 (vector-ref result 0))
@@ -350,6 +410,14 @@
   (test-equal "lost reply outcome" "unknown" (ref metadata "outcome"))
   (test-equal "lost reply no retry" 2 (length (sent result))))
 (define initial "(ok ((session . \"s\") (event-sequence . 10) (windows . #())))")
+(let ((result (run-client '("watch" "--json" "--count" "3")
+                         (list initial
+                               "(ok ((session . \"s\") (sequence . 10) (gap . #f) (events . #())))"
+                               "(ok ((session . \"s\") (sequence . 11) (gap . #f) (events . #(((sequence . 11) (name . focus-window) (arguments . #(42)))))))")
+                         #:events '(#f (350000 "(focus-window 42)\n") #f))))
+  (test-equal "watch blocks on the event socket" 0 (vector-ref result 0))
+  (test-equal "watch replays from its snapshot after waking"
+              "(events-since 10 #:session \"s\")" (last (sent result))))
 (let ((result (run-client '("watch" "--json" "--count" "3")
                           (list initial "(ok ((session . \"s\") (sequence . 12) (gap . #f) (events . #())))"
                                 "(ok ((session . \"s\") (sequence . 13) (gap . #f) (events . #(((sequence . 13) (name . focus-window) (arguments . #(42)))))))"))))

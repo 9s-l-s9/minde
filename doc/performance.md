@@ -1,5 +1,21 @@
 # Performance measurements
 
+## Control inspection and receipt observation — 2026-11-13
+
+In `tests/control-test.scm`, after gathering an initial snapshot of four
+windows, one receipt allocation and 100 status queries previously made 404
+per-window geometry reads. They now make zero. Two further snapshots, one
+ordinary and one redacted, previously made 12 geometry reads and now reuse
+the gathered facts without any. These are instrumented work counts with
+Rust stubs, not latency measurements.
+
+Policy invalidation and native geometry, lock and output checks determine
+the revision without serializing a desktop fingerprint. A fresh snapshot
+indexes frame locations once per group; cached replies copy their data so
+Scheme callers cannot mutate retained facts. Receipt polling needs no
+snapshot. The CLI socket tests additionally require quiet event waits,
+prompt wakeups, deadline enforcement and increasing fallback polling delays.
+
 ## Interactive geometry notifications — 2026-11-13
 
 The nested input-lifecycle regression sends 500 virtual-pointer motions in

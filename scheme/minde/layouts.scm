@@ -13,6 +13,7 @@
 (define-module (minde layouts)
   #:use-module (srfi srfi-1)
   #:use-module (minde compositor frames)
+  #:use-module (minde compositor revision)
   #:use-module (minde persistence)
   #:export (define-layout!
             layout-names
@@ -27,7 +28,8 @@
 
 (define (register-layout! name spec)
   (set! %layouts
-        (append (alist-delete name %layouts) (list (cons name spec)))))
+        (append (alist-delete name %layouts) (list (cons name spec))))
+  (note-policy-change!))
 
 (define (define-layout! name spec)
   "Registers configuration layout NAME as SPEC, taking precedence over

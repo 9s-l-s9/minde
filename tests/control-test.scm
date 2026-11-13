@@ -30,7 +30,9 @@
 (define (wm-output-geometry) '(0 0 1280 720))
 (define %outputs '((0 0 0 1280 720 "headless")))
 (define (wm-outputs) %outputs)
+(define %geometry-reads 0)
 (define (wm-window-geometry id)
+  (set! %geometry-reads (+ %geometry-reads 1))
   (let ((r (hash-ref %placements id)))
     (and r (>= (car r) 0) (>= (cadr r) 0) r)))
 (define (wm-session-locked?) %locked?)
@@ -617,6 +619,49 @@
        (status (act 'focus-window! '((window . 20)))) 'applied)
 (check-true "typed focus activates the intended duplicate-name group" (eq? identity-b (current-group)))
 (check "typed focus delivers keyboard focus to the target" %focused 20)
+
+;; Observations reuse desktop facts, but callers never own the cached data.
+(let* ((snapshot (desktop-snapshot)) (before %geometry-reads)
+       (request (new-action-request)))
+  (do ((i 0 (+ i 1))) ((= i 100))
+    (action-status (assq-ref request 'request-id)))
+  (check "receipt allocation and polling do not inspect every window" %geometry-reads before)
+  (desktop-snapshot)
+  (desktop-snapshot #:redact? #t)
+  (check "unchanged and redacted snapshots reuse gathered facts" %geometry-reads before)
+  (set-cdr! (assq 'focused-group snapshot) "corrupted")
+  (let ((w (vector-ref (assq-ref snapshot 'windows) 0)))
+    (string-set! (assq-ref w 'title) 0 #\X)
+    (vector-set! (assq-ref w 'locations) 0 'corrupted))
+  (check "snapshot mutation cannot corrupt cached group facts"
+         (assq-ref (desktop-snapshot) 'focused-group) (current-group-name))
+  (check-true "snapshot mutation cannot corrupt cached window facts"
+              (not (equal? (vector-ref (assq-ref snapshot 'windows) 0)
+                           (vector-ref (assq-ref (desktop-snapshot) 'windows) 0)))))
+(let ((before (desktop-snapshot)))
+  (create-group-in-background! "cache-background")
+  (check "background group creation invalidates cached facts"
+         (vector-length (assq-ref (desktop-snapshot) 'groups))
+         (+ 1 (vector-length (assq-ref before 'groups)))))
+(desktop-snapshot)
+(rename-current-group! "cache-renamed")
+(check "group rename invalidates cached facts"
+       (assq-ref (desktop-snapshot) 'focused-group) " cache-renamed ")
+(desktop-snapshot)
+(define-layout! "cache-layout" '(hsplit 1/2 leaf leaf))
+(check-true "layout registration invalidates cached facts"
+            (member "cache-layout" (vector->list (assq-ref (desktop-snapshot) 'layouts))))
+(float-window! 20 '(10 20 200 150))
+(desktop-snapshot)
+(update-floating-window-geometry! 20 30 40 210 160)
+(check "settled floating policy invalidates cached facts"
+       (assq-ref (window 20) 'float-geometry) '#(30 40 210 160))
+(let* ((before (desktop-snapshot)) (revision (assq-ref before 'revision)))
+  (set! %outputs '((0 0 0 1280 720 "renamed-output") (1 1280 0 800 600 "right")))
+  (check "native output metadata invalidates cached facts"
+         (assq-ref (vector-ref (assq-ref (desktop-snapshot) 'outputs) 0) 'name) "renamed-output")
+  (check-true "native output metadata invalidates receipt preconditions"
+              (> (assq-ref (new-action-request) 'revision) revision)))
 
 (format #t "control-test: ~a checks, ~a failures~%" checks failures)
 (unless (zero? failures) (exit 1))

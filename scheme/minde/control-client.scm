@@ -1,5 +1,5 @@
 ;;; SPDX-License-Identifier: GPL-3.0-or-later
-;;; Client-only IPC, JSON projection, polling, and interactive REPL.
+;;; Client-only IPC, JSON projection, event observation, and interactive REPL.
 (define-module (minde control-client)
   #:use-module (ice-9 match)
   #:use-module (ice-9 rdelim)
@@ -55,6 +55,13 @@
             (apply throw args))))))
 (define (would-block? arguments)
   (memv (system-error-errno arguments) (list EAGAIN EWOULDBLOCK EINPROGRESS EINTR)))
+(define (check-runtime-directory! path)
+  (let ((st (stat (dirname path))))
+    (unless (and (eq? (stat:type st) 'directory)
+                 (= (stat:uid st) (geteuid))
+                 (zero? (logand (stat:perms st) #o077)))
+      (throw 'transport-failure 'unsafe-runtime-directory
+             "runtime directory must be private and owned by the calling user"))))
 (define (connect-before-deadline sock path deadline)
   (let loop ()
     (remaining-time deadline)
@@ -83,13 +90,8 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
   (let ((sock #f) (sent? #f) (deadline (+ (milliseconds) timeout-ms)))
     (catch #t
       (lambda ()
-        (let* ((directory (dirname path)) (st (stat directory))
-               (request (string->utf8 expression)))
-          (unless (and (eq? (stat:type st) 'directory)
-                       (= (stat:uid st) (geteuid))
-                       (zero? (logand (stat:perms st) #o077)))
-            (throw 'transport-failure 'unsafe-runtime-directory
-                   "runtime directory must be private and owned by the calling user"))
+        (let ((request (string->utf8 expression)))
+          (check-runtime-directory! path)
           (when (> (bytevector-length request) %max-request-bytes)
             (throw 'transport-failure 'request-too-large "request exceeds 64 KiB"))
           (set! sock (socket PF_UNIX SOCK_STREAM 0))
@@ -235,19 +237,72 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
                 (lambda (port) (print-exception port #f key args)))
               "" ((stage . validation) (execution-started? . #f)
                   (execution-completed? . #f) (effects-may-have-occurred? . #f))))))
+(define (close-event-wakeup! wake)
+  (when (vector-ref wake 0) (false-if-exception (close (vector-ref wake 0))))
+  (vector-set! wake 0 #f))
+
+(define (connect-event-wakeup! wake path deadline)
+  (when (and (not (vector-ref wake 0)) (>= (milliseconds) (vector-ref wake 1)))
+    (vector-set! wake 1 (+ (milliseconds) 1000))
+    (let ((sock #f))
+      (catch #t
+        (lambda ()
+          (check-runtime-directory! path)
+          (set! sock (socket PF_UNIX SOCK_STREAM 0))
+          (fcntl sock F_SETFL (logior O_NONBLOCK (fcntl sock F_GETFL)))
+          (connect-before-deadline sock (string-append (dirname path) "/minde-events.sock")
+                                   (min deadline (+ (milliseconds) 200)))
+          (vector-set! wake 0 sock))
+        (lambda _ (when sock (false-if-exception (close sock))))))))
+
+(define (await-event! wake path deadline delay)
+  ;; The push socket is a wakeup hint; the journal/receipt remains authoritative.
+  ;; A bounded safety check covers an event lost before accept or a custom
+  ;; operation that changes state without publishing. Never read an unbounded
+  ;; line: even a partial line may wake us, and floods are drained in batches.
+  (connect-event-wakeup! wake path deadline)
+  (let ((sock (vector-ref wake 0)))
+    (if (not sock)
+        (begin (usleep (* 1000 (max 0 (min delay (- deadline (milliseconds)))))) #f)
+        (catch #t
+          (lambda ()
+            (wait-ready sock #f (min deadline (+ (milliseconds) 2000)))
+            (let ((buffer (make-bytevector 8192)))
+              (let drain ((left 8) (seen? #f))
+                (let ((n (catch 'system-error
+                           (lambda () (recv! sock buffer))
+                           (lambda args (if (would-block? args) -1 (apply throw args))))))
+                  (cond ((negative? n) seen?)
+                        ((zero? n) (close-event-wakeup! wake) #f)
+                        ((= left 1) #t)
+                        (else (drain (- left 1) #t)))))))
+          (lambda (key . args)
+            (unless (and (eq? key 'transport-failure) (eq? (car args) 'timeout))
+              (close-event-wakeup! wake))
+            #f)))))
+
 (define* (wait-for-action path id #:key (session #f) (timeout-ms 10000))
-  "Poll receipt state in the client. Expiry stops observation, never the action."
-  (let ((deadline (+ (milliseconds) timeout-ms)))
-    (let loop ()
-      (let* ((remaining (max 1 (- deadline (milliseconds))))
-             (reply (ipc-request path (scheme-string `(action-status ,id ,@(if session (list #:session session) '())))
-                                 #:timeout-ms (min 2000 remaining))))
-        (cond
-         ((eq? (car reply) 'error) reply)
-         ((not (memq (assq-ref (cadr reply) 'status) '(ready pending))) reply)
-         ((>= (milliseconds) deadline)
-          (transport-error 'observation-timeout "wait deadline exceeded; action may still complete" #t))
-         (else (usleep (* 1000 (min 50 (max 1 (- deadline (milliseconds)))))) (loop)))))))
+  "Observe receipts using event wakeups, with bounded polling fallback.
+Expiry stops observation, never the action."
+  (let ((deadline (+ (milliseconds) timeout-ms)) (wake (vector #f 0)))
+    (dynamic-wind
+        (lambda () (connect-event-wakeup! wake path deadline))
+        (lambda ()
+          (let loop ((delay 50))
+            (let* ((remaining (max 1 (- deadline (milliseconds))))
+                   (reply (ipc-request path (scheme-string `(action-status ,id ,@(if session (list #:session session) '())))
+                                       #:timeout-ms (min 2000 remaining))))
+              (cond
+               ((eq? (car reply) 'error) reply)
+               ((not (memq (assq-ref (cadr reply) 'status) '(ready pending))) reply)
+               ((>= (milliseconds) deadline)
+                (transport-error 'observation-timeout "wait deadline exceeded; action may still complete" #t))
+               (else
+                (let ((event? (await-event! wake path deadline delay)))
+                  (if (>= (milliseconds) deadline)
+                      (transport-error 'observation-timeout "wait deadline exceeded; action may still complete" #t)
+                      (loop (if event? 50 (min 1000 (* 2 delay)))))))))))
+        (lambda () (close-event-wakeup! wake)))))
 
 (define* (watch-desktop path #:key (mode 'scheme) (count #f) (interval-ms 200))
   "Emit a snapshot, then journal pages. Snapshot's cursor is the handoff;
@@ -260,29 +315,38 @@ reconnection always obtains a fresh snapshot, never retries an action."
            (newline))
           (else (write `(ok ((type . ,kind) (data . ,(cadr reply))))) (newline)))
     (force-output))
-  (let loop ((session #f) (cursor #f) (emitted 0))
-    (if (and count (>= emitted count)) 0
-        (let* ((snapshot? (not session))
-               (reply (ipc-request path
-                                   (if snapshot? "(desktop-snapshot)"
-                                       (scheme-string `(events-since ,cursor #:session ,session))))))
-          (cond
-           ((eq? (car reply) 'error)
-            ;; A stream reconnect is safe because both operations only inspect.
-            (format (current-error-port) "mindectl watch: ~a; reconnecting~%" (cadr reply))
-            (usleep (* interval-ms 1000))
-            (loop #f #f emitted))
-           (snapshot?
-            (publish reply 'desktop)
-            (loop (assq-ref (cadr reply) 'session)
-                  (assq-ref (cadr reply) 'event-sequence) (+ emitted 1)))
-           ((or (assq-ref (cadr reply) 'gap)
-                (not (equal? session (assq-ref (cadr reply) 'session))))
-            (loop #f #f emitted))
-           (else
-            (publish reply 'events)
-            (unless (and count (>= (+ emitted 1) count)) (usleep (* interval-ms 1000)))
-            (loop session (assq-ref (cadr reply) 'sequence) (+ emitted 1))))))))
+  (let ((wake (vector #f 0)))
+    (dynamic-wind
+        (lambda () (connect-event-wakeup! wake path (+ (milliseconds) 200)))
+        (lambda ()
+          (let loop ((session #f) (cursor #f) (emitted 0) (delay (max 1 interval-ms)))
+            (if (and count (>= emitted count)) 0
+                (let* ((snapshot? (not session))
+                       (reply (ipc-request path
+                                           (if snapshot? "(desktop-snapshot)"
+                                               (scheme-string `(events-since ,cursor #:session ,session))))))
+                  (cond
+                   ((eq? (car reply) 'error)
+                    ;; A stream reconnect is safe because both operations only inspect.
+                    (format (current-error-port) "mindectl watch: ~a; reconnecting~%" (cadr reply))
+                    (close-event-wakeup! wake)
+                    (usleep (* delay 1000))
+                    (connect-event-wakeup! wake path (+ (milliseconds) 200))
+                    (loop #f #f emitted (min 1000 (* 2 delay))))
+                   (snapshot?
+                    (publish reply 'desktop)
+                    (loop (assq-ref (cadr reply) 'session)
+                          (assq-ref (cadr reply) 'event-sequence) (+ emitted 1) (max 1 interval-ms)))
+                   ((or (assq-ref (cadr reply) 'gap)
+                        (not (equal? session (assq-ref (cadr reply) 'session))))
+                    (loop #f #f emitted (max 1 interval-ms)))
+                   (else
+                    (publish reply 'events)
+                    (let ((event? (and (not (and count (>= (+ emitted 1) count)))
+                                       (await-event! wake path (+ (milliseconds) 2000) delay))))
+                      (loop session (assq-ref (cadr reply) 'sequence) (+ emitted 1)
+                            (if event? (max 1 interval-ms) (min 1000 (* 2 delay)))))))))))
+        (lambda () (close-event-wakeup! wake)))))
 
 (define (parse-options arguments)
   (let loop ((remaining arguments) (positionals '()) (options '()))

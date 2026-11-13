@@ -36,9 +36,7 @@
 ;; Publish the versioned status document after every policy synchronization.
 ;; publish-status! suppresses unchanged states and keeps the historical
 ;; one-line file updated for existing eww configurations.
-(set-sync-hook! (lambda ()
-                  (note-desktop-change!)
-                  (publish-status!)))
+(set-sync-hook! publish-status!)
 
 (define (call-with-scheme-backtrace context thunk handler)
   "Runs THUNK and logs a Guile backtrace before invoking HANDLER on error."

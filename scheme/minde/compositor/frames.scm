@@ -19,6 +19,7 @@
   #:use-module (minde foundation geometry)
   #:use-module ((minde foundation keys) #:prefix key:)
   #:use-module (minde compositor model)
+  #:use-module (minde compositor revision)
   #:use-module (minde compositor rust)
   #:use-module (minde hooks)
   #:re-export (group-name group-floats group-float?
@@ -830,7 +831,8 @@ use raw usable rectangles, before layout gaps or spanning."
   "Stores raw client TITLE and APP-ID metadata for window ID."
   (hash-set! %window-titles id
              (cons (if (string? title) title "")
-                   (if (string? app-id) app-id ""))))
+                   (if (string? app-id) app-id "")))
+  (note-policy-change!))
 
 ;; Windows renamed via rename-window!: their title override sticks over
 ;; client-driven title changes (StumpWM title behavior).
@@ -1076,7 +1078,8 @@ ID must be an exact nonnegative integer."
   "Overrides a float's remembered (x y w h) -- desktop restore; callers
 sync."
   (when (hash-ref %floating id)
-    (hash-set! %floating id rect)))
+    (hash-set! %floating id rect)
+    (note-policy-change!)))
 
 (define (focused-window-id)
   "The effective focus: the selection retained while fullscreen is shown,
@@ -1178,6 +1181,7 @@ otherwise put a tiled window above the floats)."
   "Rust reports where a super+drag move/resize ended; keep %floating
 authoritative and treat the dragged float as focused/topmost."
   ;; A dragged tiled window must snap back on the next sync.
+  (note-policy-change!)
   (forget-placement! id)
   (when (window-floating? id)
     (hash-set! %floating id (list x y w h))
@@ -2605,6 +2609,7 @@ then the focus/shown bookkeeping and hooks run."
                     (frame-x %current-frame) (frame-y %current-frame)
                     (frame-w %current-frame) (frame-h %current-frame))))
     (set-group-shown-frame! g %current-frame))
+  (note-policy-change!)
   (when %sync-hook (%sync-hook)))
 
 (define %restoring-fullscreen? (make-parameter #f))
@@ -2686,6 +2691,7 @@ Hidden groups defer geometry until activation. Returns #f for unresolved IDs."
              (forget-placement! current))
            (hashq-set! %group-fullscreens group
                        (make-fullscreen-state id #f #f focus))
+           (note-policy-change!)
            (forget-placement! id)
            (when active? (sync-frames!)))
           ((and (not on) (equal? current id))
@@ -2700,6 +2706,7 @@ Hidden groups defer geometry until activation. Returns #f for unresolved IDs."
            (rust-call 'wm-set-fullscreen id #f)
            (forget-placement! id)
            (hashq-remove! %group-fullscreens group)
+           (note-policy-change!)
            (when active? (sync-frames!))))
          #t)))
 
@@ -2770,7 +2777,9 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
 
 (define (clear-urgent! id)
   "Removes window ID from the urgent-window set."
-  (set! %urgent-windows (delete id %urgent-windows)))
+  (when (member id %urgent-windows)
+    (set! %urgent-windows (delete id %urgent-windows))
+    (note-policy-change!)))
 
 ;; ---------------------------------------------------------------------
 ;; Event hooks

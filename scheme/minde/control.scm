@@ -6,8 +6,10 @@
   #:use-module (srfi srfi-13)
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
+  #:use-module ((rnrs base) #:select (vector-for-each))
   #:use-module (minde commands)
   #:use-module (minde compositor model)
+  #:use-module (minde compositor revision)
   #:use-module (minde compositor frames)
   #:use-module (minde compositor rust)
   #:use-module (minde event-policy)
@@ -26,7 +28,10 @@
   (let ((now (gettimeofday)))
     (format #f "~x-~x-~x" (getpid) (car now) (cdr now))))
 (define %revision 0)
-(define %fingerprint #f)
+(define %observed-policy #f)
+(define %observed-native #f)
+(define %body #f)
+(define %redacted-body #f)
 (define %receipt-limit 256)
 (define %issued 0)
 (define %receipt-floor 0)
@@ -36,7 +41,7 @@
 (define (note-desktop-change! . ignored)
   "Invalidates observed revisions after a policy synchronization or event.
 This counter also detects a supported change followed by its inverse."
-  (set! %revision (+ %revision 1)))
+  (note-policy-change!))
 
 (define (groups)
   ;; Read the policy owner's records, never maintain another group mirror.
@@ -72,7 +77,7 @@ This counter also detects a supported change followed by its inverse."
             (native-tree-spec (split-child-a tree))
             (native-tree-spec (split-child-b tree)))))
 
-(define (frame-facts g)
+(define (frame-facts g trees)
   (list->vector
    (append-map
     (lambda (entry)
@@ -84,28 +89,16 @@ This counter also detects a supported change followed by its inverse."
                                 (eq? f (current-frame))))))
            (frame-leaves (cdr entry))
            (iota (length (frame-leaves (cdr entry))))))
-    (group-head-trees g))))
+    trees)))
 
-(define (window-facts g id redact?)
-  (let* ((locations
-          (append-map
-           (lambda (entry)
-             (filter-map
-              (lambda (f index)
-                (and (member id (frame-window-ids f))
-                     `((head . ,(car entry)) (frame . ,index)
-                       (selected . ,(equal? id (frame-current-window f))))))
-              (frame-leaves (cdr entry))
-              (iota (length (frame-leaves (cdr entry))))))
-           (group-head-trees g)))
-         (geometry (rust-call-if-bound 'wm-window-geometry id))
+(define (window-facts g id locations)
+  (let* ((geometry (rust-call-if-bound 'wm-window-geometry id))
          (visible? (and (eq? g (current-group))
                         (or (window-floating? id)
                             (any (lambda (x) (assq-ref x 'selected)) locations))))
          (fullscreen? (equal? id (fullscreen-window g))))
     `((id . ,id) (group . ,(group-name g))
-      ,@(if redact? '()
-            `((title . ,(window-title id)) (app-id . ,(or (window-app-id id) ""))))
+      (title . ,(window-title id)) (app-id . ,(or (window-app-id id) ""))
       (locations . ,(list->vector locations))
       (focused . ,(equal? id (focused-window-id)))
       (visible . ,(and visible? #t))
@@ -116,31 +109,45 @@ This counter also detects a supported change followed by its inverse."
       (float-geometry . ,(let ((r (float-geometry id)))
                           (if r (list->vector r) 'null))))))
 
-(define (desktop-body redact?)
-  `((focused-group . ,(current-group-name))
+(define (group-facts g)
+  ;; Gather each tree once and index window locations while walking frames.
+  ;; Looking up every window must not walk every frame again.
+  (let* ((trees (group-head-trees g)) (frames (frame-facts g trees))
+         (locations (make-hash-table)))
+    (vector-for-each
+     (lambda (frame)
+       (vector-for-each
+        (lambda (id)
+          (hashv-set! locations id
+                      (cons `((head . ,(assq-ref frame 'head))
+                              (frame . ,(assq-ref frame 'index))
+                              (selected . ,(equal? id (assq-ref frame 'selected-window))))
+                            (hashv-ref locations id '()))))
+        (assq-ref frame 'windows))) frames)
+    (for-each (lambda (id)
+                (unless (hashv-ref locations id) (hashv-set! locations id '())))
+              (group-floats g))
+    (cons
+     `((name . ,(group-name g)) (focused . ,(eq? g (current-group)))
+       (floating . ,(group-float? g)) (dynamic . ,(and (dynamic-group? g) #t))
+       (trees . ,(list->vector
+                  (map (lambda (entry)
+                         `((head . ,(car entry))
+                           (scheme . ,(format #f "~s" (native-tree-spec (cdr entry))))))
+                       trees)))
+       (frames . ,frames))
+     (map (lambda (id) (window-facts g id (reverse (hashv-ref locations id))))
+          (sort (hash-map->list (lambda (id _) id) locations) <)))))
+
+(define (desktop-body)
+  (let ((facts (map group-facts (groups))))
+   `((focused-group . ,(current-group-name))
     (focused-window . ,(or (focused-window-id) 'null))
     (focused-head . ,(current-head-id))
     (head-mode . ,(head-mode))
     (locked . ,(and (rust-call-if-bound 'wm-session-locked?) #t))
-    (groups . ,(list->vector
-                (map (lambda (g)
-                       `((name . ,(group-name g))
-                         (focused . ,(eq? g (current-group)))
-                         (floating . ,(group-float? g))
-                         (dynamic . ,(and (dynamic-group? g) #t))
-                         (trees . ,(list->vector
-                                    (map (lambda (entry)
-                                           `((head . ,(car entry))
-                                             (scheme . ,(format #f "~s" (native-tree-spec (cdr entry))))))
-                                         (group-head-trees g))))
-                         (frames . ,(frame-facts g))))
-                     (groups))))
-    (windows . ,(list->vector
-                 (append-map
-                  (lambda (g)
-                    (map (lambda (id) (window-facts g id redact?))
-                         (sort (group-ids g) <)))
-                  (groups))))
+    (groups . ,(list->vector (map car facts)))
+    (windows . ,(list->vector (append-map cdr facts)))
     (outputs . ,(list->vector
                  (map (lambda (h)
                         `((id . ,(car h))
@@ -152,30 +159,60 @@ This counter also detects a supported change followed by its inverse."
                             (map (lambda (name)
                                    `((name . ,name)
                                      (scheme . ,(format #f "~s" (layout:layout-spec name)))))
-                                 (layout:layout-names))))))
+                                 (layout:layout-names)))))))
 
-(define (refresh-revision! body)
-  ;; Native committed geometry can change and change back between reads.
-  ;; Its owner epoch covers that case without calling Scheme from drag locks.
-  (let ((fingerprint (call-with-output-string
-                       (lambda (p)
-                         (write (list body (rust-call-if-bound 'wm-geometry-revision)) p)))))
-    (unless (equal? fingerprint %fingerprint)
-      (set! %fingerprint fingerprint)
+(define (copy-datum value)
+  ;; Public Scheme callers may mutate returned pairs, vectors and strings.
+  ;; Detach both cached facts from policy records and replies from the cache.
+  (cond ((pair? value) (cons (copy-datum (car value)) (copy-datum (cdr value))))
+        ((vector? value) (list->vector (map copy-datum (vector->list value))))
+        ((string? value) (string-copy value))
+        (else value)))
+
+(define (refresh-revision!)
+  ;; No window scan or serialization. The small native output list also
+  ;; catches metadata changes that need no Scheme frame synchronization.
+  (let ((policy (policy-revision))
+        (native (list (rust-call-if-bound 'wm-geometry-revision)
+                      (rust-call-if-bound 'wm-session-locked?)
+                      (or (rust-call-if-bound 'wm-outputs) (heads)))))
+    (unless (and (equal? policy %observed-policy) (equal? native %observed-native))
+      (set! %observed-policy policy)
+      (set! %observed-native (copy-datum native))
+      (set! %body #f)
+      (set! %redacted-body #f)
       (set! %revision (+ %revision 1)))
     %revision))
+
+(define (cached-desktop-body)
+  (refresh-revision!)
+  (unless %body (set! %body (copy-datum (desktop-body))))
+  %body)
+
+(define (redacted-desktop-body body)
+  (unless %redacted-body
+    (set! %redacted-body
+          (map (lambda (entry)
+                 (if (eq? (car entry) 'windows)
+                     (cons 'windows
+                           (list->vector
+                            (map (lambda (window)
+                                   (filter (lambda (field) (not (memq (car field) '(title app-id)))) window))
+                                 (vector->list (cdr entry)))))
+                     entry)) body)))
+  %redacted-body)
 
 (define* (desktop-snapshot #:key (redact? #f))
   "Returns schema-v1 desktop facts across all groups, a session epoch,
 revision, and event cursor. Objects are alists; collections are vectors.
 Null denotes unavailable information. Locking forces content redaction."
-  (let* ((body (desktop-body #f))
-         (revision (refresh-revision! body))
+  (let* ((body (cached-desktop-body))
          (redact? (or redact? (assq-ref body 'locked))))
-    `((schema-version . 1) (session . ,%session) (revision . ,revision)
+    (copy-datum
+     `((schema-version . 1) (session . ,%session) (revision . ,%revision)
       (event-sequence . ,(or (rust-call-if-bound 'wm-event-cursor) 0))
       (redacted . ,(and redact? #t))
-      ,@(if redact? (desktop-body #t) body))))
+      ,@(if redact? (redacted-desktop-body body) body)))))
 
 (define* (fail code #:optional (details '()))
   (throw 'control-error code details))
@@ -423,7 +460,7 @@ Loading this module has no compositor side effects; call after legacy setup."
   "Allocates a server-issued receipt ID and returns session/revision preconditions.
 The last 256 allocations are retained. Older IDs remain recognizably expired;
 they cannot execute again. Allocate before transmitting a retryable action."
-  (desktop-snapshot)
+  (refresh-revision!)
   (set! %issued (+ %issued 1))
   (let ((floor (max 0 (- %issued %receipt-limit))))
     (do ((n (+ %receipt-floor 1) (+ n 1))) ((> n floor))
@@ -436,7 +473,7 @@ they cannot execute again. Allocate before transmitting a retryable action."
 (define* (action-status id #:key (session %session))
   "Returns a stored action result, refreshing asynchronous completion.
 An expired receipt or missing automation token reports outcome-unknown."
-  (desktop-snapshot)
+  (refresh-revision!)
   (let* ((n (receipt-number id)) (entry (and n (hash-ref %receipts n))))
     (cond
      ((not (equal? session %session)) (error-result id 'session-mismatch 'validation '()))
@@ -478,7 +515,7 @@ This procedure never waits or silently retries."
   (let ((id request-id) (entry #f) (reserved? #f) (stage 'validation))
     (catch #t
       (lambda ()
-        (desktop-snapshot)
+        (refresh-revision!)
         (unless (equal? session %session) (fail 'session-mismatch))
         (when %performing? (fail 'reentrant-action))
         (unless (rust-call-if-bound 'wm-control-ready?) (fail 'unsupported-context))
@@ -527,7 +564,10 @@ This procedure never waits or silently retries."
             (validate-targets! name
                               (map cons (command-arguments command) positional))
             (vector-set! entry 1 (result id 'pending 'null #f))
-            (let* ((before %fingerprint)
+            (let* ((compare? (memq (command-procedure command)
+                                  (list focus-target! move-target! float-target!
+                                        fullscreen-target! layout-target!)))
+                   (before (and compare? (cached-desktop-body)))
                    (value
                     (dynamic-wind
                       (lambda () (set! %performing? #t) (set! stage 'execution))
@@ -551,14 +591,11 @@ This procedure never waits or silently retries."
                                      (<= 1 target #x7fffffffffffffff)
                                      (>= target 0)))
                       (fail 'invalid-result)))))
-              (desktop-snapshot)
+              (refresh-revision!)
               (let* ((completion (command-completion command))
                      (pending? (memq completion '(automation window-disappeared)))
                      (status (cond (pending? 'pending)
-                                   ((and (memq (command-procedure command)
-                                               (list focus-target! move-target! float-target!
-                                                     fullscreen-target! layout-target!))
-                                         (equal? before %fingerprint)) 'unchanged)
+                                   ((and compare? (equal? before (cached-desktop-body))) 'unchanged)
                                    (else 'applied)))
                      (response (freeze-result (result id status value #f))))
                 (vector-set! entry 1 response)

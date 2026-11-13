@@ -18,6 +18,7 @@
   #:use-module (minde hooks)
   #:use-module (minde compositor frames)
   #:use-module (minde compositor model)
+  #:use-module (minde compositor revision)
   #:use-module (minde compositor rust)
   #:use-module (minde foundation serialization)
   #:use-module (minde persistence)
@@ -262,6 +263,7 @@ surrounding whitespace is ignored when checking uniqueness."
   (let* ((size (current-output-size))
          (g (make-empty-group name (car size) (cadr size))))
     (set! %groups (append %groups (list g)))
+    (note-policy-change!)
     g))
 
 (define (create-group! name)
@@ -317,6 +319,7 @@ ignoring surrounding whitespace. Blank input leaves the name unchanged."
   (unless (and (string? name) (string-null? (string-trim-both name)))
     (validate-group-name name (current-group))
     (set-group-name! (current-group) (string-append " " (string-trim-both name) " "))
+    (note-policy-change!)
     (echo (group-list-string))))
 
 (define (delete-current-group!)
@@ -528,10 +531,12 @@ marked * (StumpWM groups/vgroups)."
 
 (define (mark-dynamic! g)
   "Marks G dynamic and creates its empty per-head policy table."
-  (hashq-set! %dynamic-groups g (make-hash-table)))
+  (hashq-set! %dynamic-groups g (make-hash-table))
+  (note-policy-change!))
 
 (define (unmark-dynamic! g)
-  (hashq-remove! %dynamic-groups g))
+  (hashq-remove! %dynamic-groups g)
+  (note-policy-change!))
 
 (define (dynamic-state g hid)
   "The (order layout ratio) list for G on head HID, created on first
@@ -1159,6 +1164,7 @@ a sync since nothing hidden is on-screen)."
 (define (handle-heads-change! new-heads)
   "Multi-head backends report the full usable-rect list here:
 ((id x y w h) ...)."
+  (note-policy-change!)
   (let ((before (map car (heads))))
     (heads-changed! new-heads %groups)
     (retile-changed-heads! before))

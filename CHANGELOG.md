@@ -20,6 +20,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Receipt allocation and status checks update revisions without rebuilding
+  desktop snapshots. Snapshot facts are cached with detached replies and
+  indexed frame locations. `mindectl wait` and `watch` use event wakeups,
+  bounded safety checks and polling backoff when events are unavailable (#164).
 - Interactive move/resize geometry notifications are combined at 50 ms
   intervals, with immediate updates on release and cancellation. A settled
   event reports completion, waiting for native clients' final resize commit.

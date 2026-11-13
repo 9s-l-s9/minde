@@ -25,8 +25,9 @@ timeouts or a missing message exit with usage status `2` before contacting the
 compositor. Use `minde-msg -- "-t is literal message text"` when the message
 starts with an option. Message text, including quotes and newlines, stays data.
 
-`subscribe --json` re-emits `status.json` on change by polling; `subscribe
---events` is the real-time push interface described below.
+`subscribe --json` re-emits `status.json` on change, using event-socket wakeups
+and a two-second safety check (one-second polling if the event socket is
+unavailable). `subscribe --events` streams the push events described below.
 
 The local Unix socket is owned by the session user and accepts one Scheme datum
 per request. Evaluation runs on the compositor event-loop thread, serializing
