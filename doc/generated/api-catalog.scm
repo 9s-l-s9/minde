@@ -375,7 +375,7 @@
    ((name . wm-screenshot) (signature . "(wm-screenshot path [window-id])") (documentation . "Write a deferred PNG to absolute PATH. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full window rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token; completion via wm-automation-status."))
    ((name . wm-warp-pointer-relative) (signature . "(wm-warp-pointer-relative dx dy)") (documentation . "Warp the pointer by a relative delta DX,DY."))
    ((name . wm-set-key-repeat) (signature . "(wm-set-key-repeat spec)") (documentation . "Configure keyboard repeat rate and delay from SPEC."))
-   ((name . wm-idle-ms) (signature . "(wm-idle-ms)") (documentation . "Return milliseconds elapsed since the last input event."))
+   ((name . wm-idle-ms) (signature . "(wm-idle-ms)") (documentation . "Return monotonic milliseconds since input or session resume, counting from startup."))
    ((name . wm-input-devices) (signature . "(wm-input-devices)") (documentation . "Return ((name cap ...) ...): the present libinput devices."))
    ((name . wm-configure-input-rule!) (signature . "(wm-configure-input-rule! match tap natural accel click output)") (documentation . "Low-level input rule primitive wrapped by wm-configure-input!. OUTPUT is a connector name, an empty string for automatic association, or #f to omit the output setting."))
    ((name . wm-session-lock-confirmed?) (signature . "(wm-session-lock-confirmed?)") (documentation . "Whether the locked session has passed its output presentation barrier; safe to suspend."))

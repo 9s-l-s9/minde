@@ -239,6 +239,7 @@ pub fn set_runtime_backend(name: &str) {
         _ => 0,
     };
     RUNTIME_BACKEND.store(code, Ordering::SeqCst);
+    // Initialize both uptime and idle time before loading Scheme policy.
     let _ = RUNTIME_STARTED.set(std::time::Instant::now());
 }
 
@@ -810,29 +811,24 @@ unsafe extern "C" fn wm_place_windows(placements: Scm) -> Scm {
     scm_list_map(&failed, |&id| from_i64(id as i64))
 }
 
-/// Unix-epoch millis of the last user input event (key or pointer),
-/// updated from `process_input_event`; `(wm-idle-ms)` reads it so
-/// Scheme can implement idle timers (StumpWM *idle-hook* style).
+/// Monotonic milliseconds from runtime startup to the last input or session
+/// activation. Zero denotes startup, so idle time advances before first input.
+/// Atomic because the opt-in Scheme REPL can query activity from another thread.
 static LAST_ACTIVITY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+fn runtime_ms() -> u64 {
+    RUNTIME_STARTED.get().map_or(0, |started| {
+        started.elapsed().as_millis().min(i64::MAX as u128) as u64
+    })
 }
 
 pub fn note_activity() {
-    LAST_ACTIVITY_MS.store(now_ms(), Ordering::Relaxed);
+    LAST_ACTIVITY_MS.store(runtime_ms(), Ordering::Relaxed);
 }
 
 unsafe extern "C" fn wm_idle_ms() -> Scm {
     let last = LAST_ACTIVITY_MS.load(Ordering::Relaxed);
-    from_i64(if last == 0 {
-        0
-    } else {
-        now_ms().saturating_sub(last) as i64
-    })
+    from_i64(runtime_ms().saturating_sub(last) as i64)
 }
 
 /// `(wm-session-locked?)` -> boolean: whether the session is currently
@@ -1568,14 +1564,11 @@ unsafe extern "C" fn wm_runtime_info() -> Scm {
         _ => "unknown",
     };
     let display = XWAYLAND_DISPLAY.load(Ordering::SeqCst) as i64;
-    let uptime = RUNTIME_STARTED
-        .get()
-        .map_or(0, |started| started.elapsed().as_millis() as i64);
     scm_list(&[
         from_str(backend),
         from_str(xwayland),
         from_i64(display),
-        from_i64(uptime),
+        from_i64(runtime_ms() as i64),
     ])
 }
 

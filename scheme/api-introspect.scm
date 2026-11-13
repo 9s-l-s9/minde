@@ -131,7 +131,7 @@
     (wm-set-key-repeat "(wm-set-key-repeat spec)"
      "Configure keyboard repeat rate and delay from SPEC.")
     (wm-idle-ms "(wm-idle-ms)"
-     "Return milliseconds elapsed since the last input event.")
+     "Return monotonic milliseconds since input or session resume, counting from startup.")
     (wm-input-devices "(wm-input-devices)"
      "Return ((name cap ...) ...): the present libinput devices.")
     (wm-configure-input-rule! "(wm-configure-input-rule! match tap natural accel click output)"

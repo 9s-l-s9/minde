@@ -592,6 +592,8 @@ pub fn init_udev(
                 }
             }
             SessionEvent::ActivateSession => {
+                // Resume starts a fresh Scheme idle interval even before input.
+                guile::note_activity();
                 info!("resuming session");
                 if libinput_context.resume().is_err() {
                     error!("failed to resume libinput context");

@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Scheme idle time uses a monotonic clock, advances before the first input,
+  and resets when the DRM session resumes. Wall-clock adjustments no longer
+  create or hide idle intervals (#146).
 - Idle inhibition lasts until every inhibitor on a surface is released.
   Surface destruction and client disconnect, including SIGKILL, release
   inhibition without waiting for user input (#85, #86).

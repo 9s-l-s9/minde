@@ -1209,7 +1209,7 @@ authoritative and treat the dragged float as focused/topmost."
   (rust-call 'wm-click button))
 
 (define (idle-ms)
-  "Milliseconds since the last user input event (0 before any input)."
+  "Monotonic milliseconds since input or session resume; counts from startup."
   (or (rust-call 'wm-idle-ms) 0))
 
 ;; ---------------------------------------------------------------------

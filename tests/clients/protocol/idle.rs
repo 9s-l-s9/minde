@@ -6,6 +6,52 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn idle_ms() -> u64 {
+    ipc("(wm-idle-ms)")
+        .strip_prefix("(ok ")
+        .unwrap()
+        .strip_suffix(')')
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+fn clock() {
+    let startup = super::input::numbers(&ipc("(list idle-startup-before idle-startup-after)"));
+    assert!(
+        startup[1] >= startup[0] + 250,
+        "idle time did not advance before backend creation: {startup:?}"
+    );
+    let advances = || {
+        let started = Instant::now();
+        let before = idle_ms();
+        std::thread::sleep(Duration::from_millis(300));
+        let after = idle_ms();
+        assert!(
+            after >= before + 250 && after - before <= started.elapsed().as_millis() as u64 + 20,
+            "idle time did not advance with elapsed time: {before} -> {after}"
+        );
+    };
+    // Queries themselves must not reset activity after startup either.
+    advances();
+    let mut c = Client::new("idle clock activity");
+    let manager = c.bind("zwlr_virtual_pointer_manager_v1", 1);
+    let pointer = c.alloc();
+    c.send(manager, 0, &words(&[0, pointer]));
+    c.roundtrip();
+    let started = Instant::now();
+    c.send(pointer, 0, &words(&[0, 256, 256]));
+    c.roundtrip();
+    let after = idle_ms();
+    assert!(
+        after <= started.elapsed().as_millis() as u64 + 20,
+        "pointer activity did not reset idle time: {after}"
+    );
+    advances();
+    super::input::evaluate("(<= (abs (- (wm-idle-ms) (idle-ms))) 1)", "#t");
+    println!("ok - Scheme idle time advances from startup and resets on input");
+}
+
 struct Observer {
     c: Client,
     manager: u32,
@@ -193,7 +239,8 @@ pub fn holder(ready: &str) {
 
 pub fn run(selected: &[String]) {
     for (name, run) in [
-        ("shared", shared as fn()),
+        ("clock", clock as fn()),
+        ("shared", shared),
         ("surface", surface_destroyed),
         ("disconnect", disconnected),
         ("killed", killed),

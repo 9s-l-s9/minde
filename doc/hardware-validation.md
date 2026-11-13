@@ -109,6 +109,15 @@ Enabling and disabling heads (udev, needs two monitors):
 - a shikane profile with `enable = false` for `eDP-1` (lid-closed profile)
   turns the panel off and windows follow to the external head.
 
+Scheme idle time (udev):
+
+- Observe `(idle-ms)` from another terminal without sending compositor input;
+  it increases with elapsed time. After switching away from the VT and back,
+  it starts a fresh interval.
+- Suspend and resume with an idle policy enabled. Before keyboard or pointer
+  input, the value measures time since session activation and must not include
+  the suspended interval or immediately trigger another suspend.
+
 Output power management (udev; `wlopm` and `swayidle` are in `manifest.scm`):
 
 - `wlopm --off '*'`: every monitor blanks (DPMS standby), `wlopm` reports

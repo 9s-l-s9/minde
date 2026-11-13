@@ -11,8 +11,9 @@
 #      synthetic input, so the seat goes idle and the compositor must fire an
 #      `idled` notification; we assert the marker appears. This exercises the
 #      real notifier timer end to end, not just global advertisement.
-#   3. Rust protocol clients check shared-surface inhibitor counts, surface
-#      destruction, disconnect and SIGKILL without any synthetic input.
+#   3. Rust protocol clients check the Scheme idle clock and activity reset,
+#      then shared-surface inhibitor counts, surface destruction, disconnect
+#      and SIGKILL without further input.
 #
 # Every client call is wrapped in `timeout`.
 set -eu
@@ -38,6 +39,16 @@ command -v swayidle >/dev/null 2>&1 || {
     echo "error: swayidle is required (add swayidle)" >&2
     exit 127
 }
+
+mkdir -p "$OUT"
+# Sample before backend creation, which can itself deliver initial host input.
+cat >"$OUT/startup.scm" <<'SCM'
+(define idle-startup-before (wm-idle-ms))
+(usleep 300000)
+(define idle-startup-after (wm-idle-ms))
+(load-from-path "init")
+SCM
+export MINDE_NESTED_INIT="$OUT/startup.scm"
 
 nested_start "$OUT" "${MINDE_IDLE_E2E_DISPLAY:-:99}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
@@ -91,7 +102,7 @@ done
 }
 echo "ok - ext-idle-notify-v1 fired an idle notification (swayidle)"
 
-# Raw clients keep multiple inhibitors alive and disconnect without input.
+# Protocol clients check elapsed idle time, then inhibitor teardown without input.
 # Optional case selection is intentionally split into separate arguments.
 # shellcheck disable=SC2086
 nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" idle-inhibit ${MINDE_IDLE_CASES:-} \

@@ -108,12 +108,18 @@ scale and exclusive output edges. Nested host input keeps its window-relative
 coordinates despite the framebuffer's flip. Physical libinput association and
 touch/stylus delivery are covered by the hardware checklist.
 
-## Idle inhibition
+## Idle time and inhibition
 
 `sh tests/idle-e2e.sh` checks protocol advertisement and a real swayidle
-timeout, then runs native Rust clients with multiple inhibitors on one
-surface. Both destruction orders must preserve inhibition until the last
-inhibitor is gone. Surface destruction, disconnect and SIGKILL must release
+timeout. Scheme initialization samples idle time before backend creation or
+input, and a native Rust client checks elapsed time, queries that leave
+activity unchanged, pointer activity reset and the public `idle-ms` wrapper.
+The clock uses the same monotonic origin as runtime uptime. Physical session
+resume remains a hardware check.
+
+Rust clients also create multiple inhibitors on one surface. Both destruction
+orders must preserve inhibition until the last inhibitor is gone. Surface
+destruction, disconnect and SIGKILL must release
 inhibition without input, while other clients' inhibitors remain effective.
 Input-only notifications prove that time passes while ordinary notifications
 are suppressed. Exact idle/resume histories also check that destroying stale
