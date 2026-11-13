@@ -37,6 +37,7 @@ fn main() {
         Some("fractional-popups") => popup::fractional_scales(),
         Some("scene-layers") => scene::layers(),
         Some("scene-message") => scene::message(),
+        Some("scene-cursor") => scene::cursor(),
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),

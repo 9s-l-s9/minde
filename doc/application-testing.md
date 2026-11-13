@@ -175,6 +175,12 @@ and pointer hit-testing. They cover layer levels, mapping order, repainting an
 older surface and fullscreen policy. Centered-message region captures must
 equal the corresponding crop of a full frame at scales 1 and 1.5; the selected
 region must also contain message pixels, so an omitted overlay cannot pass.
+The capture gate generates a small Xcursor theme with odd, asymmetric hotspots
+and checks cursor bounds at scales 1, 1.25, 1.5, 1.75, 2 and 2.5, including
+returning to cached images. Cursor-free captures must omit the fixture. This
+exercises Minde's shared themed-cursor renderer; the nested backend delegates
+its live cursor to the host, so live DRM cursor placement remains a hardware
+check. The generated binary theme stays in the test output directory.
 
 ## Gamma control lifecycle
 

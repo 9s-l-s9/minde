@@ -318,8 +318,8 @@ const DEFAULT_CURSOR_THEME: &str = "default";
 #[derive(Clone)]
 struct ThemedCursor {
     buffer: MemoryRenderBuffer,
-    /// Hotspot in cursor-image pixels (i.e. physical px at load scale).
-    hotspot: Point<i32, Physical>,
+    /// Logical hotspot; preserve fractions until rounding for the output.
+    hotspot: Point<f64, Logical>,
 }
 
 /// Loads Xcursor theme images honoring `XCURSOR_THEME`/`XCURSOR_SIZE`, and
@@ -379,17 +379,21 @@ impl XCursorLoader {
         // Xcursor stores each pixel as a little-endian 0xAARRGGBB u32, so the
         // raw file bytes (`pixels_rgba`) are B,G,R,A in memory -- exactly the
         // DRM Argb8888 layout the rest of the renderer expects.
+        let buffer_scale = int_scale.max(1);
         let buffer = MemoryRenderBuffer::from_slice(
             &image.pixels_rgba,
             smithay::backend::allocator::Fourcc::Argb8888,
             (image.width as i32, image.height as i32),
-            int_scale.max(1),
+            buffer_scale,
             smithay::utils::Transform::Normal,
             None,
         );
         Some(ThemedCursor {
             buffer,
-            hotspot: Point::from((image.xhot as i32, image.yhot as i32)),
+            hotspot: Point::from((
+                f64::from(image.xhot) / f64::from(buffer_scale),
+                f64::from(image.yhot) / f64::from(buffer_scale),
+            )),
         })
     }
 }
@@ -456,10 +460,10 @@ impl CursorState {
             CursorImageStatus::Named(icon) => {
                 let icon = *icon;
                 let int_scale = cursor_scale(scale);
-                // Themed cursor: offset the physical location by the image
-                // hotspot (in physical px) so the tip lands on the pointer.
+                // Match the hotspot to the image's physical output scale,
+                // including when the cached image was loaded at a larger scale.
                 if let Some(themed) = self.loader.get(icon, int_scale) {
-                    let loc = location - themed.hotspot;
+                    let loc = location - themed.hotspot.to_physical(scale).to_i32_round();
                     match MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
                         loc.to_f64(),

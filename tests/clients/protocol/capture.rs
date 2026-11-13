@@ -76,13 +76,21 @@ impl Capture {
         session
     }
     pub(super) fn image(&mut self, ext: bool, region: Option<[u32; 4]>) -> Image {
+        self.image_with_cursor(ext, region, false)
+    }
+    pub(super) fn cursor_image(&mut self) -> Image {
+        self.image_with_cursor(false, None, true)
+    }
+    fn image_with_cursor(&mut self, ext: bool, region: Option<[u32; 4]>, cursor: bool) -> Image {
         self.roundtrip();
-        let frame = if let Some(region) = region {
+        let frame = if region.is_some() || cursor {
             assert!(!ext);
             let id = self.alloc();
-            let mut args = words(&[id, 0, self.output]);
-            args.extend(words(&region));
-            self.send(self.wlr, 1, &args);
+            let mut args = words(&[id, u32::from(cursor), self.output]);
+            if let Some(region) = region {
+                args.extend(words(&region));
+            }
+            self.send(self.wlr, u16::from(region.is_some()), &args);
             self.event(id, 6);
             let info = self.event(id, 0);
             let size = (info.word(1), info.word(2));

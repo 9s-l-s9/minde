@@ -128,3 +128,51 @@ pub fn message() {
     output.result(config, 2, 0);
     println!("ok - message regions equal full-output crops at integer and fractional scales");
 }
+
+pub fn cursor() {
+    const COLOR: u32 = 0x12e0a7;
+    evaluate("(wm-clear-message)", "#t");
+    let mut capture = Capture::new();
+    let mut output = Outputs::new("cursor hotspot output");
+    // Fixture hotspots are (13, 9), (25, 17), (37, 25) at buffer
+    // scales 1, 2, 3. Expected bounds include per-axis physical rounding.
+    for (scale, expected) in [
+        (1.0, [187, 191, 24, 24]),
+        (1.25, [234, 239, 30, 30]),
+        (1.5, [281, 287, 36, 36]),
+        (1.75, [328, 335, 42, 42]),
+        (2.0, [375, 383, 48, 48]),
+        (2.5, [469, 479, 60, 60]),
+        (1.5, [281, 287, 36, 36]),
+        (1.0, [187, 191, 24, 24]),
+    ] {
+        let (config, head) = output.configuration(Some(true));
+        output.c.send(head, 4, &words(&[(scale * 256.0) as u32]));
+        output.result(config, 2, 0);
+        evaluate("(wm-warp-pointer 200 200)", "#t");
+        let image = capture.cursor_image();
+        let mut bounds = [u32::MAX, u32::MAX, 0, 0];
+        let mut count = 0;
+        for (index, &pixel) in image.pixels.iter().enumerate() {
+            if pixel == COLOR {
+                let (px, py) = (index as u32 % image.width, index as u32 / image.width);
+                bounds[0] = bounds[0].min(px);
+                bounds[1] = bounds[1].min(py);
+                bounds[2] = bounds[2].max(px);
+                bounds[3] = bounds[3].max(py);
+                count += 1;
+            }
+        }
+        assert!(count > 0, "themed cursor fixture was not rendered");
+        bounds[2] = bounds[2] - bounds[0] + 1;
+        bounds[3] = bounds[3] - bounds[1] + 1;
+        assert_eq!(bounds, expected, "captured cursor hotspot at scale {scale}");
+        assert_eq!(count, expected[2] * expected[3]);
+        assert!(
+            !capture.image(false, None).pixels.contains(&COLOR),
+            "cursor-free capture includes the cursor"
+        );
+    }
+    evaluate("(wm-warp-pointer 10 10)", "#t");
+    println!("ok - themed cursor captures align odd hotspots across integer and fractional scales");
+}

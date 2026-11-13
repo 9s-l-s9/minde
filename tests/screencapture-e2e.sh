@@ -23,6 +23,11 @@ command -v identify >/dev/null 2>&1 || {
     exit 127
 }
 
+mkdir -p "$OUT/cursor-theme/minde-test/cursors"
+guile --no-auto-compile tests/fixtures/cursor-theme.scm \
+    "$OUT/cursor-theme/minde-test/cursors/default"
+export XCURSOR_PATH="$OUT/cursor-theme" XCURSOR_THEME=minde-test XCURSOR_SIZE=24
+
 nested_start "$OUT" "${MINDE_SCREENCAPTURE_E2E_DISPLAY:-:96}" || {
     echo "error: nested compositor failed; inspect $OUT" >&2
     exit 1
@@ -34,7 +39,7 @@ nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" capture-clock >"$OUT/capture
 }
 cat "$OUT/capture-clock.log"
 
-for scenario in scene-layers scene-message; do
+for scenario in scene-layers scene-message scene-cursor; do
     timeout 45 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1 || {
         cat "$OUT/$scenario.log" >&2
         exit 1

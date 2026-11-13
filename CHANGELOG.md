@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Themed cursor hotspots follow fractional output scale, retaining subpixel
+  precision through the image-to-logical conversion before rounding physical
+  placement. Cached cursor images stay aligned across scale changes (#35).
 - Layer rendering matches input order: Overlay above Top, windows above
   Bottom and Background, and newer mappings above older ones within a layer.
   Fullscreen still hides Top surfaces while preserving Overlay (#34).
