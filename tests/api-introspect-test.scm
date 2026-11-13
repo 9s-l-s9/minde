@@ -7,9 +7,10 @@
              (srfi srfi-13)
              (ice-9 rdelim)
              (minde commands)
+             (minde control)
              (minde command-catalog))
 
-;; describe-api reflects the eight public modules; make them resolvable.
+;; describe-api reflects the documented public modules; make them resolvable.
 (use-modules (minde windows)
              (minde frames)
              (minde groups)
@@ -19,6 +20,7 @@
              (minde status))
 
 (load-from-path "api-introspect.scm")
+(load-from-path "ipc-reply.scm")
 
 (define failures 0)
 (define (check description value)
@@ -35,6 +37,7 @@
 
 ;; Populate the command registry the way the running compositor does.
 (register-builtin-command-schemas!)
+(register-control-commands!)
 
 (define sections '(commands procedures gsubrs hooks))
 
@@ -56,6 +59,58 @@
 ;; The whole catalog round-trips as a single datum.
 (check "whole catalog is writable re-readable data"
        (writable-roundtrips? catalog))
+(check "complete catalog fits the bounded IPC reply without losing metadata"
+       (equal? (ipc-ok-reply catalog) (list 'ok catalog)))
+
+;; Public procedures must expose callable signatures and their actual docs,
+;; including procedures re-exported from the private implementation module.
+(define (entry-named entries name)
+  (or (find (lambda (entry) (eq? (assq-ref entry 'name) name)) entries) '()))
+(let* ((entries (api-module-procedures '(minde windows) #f))
+       (geometry (entry-named entries 'window-geometry))
+       (all (entry-named entries 'all-window-ids)))
+  (check "public procedure has its required arity"
+         (equal? (assq-ref geometry 'signature) "(window-geometry arg-1)"))
+  (check "public procedure retains its documentation"
+         (string-contains (assq-ref geometry 'documentation) "Return visible window ID"))
+  (check "re-exported procedure has its zero-argument signature"
+         (equal? (assq-ref all 'signature) "(all-window-ids)"))
+  (check "re-exported procedure retains its documentation"
+         (string-contains (assq-ref all 'documentation) "active-group window identifiers")))
+
+;; An isolated public interface covers values and unbound exports too.
+(let ((fixture (resolve-module '(minde-test introspection))) (called? #f))
+  (set-module-public-interface! fixture (make-module))
+  (module-define! fixture 'callable
+    (lambda* (required #:optional optional #:rest rest)
+      "Fixture procedure documentation."
+      (set! called? #t)))
+  (module-define! fixture 'undocumented (lambda () (set! called? #t)))
+  (module-define! fixture 'constant 7)
+  (module-define! fixture 'disabled #f)
+  (module-export! fixture '(callable undocumented constant disabled unavailable))
+  (let* ((entries (api-module-procedures '(minde-test introspection) #f))
+         (callable (entry-named entries 'callable)))
+    (check "signature distinguishes required, optional and rest arguments"
+           (equal? (assq-ref callable 'signature) "(callable arg-1 [opt-1] ...)"))
+    (check "procedure documentation is the bound procedure's string"
+           (equal? (assq-ref callable 'documentation) "Fixture procedure documentation."))
+    (check "undocumented procedure still has a callable signature"
+           (equal? (assq-ref (entry-named entries 'undocumented) 'signature) "(undocumented)"))
+    (check "missing procedure documentation remains empty"
+           (equal? (assq-ref (entry-named entries 'undocumented) 'documentation) ""))
+    (for-each
+     (lambda (name)
+       (let ((entry (entry-named entries name)))
+         (check "unbound and non-procedure exports retain bare signatures"
+                (equal? (assq-ref entry 'signature) (symbol->string name)))
+         (check "unbound and non-procedure exports have empty documentation"
+                (equal? (assq-ref entry 'documentation) ""))))
+     '(constant disabled unavailable))
+    (check "filtered lookup retains procedure metadata"
+           (equal? (api-module-procedures '(minde-test introspection) "CALL") (list callable)))
+    (check "mixed public bindings remain writable data" (writable-roundtrips? entries))
+    (check "introspection never invokes a procedure" (not called?))))
 
 ;; --- Every registered command appears in the commands section --------------
 

@@ -12,7 +12,7 @@
 ;;; are:
 ;;;   commands   -- the registered command catalog (name, category, summary,
 ;;;                 arguments, documentation);
-;;;   procedures -- public bindings of the eight documented (minde ...)
+;;;   procedures -- public bindings of the documented (minde ...)
 ;;;                 modules (name, module, signature, documentation);
 ;;;   gsubrs     -- the wm-* Rust primitives (name, signature, documentation);
 ;;;   hooks      -- the (minde hooks) event hooks (name, arguments,
@@ -232,7 +232,8 @@
     (sort
      (filter-map
       (lambda (pair)
-        (let ((name (car pair)) (value (cdr pair)))
+        (let* ((name (car pair)) (binding (cdr pair))
+               (value (and (variable-bound? binding) (variable-ref binding))))
           (and (api-name-matches? filter name)
                (list (cons 'name name)
                      (cons 'module module-name)

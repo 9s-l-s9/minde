@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Runtime and generated API catalogs resolve exported bindings to their
+  values, restoring callable signatures and procedure documentation,
+  including re-exports. Unbound exports remain inspectable (#111).
 - Failed status-file writes remain pending and retry on the next publication,
   even without a desktop change. Retries preserve the sequence number, and
   newer state replaces the pending state before a deferred write (#110).

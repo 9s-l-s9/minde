@@ -85,6 +85,11 @@ guarantee above:
 - `hooks` — the `(minde hooks)` event hooks: `name`, `arguments` (the payload
   shape), `documentation`.
 
+Bound procedures carry signatures derived from their required, optional,
+and rest arguments, plus any available procedure docstring. This also works
+for re-exported procedures. Non-procedure and unbound exports remain named
+entries with empty documentation.
+
 The optional string argument is an apropos filter: only items whose name
 contains it (case-insensitively) are returned, in every section at once.
 
