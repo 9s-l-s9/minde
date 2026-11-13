@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Control receipts accept only the exact server-issued request ID. Altered
+  spellings cannot execute actions or consume their receipts, and oversized
+  numeric suffixes are rejected before parsing or retention (#108).
 - Control errors return flat association lists for their details, matching
   argument-validation errors and preserving the same shape in stored and
   replayed receipts (#106).

@@ -405,12 +405,17 @@ Loading this module has no compositor side effects; call after legacy setup."
       (cadr (call-with-input-string text read)))))
 
 (define (receipt-number id)
-  (and (string? id)
-       (string-prefix? (string-append %session ":") id)
-       (let* ((text (substring id (+ 1 (string-length %session))))
-              (n (and (not (string-null? text)) (string-every char-numeric? text)
-                      (string->number text))))
-         (and (exact-integer? n) (> n 0) (<= n %issued) n))))
+  (let ((prefix (string-append %session ":")))
+    (and (string? id)
+         ;; Bound caller text before copying or parsing its numeric suffix.
+         (<= (string-length id)
+             (+ (string-length prefix) (string-length (number->string %issued))))
+         (string-prefix? prefix id)
+         (let* ((text (substring id (string-length prefix)))
+                (n (string->number text)))
+           ;; Only the spelling emitted by new-action-request names a receipt.
+           (and (exact-integer? n) (> n 0) (<= n %issued)
+                (string=? text (number->string n)) n)))))
 
 (define (new-action-request)
   "Allocates a server-issued receipt ID and returns session/revision preconditions.

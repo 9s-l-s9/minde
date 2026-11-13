@@ -156,6 +156,11 @@ In Scheme, allocation is `(new-action-request)` and observation is
                  #:request-id (assq-ref receipt 'request-id))
 ```
 
+Use the server-issued request ID unchanged. Alternate spellings, including
+zero-padded numbers, fail with `invalid-request-id` at stage `validation`,
+before executing the action or reserving the legitimate receipt. The same
+rule applies when querying a receipt, including an expired one.
+
 Once a receipt is bound to a submitted action, repeating that same action,
 normalized arguments, and revision returns the recorded result or current
 pending status. It does not run the action again. A conflicting reuse fails

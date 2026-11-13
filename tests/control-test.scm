@@ -85,6 +85,30 @@
                    #:if-revision (assq-ref request 'revision)
                    #:request-id (assq-ref request 'request-id)))
 
+(define (check-invalid-id reply)
+  (let ((error (or (assq-ref reply 'error) '())))
+    (check "noncanonical receipt is rejected" (status reply) 'error)
+    (check "invalid receipt code" (assq-ref error 'code) 'invalid-request-id)
+    (check "invalid receipt fails during validation" (assq-ref error 'stage) 'validation)
+    (check "invalid receipt cannot have effects" (assq-ref error 'effects-may-have-occurred) #f)))
+
+;; Cross a decimal-width boundary while retaining the first receipt. Its
+;; zero-padded alias now fits within the maximum issued ID length.
+(let* ((request (new-action-request)) (id (assq-ref request 'request-id))
+       (prefix (string-append (assq-ref request 'session) ":"))
+       (suffix (substring id (string-length prefix))))
+  (do ((i 0 (+ i 1))) ((= i 9)) (new-action-request))
+  (for-each
+   (lambda (text)
+     (let ((alias (string-append prefix text)))
+       (check-invalid-id (action-status alias))
+       (check-invalid-id (act 'windows '() (acons 'request-id alias request)))))
+   (list (string-append "0" suffix) (string-append "+" suffix)
+         (string-append " " suffix) "1." "١" "0" "11" ""))
+  (check "invalid aliases leave the canonical receipt ready" (status (action-status id)) 'ready)
+  (check "short canonical ID remains usable after counter growth" (status (act 'windows '() request)) 'applied)
+  (check "successful receipt retains its issued spelling" (assq-ref (action-status id) 'request-id) id))
+
 ;; Rust allocates window identifiers from zero; zero is a valid target, not
 ;; the absence marker (Scheme uses #f for that).
 (handle-window-map! 0 "First mapped window" "zero-id")
@@ -467,6 +491,33 @@
 (with-fluids ((read-eval? #t)) (events-since 0))
 (check "replaying event data never invokes read-time evaluation" %reader-effect? #f)
 
+;; Aliases must not execute a mutation, reserve its receipt, or retain bulk
+;; caller text. A later canonical submission and replay still execute once.
+(for-each
+ (lambda (padding)
+   (let* ((request (new-action-request)) (id (assq-ref request 'request-id))
+          (prefix (string-append (assq-ref request 'session) ":"))
+          (alias (string-append prefix (make-string padding #\0)
+                                (substring id (string-length prefix))))
+          (bad-request (acons 'request-id alias request))
+          (before %effect-count)
+          (rejected (act 'external-counter! '() bad-request)))
+     (check-invalid-id rejected)
+     (when (> (string-length alias) 512)
+       (check-true "oversized rejected ID is not echoed" (eq? (assq-ref rejected 'request-id) 'null)))
+     (check "invalid ID never invokes the action" %effect-count before)
+     (check "invalid ID does not reserve another receipt" (status (action-status id)) 'ready)
+     (let ((reply (act 'external-counter! '() request)))
+       (check "canonical mutation applies" (status reply) 'applied)
+       (check-true "applied receipt uses only the issued ID" (equal? (assq-ref reply 'request-id) id))
+       (check "canonical mutation executes once" %effect-count (+ before 1))
+       (check-invalid-id (action-status alias))
+       (check-invalid-id (act 'external-counter! '() bad-request))
+       (check-true "alias cannot replace the stored canonical result" (equal? (action-status id) reply))
+       (check-true "canonical replay remains identical" (equal? (act 'external-counter! '() request) reply))
+       (check "rejected aliases and replay never repeat effects" %effect-count (+ before 1)))))
+ '(1 3 60000))
+
 ;; Once an issued ID ages out it must never become a fresh request again.
 (let* ((request (new-action-request))
        (id (assq-ref request 'request-id)) (before (length %closed)))
@@ -476,6 +527,10 @@
          (code (action-status id)) 'outcome-unknown)
   (check "expired request ID cannot execute again"
          (code (act 'close-window! '((window . 1)) request)) 'outcome-unknown)
+  (let* ((prefix (string-append (assq-ref request 'session) ":"))
+         (alias (string-append prefix "0" (substring id (string-length prefix)))))
+    (check-invalid-id (action-status alias))
+    (check-invalid-id (act 'close-window! '((window . 1)) (acons 'request-id alias request))))
   (check "expiry never repeats close" (length %closed) (+ before 1)))
 
 ;; A desktop snapshot must retain head identity instead of flattening frames.
