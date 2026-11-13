@@ -40,8 +40,18 @@ impl MindeState {
 
     /// Update inspection and output associations now; coalesce grab events.
     pub(crate) fn publish_window_geometry(&mut self, id: u64) {
-        self.refresh_foreign_toplevel_output(id);
-        let geometry = self.window_geometry(id);
+        if let Some(window) = self.windows.get(&id).cloned() {
+            self.publish_geometry_for_window(&window);
+        }
+    }
+
+    pub(crate) fn publish_geometry_for_window(&mut self, window: &smithay::desktop::Window) {
+        let Some(id) = self.id_for_window(window) else {
+            return;
+        };
+        let bounds = self.space.element_geometry(window);
+        self.refresh_foreign_toplevel_geometry(id, bounds);
+        let geometry = self.visible_window_geometry(bounds);
         if !crate::automation_observe::set_window_geometry(id, geometry) {
             return;
         }

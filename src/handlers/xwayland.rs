@@ -49,9 +49,18 @@ impl XWaylandShellHandler for MindeState {
         // The X11/Wayland association can arrive after the buffer commit.
         // Refresh the inspection mirror even if the client never repaints.
         if let Some((id, window)) = self.window_for_x11(&surface) {
+            crate::state::remember_surface_window(&window);
             window.on_commit();
             self.update_window_fractional_scale(&window);
             self.publish_window_geometry(id);
+        } else if let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.x11_surface() == Some(&surface))
+        {
+            // Override-redirect menus are mapped without a managed window id.
+            crate::state::remember_surface_window(window);
+            window.on_commit();
         }
         self.schedule_redraw();
     }
@@ -174,6 +183,7 @@ impl XwmHandler for MindeState {
         let location = window.last_configure().loc;
         let element = Window::new_x11_window(window);
         self.space.map_element(element.clone(), location, true);
+        crate::state::remember_surface_window(&element);
         self.update_window_fractional_scale(&element);
     }
 

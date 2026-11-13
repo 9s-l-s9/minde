@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Bounded raw Wayland clients for the private nested test compositor.
 mod capture;
+mod commits;
 mod constraints;
 mod emergency;
 mod focus;
@@ -50,6 +51,7 @@ fn main() {
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),
         Some("frame-callbacks") => frames::run(),
+        Some("surface-commits") => commits::run(),
         Some("idle-inhibit") => idle::run(&args[1..]),
         Some("idle-inhibitor-holder") => idle::holder(args.get(1).expect("ready path")),
         Some("window-fullscreen") => fullscreen::run(),

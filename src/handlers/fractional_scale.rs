@@ -58,7 +58,7 @@ impl MindeState {
         {
             root = parent;
         }
-        if let Some(window) = window_for_surface(&self.space, &root) {
+        if let Some(window) = window_for_surface(&root) {
             return scale_for_geometry(&self.space, self.space.element_geometry(&window));
         }
         for output in self.space.outputs() {

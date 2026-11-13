@@ -200,6 +200,10 @@ delivery remains a hardware check.
 records callback counts plus client/compositor CPU usage. It checks low-rate
 hidden updates on an idle desktop and during visible redraws, immediate
 recovery on reveal, lock and DPMS suspension, child-only requests and unmap.
+Its surface-commit scenario measures render and layer-arrangement counts
+with a hidden client repainting at 20 Hz and a bar repainting at 1 Hz.
+It also checks exclusive-zone changes, configure acknowledgements,
+keyboard-only layer changes and synchronized child commits.
 Both backends use the same callback selection and hidden timer; the nested
 suite does not measure a physical GPU or DRM presentation.
 

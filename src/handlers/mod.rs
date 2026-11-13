@@ -314,8 +314,7 @@ impl XdgActivationHandler for MindeState {
         surface: WlSurface,
     ) {
         self.xdg_activation_state.remove_token(&token);
-        let id = crate::state::window_for_surface(&self.space, &surface)
-            .and_then(|w| self.id_for_window(&w));
+        let id = crate::state::window_for_surface(&surface).and_then(|w| self.id_for_window(&w));
         if let Some(id) = id {
             crate::guile::on_urgent(id);
         }

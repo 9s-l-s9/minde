@@ -362,7 +362,7 @@
    ((name . wm-geometry-revision) (signature . "(wm-geometry-revision)") (documentation . "Monotonic process-local epoch for changes in committed window geometry, including changes reverted between snapshot reads."))
    ((name . wm-transient-ids) (signature . "(wm-transient-ids)") (documentation . "Return transient window IDs from Wayland parent and X11 transient hints."))
    ((name . wm-floating-ids) (signature . "(wm-floating-ids)") (documentation . "The window ids the compositor currently treats as floating."))
-   ((name . wm-timing-stats) (signature . "(wm-timing-stats)") (documentation . "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch and rendering."))
+   ((name . wm-timing-stats) (signature . "(wm-timing-stats)") (documentation . "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch, rendering and layer arrangement."))
    ((name . wm-place-windows) (signature . "(wm-place-windows placements)") (documentation . "Apply a whole layout at once: PLACEMENTS is a list of (id x y w h) tiled or (id x y w h #f) float entries; returns the ids of unknown windows."))
    ((name . wm-raise-window) (signature . "(wm-raise-window id)") (documentation . "Raise window ID to the top of the stack."))
    ((name . wm-set-floating) (signature . "(wm-set-floating id floating?)") (documentation . "Set whether window ID floats above the tiling layout."))

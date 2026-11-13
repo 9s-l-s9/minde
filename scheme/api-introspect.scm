@@ -105,7 +105,7 @@
     (wm-floating-ids "(wm-floating-ids)"
      "The window ids the compositor currently treats as floating.")
     (wm-timing-stats "(wm-timing-stats)"
-     "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch and rendering.")
+     "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch, rendering and layer arrangement.")
     (wm-place-windows "(wm-place-windows placements)"
      "Apply a whole layout at once: PLACEMENTS is a list of (id x y w h) tiled or (id x y w h #f) float entries; returns the ids of unknown windows.")
     (wm-raise-window "(wm-raise-window id)"

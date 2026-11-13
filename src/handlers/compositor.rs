@@ -3,6 +3,9 @@
 use crate::{MindeState, grabs::resize_grab, state::ClientState};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
+    desktop::{Window, WindowSurfaceType, find_popup_root_surface, layer_map_for_output},
+    input::pointer::CursorImageStatus,
+    output::{Output, WeakOutput},
     reexports::{
         calloop::Interest,
         wayland_server::{
@@ -14,16 +17,36 @@ use smithay::{
         buffer::BufferHandler,
         compositor::{
             BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
-            SurfaceAttributes, add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface,
-            with_states,
+            SurfaceAttributes, TraversalAction, add_blocker, add_pre_commit_hook, get_parent,
+            get_role, is_sync_subsurface, with_states, with_surface_tree_downward,
         },
         dmabuf::get_dmabuf,
         drm_syncobj::DrmSyncobjCachedState,
+        shell::wlr_layer::LayerSurfaceCachedState,
         shm::{ShmHandler, ShmState},
     },
 };
+use std::sync::Mutex;
 
 use super::xdg_shell;
+
+#[derive(Default)]
+struct CommitOutputs(Mutex<Vec<WeakOutput>>);
+
+// Configure acknowledgements do not change layer placement. Compare only
+// the layout fields, not the serial or keyboard-interactivity bookkeeping.
+fn same_layer_layout(a: &LayerSurfaceCachedState, b: &LayerSurfaceCachedState) -> bool {
+    a.size == b.size
+        && a.anchor == b.anchor
+        && a.exclusive_zone == b.exclusive_zone
+        && a.exclusive_edge == b.exclusive_edge
+        && a.layer == b.layer
+        && (a.margin.top, a.margin.right, a.margin.bottom, a.margin.left)
+            == (b.margin.top, b.margin.right, b.margin.bottom, b.margin.left)
+}
+
+#[derive(Default)]
+struct LayerLayout(Mutex<Option<LayerSurfaceCachedState>>);
 
 impl CompositorHandler for MindeState {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -47,20 +70,30 @@ impl CompositorHandler for MindeState {
 
     fn new_subsurface(&mut self, surface: &WlSurface, _parent: &WlSurface) {
         self.update_surface_fractional_scale(surface);
+        self.enter_layer_surface_output(surface);
     }
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.idle_surface_destroyed(surface);
+        // A disappearing popup/subsurface may send no final commit. Include
+        // its owner's current footprint and the last committed footprint.
+        let outputs = self.surface_outputs(surface, None);
+        self.redraw_surface_outputs(surface, outputs);
     }
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
-        let committed_window = if !is_sync_subsurface(surface) {
+        // A synchronized child is applied by its parent's commit. It must
+        // not wake a renderer while its pending state is still invisible.
+        if is_sync_subsurface(surface) {
+            return;
+        }
+        let committed_window = {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            let window = crate::state::window_for_surface(&self.space, &root);
+            let window = crate::state::window_for_surface(&root);
             let window = if &root == surface {
                 self.handle_toplevel_commit(surface, window)
             } else {
@@ -75,30 +108,153 @@ impl CompositorHandler for MindeState {
                 }
             }
             window
-        } else {
-            None
         };
 
         xdg_shell::handle_popup_commit(&mut self.popups, surface);
-        resize_grab::handle_commit(self, surface);
+        resize_grab::handle_commit(self, surface, committed_window.as_ref());
         // Resizing can also move the origin during commit. Publish after that
         // adjustment and after Window::on_commit refreshed the committed size.
         // `committed_window` owns a clone, not a borrow into compositor state
         // held across report_title_if_changed's possible Scheme callback.
-        if let Some(window) = committed_window {
-            self.update_window_fractional_scale(&window);
-            if let Some(id) = self.id_for_window(&window) {
-                self.publish_window_geometry(id);
-            }
+        if let Some(window) = &committed_window {
+            self.update_window_fractional_scale(window);
+            self.publish_geometry_for_window(window);
         }
         self.handle_layer_commit(surface);
-        // Every commit may carry new content or a frame-callback request;
-        // both need a render pass (see `udev` repaint scheduling).
-        self.schedule_redraw();
+        let owner = committed_window.or_else(|| self.surface_window(surface));
+        let outputs = self.surface_outputs(surface, owner.as_ref());
+        if outputs.is_empty()
+            && let Some(window) = &owner
+        {
+            self.schedule_parked_window_frames(window);
+        }
+        self.redraw_surface_outputs(surface, outputs);
     }
 }
 
 impl MindeState {
+    // LayerMap::arrange used to send these enters as a side effect of every
+    // parent repaint. New child roles must now receive them independently.
+    pub(super) fn enter_layer_surface_output(&self, surface: &WlSurface) {
+        let root = self.surface_root(surface);
+        if !with_states(&root, |s| {
+            s.data_map
+                .get::<smithay::wayland::shell::wlr_layer::LayerSurfaceData>()
+                .is_some()
+        }) {
+            return;
+        }
+        for output in self.surface_outputs(&root, None) {
+            with_surface_tree_downward(
+                surface,
+                (),
+                |_, _, _| TraversalAction::DoChildren(()),
+                |s, _, _| output.enter(s),
+                |_, _, _| true,
+            );
+        }
+    }
+
+    fn surface_root(&self, surface: &WlSurface) -> WlSurface {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        if let Some(popup) = self.popups.find_popup(&root)
+            && let Ok(parent) = find_popup_root_surface(&popup)
+        {
+            root = parent;
+        }
+        root
+    }
+
+    fn surface_window(&self, surface: &WlSurface) -> Option<Window> {
+        crate::state::window_for_surface(&self.surface_root(surface))
+    }
+
+    fn surface_outputs(&self, surface: &WlSurface, window: Option<&Window>) -> Vec<Output> {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        if self.locked {
+            return self
+                .lock_surfaces
+                .iter()
+                .filter(|(_, lock)| lock.wl_surface() == &root)
+                .map(|(output, _)| output.clone())
+                .collect();
+        }
+        if matches!(self.cursor_state.status(), CursorImageStatus::Surface(s) if s == &root)
+            || get_role(&root) == Some(smithay::wayland::selection::data_device::DND_ICON_ROLE)
+        {
+            return self
+                .space
+                .outputs()
+                .filter(|o| {
+                    self.space
+                        .output_geometry(o)
+                        .is_some_and(|r| r.to_f64().contains(self.pointer_location))
+                })
+                .cloned()
+                .collect();
+        }
+        if let Some(popup) = self.popups.find_popup(&root)
+            && let Ok(parent) = find_popup_root_surface(&popup)
+        {
+            root = parent;
+        }
+        let owner = window
+            .cloned()
+            .or_else(|| crate::state::window_for_surface(&root));
+        if let Some(window) = owner {
+            let bounds = self.space.element_location(&window).map(|location| {
+                let mut bounds = window.bbox_with_popups();
+                bounds.loc += location - window.geometry().loc;
+                bounds
+            });
+            return super::foreign_toplevel::outputs_for_geometry(&self.space, bounds);
+        }
+        if !with_states(&root, |s| {
+            s.data_map
+                .get::<smithay::wayland::shell::wlr_layer::LayerSurfaceData>()
+                .is_some()
+        }) {
+            return Vec::new();
+        }
+        self.space
+            .outputs()
+            .filter(|o| {
+                layer_map_for_output(o)
+                    .layer_for_surface(&root, WindowSurfaceType::TOPLEVEL)
+                    .is_some()
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn redraw_surface_outputs(&mut self, surface: &WlSurface, current: Vec<Output>) {
+        let affected = with_states(surface, |states| {
+            states.data_map.insert_if_missing(CommitOutputs::default);
+            let mut previous = states
+                .data_map
+                .get::<CommitOutputs>()
+                .unwrap()
+                .0
+                .lock()
+                .unwrap();
+            let mut affected = current.clone();
+            for output in previous.iter().filter_map(WeakOutput::upgrade) {
+                if !affected.contains(&output) {
+                    affected.push(output);
+                }
+            }
+            *previous = current.iter().map(Output::downgrade).collect();
+            affected
+        });
+        self.schedule_redraw_outputs(&affected);
+    }
+
     /// Holds a commit that attaches a dmabuf until the client's GPU work on
     /// it has finished, so the buffer is never sampled or scanned out half
     /// drawn.  With `linux-drm-syncobj-v1` the wait is on the explicit
@@ -214,10 +370,30 @@ impl MindeState {
                 .unwrap_or(true)
         });
 
-        // Arrange (once: `update_usable_area` does it for every output)
-        // before the initial configure so the configure carries the size the
-        // anchors/margins produce.
-        self.update_usable_area();
+        let layout_changed = with_states(surface, |states| {
+            let current = *states
+                .cached_state
+                .get::<LayerSurfaceCachedState>()
+                .current();
+            states.data_map.insert_if_missing(LayerLayout::default);
+            let mut previous = states
+                .data_map
+                .get::<LayerLayout>()
+                .unwrap()
+                .0
+                .lock()
+                .unwrap();
+            let changed = previous
+                .as_ref()
+                .is_none_or(|old| !same_layer_layout(old, &current));
+            *previous = Some(current);
+            changed
+        });
+        // Content-only commits and configure acknowledgements do not change
+        // usable areas. The initial configure still needs arranged dimensions.
+        if !initial_configure_sent || layout_changed {
+            self.update_usable_area();
+        }
         if !initial_configure_sent
             && let Some(layer) = layer_map_for_output(&output)
                 .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)

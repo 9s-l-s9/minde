@@ -118,7 +118,8 @@ keeps the registry and the Rust table identical.
 
 ## Timing probes
 
-`src/timing.rs` records the duration of every applied command, key dispatch
-and rendered frame in lock-free histograms. `(wm-timing-stats)` returns
+`src/timing.rs` records the duration of every applied command, key dispatch,
+rendered frame and usable-area/layer arrangement in lock-free histograms.
+`(wm-timing-stats)` returns
 them; the diagnostic report writes `timing.txt`. `make bench-scheme` times
 the frame-sync path against stubbed primitives.

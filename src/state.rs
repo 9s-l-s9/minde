@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 
 use smithay::wayland::seat::WaylandFocus;
-use std::{collections::VecDeque, ffi::OsString, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    ffi::OsString,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use smithay::{
-    desktop::{PopupManager, Space, Window, WindowSurfaceType},
+    desktop::{PopupManager, Space, WeakWindow, Window, WindowSurfaceType},
     input::{
         Seat, SeatState,
         keyboard::{XkbConfig, xkb},
@@ -74,11 +79,50 @@ fn text_mime_types() -> Vec<String> {
 /// surface, or an X11 window's once the xwayland-shell association happened.
 /// The one lookup behind every "which window owns this surface" question
 /// (commit routing, popups, grabs, activation).
-pub fn window_for_surface(space: &Space<Window>, surface: &WlSurface) -> Option<Window> {
-    space
-        .elements()
-        .find(|w| w.wl_surface().is_some_and(|s| &*s == surface))
-        .cloned()
+pub fn window_for_surface(surface: &WlSurface) -> Option<Window> {
+    smithay::wayland::compositor::with_states(surface, |states| {
+        states
+            .data_map
+            .get::<SurfaceWindow>()?
+            .0
+            .lock()
+            .unwrap()
+            .as_ref()?
+            .upgrade()
+    })
+}
+
+// Weak ownership avoids a surface -> Window -> surface reference cycle.
+// Clear explicitly on unmap: a grab may still retain a strong Window handle.
+#[derive(Default)]
+struct SurfaceWindow(Mutex<Option<WeakWindow>>);
+
+pub(crate) fn remember_surface_window(window: &Window) {
+    if let Some(surface) = window.wl_surface() {
+        smithay::wayland::compositor::with_states(&surface, |states| {
+            states.data_map.insert_if_missing(SurfaceWindow::default);
+            *states
+                .data_map
+                .get::<SurfaceWindow>()
+                .unwrap()
+                .0
+                .lock()
+                .unwrap() = Some(window.downgrade());
+        });
+    }
+}
+
+pub(crate) fn forget_surface_window(window: &Window) {
+    if let Some(surface) = window.wl_surface() {
+        smithay::wayland::compositor::with_states(&surface, |states| {
+            if let Some(cached) = states.data_map.get::<SurfaceWindow>() {
+                let mut cached = cached.0.lock().unwrap();
+                if cached.as_ref().and_then(WeakWindow::upgrade).as_ref() == Some(window) {
+                    *cached = None;
+                }
+            }
+        });
+    }
 }
 
 /// Prefer the largest overlap, keeping output order on ties or offscreen.
@@ -1544,7 +1588,14 @@ impl MindeState {
     /// Windows parked outside every output are intentionally reported hidden.
     pub(crate) fn window_geometry(&self, id: u64) -> Option<[i32; 4]> {
         let window = self.window_by_id(id)?;
-        let rect = self.space.element_geometry(&window)?;
+        self.visible_window_geometry(self.space.element_geometry(&window))
+    }
+
+    pub(crate) fn visible_window_geometry(
+        &self,
+        rect: Option<Rectangle<i32, Logical>>,
+    ) -> Option<[i32; 4]> {
+        let rect = rect?;
         let visible = rect.size.w > 0
             && rect.size.h > 0
             && self
@@ -2178,14 +2229,7 @@ impl MindeState {
         &self,
         toplevel: &smithay::wayland::shell::xdg::ToplevelSurface,
     ) -> Option<u64> {
-        self.windows
-            .iter()
-            .find(|(_, w)| {
-                w.toplevel()
-                    .map(|t| t.wl_surface() == toplevel.wl_surface())
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id)
+        window_for_surface(toplevel.wl_surface()).and_then(|w| self.id_for_window(&w))
     }
 
     /// Registers a newly-mapped toplevel window and returns its assigned id.
@@ -2196,6 +2240,7 @@ impl MindeState {
         // still arrive through the title-change hooks.
         let (title, app_id) = self.window_title_app_id(&window);
         window.user_data().insert_if_missing(|| WindowId(id));
+        remember_surface_window(&window);
         self.windows.insert(id, window);
         self.reported_titles
             .insert(id, (title.clone(), app_id.clone()));
@@ -2685,9 +2730,10 @@ impl MindeState {
     /// Recomputes every output's usable area (geometry minus layer-shell
     /// exclusive zones) and tells Scheme when anything changed, so the
     /// frame trees shrink around docked panels (eww bars etc.). Call
-    /// after any layer surface maps, unmaps, or commits, and on output
+    /// after any layer surface maps, unmaps, or changes layout, and on output
     /// init/resize/hotplug.
     pub fn update_usable_area(&mut self) {
+        let _measurement = crate::timing::Measurement::start(crate::timing::Probe::ArrangeLayers);
         self.repack_auto_outputs();
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let mut heads = Vec::new();

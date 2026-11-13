@@ -20,6 +20,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Surface commits redraw their affected outputs; hidden windows keep their
+  throttled frame callbacks without waking the renderer. Surface ownership
+  is cached across commits and cleared on unmap. Content-only layer commits
+  no longer recompute usable areas; `wm-timing-stats` includes layer
+  arrangement counts (#153).
 - Receipt allocation and status checks update revisions without rebuilding
   desktop snapshots. Snapshot facts are cached with detached replies and
   indexed frame locations. `mindectl wait` and `watch` use event wakeups,

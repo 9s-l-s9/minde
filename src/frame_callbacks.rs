@@ -123,6 +123,14 @@ impl ParkedFrames {
 }
 
 impl MindeState {
+    /// Hidden commits need callback pacing without waking a rendering output.
+    pub(crate) fn schedule_parked_window_frames(&mut self, window: &Window) {
+        if !self.locked && pending_frames(window) {
+            self.parked_frames
+                .schedule(&self.handle, self.start_time.elapsed());
+        }
+    }
+
     fn send_parked_frames(&mut self) {
         if self.locked {
             return;

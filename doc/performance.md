@@ -1,5 +1,25 @@
 # Performance measurements
 
+## Surface commits and layer arrangement — 2026-11-13
+
+The `surface-commits` scenario in `tests/frame-callbacks-e2e.sh` keeps a
+hidden native client painting at 20 Hz while a visible layer bar paints at
+1 Hz. After startup, 60 hidden paints and three bar paints previously
+caused 63 renders and three usable-area/layer arrangements. They now cause
+three renders and zero arrangements, measured through `wm-timing-stats`.
+The new `arrange-layers` probe counts calls to `update_usable_area`.
+This is one isolated nested output under Xvfb with Xwayland disabled;
+it does not measure physical DRM presentation or multiple GPU outputs.
+
+Commits select affected outputs from current surface ownership and retain
+the previous footprint so shrinking or removing content still repaints.
+Hidden windows arm their callback timer without a render. Window ownership
+uses weak surface references that are cleared on unmap, including X11
+association and remapping. Layer commits compare placement fields, while
+new popup/subsurface roles receive their output association independently.
+The regression also verifies real exclusive-zone changes and synchronized
+child commits. Existing callback tests cover hidden progress and reveal.
+
 ## Control inspection and receipt observation — 2026-11-13
 
 In `tests/control-test.scm`, after gathering an initial snapshot of four

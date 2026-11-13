@@ -416,14 +416,18 @@ impl ResizeSurfaceState {
 }
 
 /// Should be called on `WlSurface::commit`
-pub fn handle_commit(data: &mut MindeState, surface: &WlSurface) -> Option<()> {
+pub fn handle_commit(
+    data: &mut MindeState,
+    surface: &WlSurface,
+    window: Option<&Window>,
+) -> Option<()> {
     // Cheap per-surface state check (no `Space` scan) first: almost every
     // commit is not part of an active resize, so bail before paying for
-    // `window_for_surface`'s linear walk over `space.elements()` (3.9).
+    // a resize transition. Reuse the commit router's owner lookup.
     if ResizeSurfaceState::with(surface, |state| *state == ResizeSurfaceState::Idle) {
         return None;
     }
-    let Some(window) = crate::state::window_for_surface(&data.space, surface) else {
+    let Some(window) = window else {
         ResizeSurfaceState::with(surface, |state| *state = ResizeSurfaceState::Idle);
         return None;
     };
@@ -432,13 +436,13 @@ pub fn handle_commit(data: &mut MindeState, surface: &WlSurface) -> Option<()> {
         .with_cached_state(|state| state.last_acked.as_ref().map(|configure| configure.serial));
     let (edges, initial_rect, finished) =
         ResizeSurfaceState::with(surface, |state| state.commit(committed))?;
-    let loc = data.space.element_location(&window)?;
+    let loc = data.space.element_location(window)?;
     let size = window.geometry().size;
     let new_loc = resize_location(edges, initial_rect, loc, size);
     if new_loc != loc {
         data.space.map_element(window.clone(), new_loc, false);
     }
-    if finished && let Some(id) = data.id_for_window(&window) {
+    if finished && let Some(id) = data.id_for_window(window) {
         // The client may choose a different size (e.g. terminal increments).
         // The acknowledged final commit, rather than a size comparison, ends
         // the resize and supplies the authoritative floating rectangle.

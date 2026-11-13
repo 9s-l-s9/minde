@@ -1720,19 +1720,27 @@ impl MindeState {
     /// overlays, output configuration, queued captures. Wakes winit through its
     /// coalescing ping source.
     pub fn schedule_redraw(&mut self) {
-        self.schedule_redraw_where(|_| true);
+        self.schedule_redraw_where(|_, _| true);
     }
 
     /// Like [`schedule_redraw`](Self::schedule_redraw), but only for the
     /// outputs whose geometry contains one of `points` -- the pointer's old
     /// and new location on motion, or its location on a cursor image change.
     pub fn schedule_redraw_at(&mut self, points: &[Point<f64, Logical>]) {
-        self.schedule_redraw_where(|geo| points.iter().any(|p| geo.to_f64().contains(*p)));
+        self.schedule_redraw_where(|_, geo| points.iter().any(|p| geo.to_f64().contains(*p)));
+    }
+
+    /// A content commit can affect only its current and previous outputs.
+    /// Do not wake the nested backend for an empty (hidden) surface footprint.
+    pub(crate) fn schedule_redraw_outputs(&mut self, outputs: &[Output]) {
+        if !outputs.is_empty() {
+            self.schedule_redraw_where(|output, _| outputs.contains(output));
+        }
     }
 
     fn schedule_redraw_where(
         &mut self,
-        mut wanted: impl FnMut(smithay::utils::Rectangle<i32, Logical>) -> bool,
+        mut wanted: impl FnMut(&Output, smithay::utils::Rectangle<i32, Logical>) -> bool,
     ) {
         if let Some(ping) = &self.winit_redraw_ping {
             ping.ping();
@@ -1750,7 +1758,7 @@ impl MindeState {
                 let Some(geo) = self.space.output_geometry(&entry.output) else {
                     continue;
                 };
-                if !wanted(geo) {
+                if !wanted(&entry.output, geo) {
                     continue;
                 }
                 surface.dirty = true;

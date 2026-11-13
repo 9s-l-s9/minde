@@ -14,4 +14,9 @@ nested_wayland timeout 45 "$NESTED_PROTOCOL_CLIENT" frame-callbacks >"$OUT/frame
     exit 1
 }
 cat "$OUT/frames.log"
+nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" surface-commits >"$OUT/commits.log" 2>&1 || {
+    cat "$OUT/commits.log" >&2
+    exit 1
+}
+cat "$OUT/commits.log"
 echo "frame-callbacks-e2e: all checks passed"

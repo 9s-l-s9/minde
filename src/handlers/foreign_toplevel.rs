@@ -99,7 +99,7 @@ fn encode_states(states: &[HandleState]) -> Vec<u8> {
     bytes
 }
 
-fn outputs_for_geometry(
+pub(crate) fn outputs_for_geometry(
     space: &Space<Window>,
     geometry: Option<Rectangle<i32, Logical>>,
 ) -> Vec<Output> {
@@ -246,7 +246,19 @@ impl MindeState {
     /// Refresh just the window whose committed geometry changed. This also
     /// runs during pointer dispatch, so it must not call Scheme or grab input.
     pub(crate) fn refresh_foreign_toplevel_output(&mut self, id: u64) {
-        let new_outputs = self.foreign_outputs_for(id);
+        let geometry = self
+            .windows
+            .get(&id)
+            .and_then(|w| self.space.element_geometry(w));
+        self.refresh_foreign_toplevel_geometry(id, geometry);
+    }
+
+    pub(crate) fn refresh_foreign_toplevel_geometry(
+        &mut self,
+        id: u64,
+        geometry: Option<Rectangle<i32, Logical>>,
+    ) {
+        let new_outputs = outputs_for_geometry(&self.space, geometry);
         let Some(entry) = self.foreign_toplevel.toplevels.get_mut(&id) else {
             return;
         };

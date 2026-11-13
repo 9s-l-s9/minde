@@ -17,6 +17,7 @@ use smithay::{
 
 impl MindeState {
     pub(crate) fn unmap_window(&mut self, window: &Window) {
+        crate::state::forget_surface_window(window);
         self.space.unmap_elem(window);
         self.schedule_redraw();
         // Unmapped native and X11 windows may retain live surfaces. Grabs cannot

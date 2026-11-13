@@ -101,6 +101,8 @@ impl Popup {
         let geometry = std::array::from_fn(|i| event.word(i) as i32);
         let configure = c.wait(start, |e| e.is(self.xdg, 0));
         c.send(self.xdg, 4, &words(&[configure.word(0)]));
+        let callback = c.alloc();
+        c.send(self.surface, 3, &words(&[callback]));
         c.paint(
             self.surface,
             geometry[2] as u32,
@@ -108,6 +110,7 @@ impl Popup {
             0x00ff00,
         );
         c.roundtrip();
+        c.event(callback, 0);
         geometry
     }
 
@@ -150,6 +153,7 @@ pub fn fractional_scales() {
     ];
 
     let mut panel = Panel::new("fractional layer parent", 3, 0);
+    let panel_output = panel.input.bind("wl_output", 1);
     let surface = panel.input.surface;
     let panel_scale = fractional(&mut panel.input.c, surface);
     let (menu, _) = Popup::new(
@@ -164,6 +168,16 @@ pub fn fractional_scales() {
     let panel_scales = [panel_scale, menu.scale, menu_child, submenu.scale];
     scales(&mut desktop.c, &desktop_scales, 120);
     scales(&mut panel.input.c, &panel_scales, 120);
+    for surface in [menu.surface, submenu.surface] {
+        assert!(
+            panel
+                .input
+                .events
+                .iter()
+                .any(|e| e.is(surface, 0) && e.word(0) == panel_output),
+            "layer popup missed output enter without a parent repaint"
+        );
+    }
 
     for (fixed_scale, expected) in [(384, 180), (256, 120)] {
         let (config, head) = output.configuration(Some(true));

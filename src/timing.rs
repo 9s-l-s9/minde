@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Wall-clock probes around the compositor's hot paths: one command applied
-//! from Scheme, one key dispatch, one rendered frame. Each probe keeps a
+//! from Scheme, one key dispatch, one rendered frame, one layer arrangement.
+//! Each probe keeps a
 //! count, total and maximum plus a five-bucket histogram, all as atomics so
 //! recording costs a few stores. `(wm-timing-stats)` reads the snapshot for
 //! the diagnostics report, turning "unverified" costs into numbers on the
@@ -23,12 +24,15 @@ pub enum Probe {
     HandleKey = 1,
     /// One `render_surface` (udev) or winit redraw.
     Render = 2,
+    /// Recompute output usable areas and arrange their layer surfaces.
+    ArrangeLayers = 3,
 }
 
-const PROBES: [(&str, Probe); 3] = [
+const PROBES: [(&str, Probe); 4] = [
     ("apply-command", Probe::ApplyCommand),
     ("handle-key", Probe::HandleKey),
     ("render", Probe::Render),
+    ("arrange-layers", Probe::ArrangeLayers),
 ];
 
 #[derive(Default)]
@@ -39,7 +43,13 @@ struct Stats {
     buckets: [AtomicU64; 5],
 }
 
-static STATS: [Stats; 3] = [
+static STATS: [Stats; 4] = [
+    Stats {
+        count: AtomicU64::new(0),
+        total_us: AtomicU64::new(0),
+        max_us: AtomicU64::new(0),
+        buckets: [const { AtomicU64::new(0) }; 5],
+    },
     Stats {
         count: AtomicU64::new(0),
         total_us: AtomicU64::new(0),

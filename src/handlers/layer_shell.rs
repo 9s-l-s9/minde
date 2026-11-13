@@ -64,6 +64,7 @@ impl WlrLayerShellHandler for MindeState {
         // before the popup's initial commit and configure handshake.
         self.unconstrain_popup(&popup);
         self.update_surface_fractional_scale(popup.wl_surface());
+        self.enter_layer_surface_output(popup.wl_surface());
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {

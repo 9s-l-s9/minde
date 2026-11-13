@@ -93,7 +93,7 @@ impl XdgShellHandler for MindeState {
         // A dying client sends no further commits, so the render pass must
         // be asked for explicitly or its last frame lingers on screen.
         self.schedule_redraw();
-        let window = crate::state::window_for_surface(&self.space, surface.wl_surface());
+        let window = crate::state::window_for_surface(surface.wl_surface());
 
         if let Some(window) = window {
             self.unmap_window(&window);
@@ -104,6 +104,7 @@ impl XdgShellHandler for MindeState {
         self.unconstrain_popup(&surface);
         let _ = self.popups.track_popup(PopupKind::Xdg(surface.clone()));
         self.update_surface_fractional_scale(surface.wl_surface());
+        self.enter_layer_surface_output(surface.wl_surface());
     }
 
     fn reposition_request(
@@ -137,7 +138,7 @@ impl XdgShellHandler for MindeState {
                 return;
             };
 
-            let Some(window) = crate::state::window_for_surface(&self.space, wl_surface) else {
+            let Some(window) = crate::state::window_for_surface(wl_surface) else {
                 return;
             };
             let Some(initial_window_location) = self.space.element_location(&window) else {
@@ -180,7 +181,7 @@ impl XdgShellHandler for MindeState {
                 return;
             };
 
-            let Some(window) = crate::state::window_for_surface(&self.space, wl_surface) else {
+            let Some(window) = crate::state::window_for_surface(wl_surface) else {
                 return;
             };
             let Some(initial_window_location) = self.space.element_location(&window) else {
@@ -424,7 +425,7 @@ impl MindeState {
             return;
         };
         let parent_offset = get_popup_toplevel_coords(&kind);
-        let target = if let Some(window) = crate::state::window_for_surface(&self.space, &root) {
+        let target = if let Some(window) = crate::state::window_for_surface(&root) {
             self.space.element_geometry(&window).and_then(|geometry| {
                 popup_constraint_rect(
                     geometry,
