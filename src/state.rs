@@ -863,6 +863,10 @@ impl MindeState {
             }
             WmCommand::SetFloating { id, on } => {
                 if on {
+                    if !self.windows.contains_key(&id) {
+                        tracing::warn!(id, "wm-set-floating: unknown window id");
+                        return false;
+                    }
                     self.floating_ids.insert(id);
                 } else {
                     self.floating_ids.remove(&id);

@@ -204,6 +204,7 @@ pub fn outputs() {
     println!("ok - disabling and restoring the last output clears and restores associations");
 }
 pub fn run() {
+    floating_ids();
     focus();
     metadata();
     placement_rules();
@@ -369,6 +370,59 @@ pub fn run() {
     evaluate("(length lifecycle-unmaps)", "7");
     assert!(observer.live_handles().is_empty());
     println!("ok - mapped and unmapped role destruction emit unmap exactly once");
+}
+
+fn floating_ids() {
+    evaluate("(wm-floating-ids)", "()");
+    let mut anchor = Client::new("floating registry anchor");
+    anchor.toplevel(true);
+    let anchor_id = window_id(&anchor.name);
+    let next_id = anchor_id + 1;
+    for id in [u32::MAX, next_id] {
+        evaluate(&format!("(wm-set-floating {id} #t)"), "#f");
+        evaluate("(wm-floating-ids)", "()");
+        evaluate(&format!("(wm-set-floating {id} #f)"), "#t");
+    }
+    let mut target = Client::new("floating registry target");
+    target.toplevel(true);
+    let id = window_id(&target.name);
+    assert_eq!(id, next_id);
+    evaluate("(wm-floating-ids)", "()");
+    evaluate(&format!("(wm-set-floating {anchor_id} #t)"), "#t");
+    for on in ["#t", "#f", "#t"] {
+        evaluate(&format!("(wm-set-floating {id} {on})"), "#t");
+        evaluate(&format!("(and (member {id} (wm-floating-ids)) #t)"), on);
+    }
+    target.map_on_configure = false;
+    target.send(target.surface, 1, &words(&[0, 0, 0]));
+    target.send(target.surface, 6, &[]);
+    target.roundtrip();
+    evaluate("(wm-floating-ids)", &format!("({anchor_id})"));
+    evaluate(&format!("(wm-set-floating {id} #t)"), "#f");
+    evaluate(&format!("(wm-set-floating {id} #f)"), "#t");
+    evaluate("(wm-floating-ids)", &format!("({anchor_id})"));
+    target.send(target.surface, 6, &[]);
+    target.roundtrip();
+    target.send(target.toplevel_object, 2, &string(&target.name));
+    target.map_on_configure = true;
+    target.paint(target.surface, 300, 200, 0x00ff00);
+    target.roundtrip();
+    let remapped = window_id(&target.name);
+    assert!(remapped > id);
+    evaluate(
+        &format!("(and (member {remapped} (wm-floating-ids)) #t)"),
+        "#f",
+    );
+    drop(target);
+    drop(anchor);
+    until(
+        || ipc("(all-window-ids)") == "(ok ())",
+        "floating registry clients remained mapped",
+    );
+    evaluate("(wm-floating-ids)", "()");
+    println!(
+        "ok - floating flags reject unknown, future and retired IDs and follow actual window lifetimes"
+    );
 }
 
 fn metadata() {

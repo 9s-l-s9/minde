@@ -296,3 +296,5 @@ hidden groups and unfocused windows. It checks configure replies for deferred,
 repeated and cancelled requests, parked geometry, keyboard delivery, invalid
 IDs and explicit taskbar activation. Scheme tests cover stale float mirrors,
 fullscreen-owner replacement and removal of the separately focused window.
+Its lifecycle client checks that floating flags reject unknown, future and
+retired IDs, follow real map/unmap lifetimes, and leave other windows intact.

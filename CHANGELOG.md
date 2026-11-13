@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Enabling floating state rejects unknown or retired window IDs instead of
+  leaving ghost entries or premarking future windows. Disabling remains a
+  harmless cleanup operation for stale IDs (#59).
 - Automation drops publish one terminal result per token. Finishing or
   destroying an accepted offer cleans up transfers without overwriting the
   accepted handoff result or resurrecting evicted history entries (#51).
