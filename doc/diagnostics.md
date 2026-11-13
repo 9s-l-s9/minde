@@ -77,6 +77,13 @@ scripts/mindectl report --output /tmp/minde-report
 ```
 
 The output directory must not already exist and is created mode `0700`.
+The command fetches required state before creating that directory, so a failed
+state request leaves the destination available for retry. Each IPC exchange,
+including `query state --json`, has a two-second deadline. Transport failures
+exit with status `3` and a short error on stderr. Optional timing and drift
+requests may fail or time out while the rest of the report is still collected.
+An output directory created by another process during state retrieval is
+preserved and the command fails without writing into it.
 It contains:
 
 - `report.txt`: report version, minde version, kernel, redacted config path,

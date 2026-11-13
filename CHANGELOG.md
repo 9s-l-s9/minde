@@ -21,6 +21,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Diagnostic state queries and report requests use the bounded IPC client,
+  returning transport status 3 without an uncaught backtrace. A failed initial
+  state request no longer leaves an empty report directory, and concurrent
+  report creation cannot overwrite another report (#115, #116).
 - IPC clients handle pending connections and transient socket errors within
   their original deadline. Interrupted waits resume, and transport failures
   only report possible effects after request bytes have been sent (#109).

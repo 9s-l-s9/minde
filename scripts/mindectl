@@ -46,7 +46,7 @@ failure. A timeout never cancels an action; inspect its receipt before retrying.
 EOF
 }
 
-control_client() {
+client_modules() {
     script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
     if [ -f "$script_dir/../scheme/minde/control-client.scm" ]; then
         modules=$script_dir/../scheme
@@ -63,14 +63,17 @@ control_client() {
         GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
         export GUILE_LOAD_COMPILED_PATH
     fi
+}
+
+control_client() {
+    client_modules
     exec "$GUILE" -q --no-auto-compile -L "$modules" -c \
         '(use-modules (minde control-client))
          (exit (control-client-main (cdr (command-line))))' "$socket_path" "$@"
 }
 
-# Shared by every socket client: refuse a runtime directory that is not a
-# private directory of the calling user, exactly like the compositor does
-# before it binds (src/runtime_dir.rs), then connect.
+# Long-lived subscriptions use blocking sockets. Request/response commands
+# use the bounded control client below. Both require a private runtime directory.
 client_prelude='
 (define (connect-private path)
   (let* ((directory (dirname path))
@@ -90,47 +93,21 @@ client_prelude='
   (let ((st (false-if-exception (stat path))))
     (and st (eq? (stat:type st) (quote socket)))))'
 
-# One request per connection, SHUT_WR framing, one datum reply. MODE is
-# `scheme` for the historical eval representation and `raw` for a returned
-# string such as current-state-json (displayed verbatim). A Guile boot costs
-# about 20 ms here (guile -q --no-auto-compile); nothing lighter is in the
-# manifest, so this stays the client.
+# Keep diagnostic output verbatim while sharing the control client's deadline,
+# framing, runtime checks and transport exit status.
 ipc_request() {
-    mode=$1
-    expression=$2
-    "$GUILE" -q --no-auto-compile -c "$client_prelude"'
-      (let* ((args (cdr (member "--" (command-line))))
+    client_modules
+    "$GUILE" -q --no-auto-compile -L "$modules" -c '
+      (use-modules (minde control-client))
+      (let* ((args (cdr (command-line)))
              (path (car args))
-             (mode (cadr args))
-             (expression (caddr args))
-             (sock (connect-private path)))
-        (display expression sock)
-        (shutdown sock 1)
-        (let ((response (read sock)))
-          (close sock)
-          (if (and (pair? response) (eq? (car response) (quote ok)))
-              (begin
-                (if (string=? mode "raw")
-                    (display (cadr response))
-                    (write (cadr response)))
-                (newline))
-              (begin
-                ;; Error replies are (error KEY ARGS MESSAGE BACKTRACE); surface
-                ;; the human-readable message and bounded backtrace when present,
-                ;; falling back to the raw datum for any other shape.
-                (if (and (pair? response) (eq? (car response) (quote error)))
-                    (let ((tail (cdddr response)))
-                      (format (current-error-port) "mindectl: ~a: ~s~%"
-                              (cadr response) (caddr response))
-                      (when (and (pair? tail) (string? (car tail))
-                                 (not (string-null? (car tail))))
-                        (format (current-error-port) "  ~a~%" (car tail)))
-                      (when (and (pair? tail) (pair? (cdr tail))
-                                 (string? (cadr tail))
-                                 (not (string-null? (cadr tail))))
-                        (format (current-error-port) "~a~%" (cadr tail))))
-                    (format (current-error-port) "mindectl: ~s~%" response))
-                (exit 1)))))' -- "$socket_path" "$mode" "$expression"
+             (expression (cadr args))
+             (response (ipc-request path expression)))
+        (if (eq? (car response) (quote ok))
+            (begin
+              (display (cadr response))
+              (newline))
+            (exit (emit-reply response (quote raw)))))' "$socket_path" "$1"
 }
 
 redacted_path() {
@@ -147,13 +124,17 @@ write_report() {
         echo "mindectl: report output already exists: $output" >&2
         exit 1
     }
-    mkdir -p "$output"
-    chmod 700 "$output"
+    # A missing or stalled compositor must not reserve the destination with an
+    # empty state file. Command substitution preserves the transport exit code.
+    state=$(ipc_request '(current-state-json #:redact? #t)')
+    mkdir -p -- "$(dirname -- "$output")"
+    # Refuse a destination created by another process during the IPC request.
+    mkdir -m 700 -- "$output"
 
-    ipc_request raw '(current-state-json #:redact? #t)' >"$output/state.json"
+    printf '%s\n' "$state" >"$output/state.json"
     # Hot-path timing and mirror consistency: cheap, never personal.
-    ipc_request raw '(wm-timing-stats)' >"$output/timing.txt" 2>/dev/null || true
-    ipc_request raw '(mirror-drift)' >"$output/drift.txt" 2>/dev/null || true
+    ipc_request '(wm-timing-stats)' >"$output/timing.txt" 2>/dev/null || true
+    ipc_request '(mirror-drift)' >"$output/drift.txt" 2>/dev/null || true
     chmod 600 "$output/state.json"
 
     script_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
@@ -221,7 +202,7 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        ipc_request raw '(current-state-json)'
+        ipc_request '(current-state-json)'
         ;;
     subscribe)
         [ "$#" -eq 2 ] || { usage >&2; exit 2; }
