@@ -36,18 +36,49 @@
            (execution-started? . ,(if sent? 'unknown #f))
            (execution-completed? . #f)
            (effects-may-have-occurred? . ,(and sent? #t)))))
-(define (wait-ready sock write? deadline)
+(define (remaining-time deadline)
   (let ((remaining (- deadline (milliseconds))))
     (when (<= remaining 0) (throw 'transport-failure 'timeout "IPC deadline exceeded"))
-    (let ((ready (select (if write? '() (list sock))
-                         (if write? (list sock) '()) '()
-                         (quotient remaining 1000) (* (modulo remaining 1000) 1000))))
-      (unless (pair? (list-ref ready (if write? 1 0)))
-        (throw 'transport-failure 'timeout "IPC deadline exceeded")))))
+    remaining))
+(define (wait-ready sock write? deadline)
+  (let ((remaining (remaining-time deadline)))
+    (catch 'system-error
+      (lambda ()
+        (let ((ready (select (if write? '() (list sock))
+                            (if write? (list sock) '()) '()
+                            (quotient remaining 1000) (* (modulo remaining 1000) 1000))))
+          (unless (pair? (list-ref ready (if write? 1 0)))
+            (throw 'transport-failure 'timeout "IPC deadline exceeded"))))
+      (lambda args
+        (if (= (system-error-errno args) EINTR)
+            (wait-ready sock write? deadline)
+            (apply throw args))))))
 (define (would-block? arguments)
   (memv (system-error-errno arguments) (list EAGAIN EWOULDBLOCK EINPROGRESS EINTR)))
+(define (connect-before-deadline sock path deadline)
+  (let loop ()
+    (remaining-time deadline)
+    ;; Guile returns #f for a pending nonblocking connect; it need not throw.
+    (unless (catch 'system-error
+              (lambda () (connect sock AF_UNIX path))
+              (lambda args
+                (cond ((= (system-error-errno args) EISCONN) #t)
+                      ((or (would-block? args) (= (system-error-errno args) EALREADY)) #f)
+                      (else (apply throw args)))))
+      (wait-ready sock #t deadline)
+      (unless (zero? (getsockopt sock SOL_SOCKET SO_ERROR))
+        (throw 'transport-failure 'connection-failed "could not connect to IPC socket"))
+      ;; A full AF_UNIX accept queue leaves the socket writable with SO_ERROR
+      ;; zero, but no peer. Retry connecting, with a bounded pause to avoid spin.
+      (unless (catch 'system-error
+                (lambda () (getpeername sock) #t)
+                (lambda args
+                  (if (memv (system-error-errno args) (list ENOTCONN EINTR))
+                      #f (apply throw args))))
+        (usleep (* 1000 (min 10 (remaining-time deadline))))
+        (loop)))))
 (define* (ipc-request path expression #:key (timeout-ms 2000))
-  "One bounded request/response exchange, with no automatic retries. A lost
+  "One bounded request/response exchange, with no automatic request replay. A lost
 reply after sending is an unknown outcome; timeout does not cancel evaluation."
   (let ((sock #f) (sent? #f) (deadline (+ (milliseconds) timeout-ms)))
     (catch #t
@@ -66,25 +97,20 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
           ;; This client process reports EPIPE as structured transport failure.
           (sigaction SIGPIPE SIG_IGN)
           (fcntl sock F_SETFL (logior O_NONBLOCK (fcntl sock F_GETFL)))
-          (catch 'system-error
-            (lambda () (connect sock AF_UNIX path))
-            (lambda (key . args)
-              (unless (would-block? args) (apply throw key args))
-              (wait-ready sock #t deadline)
-              (unless (zero? (getsockopt sock SOL_SOCKET SO_ERROR))
-                (throw 'transport-failure 'connection-failed "could not connect to IPC socket"))))
+          (connect-before-deadline sock path deadline)
           (let send-loop ((offset 0))
             (when (< offset (bytevector-length request))
               (wait-ready sock #t deadline)
               (let* ((remaining (- (bytevector-length request) offset))
                      (bytes (make-bytevector remaining)))
                 (bytevector-copy! request offset bytes 0 remaining)
-                ;; Once send is attempted, conservatively allow partial delivery.
-                (set! sent? #t)
                 (let ((n (catch 'system-error
                            (lambda () (send sock bytes))
-                           (lambda (key . args)
-                             (if (would-block? args) 0 (apply throw key args))))))
+                           (lambda args
+                             (if (would-block? args) 0 (apply throw args))))))
+                  ;; EAGAIN/EINTR deliver no bytes. Any positive partial write
+                  ;; makes a subsequent failure an unknown action outcome.
+                  (when (positive? n) (set! sent? #t))
                   (send-loop (+ offset n))))))
           (shutdown sock 1)
           (let ((buffer (make-bytevector 8192)))
@@ -92,8 +118,8 @@ reply after sending is an unknown outcome; timeout does not cancel evaluation."
               (wait-ready sock #f deadline)
               (let ((n (catch 'system-error
                          (lambda () (recv! sock buffer))
-                         (lambda (key . args)
-                           (if (would-block? args) -1 (apply throw key args))))))
+                         (lambda args
+                           (if (would-block? args) -1 (apply throw args))))))
                 (cond
                  ((negative? n) (receive-loop chunks total))
                  ((zero? n)

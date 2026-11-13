@@ -21,6 +21,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- IPC clients handle pending connections and transient socket errors within
+  their original deadline. Interrupted waits resume, and transport failures
+  only report possible effects after request bytes have been sent (#109).
 - Nested tests clean up owned processes and fresh runtime directories on
   failures and signals, reject occupied Xvfb displays, and match colored
   log fields consistently. Repeated teardown does not signal retired PIDs

@@ -179,6 +179,9 @@ from the client; it never blocks the compositor. The default observation
 deadline is 10 seconds, and ordinary command transport defaults to a total
 2-second deadline, including implicit receipt allocation before a call.
 `--timeout-ms` can override that transport deadline or the wait deadline.
+Temporary socket errors, interrupted waits and a full connection queue are
+handled within that same deadline. An error before any request bytes are sent
+has outcome `not-started`; a failure after a partial write has outcome `unknown`.
 A client timeout **does not cancel an action**. If a reply is lost or
 incomplete after transmission, retain its request ID, inspect its receipt,
 and report uncertainty if observation cannot establish the outcome. Never
