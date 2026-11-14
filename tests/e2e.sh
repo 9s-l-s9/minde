@@ -1,458 +1,133 @@
 #!/bin/sh
-# Headless end-to-end test of the nested (winit) backend under Xvfb:
-# starts the compositor with the repo config, drives it with XTEST key
-# events, and asserts pass/fail from the debug log plus screenshot
-# non-emptiness. Screenshots are left in $E2E_OUT (default /tmp/minde-e2e)
-# for eyeballing.
-#
-# Run inside the dev shell with the extra tools:
-#   guix shell -m manifest.scm xorg-server xdotool imagemagick foot xterm swaylock wayland-utils -- tests/e2e.sh
-# (xterm exercises the Xwayland block; swaylock and wayland-info the
-# session-lock block; each is skipped when absent.)
-#
-# NOTE: this cannot exercise the udev/DRM backend (no seat/DRM headless);
-# TTY changes still need a live `./debug-tty.sh` run from a spare VT.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Historical keymap integration under a private Xvfb/winit session. Scheme
+# asserts observable effects; shell owns processes and external diagnostics.
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT="${E2E_OUT:-/tmp/minde-e2e}"
-LOG="$OUT/compositor.log"
+OUT=${E2E_OUT:-/tmp/minde-e2e}
+LOG=$OUT/compositor.log
 SWAYLOCK_PID=
+SUBSCRIBE_PID=
+STRESS_PIDS=
 cleanup() {
-  if [ -n "$SWAYLOCK_PID" ]; then
-    kill "$SWAYLOCK_PID" 2>/dev/null || true
-    wait "$SWAYLOCK_PID" 2>/dev/null || true
-    SWAYLOCK_PID=
-  fi
-  nested_stop
+    for pid in "$SWAYLOCK_PID" "$SUBSCRIBE_PID" $STRESS_PIDS; do
+        [ -n "$pid" ] || continue
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    nested_stop
 }
 nested_install_cleanup cleanup
-
 fail() {
-  echo "FAIL - $1"
-  [ -f "$LOG" ] && tail -5 "$LOG"
-  exit 1
+    echo "FAIL - $*; artifacts: $OUT" >&2
+    [ ! -f "$LOG" ] || tail -n 8 "$LOG" >&2
+    exit 1
 }
-ok() { echo "ok - $1"; }
-# tracing writes ANSI color codes even into the redirected log; strip
-# them before matching or patterns like "cmd=foot" never hit.
+ok() { echo "ok - $*"; }
 loggrep() { nested_log_has "$1"; }
-
-export MINDE_NESTED_LEGACY_KEYMAP=1
-nested_start "$OUT" "${E2E_DISPLAY:-:97}" || fail "nested compositor startup"
-RT=$NESTED_RT
-WM_PID=$NESTED_WM_PID
-sleep 1
-ok "compositor up, scheme layer loaded"
-
-# The supported state query and file-backed subscription expose the
-# same versioned JSON document without arbitrary caller-side parsing.
-state=$(scripts/mindectl query state --json) || fail "structured state query"
-printf '%s\n' "$state" | grep -q '"schema_version":1' || fail "state schema version"
-printf '%s\n' "$state" | grep -q '"backend":"winit"' || fail "state backend"
-printf '%s\n' "$state" | grep -q '"outputs":\[' || fail "state outputs"
-[ -s "$RT/minde/status.json" ] || fail "atomic status.json missing"
-timeout 1 scripts/mindectl subscribe --json >"$OUT/subscription.json" || true
-grep -q '"schema_version":1' "$OUT/subscription.json" || fail "status subscription"
-ok "versioned query + atomic status + subscription"
-
-xdotool search --name Smithay windowfocus || fail "focus nested window"
-
-# Native prompt: Print r, type, TAB-complete, Return -> spawns foot.
-xdotool key Print; sleep 0.3
-xdotool key r; sleep 2
-import -window root "$OUT/prompt.png"
-xdotool type --delay 60 "foo"; sleep 0.3
-xdotool key Tab; sleep 0.3
-xdotool key Return
-sleep 4
-loggrep 'wm-spawn cmd=foot' || fail "run prompt did not spawn TAB-completed foot"
-loggrep "handle-window-map!\|window map" || true
-xdotool key Print; sleep 0.2; xdotool key y; sleep 0.5
-import -window root "$OUT/info.png"
-ok "run prompt: type, complete, spawn"
-
-# Reports deliberately request the redacted status view and filter recent log
-# lines that may contain window titles, app ids, clipboard data or commands.
-REPORT="$OUT/report-$WM_PID"
-scripts/mindectl report --output "$REPORT" >/dev/null || fail "diagnostic report"
-grep -q '^report_schema_version=1$' "$REPORT/report.txt" || fail "report schema"
-grep -q '"schema_version":1' "$REPORT/state.json" || fail "report state"
-grep -q '"title"\|"app_id"' "$REPORT/state.json" && fail "report leaked window metadata"
-grep -q '^(' "$REPORT/timing.txt" || fail "report timing"
-[ "$(cat "$REPORT/drift.txt")" = "()" ] || fail "policy mirrors drifted from the compositor: $(cat "$REPORT/drift.txt")"
-# The test driver's HOME deliberately differs from the compositor's private one.
-# shellcheck disable=SC2031
-grep -q "$HOME" "$REPORT"/* && fail "report leaked an absolute home path"
-ok "redacted diagnostic report"
-
-# Splits and window cycling don't error.
-xdotool key Print; sleep 0.2; xdotool key v; sleep 0.5
-xdotool key Print; sleep 0.2; xdotool key Print; sleep 0.5
-loggrep "error in keybinding" && fail "a keybinding errored (see log)"
-ok "split + Print Print cycle without errors"
-
-# iresize mode: Print s, nudge the divider, exit -- must not error.
-xdotool key Print; sleep 0.2; xdotool key s; sleep 0.3
-xdotool key Down; sleep 0.2; xdotool key Down; sleep 0.2
-xdotool key Return; sleep 0.5
-loggrep "error in keybinding" && fail "iresize errored (see log)"
-ok "iresize mode"
-
-# Navigation: directional focus, last-window toggle, select by
-# number, windows echo -- none may error.
-xdotool key Print; sleep 0.2; xdotool key Down; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key Tab; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key 0; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key shift+w; sleep 0.5
-import -window root "$OUT/windows-echo.png"
-loggrep "error in keybinding" && fail "navigation keys errored (see log)"
-ok "navigation: arrows / Tab / 0 / W"
-
-# Which-key, describe-key and marks -- no errors. Prompt editing is
-# covered by input-test.scm and evaluation envelopes by ipc-reply-test.scm;
-# typing a long expression through XTEST redraws the software-rendered prompt
-# for every character and is too timing-sensitive to be a useful e2e gate.
-xdotool key Print; sleep 0.2; xdotool key question; sleep 0.3
-xdotool key Escape; sleep 0.2 # leave the armed prefix
-xdotool key Print; sleep 0.2; xdotool key F1; sleep 0.2; xdotool key v; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key x; sleep 0.3
-loggrep "error in keybinding" && fail "which-key/describe-key/marks keys errored (see log)"
-ok "which-key / describe-key / marks"
-
-# Fullscreen toggle, banish, frame flash, clipboard. Timer delivery
-# and lock-timeout behavior are covered deterministically by session-test.scm;
-# the nested path below checks that timer-backed commands do not log errors.
-xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
-xdotool key Print; sleep 0.2; xdotool key alt+f; sleep 0.5
-xdotool key Print; sleep 0.2; xdotool key shift+b; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key ctrl+c; sleep 0.6
-loggrep "error in keybinding" && fail "fullscreen/banish/clipboard keys errored (see log)"
-loggrep "error in timer" && fail "a timer thunk errored (see log)"
-# Clipboard: own the selection compositor-side, paste it into the eval
-# prompt with C-y, evaluate.
-scripts/minde-cmd '(set-clipboard! "(+ 2 3)")' >/dev/null 2>&1 || true
-sleep 0.5
-xdotool key Print; sleep 0.2; xdotool key colon; sleep 0.3
-xdotool key ctrl+y; sleep 0.5
-xdotool key Return; sleep 0.5
-import -window root "$OUT/paste.png"
-loggrep "error in keybinding" && fail "clipboard paste errored (see log)"
-ok "fullscreen / banish / flash / clipboard paste"
-
-# Multi-head keys: with the single nested head they must echo "only one
-# head" rather than erroring; wm-outputs must return the winit head.
-xdotool key Print; sleep 0.2; xdotool key shift+s; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key alt+s; sleep 0.3
-loggrep "error in keybinding" && fail "head keys errored (see log)"
-scripts/minde-cmd '(wm-log (format #f "e2e-outputs ~s" (wm-outputs)))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-outputs ((0 " || fail "wm-outputs did not report the winit head"
-ok "head keys + wm-outputs (single head)"
-
-# Xwayland: an X11 client (xterm) must map as a managed window, with the
-# 'new-window hook seeing its class as the app-id. Skips cleanly when
-# Xwayland/xterm aren't in the shell.
-if command -v Xwayland >/dev/null 2>&1 && command -v xterm >/dev/null 2>&1; then
-  scripts/minde-cmd '(begin
-    (use-modules (minde hooks))
-    (add-event-hook! (quote new-window)
-      (lambda (id title app-id) (wm-log (format #f "e2e-x11-map ~a" app-id))))
-    (wm-spawn "xterm"))' >/dev/null 2>&1 || true
-  i=0
-  until loggrep "e2e-x11-map.*[Xx][Tt]erm"; do
-    i=$((i + 1))
-    [ "$i" -le 15 ] || fail "xterm did not map via Xwayland within 15s"
-    sleep 1
-  done
-  import -window root "$OUT/x11.png"
-  loggrep "error in keybinding" && fail "x11 block errored (see log)"
-  ok "xwayland: xterm mapped as a managed window"
-else
-  echo "skip - Xwayland/xterm not in the shell; X11 e2e block skipped"
-fi
-
-# Floating: F floats the focused window (geometry lands in %floating),
-# F again unfloats. Assert via a REPL log marker; the geometry must
-# persist across a focus cycle.
-xdotool key Print; sleep 0.2; xdotool key shift+f; sleep 0.5
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (wm-log (format #f "e2e-float ~s ~s"
-                  (window-floating? (focused-window-id))
-                  (float-geometry (focused-window-id)))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-float #t (" || fail "float-this did not float the window"
-xdotool key Print; sleep 0.2; xdotool key f; sleep 0.3
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (wm-log (format #f "e2e-float-still ~s"
-                  (pair? (group-floats (current-group))))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-float-still #t" || fail "float lost across a focus cycle"
-import -window root "$OUT/float.png"
-# Unfloat via IPC (key-cycling back onto the float would depend on
-# how many windows earlier blocks left open).
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (unfloat-window! (car (group-floats (current-group))))
-  (wm-log (format #f "e2e-unfloat ~s"
-                  (null? (group-floats (current-group))))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-unfloat #t" || fail "unfloat did not clear the float list"
-loggrep "error in keybinding" && fail "float keys errored (see log)"
-ok "float-this: float + persistence + unfloat"
-
-# Menu: the windowlist is now a navigable menu; C-n + Return must focus
-# a window without keybinding errors.
-xdotool key Print; sleep 0.2; xdotool key l; sleep 0.5
-import -window root "$OUT/menu.png"
-xdotool key ctrl+n; sleep 0.2
-xdotool key Return; sleep 0.5
-loggrep "error in keybinding" && fail "menu windowlist errored (see log)"
-ok "menu windowlist: open / navigate / select"
-
-# send-string / ratclick / idle / rename / ontop /
-# flatten must all execute without erroring (send-string types into
-# whatever is focused; we only assert the round-trip).
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (window-send-string "echo hi")
-  (ratclick! 1)
-  (rename-window! "e2e-renamed")
-  (toggle-always-on-top!)
-  (toggle-always-on-top!)
-  (wm-log (format #f "e2e-polish idle=~a" (>= (idle-ms) 0))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-polish idle=#t" || fail "polish commands round-trip"
-loggrep "error in keybinding" && fail "polish block errored (see log)"
-ok "send-string / ratclick / rename / ontop / idle"
-
-# Command mode: Print z, then prefix keys work bare until Return.
-xdotool key Print; sleep 0.2; xdotool key z; sleep 0.3
-xdotool key v; sleep 0.3          # bare vsplit
-xdotool key c; sleep 0.3          # bare remove-split
-xdotool key Return; sleep 0.3     # leave command mode
-loggrep "error in keybinding" && fail "command mode errored (see log)"
-ok "command mode: enter / bare keys / exit"
-
-# gnewbg (created, not switched), sticky follows a group
-# switch, and the pull-from-windowlist menu -- all via REPL markers.
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames) (minde groups))
-  (let ((before (current-group-name)))
-    (create-group-in-background! " e2eBG ")
-    (wm-log (format #f "e2e-gnewbg ~s ~s"
-                    (and (member " e2eBG " (group-names)) #t)
-                    (string=? (current-group-name) before)))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-gnewbg #t #t" || fail "gnewbg did not create in the background"
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames) (minde groups))
-  (toggle-always-show!)
-  (switch-to-group! " e2eBG ")
-  (wm-log (format #f "e2e-sticky ~s"
-                  (and (focused-window-id)
-                       (group-has-window? " e2eBG " (focused-window-id))
-                       #t)))
-  (toggle-always-show!)
-  (switch-to-last-group!))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-sticky #t" || fail "sticky window did not follow the group switch"
-# pull-from-windowlist: open the menu (Print M-p), take the first entry.
-xdotool key Print; sleep 0.2; xdotool key alt+p; sleep 0.5
-xdotool key Return; sleep 0.5
-loggrep "error in keybinding" && fail "pull-from-windowlist errored (see log)"
-ok "gnewbg / always-show / pull-from-windowlist"
-
-# fselect (overlays + digit jump), expose in/out, remember +
-# place-existing round-trip.
-xdotool key Print; sleep 0.2; xdotool key j; sleep 0.4
-import -window root "$OUT/fselect.png"
-xdotool key 0; sleep 0.4
-xdotool key Print; sleep 0.2; xdotool key alt+e; sleep 0.5
-import -window root "$OUT/expose.png"
-xdotool key Escape; sleep 0.4
-loggrep "error in keybinding" && fail "fselect/expose errored (see log)"
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames) (minde groups))
-  (remember!)
-  (place-existing-windows!)
-  (forget!)
-  (wm-log "e2e-remember-ok"))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-remember-ok" || fail "remember/forget round-trip"
-ok "fselect / expose / remember"
-
-# Remapped keys + send-key through the real subr, which-key
-# auto-echo, help prompts. A fresh Wayland client first: its app-id
-# only arrives after map, via handle-window-title-change!.
-scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
-sleep 2
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (define-remapped-keys! (list (list ".*" (cons "C-F9" "Down"))))
-  (wm-log (format #f "e2e-remap ~s" (remap-target "C-F9")))
-  (wm-log (format #f "e2e-appids ~s"
-                  (map (lambda (id) (window-app-id id)) (all-window-ids))))
-  (send-key "Down")
-  (wm-log "e2e-sendkey-ok"))' >/dev/null 2>&1 || true
-sleep 1
-loggrep 'e2e-remap "Down"' || fail "remap-target did not resolve"
-# Titles/app-ids must arrive post-map via handle-window-title-change!.
-loggrep 'e2e-appids .*foot' || fail "app-ids never arrived (handle-window-title-change!)"
-loggrep "e2e-sendkey-ok" || fail "send-key errored"
-# Exercise the live remap branch (consumed, synthesized, no errors),
-# then drop the table again.
-xdotool key ctrl+F9; sleep 0.3
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames))
-  (unbind-remapped-keys!))' >/dev/null 2>&1 || true
-# which-key auto-echo: arm the prefix, wait past the delay, screenshot.
-scripts/minde-cmd '(which-key-mode!)' >/dev/null 2>&1 || true
-xdotool key Print; sleep 1.6
-import -window root "$OUT/whichkey.png"
-xdotool key Escape; sleep 0.3
-scripts/minde-cmd '(which-key-mode!)' >/dev/null 2>&1 || true
-# Help prompts open and abort cleanly.
-xdotool key Print; sleep 0.2; xdotool key F2; sleep 0.4
-xdotool key Escape; sleep 0.3
-xdotool key Print; sleep 0.2; xdotool key F5; sleep 0.4
-xdotool key Escape; sleep 0.3
-loggrep "error in keybinding" && fail "remapped-keys/help keys errored (see log)"
-ok "remapped keys / send-key / which-key / help prompts"
-
-# Dynamic groups -- master/stack auto-tiling, rotate,
-# exchange, retile; manual split refused.
-scripts/minde-cmd '(create-dynamic-group! " dyn ")' >/dev/null 2>&1 || true
-sleep 1
-scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
-sleep 2
-scripts/minde-cmd '(wm-spawn "foot")' >/dev/null 2>&1 || true
-sleep 2
-scripts/minde-cmd '(begin
-  (use-modules (minde compositor frames) (minde groups))
-  (wm-log (format #f "e2e-dynamic frames=~a dynamic=~a"
-                  (length (frame-leaves (current-tree)))
-                  (dynamic-group?))))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-dynamic frames=2 dynamic=#t" || fail "dynamic group did not auto-tile"
-import -window root "$OUT/dynamic.png"
-# rotate + exchange via the M-G submap, split refusal via Print v.
-xdotool key Print; sleep 0.2; xdotool key alt+shift+g; sleep 0.3
-xdotool key r; sleep 0.4
-xdotool key Print; sleep 0.2; xdotool key alt+shift+g; sleep 0.3
-xdotool key x; sleep 0.4
-xdotool key Print; sleep 0.2; xdotool key v; sleep 0.4
-loggrep "error in keybinding" && fail "dynamic-group keys errored (see log)"
-scripts/minde-cmd '(begin
-  (use-modules (minde groups))
-  (delete-current-group!)
-  (wm-log "e2e-dynamic-done"))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-dynamic-done" || fail "dynamic gkill cleanup"
-ok "dynamic groups: auto-tile / rotate / exchange / split guard"
-
-# Layouts + gaps via main-thread IPC, with a log marker to assert on.
-scripts/minde-cmd '(begin
-  (use-modules (minde layouts) (minde compositor frames))
-  (apply-layout! "grid4")
-  (set-gaps! 8 8)
-  (wm-log "e2e-layout-and-gaps-ok"))' >/dev/null 2>&1 || true
-sleep 1
-loggrep "e2e-layout-and-gaps-ok" || fail "layout/gaps IPC round-trip"
-loggrep "error in keybinding" && fail "layout/gaps errored (see log)"
-import -window root "$OUT/layout.png"
-ok "grid4 layout + gaps applied via IPC"
-
-# Optional stress pass: all requests and reloads must serialize on calloop.
-if [ -n "${MINDE_E2E_STRESS:-}" ]; then
-  worker() {
-    n=0
-    while [ "$n" -lt 15 ]; do
-      scripts/mindectl eval '(begin (reload-configuration!) (current-group-name))' >/dev/null
-      n=$((n + 1))
-    done
-  }
-  worker & p1=$!
-  worker & p2=$!
-  worker & p3=$!
-  wait "$p1" "$p2" "$p3" || fail "concurrent IPC/reload stress"
-  kill -0 "$WM_PID" || fail "compositor exited during IPC/reload stress"
-  loggrep "panicked at" && fail "panic during IPC/reload stress"
-  ok "concurrent IPC/reload stress"
-fi
-
-# Finish by exercising reload through the keymap as well as IPC.
-xdotool key Print; sleep 0.2; xdotool key shift+r; sleep 2
-import -window root "$OUT/reload.png"
-loggrep "reloaded " || fail "Print R reload did not report success"
-loggrep "error in keybinding" && fail "reload reported a keybinding error"
-ok "Print R reload"
-
-# Screenshots must not be blank (a uniform 1280x800 PNG is ~1KB).
-for shot in prompt reload; do
-  size=$(wc -c < "$OUT/$shot.png")
-  [ "$size" -gt 2000 ] || fail "$shot.png looks blank ($size bytes)"
-done
-ok "screenshots non-blank (in $OUT)"
-
-# Session lock (ext-session-lock-v1), last: nothing can PAM-unlock in a
-# headless harness, so the session stays locked until the compositor is
-# torn down. The nested compositor's client env (not ours) knows the
-# Wayland socket name, so fetch it over IPC for the lock clients below.
-WLD=$(scripts/mindectl eval '(getenv "WAYLAND_DISPLAY")' | tr -d '"')
-if command -v wayland-info >/dev/null 2>&1; then
-  WAYLAND_DISPLAY="$WLD" wayland-info 2>/dev/null \
-    | grep -q ext_session_lock_manager_v1 \
-    || fail "ext_session_lock_manager_v1 global not advertised"
-  ok "session lock: ext_session_lock_manager_v1 advertised"
-else
-  echo "skip: wayland-info not in the shell environment; global check skipped"
-fi
-# The full lock flow needs a real locker. Skips (does not fail) when
-# swaylock is absent or reports an identified PAM/account startup failure.
-if command -v swaylock >/dev/null 2>&1; then
-  nested_wayland_exec swaylock >"$OUT/swaylock.log" 2>&1 &
-  SWAYLOCK_PID=$!
-  n=0
-  until loggrep "session locked (ext-session-lock)"; do
-    n=$((n + 1))
-    if [ "$n" -gt 25 ]; then
-      if ! kill -0 "$SWAYLOCK_PID" 2>/dev/null && nested_locker_unavailable "$OUT/swaylock.log"; then
-        echo "skip: swaylock PAM/account startup failed; inspect $OUT/swaylock.log"
-        break
-      fi
-      fail "swaylock did not confirm the session lock; inspect $OUT/swaylock.log"
+# Preserve errors as well as values, including commands in the lock block.
+eval_checked() {
+    printf '\nrequest: %s\n' "$1" >>"$OUT/cli-ipc.log"
+    if scripts/mindectl eval "$1" >"$OUT/cli-reply" 2>>"$OUT/cli-ipc.log"; then
+        cat "$OUT/cli-reply" >>"$OUT/cli-ipc.log"
+        cat "$OUT/cli-reply"
+    else
+        cat "$OUT/cli-reply" >>"$OUT/cli-ipc.log"
+        fail "IPC evaluation failed; see cli-ipc.log"
     fi
-    sleep 0.2
-  done
-  if loggrep "session locked (ext-session-lock)"; then
-    [ "$(scripts/mindectl eval '(wm-session-locked?)')" = "#t" ] \
-      || fail "wm-session-locked? is not #t while locked"
-    # The WM prefix key must be dead on the lock screen: Print shift+r
-    # reloaded earlier in this script, so a new "reloaded" line now
-    # would mean keys still reach the Scheme keybinding layer.
-    reloads_before=$(nested_plain_log <"$LOG" | grep -ac "reloaded " || true)
-    xdotool key Print; sleep 0.2; xdotool key shift+r; sleep 1
-    reloads_after=$(nested_plain_log <"$LOG" | grep -ac "reloaded " || true)
-    [ "$reloads_before" = "$reloads_after" ] \
-      || fail "Print R reached Scheme while locked"
-    import -window root "$OUT/locked.png"
-    # Abandon case: the locker dying must NOT unlock the session.
-    kill "$SWAYLOCK_PID" || fail "locker exited before the death check"
-    wait "$SWAYLOCK_PID" 2>/dev/null || true
-    SWAYLOCK_PID=
-    sleep 1
-    loggrep "session unlocked (ext-session-lock)" \
-      && fail "locker death unlocked the session"
-    [ "$(scripts/mindectl eval '(wm-session-locked?)')" = "#t" ] \
-      || fail "session did not stay locked after the locker died"
-    ok "session lock: locked, keys dead, stays locked on locker death"
-  fi
-else
-  echo "skip: swaylock not in the shell environment; lock e2e skipped"
+}
+for tool in foot xdotool import guile; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
+export MINDE_NESTED_LEGACY_KEYMAP=1
+nested_start "$OUT" "${E2E_DISPLAY:-:97}" || fail 'nested compositor startup'
+: >"$OUT/cli-ipc.log"
+timeout 5 xdotool search --sync --name Smithay windowfocus || fail 'focus private compositor'
+timeout 180 guile --no-auto-compile -L scheme tests/e2e.scm "$OUT" || fail 'behavioral assertions (see ipc.scm)'
+
+scripts/mindectl query state --json >"$OUT/state.json" || fail 'structured state query'
+jq -e '.schema_version == 1 and .runtime.backend == "winit"' "$OUT/state.json" >/dev/null || fail 'state schema/backend'
+[ -s "$NESTED_RT/minde/status.json" ] || fail 'atomic status file missing'
+timeout 5 scripts/mindectl subscribe --json >"$OUT/subscription.json" 2>"$OUT/subscription.err" &
+SUBSCRIBE_PID=$!
+attempt=0
+until [ -s "$OUT/subscription.json" ] && jq -e '.schema_version == 1' "$OUT/subscription.json" >/dev/null 2>&1; do
+    kill -0 "$SUBSCRIBE_PID" 2>/dev/null || fail 'status subscription exited without data'
+    attempt=$((attempt + 1)); [ "$attempt" -lt 50 ] || fail 'status subscription timeout'
+    sleep 0.05
+done
+kill "$SUBSCRIBE_PID" 2>/dev/null || true
+wait "$SUBSCRIBE_PID" 2>/dev/null || true
+SUBSCRIBE_PID=
+jq -e '.schema_version == 1' "$OUT/subscription.json" >/dev/null || fail 'subscription schema'
+REPORT=$OUT/report-$NESTED_WM_PID
+scripts/mindectl report --output "$REPORT" >"$OUT/report.log" 2>&1 || fail 'diagnostic report'
+grep -q '^report_schema_version=1$' "$REPORT/report.txt" || fail 'report schema'
+jq -e '.schema_version == 1' "$REPORT/state.json" >/dev/null || fail 'report state'
+grep -q '"title"\|"app_id"' "$REPORT/state.json" && fail 'report leaked window metadata'
+grep -q '^(' "$REPORT/timing.txt" || fail 'report timing'
+[ "$(cat "$REPORT/drift.txt")" = '()' ] || fail 'policy mirrors drifted from compositor'
+# The driver's HOME deliberately differs from the private compositor's HOME.
+# shellcheck disable=SC2031
+grep -Fq "$HOME" "$REPORT"/* && fail 'report leaked the driver home path'
+ok 'versioned status, subscription and redacted diagnostic report'
+
+if [ -n "${MINDE_E2E_STRESS:-}" ]; then
+    worker() {
+        n=0
+        while [ "$n" -lt 15 ]; do
+            scripts/mindectl eval '(begin (unless (reload-configuration!) (error "reload failed")) (current-group-name))' || return 1
+            n=$((n + 1))
+        done
+    }
+    for index in 1 2 3; do
+        worker >"$OUT/stress-$index.log" 2>&1 &
+        STRESS_PIDS="$STRESS_PIDS $!"
+    done
+    for pid in $STRESS_PIDS; do wait "$pid" || fail 'concurrent IPC/reload stress'; done
+    STRESS_PIDS=
+    ok 'concurrent IPC/reload stress'
 fi
 
-echo "e2e: all checks passed"
+# Real PAM authentication is not automated. Native lock/unlock/recovery is
+# covered by session-lock-e2e.sh; this last block checks the external locker.
+if command -v wayland-info >/dev/null 2>&1; then
+    nested_wayland timeout 5 wayland-info >"$OUT/wayland-info" 2>"$OUT/wayland-info.err" || fail 'Wayland global query'
+    grep -q ext_session_lock_manager_v1 "$OUT/wayland-info" || fail 'lock global missing'
+fi
+if command -v swaylock >/dev/null 2>&1; then
+    # Keep recovery inside the disposable session deterministic: the separate
+    # native lock suite verifies automatic replacement; here inspect owner loss.
+    eval_checked '(begin (set! %lock-restart? #f) #t)' >/dev/null
+    line=$(($(wc -l <"$LOG") + 1))
+    nested_wayland_exec swaylock >"$OUT/swaylock.log" 2>&1 &
+    SWAYLOCK_PID=$!
+    if nested_wait_for_log_after "$line" 'session locked (ext-session-lock)' 8; then
+        [ "$(eval_checked '(wm-session-locked?)')" = '#t' ] || fail 'locker did not lock'
+        reloads_before=$(nested_plain_log <"$LOG" | grep -ac 'reloaded ' || true)
+        timeout 5 xdotool key --clearmodifiers Print shift+r
+        # Deliberate observation interval for a forbidden event, not command synchronisation.
+        sleep 1
+        reloads_after=$(nested_plain_log <"$LOG" | grep -ac 'reloaded ' || true)
+        [ "$reloads_before" = "$reloads_after" ] || fail 'reload keys reached policy while locked'
+        import -window root "$OUT/locked.png"
+        line=$(($(wc -l <"$LOG") + 1))
+        kill "$SWAYLOCK_PID" || fail 'locker exited before owner-loss check'
+        wait "$SWAYLOCK_PID" 2>/dev/null || true
+        SWAYLOCK_PID=
+        nested_wait_for_log_after "$line" 'session lock owner disappeared' 5 || fail 'locker loss not observed'
+        [ "$(eval_checked '(wm-session-locked?)')" = '#t' ] || fail 'locker death unlocked session'
+        ok 'external locker locks, filters shortcuts and keeps session locked after owner loss'
+    elif ! kill -0 "$SWAYLOCK_PID" 2>/dev/null && nested_locker_unavailable "$OUT/swaylock.log"; then
+        echo 'skip - swaylock PAM/account unavailable; see swaylock.log'
+    else
+        fail 'external locker did not confirm lock'
+    fi
+else
+    echo 'skip - swaylock not installed; native lock suite supplies protocol coverage'
+fi
+kill -0 "$NESTED_WM_PID" || fail 'compositor exited'
+loggrep 'panicked at\|error in keybinding\|error in timer' && fail 'runtime error'
+echo 'e2e: all behavioral assertions passed'

@@ -19,6 +19,22 @@ scenario. Control-client and selector tests use Scheme and run through
 `make check-control`; `make check-control-e2e` exercises them against the
 compositor.
 
+The broad `tests/e2e.sh` suite drives the optional historical Print keymap;
+`tests/portable-e2e.sh` covers the shipped map. Its Scheme driver,
+`tests/e2e.scm`, checks actual focus, frame geometry, modal state, messages,
+clipboard contents and group membership. Reload must restore a deliberately
+removed binding and append a fresh success record. Key dispatch and expected
+state changes have bounded waits; an unbound or ineffective key fails the
+corresponding assertion. The locked-shortcut check uses a deliberate observation
+interval to detect a forbidden reload.
+
+The broad suite retains every IPC request and full reply in `ipc.scm` under
+`E2E_OUT`, plus CLI errors, client diagnostics and supplemental screenshots.
+Screenshots are inspection artifacts, not evidence inferred from PNG file size.
+Native and optional Xwayland terminals in raw mode record the bytes delivered
+by synthetic and remapped keys. The native protocol suite also checks modifier
+events and physical key ownership across focus changes.
+
 ## Resource policy
 
 - One application scenario runs at a time.

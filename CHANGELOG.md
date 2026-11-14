@@ -43,6 +43,10 @@ Target version: `1.0.0-rc1`.
   modifiers even while other modifier keys remain held. Remapping `C-F9`
   to `Down` no longer delivers `C-Down`; physical keys retain their state.
 
+- The broad nested keymap suite verifies observable command effects, waits for
+  input and state changes, retains IPC errors, and requires a fresh reload
+  instead of accepting the startup log line (#167).
+
 - Hardware reports describe the supported session-lock and recovery path,
   separate portable defaults from optional personal policy, and include the
   external-client and input checks required for hardware validation (#166).
