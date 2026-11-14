@@ -15,6 +15,8 @@
    "libxkbcommon"
    "curl"
    "coreutils"
+   ;; Stateful binary-retention API fixtures and the production planner.
+   "jq"
    "shellcheck"
    "ripgrep"
    "diffutils"

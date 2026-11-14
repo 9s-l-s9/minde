@@ -3,7 +3,7 @@
 ;; actually touches, and nothing else. manifest.scm's e2e/demo/app-matrix
 ;; tools (Xorg, xdotool, imagemagick, grim, wf-recorder, foot, xterm,
 ;; wl-clipboard, wlr-randr, wayland-utils, swayidle, wtype, wlrctl, ffmpeg,
-;; jq, util-linux) are real runtime dependencies of gates this environment
+;; util-linux) are real runtime dependencies of gates this environment
 ;; never runs (./check --all, make check-e2e/check-apps*/demos), not of
 ;; the default gate -- installing them here would only slow down every
 ;; ordinary push for tools nothing in this path calls.
@@ -22,6 +22,8 @@
    "guile-json"
    "curl"
    "coreutils"
+   ;; Static binary-retention tests use the same JSON planner as CI.
+   "jq"
    ;; Release-archive regression tests use real tar/gzip and offline Cargo.
    "tar"
    "gzip"
