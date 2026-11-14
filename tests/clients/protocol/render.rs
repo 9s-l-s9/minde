@@ -61,6 +61,18 @@ pub fn run(stage: &str) {
     let log = PathBuf::from(env::var("MINDE_TEST_COMPOSITOR_LOG").unwrap());
     let injected = |marker: &str| fs::read_to_string(&log).unwrap().matches(marker).count();
     let pixels = HostPixels::new();
+    // The lock renderer draws its cursor. Keep it away from the sample grid
+    // so every sample still has to match the submitted surface color.
+    command(
+        "xdotool",
+        &[
+            "mousemove",
+            "--window",
+            &env::var("MINDE_SESSION_LOCK_TEST_WINDOW").unwrap(),
+            "16",
+            "16",
+        ],
+    );
     let mut desktop = Client::new("desktop for rendering failures");
     ipc("(wm-clear-message)");
     desktop.toplevel(true);
