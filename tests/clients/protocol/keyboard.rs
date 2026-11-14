@@ -126,6 +126,54 @@ fn focus_changes(first: &mut Input, second: &mut Input) {
     println!("ok - focus changes transfer forwarded held keys without exposing consumed keys");
 }
 
+fn synthetic_chords(first: &mut Input, second: &mut Input) {
+    // Inspect modifiers at both edges of the target key, then transfer focus
+    // while the source modifier remains physically held. A shortcut must
+    // neither inherit that modifier nor release it on behalf of the user.
+    for (name, code, held, wanted) in [
+        ("Control_L", 29, 4, 0),
+        ("Control_R", 97, 4, 1),
+        ("Shift_L", 42, 1, 4),
+        ("Alt_L", 56, 8, 64),
+        ("Super_L", 125, 64, 8),
+    ] {
+        first.focus();
+        let start = first.events.len();
+        key("keydown", name);
+        first.key(code, 1, start);
+        let before = first.modifiers();
+        assert_eq!(before[0], held);
+        let start = first.events.len();
+        evaluate(&format!("(wm-send-key {wanted} \"Down\")"), "#t");
+        // A second queued stroke orders the first stroke's modifier releases.
+        evaluate("(wm-send-key 0 \"F11\")", "#t");
+        first.key(87, 0, start);
+        let after = first.modifiers();
+        let mut modifiers = before;
+        let mut edges = Vec::new();
+        for event in first.keyboard_events(start, &[3, 4]) {
+            if event.opcode == 4 {
+                modifiers = [event.word(1), event.word(2), event.word(3)];
+            } else if event.word(2) == 108 {
+                assert_eq!(modifiers, [wanted, 0, before[2]], "held {name}");
+                edges.push(event.word(3));
+            } else if event.word(2) == code {
+                panic!("synthetic chord changed physical {name}");
+            }
+        }
+        assert_eq!(edges, [1, 0]);
+        assert_eq!(after, before, "physical {name} not restored");
+        second.focus();
+        assert!(enter_keys(second).contains(&code));
+        assert_eq!(second.modifiers(), before);
+        let start = second.events.len();
+        key("keyup", name);
+        second.key(code, 0, start);
+        assert_eq!(second.modifiers(), [0; 3]);
+    }
+    println!("ok - synthetic chords use requested modifiers and preserve held keys across focus");
+}
+
 fn inhibitors(target: &mut Input) {
     target.focus();
     shortcut_down();
@@ -236,6 +284,7 @@ pub fn run() {
     );
     println!("ok - prefix, cancelled maps and failed shortcuts consume both press and release");
     prompt_and_menu(&mut first);
+    synthetic_chords(&mut first, &mut second);
     focus_changes(&mut first, &mut second);
     inhibitors(&mut second);
     lock_transition(&mut first);

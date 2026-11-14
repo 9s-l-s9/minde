@@ -103,7 +103,20 @@ impl KeyboardTarget<MindeState> for KeyboardFocusTarget {
             }
             return;
         }
-        self.target().key(seat, data, key, state, serial, time);
+        if let Some((projected, actual)) = data.synthetic_key_modifiers
+            && projected != actual
+        {
+            // Remapping C-F9 to Down must deliver Down while Control is
+            // physically held. Project only the client's event stream: XKB
+            // groups, latched/locked modifiers and press ownership stay intact.
+            self.target().modifiers(seat, data, projected, serial);
+            self.target().key(seat, data, key, state, serial, time);
+            // Xwayland drains queued key events when modifiers arrive.
+            self.target().modifiers(seat, data, projected, serial);
+            self.target().modifiers(seat, data, actual, serial);
+        } else {
+            self.target().key(seat, data, key, state, serial, time);
+        }
     }
 
     fn modifiers(

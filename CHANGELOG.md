@@ -39,6 +39,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Synthetic key chords delivered to focused clients use the requested
+  modifiers even while other modifier keys remain held. Remapping `C-F9`
+  to `Down` no longer delivers `C-Down`; physical keys retain their state.
+
 - Hardware reports describe the supported session-lock and recovery path,
   separate portable defaults from optional personal policy, and include the
   external-client and input checks required for hardware validation (#166).

@@ -47,6 +47,7 @@ use crate::input::{PointerButtonSource, PointerButtons};
 #[derive(Debug)]
 enum SyntheticAction {
     Key { code: u32, pressed: bool },
+    ChordKey { code: u32, pressed: bool, mods: u32 },
     Button { code: u32, pressed: bool },
     Scroll { dx: f64, dy: f64 },
     Unicode { ch: char },
@@ -374,6 +375,12 @@ pub struct MindeState {
     next_synthetic_sequence: u64,
     synthetic_keys: Vec<(u64, u32)>,
     pub(crate) unicode_stroke: Option<crate::unicode_input::UnicodeStroke>,
+    /// Client-only modifier projection for one synthetic chord event. The
+    /// physical XKB state and press ownership remain authoritative.
+    pub(crate) synthetic_key_modifiers: Option<(
+        smithay::input::keyboard::ModifiersState,
+        smithay::input::keyboard::ModifiersState,
+    )>,
     pending_unicode: Option<crate::unicode_input::UnicodeStroke>,
     pub(crate) pointer_buttons: PointerButtons,
     pub(crate) active_automation_dnd: Option<crate::automation_dnd::AutomationDndSource>,
@@ -799,6 +806,7 @@ impl MindeState {
             next_synthetic_sequence: 0,
             synthetic_keys: Vec::new(),
             unicode_stroke: None,
+            synthetic_key_modifiers: None,
             pending_unicode: None,
             pointer_buttons: PointerButtons::default(),
             active_automation_dnd: None,
@@ -1742,7 +1750,14 @@ impl MindeState {
         let time = self.start_time.elapsed().as_millis() as u32;
         match queued.action {
             SyntheticAction::Key { code, pressed } => {
-                self.synthetic_key(queued.sequence, code, pressed);
+                self.synthetic_key(queued.sequence, code, pressed, None);
+            }
+            SyntheticAction::ChordKey {
+                code,
+                pressed,
+                mods,
+            } => {
+                self.synthetic_key(queued.sequence, code, pressed, Some(mods));
             }
             SyntheticAction::Button { code, pressed } => self.pointer_button_event(
                 PointerButtonSource::Synthetic(queued.sequence),
@@ -1813,7 +1828,7 @@ impl MindeState {
         }
     }
 
-    fn synthetic_key(&mut self, sequence: u64, code: u32, pressed: bool) {
+    fn synthetic_key(&mut self, sequence: u64, code: u32, pressed: bool, mods: Option<u32>) {
         use smithay::{
             backend::input::KeyState,
             input::keyboard::{FilterResult, xkb},
@@ -1840,6 +1855,24 @@ impl MindeState {
             self.synthetic_keys.push((sequence, code));
         }
         let time = self.start_time.elapsed().as_millis() as u32;
+        let projected_mask = mods.map(|wanted| {
+            keyboard.with_xkb_state(self, |ctx| {
+                let (keymap, _) = Self::keymap_and_layout(&ctx);
+                [
+                    (1, xkb::MOD_NAME_SHIFT),
+                    (4, xkb::MOD_NAME_CTRL),
+                    (8, xkb::MOD_NAME_ALT),
+                    (64, xkb::MOD_NAME_LOGO),
+                ]
+                .into_iter()
+                .filter(|(bit, _)| wanted & bit != 0)
+                .filter_map(|(_, name)| {
+                    let index = keymap.mod_get_index(name);
+                    (index < 32).then(|| 1u32 << index)
+                })
+                .fold(0, |mask, bit| mask | bit)
+            })
+        });
         keyboard.input::<(), _>(
             self,
             keycode,
@@ -1850,8 +1883,23 @@ impl MindeState {
             },
             SERIAL_COUNTER.next_serial(),
             time,
-            |_, _, _| FilterResult::Forward,
+            |data, actual, _| {
+                data.synthetic_key_modifiers = mods.zip(projected_mask).map(|(wanted, mask)| {
+                    let mut projected = *actual;
+                    projected.shift = wanted & 1 != 0;
+                    projected.ctrl = wanted & 4 != 0;
+                    projected.alt = wanted & 8 != 0;
+                    projected.logo = wanted & 64 != 0;
+                    projected.iso_level3_shift = false;
+                    projected.iso_level5_shift = false;
+                    projected.serialized.depressed = mask;
+                    projected.serialized.latched = 0;
+                    (projected, *actual)
+                });
+                FilterResult::Forward
+            },
         );
+        self.synthetic_key_modifiers = None;
     }
 
     fn release_synthetic_keys(&mut self, sequence: Option<u64>) {
@@ -1860,7 +1908,7 @@ impl MindeState {
             .iter()
             .rfind(|(owner, _)| sequence.is_none_or(|sequence| sequence == *owner))
         {
-            self.synthetic_key(owner, code, false);
+            self.synthetic_key(owner, code, false, None);
         }
     }
 
@@ -2038,16 +2086,18 @@ impl MindeState {
             ));
         }
         actions.push((
-            SyntheticAction::Key {
+            SyntheticAction::ChordKey {
                 code: kc.raw(),
                 pressed: true,
+                mods: mods | u32::from(shifted),
             },
             8,
         ));
         actions.push((
-            SyntheticAction::Key {
+            SyntheticAction::ChordKey {
                 code: kc.raw(),
                 pressed: false,
+                mods: mods | u32::from(shifted),
             },
             8,
         ));
