@@ -32,6 +32,36 @@ The job reserves its commit tag before building; a newer push supersedes an
 unfinished build. This avoids GitHub's restriction on job tokens tagging older
 commits after workflow changes. A failed build can leave a tag without a release.
 
+Binary download retention keeps the five newest mutable, published CI
+prereleases, ordered by publication time. The current build and any active
+workflow runs are protected even if they fall outside those five. Version
+releases, drafts, immutable releases, manually published releases and tags
+whose targets differ from their embedded commit are preserved.
+
+`scripts/ci-binary-retention --apply` runs before reserving the current build's
+tag and again after publication. It removes older eligible releases before
+deleting their tags. A reservation without a release is removed only when a
+completed main-workflow run identifies its commit and no active run needs it;
+unknown reservations remain untouched. Thus failed or cancelled builds are
+cleaned up on a later run, including when that later build itself fails.
+Every API page must load and validate, and each candidate is rechecked before
+deletion. The workflow's shared concurrency group serializes these operations.
+The helper uses the workflow's `contents: write` and `actions: read` permissions.
+
+Run `scripts/ci-binary-retention --plan` for a read-only JSON deletion plan.
+Applying it is restricted to the canonical binary workflow on `main`. Its
+stateful API fixtures run in `make check-static` and cover pagination, protected
+references, concurrent changes, failed requests and retry after partial deletion.
+The relevant GitHub API contracts are the [release list](https://docs.github.com/en/rest/releases/releases#list-releases),
+[matching references](https://docs.github.com/en/rest/git/refs#list-matching-references)
+and [workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow).
+
+Older binary download URLs expire under this policy. Existing imported closures
+remain protected by their local Guix garbage-collection roots. A committed
+binary lock file does not extend download retention: importing on a new machine
+after its build expires requires selecting an available verified build or
+building from source.
+
 The builder uses the authenticated revision in `guix/ci-channels.scm` and an
 upstream-signed Guix 1.5.0 bootstrap whose SHA-256 is pinned in
 `scripts/ci-bootstrap-guix`. Cargo vendors the locked dependency graph, then

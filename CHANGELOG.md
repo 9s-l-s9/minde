@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- CI retains the five newest Guix binary prereleases, protects active builds
+  and version releases, and removes abandoned build tags on subsequent runs.
+  Older commit-specific downloads expire under this policy (#150).
+
 - Screen capture shares cached images between matching requests, reports
   source damage and reads back only changed regions. Static damage-aware wlr
   captures wait for a change; ext buffer repair remains independent (#155).

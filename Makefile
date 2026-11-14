@@ -78,6 +78,7 @@ check-static:
 	sh tests/make-gates-test.sh
 	sh tests/document-gates-test.sh
 	sh tests/ci-release-test.sh
+	sh tests/ci-binary-retention-test.sh
 	sh tests/release-notes-test.sh
 	sh tests/scheme-cache-test.sh
 	sh tests/lint-borrows.sh
@@ -89,7 +90,7 @@ check-static:
 		scripts/minde-cmd \
 		scripts/minde-msg scripts/mindectl scripts/minde-agent \
 		scripts/create-release-archives scripts/check-guix-package \
-		scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-bootstrap-guix \
+		scripts/ci scripts/ci-release scripts/ci-binary scripts/ci-binary-retention scripts/ci-bootstrap-guix \
 		scripts/hardware-report scripts/release scripts/run-nested scripts/compile-scheme
 
 # Compile scheme/**/*.scm (modules, init.scm and the files it loads) to
