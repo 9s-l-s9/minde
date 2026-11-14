@@ -50,6 +50,7 @@ fn main() {
         Some("virtual-pointer") => virtual_pointer::run(),
         Some("virtual-pointer-errors") => virtual_pointer::errors(),
         Some("capture-clock") => capture::clock(),
+        Some("capture-damage") => capture::damage::run(),
         Some("capture-lifecycle") => capture::run(&args[1..]),
         Some("winit-errors") => render::run(args.get(1).expect("render or swap")),
         Some("window-lifecycle") => window::run(),

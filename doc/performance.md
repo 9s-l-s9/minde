@@ -1,5 +1,33 @@
 # Performance measurements
 
+## Shared screen-capture work — 2026-11-14
+
+The `capture-damage` regression first reproduced full 1280×800 damage on an
+unchanged ext capture. It now observes no damage for that request. After a
+16×12 surface update, two capture sessions receive that changed rectangle;
+the `capture-render` and `capture-readback` probes each advance once. A further
+unchanged capture advances neither counter. Pixel comparisons also verify
+client-requested repairs outside the changed rectangle, fresh buffers, slow
+sessions whose damage history expired, and images evicted from the cache.
+
+Matching output geometry, region, cursor choice and renderer context share a
+persistent offscreen image. Its damage tracker uses age one because that same
+image is retained. Shm readback updates a bounding rectangle around accumulated
+damage in shared CPU pixels; it no longer reads a full output for each client.
+Ext client buffer damage determines additional copies from those pixels. Wlr
+has no buffer-age input, so its destination receives a complete CPU copy, while
+`copy_with_damage` waits when the source is unchanged. DMA buffers receive GPU
+copies without CPU readback. Captures still assemble a separate scene from the
+display, and disjoint damage can enlarge the readback bounding rectangle.
+
+These are measured work counts and pixel/protocol checks in an isolated nested
+session with Mesa software rendering. They do not establish GPU throughput or
+DRM frame latency. The requested `wm-timing-stats` render histograms with and
+without wf-recorder on the reference laptops remain hardware verification.
+The two new probes expose capture render/readback time for that comparison.
+Reproduce the automated checks with `sh tests/screencapture-e2e.sh` in the
+project Guix environment.
+
 ## Surface commits and layer arrangement — 2026-11-13
 
 The `surface-commits` scenario in `tests/frame-callbacks-e2e.sh` keeps a

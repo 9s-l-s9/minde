@@ -23,11 +23,15 @@
 //! composited frame -- so [`ImageCopyCaptureHandler::frame`] just queues the
 //! frame against its output. The next on-screen render for that output
 //! ([`crate::winit`] redraw / [`crate::udev`] vblank-driven render) then calls
-//! [`satisfy_output_captures`], which re-composites the same scene into each
-//! pending buffer and signals `ready`.
+//! [`satisfy_output_captures`], which updates a shared capture scene and copies
+//! it into pending buffers before signaling `ready`.
 //!
-//! Damage handling is conservative: every capture reports full-buffer damage.
-//! Correctness over efficiency for this first version.
+//! Persistent damage tracking avoids unchanged renders/readbacks. Ext sessions
+//! supply buffer damage; wlr copy-with-damage waits for a scene change. Capture
+//! images and their bounded damage history are shared across matching requests.
+
+mod cache;
+pub use cache::{CaptureCache, CaptureHistory};
 
 use smithay::{
     backend::{
@@ -115,6 +119,7 @@ pub struct PendingCapture {
     /// Physical size of the destination buffer.
     pub size: Size<i32, Physical>,
     geometry: CaptureGeometry,
+    history: Option<CaptureHistory>,
 }
 
 impl PendingCapture {
@@ -126,6 +131,10 @@ impl PendingCapture {
         size: Size<i32, Physical>,
     ) -> Self {
         let geometry = capture_geometry(&output);
+        let history = match &frame {
+            CaptureFrame::Wlr(frame) => Some(frame.history.clone()),
+            _ => None,
+        };
         Self {
             output,
             frame,
@@ -133,6 +142,7 @@ impl PendingCapture {
             origin,
             size,
             geometry,
+            history,
         }
     }
 }
@@ -157,6 +167,7 @@ impl MindeState {
         output: Option<&Output>,
         reason: CaptureFailureReason,
     ) {
+        self.capture_cache.clear(output);
         let pending = std::mem::take(&mut self.pending_captures);
         for capture in pending {
             if output.is_none_or(|output| output == &capture.output) {
@@ -280,19 +291,31 @@ impl ImageCopyCaptureHandler for MindeState {
             frame.fail(CaptureFailureReason::Unknown);
             return;
         };
-        self.pending_captures.push(PendingCapture::new(
+        session
+            .user_data()
+            .insert_if_missing(CaptureHistory::default);
+        let mut capture = PendingCapture::new(
             output,
             CaptureFrame::Ext(frame),
             session.draw_cursor(),
             (0, 0).into(),
             size,
-        ));
+        );
+        capture.history = session.user_data().get::<CaptureHistory>().cloned();
+        self.pending_captures.push(capture);
         // Captures are satisfied by the next composite; make sure one runs.
         self.schedule_redraw();
     }
 
     fn session_destroyed(&mut self, session: SessionRef) {
         self.capture_sessions.retain(|s| *s != session);
+    }
+
+    fn frame_aborted(&mut self, frame: smithay::wayland::image_copy_capture::FrameRef) {
+        self.pending_captures.retain(|capture| {
+            !matches!(&capture.frame,
+            CaptureFrame::Ext(pending) if pending == &frame)
+        });
     }
 }
 
@@ -307,7 +330,8 @@ impl ImageCopyCaptureHandler for MindeState {
 /// paths, so they cannot drift apart. Renderer-generic.
 ///
 /// `border_buffers` should be persistent per output for on-screen use (stable
-/// element ids keep damage tracking incremental); captures pass a throwaway.
+/// element ids keep damage tracking incremental); each cached capture scene
+/// retains its own buffers for the same reason.
 /// The returned list borrows nothing: the layer-map guard is released before
 /// returning, so callers may open their own afterwards.
 #[allow(clippy::too_many_arguments)]
@@ -434,193 +458,16 @@ where
     all
 }
 
-/// Result of filling a capture buffer: either the copied region (on success)
-/// or a reason the copy could not be done. Lets each protocol translate the
-/// outcome into its own completion events.
+/// Protocol-independent result of copying a capture image.
 pub enum FillOutcome {
-    Ok(Rectangle<i32, BufferCoords>),
-    /// The attached buffer's type is not one we can fill (neither shm nor a
-    /// dmabuf); maps to ext `BufferConstraints` / wlr `failed`.
+    Ok(Vec<Rectangle<i32, BufferCoords>>),
     UnsupportedBuffer,
-    /// Rendering the scene into the buffer failed.
     RenderFailed,
 }
 
-/// Re-composites the given elements into a client capture buffer (shm or
-/// dmabuf). Rendered upright (`Transform::Normal`), so the captured image is
-/// the logical desktop regardless of any physical output transform. Shared by
-/// the ext and wlr protocols; the caller signals completion.
-/// Renders the scene into an offscreen buffer and reads it back as RGBA8
-/// (row-major, `size.w * size.h * 4` bytes), ready for the PNG encoder. Only
-/// the GPU readback happens here; the `wm-screenshot` caller encodes and
-/// writes the file on a worker thread so the event loop is not blocked for
-/// the tens of milliseconds a 4K encode takes.
-fn render_to_rgba<R>(
-    renderer: &mut R,
-    elements: &[MindeRenderElements<R>],
-    size: Size<i32, Physical>,
-    scale: Scale<f64>,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>>
-where
-    R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer>,
-    R::TextureId: Send + Clone + 'static,
-    R::Error: Send + Sync + 'static,
-{
-    let buffer_size: Size<i32, BufferCoords> = (size.w, size.h).into();
-    let region = Rectangle::from_size(buffer_size);
-    let mut tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
-    let mut offscreen = renderer.create_buffer(Fourcc::Argb8888, buffer_size)?;
-    let mut framebuffer = renderer.bind(&mut offscreen)?;
-    tracker.render_output(
-        renderer,
-        &mut framebuffer,
-        0,
-        elements,
-        [0.1, 0.1, 0.1, 1.0],
-    )?;
-    let mapping = renderer.copy_framebuffer(&framebuffer, region, Fourcc::Argb8888)?;
-    drop(framebuffer);
-    let mut pixels = renderer.map_texture(&mapping)?.to_vec();
-    // Argb8888 is BGRA in little-endian memory; PNG wants RGBA.
-    for px in pixels.chunks_exact_mut(4) {
-        px.swap(0, 2);
-    }
-    Ok(pixels)
-}
-
-fn fill_capture_buffer<R>(
-    renderer: &mut R,
-    elements: &[MindeRenderElements<R>],
-    buffer: &WlBuffer,
-    size: Size<i32, Physical>,
-    scale: Scale<f64>,
-) -> FillOutcome
-where
-    R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer> + Bind<Dmabuf>,
-    R::TextureId: Send + Clone + 'static,
-    R::Error: Send + Sync + 'static,
-{
-    if !smithay::backend::renderer::buffer_dimensions(buffer)
-        .is_some_and(|actual| actual.w >= size.w && actual.h >= size.h)
-    {
-        return FillOutcome::UnsupportedBuffer;
-    }
-    let buffer_size: Size<i32, BufferCoords> = (size.w, size.h).into();
-    let region = Rectangle::from_size(buffer_size);
-    let mut tracker = OutputDamageTracker::new(size, scale, Transform::Normal);
-    let clear = [0.1, 0.1, 0.1, 1.0];
-
-    match smithay::backend::renderer::buffer_type(buffer) {
-        Some(smithay::backend::renderer::BufferType::Dma) => {
-            match render_into_dmabuf(renderer, elements, buffer, &mut tracker, clear) {
-                Ok(()) => FillOutcome::Ok(region),
-                Err(err) => {
-                    tracing::warn!(%err, "screencopy: dmabuf capture failed");
-                    FillOutcome::RenderFailed
-                }
-            }
-        }
-        Some(smithay::backend::renderer::BufferType::Shm) => {
-            match render_into_shm(
-                renderer,
-                elements,
-                buffer,
-                &mut tracker,
-                clear,
-                buffer_size,
-                region,
-            ) {
-                Ok(()) => FillOutcome::Ok(region),
-                Err(err) => {
-                    tracing::warn!(%err, "screencopy: shm capture failed");
-                    FillOutcome::RenderFailed
-                }
-            }
-        }
-        _ => FillOutcome::UnsupportedBuffer,
-    }
-}
-
-fn render_into_dmabuf<R>(
-    renderer: &mut R,
-    elements: &[MindeRenderElements<R>],
-    buffer: &WlBuffer,
-    tracker: &mut OutputDamageTracker,
-    clear: [f32; 4],
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    R: Renderer + ImportAll + ImportMem + Bind<Dmabuf>,
-    R::TextureId: Send + Clone + 'static,
-    R::Error: Send + Sync + 'static,
-{
-    let mut dmabuf = smithay::wayland::dmabuf::get_dmabuf(buffer)
-        .map_err(|_| "attached buffer is not a dmabuf")?
-        .clone();
-    let mut framebuffer = renderer.bind(&mut dmabuf)?;
-    tracker.render_output(renderer, &mut framebuffer, 0, elements, clear)?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_into_shm<R>(
-    renderer: &mut R,
-    elements: &[MindeRenderElements<R>],
-    buffer: &WlBuffer,
-    tracker: &mut OutputDamageTracker,
-    clear: [f32; 4],
-    size: Size<i32, BufferCoords>,
-    region: Rectangle<i32, BufferCoords>,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer>,
-    R::TextureId: Send + Clone + 'static,
-    R::Error: Send + Sync + 'static,
-{
-    // Copy back in whatever pixel format the client's shm buffer uses.
-    let dst_format = with_buffer_contents_mut(buffer, |_, _, data| data.format)
-        .map_err(|err| format!("shm buffer access: {err:?}"))?;
-    let fourcc = shm_format_to_fourcc(dst_format).ok_or("unsupported shm format")?;
-
-    // Render into an offscreen GL renderbuffer, then read it back and copy
-    // into the client's shm mapping (GlesRenderer cannot scan out to shm).
-    let mut offscreen = renderer.create_buffer(Fourcc::Argb8888, size)?;
-    let mut framebuffer = renderer.bind(&mut offscreen)?;
-    tracker.render_output(renderer, &mut framebuffer, 0, elements, clear)?;
-    let mapping = renderer.copy_framebuffer(&framebuffer, region, fourcc)?;
-    drop(framebuffer);
-    let pixels = renderer.map_texture(&mapping)?.to_vec();
-
-    with_buffer_contents_mut(buffer, |ptr, len, data| {
-        let bpp = 4usize;
-        let src_stride = size.w as usize * bpp;
-        let dst_stride = data.stride as usize;
-        let rows = (data.height as usize).min(size.h as usize);
-        let copy_w = src_stride.min(dst_stride);
-        for row in 0..rows {
-            let src_off = row * src_stride;
-            let dst_off = data.offset as usize + row * dst_stride;
-            if src_off + copy_w > pixels.len() || dst_off + copy_w > len {
-                break;
-            }
-            // Safety: bounds checked above; ptr is the client pool mapping.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    pixels.as_ptr().add(src_off),
-                    ptr.add(dst_off),
-                    copy_w,
-                );
-            }
-        }
-    })
-    .map_err(|err| format!("shm buffer access: {err:?}"))?;
-    Ok(())
-}
-
-/// Satisfies every capture frame queued for `output`, re-compositing the
-/// scene into each pending buffer. Called from the render loops after the
-/// on-screen frame is drawn. All arguments are disjoint fields of
-/// [`MindeState`] so the udev caller can hand them out while the renderer
-/// borrows `udev_data`.
+/// Update each distinct capture scene once, then fan it out to its clients.
+/// Source damage and client buffer repair are independent: a fresh buffer
+/// still needs all pixels even when the scene itself has not changed.
 #[allow(clippy::too_many_arguments)]
 pub fn satisfy_output_captures<R>(
     renderer: &mut R,
@@ -629,6 +476,7 @@ pub fn satisfy_output_captures<R>(
     scale: Scale<f64>,
     time: Time<Monotonic>,
     pending: &mut Vec<PendingCapture>,
+    cache: &mut CaptureCache,
     space: &Space<Window>,
     cursor_state: &mut CursorState,
     pointer_location: Point<f64, Logical>,
@@ -637,35 +485,50 @@ pub fn satisfy_output_captures<R>(
     focus: Option<Rectangle<i32, Logical>>,
     border_color: [f32; 4],
 ) where
-    R: Renderer + ImportAll + ImportMem + ExportMem + Offscreen<GlesRenderbuffer> + Bind<Dmabuf>,
+    R: Renderer
+        + ImportAll
+        + ImportMem
+        + ExportMem
+        + Offscreen<GlesRenderbuffer>
+        + Bind<Dmabuf>
+        + smithay::backend::renderer::Blit,
     R::TextureId: Send + Clone + 'static,
     R::Error: Send + Sync + 'static,
 {
-    // Pull out the frames for this output (Frame is not Clone; move them).
-    if !pending.iter().any(|capture| &capture.output == output) {
-        return;
-    }
-    let (mine, rest): (Vec<PendingCapture>, Vec<PendingCapture>) = pending
-        .drain(..)
-        .partition(|capture| &capture.output == output);
+    let (mine, rest): (Vec<_>, Vec<_>) = pending.drain(..).partition(|c| &c.output == output);
     *pending = rest;
-    let mut border_buffers = BorderBuffers::default();
-
+    let mut groups: Vec<(cache::Key, Vec<PendingCapture>)> = Vec::new();
     for capture in mine {
         if capture.geometry != capture_geometry(output) {
             capture.frame.fail(CaptureFailureReason::BufferConstraints);
             continue;
         }
-        let cursor = if capture.draw_cursor {
-            Some((&mut *cursor_state, pointer_location))
-        } else {
-            None
+        let key = cache::Key {
+            output: output.clone(),
+            geometry: capture.geometry,
+            output_geo,
+            origin: capture.origin,
+            size: capture.size,
+            cursor: capture.draw_cursor,
+            context: renderer.context_id().erased(),
         };
+        if let Some((_, frames)) = groups.iter_mut().find(|(existing, _)| existing == &key) {
+            frames.push(capture);
+        } else {
+            groups.push((key, vec![capture]));
+        }
+    }
+    for (key, captures) in groups {
+        let mut scene = cache.take(key, scale);
+        let cursor = scene
+            .key
+            .cursor
+            .then_some((&mut *cursor_state, pointer_location));
         let elements = output_scene_elements(
             renderer,
             output,
             output_geo,
-            capture.origin,
+            scene.key.origin,
             scale,
             space,
             cursor,
@@ -673,59 +536,86 @@ pub fn satisfy_output_captures<R>(
             overlays,
             focus,
             border_color,
-            &mut border_buffers,
+            &mut scene.borders,
         );
-        match capture.frame {
-            CaptureFrame::Ext(frame) => {
-                let buffer = frame.buffer();
-                match fill_capture_buffer(renderer, &elements, &buffer, capture.size, scale) {
-                    FillOutcome::Ok(region) => frame.success(Transform::Normal, vec![region], time),
-                    FillOutcome::UnsupportedBuffer => {
-                        frame.fail(CaptureFailureReason::BufferConstraints)
+        if let Err(err) = scene.render(renderer, &elements) {
+            tracing::warn!(%err, "screencopy: scene render failed");
+            for capture in captures {
+                capture.frame.fail(CaptureFailureReason::Unknown);
+            }
+            continue; // Never reuse a partially rendered image/damage history.
+        }
+        for capture in captures {
+            let damage = scene.changed_since(capture.history.as_ref());
+            if damage.is_empty()
+                && matches!(&capture.frame, CaptureFrame::Wlr(frame) if frame.with_damage)
+            {
+                pending.push(capture);
+                continue; // Reconsider on the next scene change, without a polling timer.
+            }
+            match capture.frame {
+                CaptureFrame::Ext(frame) => {
+                    let mut repair = damage.clone();
+                    repair.extend(frame.damage());
+                    match scene.copy(renderer, &frame.buffer(), &repair) {
+                        FillOutcome::Ok(_) => {
+                            scene.delivered(capture.history.as_ref());
+                            frame.success(Transform::Normal, damage, time);
+                        }
+                        FillOutcome::UnsupportedBuffer => {
+                            frame.fail(CaptureFailureReason::BufferConstraints)
+                        }
+                        FillOutcome::RenderFailed => frame.fail(CaptureFailureReason::Unknown),
                     }
-                    FillOutcome::RenderFailed => frame.fail(CaptureFailureReason::Unknown),
                 }
-            }
-            CaptureFrame::Wlr(pending) => {
-                let outcome =
-                    fill_capture_buffer(renderer, &elements, &pending.buffer, capture.size, scale);
-                pending.complete(outcome, time.into());
-            }
-            CaptureFrame::File { destination, token } => {
-                use crate::automation_dnd::{
-                    AutomationOperation, AutomationStatus, record_and_publish,
-                };
-                match render_to_rgba(renderer, &elements, capture.size, scale) {
-                    Ok(pixels) => {
-                        // Encode and write off the event loop; completion is
-                        // reported from the worker (the registry is
-                        // thread-safe, see `record_and_publish`).
-                        let size = capture.size;
-                        std::thread::spawn(move || {
-                            let status = match destination.write_rgba(
-                                size.w as u32,
-                                size.h as u32,
-                                &pixels,
-                            ) {
-                                Ok(()) => AutomationStatus::Done,
-                                Err(err) => {
-                                    tracing::warn!(%err, path = %destination.path().display(), "wm-screenshot failed");
-                                    AutomationStatus::Failed
-                                }
-                            };
-                            record_and_publish(token, AutomationOperation::Screenshot, status);
-                        });
-                    }
-                    Err(err) => {
-                        tracing::warn!(%err, path = %destination.path().display(), "wm-screenshot render failed");
-                        record_and_publish(
-                            token,
-                            AutomationOperation::Screenshot,
-                            AutomationStatus::Failed,
-                        );
+                CaptureFrame::Wlr(frame) => {
+                    // wlr provides no buffer age/damage: every supplied buffer
+                    // must receive the whole image, but shared CPU pixels need
+                    // GPU readback only for the newly damaged source region.
+                    let full = Rectangle::from_size((capture.size.w, capture.size.h).into());
+                    let outcome = match scene.copy(renderer, &frame.buffer, &[full]) {
+                        FillOutcome::Ok(_) => {
+                            scene.delivered(capture.history.as_ref());
+                            FillOutcome::Ok(damage)
+                        }
+                        error => error,
+                    };
+                    frame.complete(outcome, time.into());
+                }
+                CaptureFrame::File { destination, token } => {
+                    use crate::automation_dnd::{
+                        AutomationOperation, AutomationStatus, record_and_publish,
+                    };
+                    match scene.rgba(renderer) {
+                        Ok(pixels) => {
+                            let size = capture.size;
+                            std::thread::spawn(move || {
+                                let status = match destination.write_rgba(
+                                    size.w as u32,
+                                    size.h as u32,
+                                    &pixels,
+                                ) {
+                                    Ok(()) => AutomationStatus::Done,
+                                    Err(err) => {
+                                        tracing::warn!(%err, path = %destination.path().display(), "wm-screenshot failed");
+                                        AutomationStatus::Failed
+                                    }
+                                };
+                                record_and_publish(token, AutomationOperation::Screenshot, status);
+                            });
+                        }
+                        Err(err) => {
+                            tracing::warn!(%err, "wm-screenshot readback failed");
+                            record_and_publish(
+                                token,
+                                AutomationOperation::Screenshot,
+                                AutomationStatus::Failed,
+                            );
+                        }
                     }
                 }
             }
         }
+        cache.put(scene);
     }
 }

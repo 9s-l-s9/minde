@@ -237,6 +237,17 @@ continues to accept partial changes; completeness is a protocol requirement.
 
 ## Screen capture lifecycle
 
+The `capture-damage` scenario checks first-frame and unchanged-frame damage,
+two ext sessions sharing one partial update, and repair of reused client
+buffers outside the source damage. Render/readback counters must advance once
+for the shared update and stay unchanged on a static capture. The wlr client
+checks that `copy_with_damage` waits for a change, reports its extent, fills
+the complete destination buffer and permits cancellation while waiting.
+The recorder check requires multiple encoded frames. After SIGINT it changes
+the private scene once more: wf-recorder 0.6.0 sets its exit flag in the signal
+handler but can remain blocked in Wayland dispatch while a damage-aware copy
+waits on a static scene. This wakeup belongs to the test harness.
+
 `sh tests/screencapture-e2e.sh` checks both capture protocols and file captures
 in a private nested compositor. Raw clients batch capture requests with lock,
 disable and power-off requests to exercise transitions before the next render.

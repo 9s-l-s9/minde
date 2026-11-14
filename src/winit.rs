@@ -332,8 +332,7 @@ fn render_frame(
             .map_err(|error| ("submit", error))?;
     }
 
-    // Satisfy any queued screen-capture frames for this output
-    // by re-compositing the scene into their buffers (shm).
+    // Update shared capture images and satisfy queued buffers for this output.
     if !state.pending_captures.is_empty() {
         let time = Clock::<Monotonic>::new().now();
         crate::handlers::screencopy::satisfy_output_captures(
@@ -343,6 +342,7 @@ fn render_frame(
             scale,
             time,
             &mut state.pending_captures,
+            &mut state.capture_cache,
             &state.space,
             &mut state.cursor_state,
             state.pointer_location,

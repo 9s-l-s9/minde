@@ -2578,6 +2578,7 @@ impl MindeState {
                 scale,
                 time,
                 &mut self.pending_captures,
+                &mut self.capture_cache,
                 &self.space,
                 &mut self.cursor_state,
                 self.pointer_location,

@@ -99,11 +99,17 @@ Known follow-ups:
 ## Screen capture and desktop portal
 
 `ext-image-copy-capture-v1` + `ext-image-capture-source-v1` are wired on
-both backends (`src/handlers/screencopy.rs`): shm capture everywhere,
-dmabuf constraints offered on udev for a future zero-copy screen-cast
-path; output capture only — no cursor sessions or toplevel sources are
-advertised. Captures are queued and satisfied after a real composited
-frame. `zwlr_screencopy_manager_v1` v3 is hand-implemented in
+both backends (`src/handlers/screencopy.rs`): shm capture everywhere and
+GPU copies into client dmabufs on udev; output capture only, with no cursor
+sessions or toplevel sources advertised. Captures are queued and satisfied
+after a real composited frame. Matching output, cursor and region requests
+share a cached image. Persistent damage tracking avoids unchanged drawing
+and limits shm readback to the changed area. Client buffer repair is tracked
+separately from source damage, and wlr damage-aware requests wait for changes.
+The cache retains at most four variants within a 128 MiB image budget, keeping
+one image when a single output exceeds that budget. Reusing the display's
+already composited framebuffer remains a possible further optimization.
+`zwlr_screencopy_manager_v1` v3 is hand-implemented in
 `src/handlers/wlr_screencopy.rs` (Smithay ships no server module) and
 reuses the same machinery; region capture clips to the output. A bounded
 gate (`tests/screencapture-e2e.sh`, part of `make check-e2e`) validates

@@ -39,6 +39,12 @@ nested_wayland timeout 20 "$NESTED_PROTOCOL_CLIENT" capture-clock >"$OUT/capture
 }
 cat "$OUT/capture-clock.log"
 
+nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" capture-damage >"$OUT/capture-damage.log" 2>&1 || {
+    cat "$OUT/capture-damage.log" >&2
+    exit 1
+}
+cat "$OUT/capture-damage.log"
+
 for scenario in scene-layers scene-message scene-cursor; do
     timeout 45 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1 || {
         cat "$OUT/$scenario.log" >&2
@@ -131,7 +137,18 @@ else
         cat "$OUT/wf-recorder.log" >&2 || true
         exit 1
     fi
+    # Exercise a second encoded image as well as an idle damage-aware wait.
+    nested_wayland scripts/minde-cmd '(wm-message "Recording changed frame" 0)' \
+        >"$OUT/recording-change.log" 2>&1
+    sleep 0.5
     kill -INT "$wfr_pid" 2>/dev/null || true
+    # wf-recorder 0.6.0's signal handler only sets exit_main_loop. Its main
+    # thread can remain in wl_display_dispatch on a static scene (the writer
+    # has already finalized the file). A final real scene change releases
+    # that pending copy_with_damage. Keep damage semantics in the compositor;
+    # do not manufacture periodic identical frames to wake this client.
+    nested_wayland scripts/minde-cmd '(wm-message "Recorder shutdown" 0)' \
+        >"$OUT/recording-stop.log" 2>&1
     # Give it a bounded window to flush and finalize the container.
     reaped=0
     for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -171,6 +188,13 @@ else
             echo "error: wf-recorder video has no valid geometry (got '$dims')" >&2
             exit 1
         fi
+        frames=$(ffprobe -v error -select_streams v:0 -count_frames \
+            -show_entries stream=nb_read_frames -of default=noprint_wrappers=1:nokey=1 \
+            "$vid" 2>>"$OUT/ffprobe.log")
+        case $frames in
+            ''|*[!0-9]*) echo "error: wf-recorder frame count is invalid: $frames" >&2; exit 1 ;;
+        esac
+        [ "$frames" -ge 2 ] || { echo "error: wf-recorder missed the changed frame" >&2; exit 1; }
         echo "ok - wf-recorder (wlr-screencopy) recorded a ${vw}x${vh} video"
     else
         echo "ok - wf-recorder (wlr-screencopy) recorded a non-empty video (ffprobe absent)"

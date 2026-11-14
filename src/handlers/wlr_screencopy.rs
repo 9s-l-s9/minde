@@ -40,7 +40,7 @@ use smithay::utils::{Logical, Physical, Rectangle, Scale, Size};
 use smithay::wayland::shm::{shm_format_to_fourcc, with_buffer_contents};
 
 use super::screencopy::{
-    CaptureFrame, CaptureGeometry, FillOutcome, PendingCapture, capture_geometry,
+    CaptureFrame, CaptureGeometry, CaptureHistory, FillOutcome, PendingCapture, capture_geometry,
 };
 use crate::MindeState;
 
@@ -49,7 +49,8 @@ use crate::MindeState;
 pub struct WlrPending {
     frame: ZwlrScreencopyFrameV1,
     pub buffer: WlBuffer,
-    with_damage: bool,
+    pub with_damage: bool,
+    pub history: CaptureHistory,
 }
 
 impl WlrPending {
@@ -62,16 +63,18 @@ impl WlrPending {
     /// `failed`.
     pub fn complete(self, outcome: FillOutcome, time: Duration) {
         match outcome {
-            FillOutcome::Ok(region) => {
+            FillOutcome::Ok(damage) => {
                 // Rendered upright (Transform::Normal), so no y-invert.
                 self.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
                 if self.with_damage && self.frame.version() >= 2 {
-                    self.frame.damage(
-                        region.loc.x.max(0) as u32,
-                        region.loc.y.max(0) as u32,
-                        region.size.w.max(0) as u32,
-                        region.size.h.max(0) as u32,
-                    );
+                    for region in damage {
+                        self.frame.damage(
+                            region.loc.x.max(0) as u32,
+                            region.loc.y.max(0) as u32,
+                            region.size.w.max(0) as u32,
+                            region.size.h.max(0) as u32,
+                        );
+                    }
                 }
                 let secs = time.as_secs();
                 self.frame
@@ -90,6 +93,7 @@ pub struct WlrFrameData {
 }
 
 struct WlrFrameInner {
+    history: CaptureHistory,
     output: WeakOutput,
     geometry: Option<CaptureGeometry>,
     /// Captured area in output-logical coords (full output for `capture_output`).
@@ -111,17 +115,17 @@ impl GlobalDispatch<ZwlrScreencopyManagerV1, ()> for MindeState {
         _global_data: &(),
         data_init: &mut DataInit<'_, Self>,
     ) {
-        data_init.init(resource, ());
+        data_init.init(resource, CaptureHistory::default());
     }
 }
 
-impl Dispatch<ZwlrScreencopyManagerV1, ()> for MindeState {
+impl Dispatch<ZwlrScreencopyManagerV1, CaptureHistory> for MindeState {
     fn request(
         state: &mut Self,
         _client: &Client,
         _manager: &ZwlrScreencopyManagerV1,
         request: zwlr_screencopy_manager_v1::Request,
-        _data: &(),
+        history: &CaptureHistory,
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
@@ -132,7 +136,14 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for MindeState {
                 overlay_cursor,
                 output,
             } => {
-                state.create_wlr_frame(frame, overlay_cursor != 0, &output, None, data_init);
+                state.create_wlr_frame(
+                    frame,
+                    overlay_cursor != 0,
+                    &output,
+                    None,
+                    history.clone(),
+                    data_init,
+                );
             }
             Request::CaptureOutputRegion {
                 frame,
@@ -144,7 +155,14 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for MindeState {
                 height,
             } => {
                 let rect = Rectangle::new((x, y).into(), (width.max(0), height.max(0)).into());
-                state.create_wlr_frame(frame, overlay_cursor != 0, &output, Some(rect), data_init);
+                state.create_wlr_frame(
+                    frame,
+                    overlay_cursor != 0,
+                    &output,
+                    Some(rect),
+                    history.clone(),
+                    data_init,
+                );
             }
             Request::Destroy => {}
             _ => unreachable!(),
@@ -162,6 +180,7 @@ impl MindeState {
         overlay_cursor: bool,
         wl_output: &WlOutput,
         region: Option<Rectangle<i32, Logical>>,
+        history: CaptureHistory,
         data_init: &mut DataInit<'_, MindeState>,
     ) {
         let output = Output::from_resource(wl_output).filter(|o| self.capture_output_available(o));
@@ -207,6 +226,7 @@ impl MindeState {
             id,
             WlrFrameData {
                 inner: Mutex::new(WlrFrameInner {
+                    history,
                     output: output.downgrade(),
                     geometry: Some(capture_geometry(&output)),
                     region,
@@ -238,6 +258,7 @@ impl MindeState {
 fn placeholder_frame_data() -> WlrFrameData {
     WlrFrameData {
         inner: Mutex::new(WlrFrameInner {
+            history: CaptureHistory::default(),
             output: WeakOutput::default(),
             geometry: None,
             region: Rectangle::default(),
@@ -301,6 +322,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, WlrFrameData> for MindeState {
                 frame: frame.clone(),
                 buffer,
                 with_damage,
+                history: inner.history.clone(),
             }),
             inner.overlay_cursor,
             inner.region.loc,
@@ -308,6 +330,18 @@ impl Dispatch<ZwlrScreencopyFrameV1, WlrFrameData> for MindeState {
         ));
         // Captures are satisfied by the next composite; make sure one runs.
         state.schedule_redraw();
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        resource: &ZwlrScreencopyFrameV1,
+        _data: &WlrFrameData,
+    ) {
+        state.pending_captures.retain(|capture| {
+            !matches!(&capture.frame,
+            CaptureFrame::Wlr(pending) if &pending.frame == resource)
+        });
     }
 }
 

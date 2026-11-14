@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- Screen capture shares cached images between matching requests, reports
+  source damage and reads back only changed regions. Static damage-aware wlr
+  captures wait for a change; ext buffer repair remains independent (#155).
+
 - Lock surfaces receive physical pointer and touch input on their respective
   outputs, including locker cursors and touch wake-up. Lock transitions cancel
   held input so it cannot cross into the desktop or a replacement locker (#154).

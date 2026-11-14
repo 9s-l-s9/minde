@@ -408,6 +408,7 @@ pub struct MindeState {
     pub image_copy_capture_state: smithay::wayland::image_copy_capture::ImageCopyCaptureState,
     pub capture_sessions: Vec<smithay::wayland::image_copy_capture::Session>,
     pub pending_captures: Vec<crate::handlers::screencopy::PendingCapture>,
+    pub capture_cache: crate::handlers::screencopy::CaptureCache,
 
     /// Active `wlr-gamma-control-unstable-v1` controls, one per output
     /// (blue-light tools: gammastep, wlsunset). Only ever populated under
@@ -813,6 +814,7 @@ impl MindeState {
             image_copy_capture_state,
             capture_sessions: Vec::new(),
             pending_captures: Vec::new(),
+            capture_cache: Default::default(),
             gamma_controls: Default::default(),
             foreign_toplevel,
             output_management,

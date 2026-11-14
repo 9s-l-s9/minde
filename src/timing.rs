@@ -26,13 +26,19 @@ pub enum Probe {
     Render = 2,
     /// Recompute output usable areas and arrange their layer surfaces.
     ArrangeLayers = 3,
+    /// An incremental update of a cached capture image (excludes no damage).
+    CaptureRender = 4,
+    /// GPU readback of the accumulated changed rectangle into shared pixels.
+    CaptureReadback = 5,
 }
 
-const PROBES: [(&str, Probe); 4] = [
+const PROBES: [(&str, Probe); 6] = [
     ("apply-command", Probe::ApplyCommand),
     ("handle-key", Probe::HandleKey),
     ("render", Probe::Render),
     ("arrange-layers", Probe::ArrangeLayers),
+    ("capture-render", Probe::CaptureRender),
+    ("capture-readback", Probe::CaptureReadback),
 ];
 
 #[derive(Default)]
@@ -43,7 +49,19 @@ struct Stats {
     buckets: [AtomicU64; 5],
 }
 
-static STATS: [Stats; 4] = [
+static STATS: [Stats; 6] = [
+    Stats {
+        count: AtomicU64::new(0),
+        total_us: AtomicU64::new(0),
+        max_us: AtomicU64::new(0),
+        buckets: [const { AtomicU64::new(0) }; 5],
+    },
+    Stats {
+        count: AtomicU64::new(0),
+        total_us: AtomicU64::new(0),
+        max_us: AtomicU64::new(0),
+        buckets: [const { AtomicU64::new(0) }; 5],
+    },
     Stats {
         count: AtomicU64::new(0),
         total_us: AtomicU64::new(0),
