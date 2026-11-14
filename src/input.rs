@@ -21,6 +21,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 type SurfaceTarget = Option<(WlSurface, Point<f64, Logical>)>;
 
+/// Repeat settings shared by Wayland clients and consumed compositor keys.
+#[derive(Debug, Clone, Copy)]
+pub struct KeyboardRepeat {
+    pub rate: i32,
+    pub delay: i32,
+}
+
+impl Default for KeyboardRepeat {
+    fn default() -> Self {
+        Self {
+            rate: 25,
+            delay: 200,
+        }
+    }
+}
+
+impl KeyboardRepeat {
+    pub fn new(rate: i32, delay: i32) -> Option<Self> {
+        ((0..=1000).contains(&rate) && (0..=10000).contains(&delay)).then_some(Self { rate, delay })
+    }
+
+    fn interval(self) -> std::time::Duration {
+        std::time::Duration::from_nanos(1_000_000_000 / self.rate.max(1) as u64)
+    }
+}
+
 /// The first physical press decides whether its matching release reaches a
 /// client. Keep this across focus, prompt, inhibitor and lock transitions.
 #[derive(Default)]
@@ -379,12 +405,12 @@ impl MindeState {
                                 // so while a prompt/mode asked for repeat
                                 // (wm-set-key-repeat) re-fire the handler
                                 // from a timer until the key is released.
-                                if data.key_repeat_enabled {
+                                if data.key_repeat_enabled && data.keyboard_repeat.rate > 0 {
                                     let code = key_code.raw();
                                     let (m, k) = (mods_bitmask(mods), keysym.raw());
                                     let timer =
                                         smithay::reexports::calloop::timer::Timer::from_duration(
-                                            std::time::Duration::from_millis(600),
+                                            std::time::Duration::from_millis(data.keyboard_repeat.delay as u64),
                                         );
                                     let n = name.clone();
                                     let u = utf8.clone();
@@ -396,11 +422,12 @@ impl MindeState {
                                                 .as_ref()
                                                 .is_some_and(|(c, _)| *c == code);
                                             if state.key_repeat_enabled
+                                                && state.keyboard_repeat.rate > 0
                                                 && held
                                                 && guile::handle_key(m, k, &n, &u)
                                             {
                                                 TimeoutAction::ToDuration(
-                                                    std::time::Duration::from_millis(40),
+                                                    state.keyboard_repeat.interval(),
                                                 )
                                             } else {
                                                 if held {

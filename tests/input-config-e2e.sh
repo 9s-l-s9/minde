@@ -69,6 +69,20 @@ raw=$(ctl_eval '(wm-configure-input-rule! "Touchpad" -1 -1 "" "" #t)')
 [ "$raw" = "#f" ] || { echo "error: primitive accepted a non-string output mapping" >&2; exit 1; }
 echo "ok - output mapping accepts automatic selection and rejects invalid values"
 
+options=$(ctl_eval '(wm-configure-input! "Touchpad" #:accel-speed -0.5 #:scroll-method (quote two-finger) #:left-handed #f #:disable-while-typing #t #:middle-emulation #f)')
+[ "$options" = '#t' ] || { echo 'error: additional input settings rejected' >&2; exit 1; }
+options=$(ctl_eval '(wm-configure-input! "Trackball" #:accel-speed 0 #:scroll-method (quote on-button-down) #:scroll-button 274 #:left-handed #t #:middle-emulation #t)')
+[ "$options" = '#t' ] || { echo 'error: trackball settings rejected' >&2; exit 1; }
+options=$(ctl_eval '(wm-configure-input! "Trackball" #:scroll-method (quote none) #:scroll-button 0 #:disable-while-typing #f)')
+[ "$options" = '#t' ] || { echo 'error: explicit disabled settings rejected' >&2; exit 1; }
+for invalid in '#:accel-speed +nan.0' '#:accel-speed +inf.0' '#:accel-speed 1.01' \
+    '#:left-handed 1' '#:disable-while-typing "yes"' '#:middle-emulation (quote yes)' \
+    '#:scroll-button -1' '#:scroll-button 768' '#:scroll-button 274.0' '#:scroll-method (quote typo)'; do
+    result=$(ctl_eval "(wm-configure-input! \"Touchpad\" $invalid)")
+    [ "$result" = '#f' ] || { echo "error: invalid input setting accepted: $invalid" >&2; exit 1; }
+done
+echo 'ok - additional input settings preserve explicit values and reject invalid requests'
+
 # Winit's framebuffer flip must not invert host pointer coordinates. DISPLAY
 # belongs to nested_start's private Xvfb, never to the user's desktop.
 window=$(timeout 5 xdotool search --sync --name Smithay | head -n 1)

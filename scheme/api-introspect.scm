@@ -58,6 +58,8 @@
      "Remove every text overlay.")
     (wm-border-color "(wm-border-color hex)"
      "Set the focus-border color from a \"#rrggbb\" string.")
+    (wm-configure-appearance! "(wm-configure-appearance! settings)"
+     "Apply an alist of border-width, background, message-font-size, message-padding, message-border-width, message-foreground, message-background and message-border-color. Sizes are logical pixels; colors are #rrggbb strings. Reject invalid or duplicate settings with #f and no changes; omitted fields retain their values.")
     (wm-focus-rect "(wm-focus-rect x y w h)"
      "Draw the focus rectangle at the given geometry.")
     (wm-output-geometry "(wm-output-geometry)"
@@ -130,14 +132,16 @@
      "The absolute screenshot directory: MINDE_SCREENSHOT_DIR or the private runtime directory's minde/screenshots child. Returns #f for invalid configuration.")
     (wm-warp-pointer-relative "(wm-warp-pointer-relative dx dy)"
      "Warp the pointer by a relative delta DX,DY.")
-    (wm-set-key-repeat "(wm-set-key-repeat spec)"
-     "Configure keyboard repeat rate and delay from SPEC.")
+    (wm-set-key-repeat "(wm-set-key-repeat enabled?)"
+     "Enable or disable compositor-side repeat for keys consumed by a prompt or keymap. This does not change client repeat settings.")
+    (wm-set-keyboard-repeat! "(wm-set-keyboard-repeat! rate delay-ms)"
+     "Set shared client and compositor repeat timing: exact integer rate 0-1000 Hz and delay 0-10000 ms. Rate 0 disables repeat. Stops any active compositor repeat; the next press uses the new settings. Invalid arguments return #f without changes.")
     (wm-idle-ms "(wm-idle-ms)"
      "Return monotonic milliseconds since input or session resume, counting from startup.")
     (wm-input-devices "(wm-input-devices)"
      "Return ((name cap ...) ...): the present libinput devices.")
-    (wm-configure-input-rule! "(wm-configure-input-rule! match tap natural accel click output)"
-     "Low-level input rule primitive wrapped by wm-configure-input!. OUTPUT is a connector name, an empty string for automatic association, or #f to omit the output setting.")
+    (wm-configure-input-rule! "(wm-configure-input-rule! match tap natural accel click output [options])"
+     "Low-level input rule primitive wrapped by wm-configure-input!. OUTPUT is a connector name, an empty string for automatic association, or #f to omit it. Optional OPTIONS is an alist with accel-speed, scroll-method, scroll-button, left-handed, disable-while-typing and middle-emulation. Invalid options return #f without replacing the rule.")
     (wm-session-lock-confirmed? "(wm-session-lock-confirmed?)"
                               "Whether the locked session has passed its output presentation barrier; safe to suspend.")
     (wm-session-locked? "(wm-session-locked?)"

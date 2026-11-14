@@ -148,6 +148,7 @@ impl Scene {
         &mut self,
         renderer: &mut R,
         elements: &[MindeRenderElements<R>],
+        background: [f32; 4],
     ) -> Result<(), Error>
     where
         R: Renderer + ImportAll + ImportMem + Offscreen<GlesRenderbuffer>,
@@ -159,13 +160,9 @@ impl Scene {
         }
         let mut framebuffer = renderer.bind(self.buffer.as_mut().unwrap())?;
         let start = Instant::now();
-        let result = self.tracker.render_output(
-            renderer,
-            &mut framebuffer,
-            1,
-            elements,
-            [0.1, 0.1, 0.1, 1.0],
-        )?;
+        let result =
+            self.tracker
+                .render_output(renderer, &mut framebuffer, 1, elements, background)?;
         let damaged = result
             .damage
             .and_then(|rects| rects.iter().copied().reduce(Rectangle::merge));

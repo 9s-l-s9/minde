@@ -33,9 +33,47 @@ smithay::backend::renderer::element::render_elements! {
     Cursor=MemoryRenderBufferRenderElement<R>,
 }
 
-/// Focused-window border: gruvbox yellow, matching the user's StumpWM theme.
+/// Default focus-border color; policy may change it for modal states.
 pub const BORDER_COLOR: [f32; 4] = [0.84, 0.60, 0.13, 1.0]; // #d79921
-pub const BORDER_WIDTH: i32 = 3;
+
+pub struct Appearance {
+    pub border_width: i32,
+    pub background: [f32; 4],
+    pub message: MessageStyle,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            border_width: 3,
+            background: [0.1, 0.1, 0.1, 1.0],
+            message: MessageStyle::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageStyle {
+    pub font_size: i32,
+    pub padding: i32,
+    pub border_width: i32,
+    pub foreground: [u8; 4],
+    pub background: [u8; 4],
+    pub border_color: [u8; 4],
+}
+
+impl Default for MessageStyle {
+    fn default() -> Self {
+        Self {
+            font_size: 17,
+            padding: 12,
+            border_width: 2,
+            foreground: [0xeb, 0xdb, 0xb2, 0xff],
+            background: [0x28, 0x28, 0x28, 0xff],
+            border_color: [0xd7, 0x99, 0x21, 0xff],
+        }
+    }
+}
 
 /// A locked frame contains only the lock tree and its cursor. Share this
 /// path between DRM and nested rendering, including cursor ownership checks.
@@ -134,12 +172,13 @@ impl BorderBuffers {
         geo: Rectangle<i32, Logical>,
         scale: Scale<f64>,
         color: [f32; 4],
+        width: i32,
     ) -> Vec<MindeRenderElements<R>>
     where
         R: Renderer + ImportAll + ImportMem,
     {
         let (x, y, w, h) = (geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
-        let t = BORDER_WIDTH.min((w - 1).max(0) / 2).min((h - 1).max(0) / 2);
+        let t = width.min((w - 1).max(0) / 2).min((h - 1).max(0) / 2);
         if t == 0 {
             return Vec::new();
         }
@@ -177,14 +216,6 @@ impl BorderBuffers {
 /// from Guix font-dejavu; the DejaVu license permits embedding).
 static MESSAGE_FONT_BYTES: &[u8] = include_bytes!("../resources/DejaVuSansMono.ttf");
 
-const MESSAGE_FONT_PX: f32 = 17.0;
-const MESSAGE_PAD: i32 = 12;
-const MESSAGE_BORDER: i32 = 2;
-// Gruvbox, matching the user's StumpWM theme.
-const MESSAGE_BG: [u8; 4] = [0x28, 0x28, 0x28, 0xff]; // #282828
-const MESSAGE_FG: [u8; 4] = [0xeb, 0xdb, 0xb2, 0xff]; // #ebdbb2
-const MESSAGE_BORDER_COLOR: [u8; 4] = [0xd7, 0x99, 0x21, 0xff]; // #d79921
-
 /// The parsed message font, parsed once: `Font::from_bytes` re-reads the
 /// whole TTF, which is far too much for every echo message and overlay label.
 fn message_font() -> &'static fontdue::Font {
@@ -195,30 +226,98 @@ fn message_font() -> &'static fontdue::Font {
     })
 }
 
-/// Glyph coverage bitmaps at `MESSAGE_FONT_PX`, cached per character: the
-/// message text is mostly the same few dozen glyphs over and over.
-fn rasterize_cached(font: &fontdue::Font, ch: char) -> (fontdue::Metrics, std::sync::Arc<[u8]>) {
+/// Cache glyphs by character and physical font size, with an 8 MiB budget.
+fn rasterize_cached(
+    font: &fontdue::Font,
+    ch: char,
+    px: i32,
+) -> (fontdue::Metrics, std::sync::Arc<[u8]>) {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     type Glyph = (fontdue::Metrics, Arc<[u8]>);
-    static GLYPHS: Mutex<Option<HashMap<char, Glyph>>> = Mutex::new(None);
+    type Cache = (HashMap<(char, i32), Glyph>, usize);
+    static GLYPHS: Mutex<Option<Cache>> = Mutex::new(None);
     let mut guard = GLYPHS.lock().unwrap();
-    let cache = guard.get_or_insert_with(HashMap::new);
-    cache
-        .entry(ch)
-        .or_insert_with(|| {
-            let (metrics, bitmap) = font.rasterize(ch, MESSAGE_FONT_PX);
-            (metrics, Arc::from(bitmap))
-        })
-        .clone()
+    let (cache, bytes) = guard.get_or_insert_with(|| (HashMap::new(), 0));
+    if let Some(glyph) = cache.get(&(ch, px)) {
+        return glyph.clone();
+    }
+    let (metrics, bitmap) = font.rasterize(ch, px as f32);
+    let len = bitmap.len();
+    let glyph = (metrics, Arc::from(bitmap));
+    if *bytes + len > 8 * 1024 * 1024 || cache.len() >= 1024 {
+        cache.clear();
+        *bytes = 0;
+    }
+    if len <= 8 * 1024 * 1024 {
+        *bytes += len;
+        cache.insert((ch, px), glyph.clone());
+    }
+    glyph
 }
 
-/// A rasterized message ready to render, plus the generation counter used
-/// so a stale hide-timer can't clear a newer message.
+/// Message content with up to four cached density/style/size variants.
 pub struct MessageState {
+    text: String,
+    limits: (i32, i32),
+    buffers: std::cell::RefCell<Vec<(MessageKey, MessageBuffer)>>,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MessageKey {
+    style: MessageStyle,
+    scale: i32,
+    bounds: (i32, i32),
+}
+
+#[derive(Clone)]
+pub struct MessageBuffer {
     pub buffer: MemoryRenderBuffer,
     pub size: (i32, i32),
-    pub generation: u64,
+    bytes: usize,
+}
+
+impl MessageState {
+    pub fn new(text: &str, generation: u64, limits: (i32, i32)) -> Self {
+        Self {
+            text: text.into(),
+            generation,
+            limits,
+            buffers: Default::default(),
+        }
+    }
+
+    pub fn prepare(
+        &self,
+        style: MessageStyle,
+        scale: Scale<f64>,
+        bounds: (i32, i32),
+    ) -> MessageBuffer {
+        let key = MessageKey {
+            style,
+            scale: cursor_scale(scale),
+            bounds: (
+                bounds.0.min(self.limits.0).max(1),
+                bounds.1.min(self.limits.1).max(1),
+            ),
+        };
+        let mut buffers = self.buffers.borrow_mut();
+        if let Some((_, buffer)) = buffers.iter().find(|(existing, _)| *existing == key) {
+            return buffer.clone();
+        }
+        let buffer = rasterize_message(&self.text, key);
+        // Keep one oversized image, but do not multiply it across variants.
+        while !buffers.is_empty()
+            && (buffers.len() >= 4
+                || buffers.iter().map(|(_, b)| b.bytes).sum::<usize>() + buffer.bytes
+                    > 16 * 1024 * 1024)
+        {
+            buffers.remove(0);
+        }
+        buffers.push((key, buffer.clone()));
+        buffer
+    }
 }
 
 fn put_px(data: &mut [u8], stride: usize, x: i32, y: i32, rgba: [u8; 4]) {
@@ -230,19 +329,19 @@ fn put_px(data: &mut [u8], stride: usize, x: i32, y: i32, rgba: [u8; 4]) {
     data[off + 3] = rgba[3];
 }
 
-/// Rasterizes `text` (multi-line) into an ARGB `MemoryRenderBuffer` styled
-/// like StumpWM's message window. Lines are hard-wrapped/clamped to fit
-/// within `max_w` x `max_h` (pass the output size).
-pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> MessageState {
+/// Layout in logical pixels, rasterize at integer-ceil output density.
+fn rasterize_message(text: &str, key: MessageKey) -> MessageBuffer {
     let font = message_font();
-
-    let advance = font.metrics('M', MESSAGE_FONT_PX).advance_width.ceil() as i32;
-    let line_h = (MESSAGE_FONT_PX * 1.35).ceil() as i32;
-    let baseline = (MESSAGE_FONT_PX * 1.05).ceil() as i32;
+    let (style, scale) = (key.style, key.scale);
+    let (max_w, max_h) = key.bounds;
+    let font_px = style.font_size as f32;
+    let advance = font.metrics('M', font_px).advance_width.ceil() as i32;
+    let line_h = (font_px * 1.35).ceil() as i32;
+    let baseline = (font_px * 1.05).ceil() as i32;
 
     // Hard-wrap to the width budget, clamp to the height budget.
-    let inset = MESSAGE_PAD + MESSAGE_BORDER;
-    let max_cols = (((max_w * 8 / 10) - 2 * inset) / advance.max(1)).max(8) as usize;
+    let inset = style.padding + style.border_width;
+    let max_cols = (((max_w * 8 / 10) - 2 * inset) / advance.max(1)).max(1) as usize;
     let max_lines = ((((max_h * 8 / 10) - 2 * inset) / line_h.max(1)).max(1)) as usize;
     let mut lines: Vec<String> = Vec::new();
     'outer: for raw in text.split('\n') {
@@ -267,27 +366,31 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
         .max()
         .unwrap_or(1)
         .max(1) as i32;
-    let w = cols * advance + 2 * inset;
-    let h = lines.len() as i32 * line_h + 2 * inset;
+    let size = (
+        (cols * advance + 2 * inset).clamp(1, max_w),
+        (lines.len() as i32 * line_h + 2 * inset).clamp(1, max_h),
+    );
+    let (w, h) = (size.0 * scale, size.1 * scale);
+    let border_width = style.border_width * scale;
 
     let stride = w as usize * 4;
     let mut data = vec![0u8; stride * h as usize];
 
     for y in 0..h {
         for x in 0..w {
-            let border = x < MESSAGE_BORDER
-                || y < MESSAGE_BORDER
-                || x >= w - MESSAGE_BORDER
-                || y >= h - MESSAGE_BORDER;
+            let border = x < border_width
+                || y < border_width
+                || x >= w - border_width
+                || y >= h - border_width;
             put_px(
                 &mut data,
                 stride,
                 x,
                 y,
                 if border {
-                    MESSAGE_BORDER_COLOR
+                    style.border_color
                 } else {
-                    MESSAGE_BG
+                    style.background
                 },
             );
         }
@@ -296,9 +399,9 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
     for (row, line) in lines.iter().enumerate() {
         let y0 = inset + row as i32 * line_h;
         for (col, ch) in line.chars().enumerate() {
-            let (metrics, bitmap) = rasterize_cached(font, ch);
-            let gx = inset + col as i32 * advance + metrics.xmin;
-            let gy = y0 + baseline - metrics.height as i32 - metrics.ymin;
+            let (metrics, bitmap) = rasterize_cached(font, ch, style.font_size * scale);
+            let gx = (inset + col as i32 * advance) * scale + metrics.xmin;
+            let gy = (y0 + baseline) * scale - metrics.height as i32 - metrics.ymin;
             for by in 0..metrics.height as i32 {
                 for bx in 0..metrics.width as i32 {
                     let cov = bitmap[(by * metrics.width as i32 + bx) as usize] as u32;
@@ -306,19 +409,19 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
                         continue;
                     }
                     let (px, py) = (gx + bx, gy + by);
-                    if px < MESSAGE_BORDER
-                        || py < MESSAGE_BORDER
-                        || px >= w - MESSAGE_BORDER
-                        || py >= h - MESSAGE_BORDER
+                    if px < border_width
+                        || py < border_width
+                        || px >= w - border_width
+                        || py >= h - border_width
                     {
                         continue;
                     }
                     let blend =
                         |f: u8, b: u8| ((f as u32 * cov + b as u32 * (255 - cov)) / 255) as u8;
                     let rgba = [
-                        blend(MESSAGE_FG[0], MESSAGE_BG[0]),
-                        blend(MESSAGE_FG[1], MESSAGE_BG[1]),
-                        blend(MESSAGE_FG[2], MESSAGE_BG[2]),
+                        blend(style.foreground[0], style.background[0]),
+                        blend(style.foreground[1], style.background[1]),
+                        blend(style.foreground[2], style.background[2]),
                         0xff,
                     ];
                     put_px(&mut data, stride, px, py, rgba);
@@ -331,15 +434,15 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
         &data,
         smithay::backend::allocator::Fourcc::Argb8888,
         (w, h),
-        1,
+        scale,
         smithay::utils::Transform::Normal,
         None,
     );
 
-    MessageState {
+    MessageBuffer {
         buffer,
-        size: (w, h),
-        generation,
+        size,
+        bytes: data.len(),
     }
 }
 
@@ -347,7 +450,7 @@ pub fn render_message(text: &str, generation: u64, max_w: i32, max_h: i32) -> Me
 /// or `None` if import fails.
 pub fn overlay_element<R>(
     renderer: &mut R,
-    msg: &MessageState,
+    msg: &MessageBuffer,
     loc: Point<i32, Logical>,
     scale: Scale<f64>,
 ) -> Option<MindeRenderElements<R>>
@@ -608,19 +711,73 @@ impl CursorState {
 mod tests {
     use super::*;
 
+    fn pixels(message: &mut MessageBuffer) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        message
+            .buffer
+            .render()
+            .draw::<_, std::convert::Infallible>(|data| {
+                bytes.extend_from_slice(data);
+                Ok(Vec::new())
+            })
+            .unwrap();
+        bytes
+    }
+
     #[test]
     fn message_layout_wraps_and_stays_inside_the_output_budget() {
-        let message = render_message(&"abcdefghij".repeat(200), 41, 1280, 800);
+        let message = MessageState::new(&"abcdefghij".repeat(200), 41, (1280, 800));
         assert_eq!(message.generation, 41);
+        let message = message.prepare(MessageStyle::default(), Scale::from(1.0), (1280, 800));
         assert!(message.size.0 > 0 && message.size.0 <= 1280);
         assert!(message.size.1 > 0 && message.size.1 <= 800);
     }
 
     #[test]
     fn empty_message_still_has_a_renderable_box() {
-        let message = render_message("", 0, 640, 480);
+        let message = MessageState::new("", 0, (640, 480)).prepare(
+            MessageStyle::default(),
+            Scale::from(1.0),
+            (640, 480),
+        );
         assert!(message.size.0 > 0);
         assert!(message.size.1 > 0);
+    }
+
+    #[test]
+    fn message_density_changes_buffer_pixels_without_changing_logical_layout() {
+        let message = MessageState::new("fractional text", 0, (1280, 800));
+        let style = MessageStyle::default();
+        let mut normal = message.prepare(style, Scale::from(1.0), (1280, 800));
+        let mut fractional = message.prepare(style, Scale::from(1.5), (1280, 800));
+        assert_eq!(normal.size, fractional.size);
+        assert_eq!(
+            pixels(&mut normal).len(),
+            (normal.size.0 * normal.size.1 * 4) as usize
+        );
+        assert_eq!(
+            pixels(&mut fractional).len(),
+            (normal.size.0 * normal.size.1 * 16) as usize
+        );
+        let mut again = message.prepare(style, Scale::from(2.0), (1280, 800));
+        assert_eq!(pixels(&mut again), pixels(&mut fractional));
+        assert_eq!(message.buffers.borrow().len(), 2);
+        let bigger = MessageStyle {
+            font_size: 24,
+            ..style
+        };
+        let large = message.prepare(bigger, Scale::from(1.5), (1280, 800));
+        assert!(large.size.0 > normal.size.0 && large.size.1 > normal.size.1);
+        let tiny = message.prepare(bigger, Scale::from(1.5), (8, 4));
+        assert!(tiny.size.0 <= 8 && tiny.size.1 <= 4);
+        for font_size in 6..30 {
+            message.prepare(
+                MessageStyle { font_size, ..style },
+                Scale::from(1.0),
+                (1280, 800),
+            );
+        }
+        assert!(message.buffers.borrow().len() <= 4);
     }
 
     #[test]

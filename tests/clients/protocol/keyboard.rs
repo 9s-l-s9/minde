@@ -228,13 +228,37 @@ fn lock_transition(target: &mut Input) {
 }
 
 fn repeat(target: &mut Input) {
+    // Keep the existing v1 keyboard for key ownership checks, and bind a
+    // modern resource for repeat_info (introduced in keyboard version 4).
+    let seat = target.bind("wl_seat", 5);
+    let keyboard = target.alloc();
+    target.send(seat, 1, &words(&[keyboard]));
+    let initial = target.event(keyboard, 5);
+    assert_eq!((initial.word(0), initial.word(1)), (25, 200));
+    let configure = |target: &mut Input, rate, delay| {
+        let start = target.events.len();
+        evaluate(&format!("(wm-set-keyboard-repeat! {rate} {delay})"), "#t");
+        let event = target.wait(start, |event| event.is(keyboard, 5));
+        assert_eq!((event.word(0), event.word(1)), (rate, delay));
+    };
+    configure(target, 5, 900);
+    let mut newcomer = Input::new("repeat settings newcomer");
+    let seat = newcomer.bind("wl_seat", 5);
+    let new_keyboard = newcomer.alloc();
+    newcomer.send(seat, 1, &words(&[new_keyboard]));
+    let info = newcomer.event(new_keyboard, 5);
+    assert_eq!((info.word(0), info.word(1)), (5, 900));
     evaluate(
         "(begin
       (define keyboard-filter-handler wm-handle-key)
       (define keyboard-filter-repeats 0)
+      (define keyboard-filter-times '())
       (set! wm-handle-key (lambda args
         (when (equal? (list-ref args 2) \"a\")
-          (set! keyboard-filter-repeats (+ keyboard-filter-repeats 1)))
+          (set! keyboard-filter-repeats (+ keyboard-filter-repeats 1))
+          (set! keyboard-filter-times (cons
+            (quotient (* 1000 (get-internal-real-time)) internal-time-units-per-second)
+            keyboard-filter-times)))
         (apply keyboard-filter-handler args)))
       (read-one-line \"repeat: \" (lambda (_) #t)) #t)",
         "#t",
@@ -242,8 +266,25 @@ fn repeat(target: &mut Input) {
     let start = target.events.len();
     key("keydown", "a");
     until(
-        || token(&ipc("keyboard-filter-repeats")) >= 2,
+        || token(&ipc("keyboard-filter-repeats")) >= 3,
         "compositor repeat did not start",
+    );
+    let times = super::input::numbers(&ipc("(reverse keyboard-filter-times)"));
+    assert!(
+        times[1] - times[0] >= 850,
+        "repeat ignored configured delay: {times:?}"
+    );
+    assert!(
+        times[2] - times[1] >= 180,
+        "repeat ignored configured rate: {times:?}"
+    );
+    configure(target, 0, 900);
+    let count = ipc("keyboard-filter-repeats");
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(
+        ipc("keyboard-filter-repeats"),
+        count,
+        "reconfiguration left a repeat timer active"
     );
     key("keyup", "a");
     key("key", "Escape");
@@ -252,10 +293,31 @@ fn repeat(target: &mut Input) {
     std::thread::sleep(Duration::from_millis(160));
     assert_eq!(ipc("keyboard-filter-repeats"), count);
     evaluate(
+        "(begin (set! keyboard-filter-repeats 0)
+         (read-one-line \"disabled repeat: \" (lambda (_) #t)) #t)",
+        "#t",
+    );
+    key("keydown", "a");
+    until(
+        || token(&ipc("keyboard-filter-repeats")) > 0,
+        "initial press missing",
+    );
+    std::thread::sleep(Duration::from_millis(1100));
+    assert_eq!(
+        ipc("keyboard-filter-repeats"),
+        "(ok 1)",
+        "rate zero repeated a new press"
+    );
+    key("keyup", "a");
+    key("key", "Escape");
+    configure(target, 25, 200);
+    evaluate(
         "(begin (set! wm-handle-key keyboard-filter-handler) #t)",
         "#t",
     );
-    println!("ok - consumed repeats stop on release without leaking a release event");
+    println!(
+        "ok - clients and consumed keys share repeat settings; zero and reconfiguration stop repeats"
+    );
 }
 
 pub fn run() {

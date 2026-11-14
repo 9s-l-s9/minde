@@ -592,7 +592,7 @@ pub fn init_udev(
                 // A key held through a VT switch or suspend never delivers
                 // its release here (libinput is suspended), so an armed
                 // compositor-side repeat would keep firing its Scheme
-                // handler every 40 ms into the paused session -- and keep
+                // handler into the paused session -- and keep
                 // going after resume. Balance forwarded physical keys and
                 // discard consumed ones together with the repeat timer.
                 state.reset_keyboard_input();
@@ -2443,6 +2443,7 @@ impl MindeState {
             &self.overlays,
             focus,
             self.border_color,
+            &self.appearance,
             &mut output_surface.border_buffers,
         );
 
@@ -2451,7 +2452,7 @@ impl MindeState {
             .render_frame(
                 &mut renderer,
                 &all_elements,
-                smithay::backend::renderer::Color32F::new(0.1, 0.1, 0.1, 1.0),
+                self.appearance.background,
                 FrameFlags::DEFAULT,
             )
             .map_err(|err| match err {
@@ -2586,6 +2587,7 @@ impl MindeState {
                 &self.overlays,
                 focus,
                 self.border_color,
+                &self.appearance,
             );
         }
 

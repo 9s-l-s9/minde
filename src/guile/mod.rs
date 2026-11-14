@@ -8,12 +8,15 @@
 //! `scheme/init.scm`) spawns its own internal thread that Guile itself
 //! manages -- we never touch libguile from other Rust threads.
 
+mod appearance;
 mod command;
 pub mod ffi;
+mod input_config;
 pub mod output_config;
 mod paths;
 mod startup;
 
+pub use appearance::AppearanceChange;
 pub use command::{KeyboardLayoutSpec, WmCommand};
 pub use output_config::OutputHeadInfo;
 use output_config::{SpecValue, parse_output_change_spec, transform_name};
@@ -165,7 +168,7 @@ pub fn set_keyboard_layouts(names: Vec<String>, active: usize) -> bool {
 /// and applies them to matching devices as they arrive (and re-applies to
 /// devices already present). Under winit there is no libinput context, so
 /// rules are stored and never applied.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct InputRule {
     /// Substring matched against the device name; the empty string matches
     /// every device (`#t` in Scheme).
@@ -181,6 +184,7 @@ pub struct InputRule {
     /// Output name; an empty string restores automatic association. None
     /// leaves the output choice from earlier matching rules unchanged.
     pub map_to_output: Option<String>,
+    pub options: input_config::InputOptions,
 }
 
 /// All rules registered through `wm-configure-input!`, applied in order
@@ -1026,6 +1030,23 @@ unsafe extern "C" fn wm_set_key_repeat(on: Scm) -> Scm {
     from_bool(send_command(WmCommand::SetKeyRepeat { on }))
 }
 
+unsafe extern "C" fn wm_set_keyboard_repeat(rate: Scm, delay: Scm) -> Scm {
+    let rate = checked_arg!(to_i32(rate));
+    let delay = checked_arg!(to_i32(delay));
+    let settings = checked_arg!(crate::input::KeyboardRepeat::new(rate, delay));
+    from_bool(send_command(WmCommand::SetKeyboardRepeat(settings)))
+}
+
+unsafe extern "C" fn wm_configure_appearance(settings: Scm) -> Scm {
+    match scm_to_alist(settings).and_then(|entries| appearance::parse(&entries)) {
+        Ok(changes) => from_bool(send_command(WmCommand::ConfigureAppearance(changes))),
+        Err(error) => {
+            tracing::warn!(%error, "wm-configure-appearance!: rejected settings");
+            from_bool(false)
+        }
+    }
+}
+
 /// `(wm-keyboard-layouts)` -> list of `((name . "German (Bone)")
 /// (active . #t))` alists, one per XKB layout group of the seat keyboard
 /// in keymap order. `()` before the keyboard exists.
@@ -1521,12 +1542,13 @@ unsafe extern "C" fn wm_input_devices() -> Scm {
 }
 
 /// Low-level primitive behind the Scheme `wm-configure-input!` wrapper
-/// (see `scheme/init.scm`). All arguments are pre-normalized scalars so
-/// the FFI stays simple:
+/// (see `scheme/init.scm`). The six original arguments remain scalar;
+/// optional settings use a validated alist:
 /// - `match_`: device-name substring; the empty string matches every device.
 /// - `tap`, `natural`: `1` = enable, `0` = disable, anything else = leave.
 /// - `accel`, `click`: the profile/method string, or `""` to leave unchanged.
 /// - `output`: an output name, `""` for automatic mapping, or `#f` to omit.
+/// - `options`: optional alist of additional settings, validated atomically.
 ///
 /// Stores the rule (replacing any earlier rule with the same match) and
 /// asks the main thread to re-apply to devices already present.
@@ -1537,6 +1559,7 @@ unsafe extern "C" fn wm_configure_input_rule(
     accel: Scm,
     click: Scm,
     output: Scm,
+    options: Scm,
 ) -> Scm {
     let tap = checked_arg!(to_i64(tap));
     let natural = checked_arg!(to_i64(natural));
@@ -1553,6 +1576,18 @@ unsafe extern "C" fn wm_configure_input_rule(
     } else {
         Some(checked_arg!(to_string_lossy(output)))
     };
+    let options = if options == ffi::SCM_UNDEFINED {
+        input_config::InputOptions::default()
+    } else {
+        match scm_to_alist(options).and_then(|entries| input_config::InputOptions::parse(&entries))
+        {
+            Ok(options) => options,
+            Err(error) => {
+                tracing::warn!(%error, "wm-configure-input-rule!: rejected settings");
+                return from_bool(false);
+            }
+        }
+    };
     let rule = InputRule {
         match_name,
         tap: tri(tap),
@@ -1560,6 +1595,7 @@ unsafe extern "C" fn wm_configure_input_rule(
         accel_profile: (!accel.is_empty()).then_some(accel),
         click_method: (!click.is_empty()).then_some(click),
         map_to_output,
+        options,
     };
     {
         let mut rules = INPUT_RULES.lock().unwrap();
@@ -1642,6 +1678,9 @@ macro_rules! gsubr {
     ($f:ident, 6) => {
         std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>($f)
     };
+    ($f:ident, 7) => {
+        std::mem::transmute::<unsafe extern "C" fn(Scm, Scm, Scm, Scm, Scm, Scm, Scm) -> Scm, ffi::Gsubr>($f)
+    };
 }
 
 /// Defines one gsubr with `req` required and `opt` optional arguments (no
@@ -1681,6 +1720,12 @@ fn register_primitives() {
         register_gsubr("wm-add-overlay", 3, 0, gsubr!(wm_add_overlay, 3));
         register_gsubr("wm-clear-overlays", 0, 0, gsubr!(wm_clear_overlays, 0));
         register_gsubr("wm-border-color", 1, 0, gsubr!(wm_border_color, 1));
+        register_gsubr(
+            "wm-configure-appearance!",
+            1,
+            0,
+            gsubr!(wm_configure_appearance, 1),
+        );
         register_gsubr("wm-focus-rect", 4, 0, gsubr!(wm_focus_rect, 4));
         // Single-head union kept for configs predating `wm-outputs`; see
         // doc/generated/api-reference.md ("handle-output-geometry!").
@@ -1739,6 +1784,12 @@ fn register_primitives() {
         );
         register_gsubr("wm-scroll", 2, 0, gsubr!(wm_scroll, 2));
         register_gsubr("wm-set-key-repeat", 1, 0, gsubr!(wm_set_key_repeat, 1));
+        register_gsubr(
+            "wm-set-keyboard-repeat!",
+            2,
+            0,
+            gsubr!(wm_set_keyboard_repeat, 2),
+        );
         register_gsubr("wm-idle-ms", 0, 0, gsubr!(wm_idle_ms, 0));
         // XKB layout groups (XKB_DEFAULT_LAYOUT="de,us"): query + switch.
         // Wrapped by keyboard-layouts / set-keyboard-layout! in (minde groups).
@@ -1756,8 +1807,8 @@ fn register_primitives() {
         register_gsubr(
             "wm-configure-input-rule!",
             6,
-            0,
-            gsubr!(wm_configure_input_rule, 6),
+            1,
+            gsubr!(wm_configure_input_rule, 7),
         );
         register_gsubr("wm-session-locked?", 0, 0, gsubr!(wm_session_locked, 0));
         register_gsubr(
@@ -2111,6 +2162,8 @@ mod tests {
                 format!("(wm-message \"text\" {invalid})"),
                 format!("(wm-screenshot \"/tmp/minde-boundary.png\" {invalid})"),
                 format!("(wm-configure-input-rule! \"test\" 1 {invalid} \"\" \"\" #f)"),
+                format!("(wm-set-keyboard-repeat! {invalid} 200)"),
+                format!("(wm-set-keyboard-repeat! 25 {invalid})"),
                 format!("(wm-run-after-ms 1 {invalid})"),
                 format!("(wm-scroll 0 {invalid})"),
                 format!("(wm-warp-pointer-relative 0 {invalid})"),
@@ -2139,6 +2192,14 @@ mod tests {
             "(wm-set-floating 0 'yes)",
             "(wm-set-fullscreen 0 'yes)",
             "(wm-set-key-repeat 'yes)",
+            "(wm-set-keyboard-repeat! -1 200)",
+            "(wm-set-keyboard-repeat! 1001 200)",
+            "(wm-set-keyboard-repeat! 25 -1)",
+            "(wm-set-keyboard-repeat! 25 10001)",
+            "(wm-configure-appearance! #f)",
+            "(wm-configure-appearance! '((border-width . 5) (message-font-size . +inf.0)))",
+            "(wm-configure-appearance! '((background . \"#ffffff\") . #t))",
+            "(wm-configure-appearance! '((message-foreground . #xffffff)))",
             "(wm-send-key 4294967296 \"a\")",
             "(wm-drop-text 2147483648 0 \"payload\")",
             "(wm-drop-files 0 0 '(\"relative\"))",
@@ -2207,5 +2268,49 @@ mod tests {
             }
         ));
         assert!(receiver.try_recv().is_err());
+        for expression in [
+            "(wm-configure-input-rule! \"boundary-device\" -1 -1 \"\" \"\" #f)",
+            "(wm-configure-input-rule! \"boundary-device\" 1 -1 \"adaptive\" \"\" #f '((accel-speed . -0.5) (left-handed . #f)))",
+        ] {
+            assert_eq!(eval_string(expression), Some(ffi::SCM_BOOL_T));
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                WmCommand::ReapplyInputConfig
+            ));
+        }
+        let rules = input_rules();
+        let rule = rules.last().unwrap();
+        assert_eq!(rule.options.accel_speed, Some(-0.5));
+        assert_eq!(rule.options.left_handed, Some(false));
+        assert_eq!(rule.options.disable_while_typing, None);
+        for invalid in [
+            "#f",
+            "42",
+            "'(accel-speed)",
+            "'((accel-speed . 0) . #t)",
+            "'((accel-speed . +nan.0))",
+            "'((accel-speed . +inf.0))",
+            "'((accel-speed . 2))",
+            "'((scroll-button . 274.0))",
+            "'((left-handed . yes))",
+            "'((scroll-method . typo))",
+            "'((middle-emulation . #t) (typo . #t))",
+            "'((left-handed . #t) (left-handed . #f))",
+        ] {
+            let expression = format!(
+                "(wm-configure-input-rule! \"boundary-device\" 0 1 \"flat\" \"\" #f {invalid})"
+            );
+            assert_eq!(
+                eval_string(&expression),
+                Some(ffi::SCM_BOOL_F),
+                "{expression}"
+            );
+            assert_eq!(
+                input_rules(),
+                rules,
+                "rejected rule replaced stored settings"
+            );
+            assert!(receiver.try_recv().is_err());
+        }
     }
 }

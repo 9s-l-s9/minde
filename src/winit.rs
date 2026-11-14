@@ -310,6 +310,7 @@ fn render_frame(
             &state.overlays,
             focus,
             state.border_color,
+            &state.appearance,
             border_buffers,
         );
         damage_tracker
@@ -318,7 +319,7 @@ fn render_frame(
                 &mut framebuffer,
                 age,
                 &elements,
-                [0.1, 0.1, 0.1, 1.0],
+                state.appearance.background,
             )
             .map_err(|error| ("render", render_error(error)))?
             .damage
@@ -350,6 +351,7 @@ fn render_frame(
             &state.overlays,
             focus,
             state.border_color,
+            &state.appearance,
         );
         let _ = state.display_handle.flush_clients();
     }

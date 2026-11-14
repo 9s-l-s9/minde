@@ -347,6 +347,7 @@ pub(crate) fn output_scene_elements<R>(
     overlays: &[(Point<i32, Logical>, MessageState)],
     focus: Option<Rectangle<i32, Logical>>,
     border_color: [f32; 4],
+    appearance: &crate::render::Appearance,
     border_buffers: &mut BorderBuffers,
 ) -> Vec<MindeRenderElements<R>>
 where
@@ -375,18 +376,28 @@ where
 
     // Centered message overlay.
     if let Some(msg) = message {
+        let msg = msg.prepare(
+            appearance.message,
+            scale,
+            (output_geo.size.w, output_geo.size.h),
+        );
         let center = Point::<i32, Logical>::from((
             (output_geo.size.w - msg.size.0) / 2,
             (output_geo.size.h - msg.size.1) / 2,
         ));
-        if let Some(elem) = crate::render::overlay_element(renderer, msg, center - origin, scale) {
+        if let Some(elem) = crate::render::overlay_element(renderer, &msg, center - origin, scale) {
             all.push(elem);
         }
     }
 
     // Positioned overlays landing on this output.
     for (loc, msg) in overlays.iter().filter(|(l, _)| output_geo.contains(*l)) {
-        if let Some(elem) = crate::render::overlay_element(renderer, msg, *loc - base, scale) {
+        let msg = msg.prepare(
+            appearance.message,
+            scale,
+            (output_geo.size.w, output_geo.size.h),
+        );
+        if let Some(elem) = crate::render::overlay_element(renderer, &msg, *loc - base, scale) {
             all.push(elem);
         }
     }
@@ -433,7 +444,7 @@ where
     {
         let mut local = geo;
         local.loc -= base;
-        all.extend(border_buffers.elements(local, scale, border_color));
+        all.extend(border_buffers.elements(local, scale, border_color, appearance.border_width));
     }
 
     // Window surfaces, front-to-back (space yields back-to-front).
@@ -484,6 +495,7 @@ pub fn satisfy_output_captures<R>(
     overlays: &[(Point<i32, Logical>, MessageState)],
     focus: Option<Rectangle<i32, Logical>>,
     border_color: [f32; 4],
+    appearance: &crate::render::Appearance,
 ) where
     R: Renderer
         + ImportAll
@@ -536,9 +548,10 @@ pub fn satisfy_output_captures<R>(
             overlays,
             focus,
             border_color,
+            appearance,
             &mut scene.borders,
         );
-        if let Err(err) = scene.render(renderer, &elements) {
+        if let Err(err) = scene.render(renderer, &elements, appearance.background) {
             tracing::warn!(%err, "screencopy: scene render failed");
             for capture in captures {
                 capture.frame.fail(CaptureFailureReason::Unknown);

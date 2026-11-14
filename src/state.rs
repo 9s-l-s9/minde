@@ -343,6 +343,7 @@ pub struct MindeState {
     /// Focus border color; Scheme flips it while the prefix key is armed
     /// (StumpWM's pointer-box equivalent).
     pub border_color: [f32; 4],
+    pub appearance: crate::render::Appearance,
 
     /// Last title/app-id reported to Scheme per window id. Clients set
     /// them before or after the first buffer commit and retitle at will;
@@ -356,6 +357,7 @@ pub struct MindeState {
     /// Toggled from Scheme via `wm-set-key-repeat`; the active repeat is
     /// the held raw keycode plus its calloop timer's token.
     pub key_repeat_enabled: bool,
+    pub keyboard_repeat: crate::input::KeyboardRepeat,
     pub key_repeat: Option<(u32, smithay::reexports::calloop::RegistrationToken)>,
     pub(crate) keyboard_presses: crate::input::KeyboardPresses,
     pub(crate) touch_contacts: crate::touch::TouchContacts,
@@ -703,7 +705,12 @@ impl MindeState {
             variant: &variant,
             options: std::env::var("XKB_DEFAULT_OPTIONS").ok(),
         };
-        if let Err(error) = seat.add_keyboard(xkb_config.clone(), 200, 25) {
+        let keyboard_repeat = crate::input::KeyboardRepeat::default();
+        if let Err(error) = seat.add_keyboard(
+            xkb_config.clone(),
+            keyboard_repeat.delay,
+            keyboard_repeat.rate,
+        ) {
             tracing::warn!(
                 %error,
                 XKB_DEFAULT_RULES = %rules,
@@ -724,8 +731,8 @@ impl MindeState {
                     variant: "",
                     options: Some(String::new()),
                 },
-                200,
-                25,
+                keyboard_repeat.delay,
+                keyboard_repeat.rate,
                 xkb::CONTEXT_NO_ENVIRONMENT_NAMES,
             )
             .inspect_err(|error| {
@@ -795,8 +802,10 @@ impl MindeState {
             applying_output_config: false,
             output_ids: OutputIds::default(),
             border_color: crate::render::BORDER_COLOR,
+            appearance: crate::render::Appearance::default(),
             reported_titles: std::collections::HashMap::new(),
             key_repeat_enabled: false,
+            keyboard_repeat,
             key_repeat: None,
             keyboard_presses: Default::default(),
             touch_contacts: Default::default(),
@@ -981,6 +990,19 @@ impl MindeState {
                     self.cancel_key_repeat();
                 }
             }
+            WmCommand::SetKeyboardRepeat(settings) => {
+                self.cancel_key_repeat();
+                self.keyboard_repeat = settings;
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.change_repeat_info(settings.rate, settings.delay);
+                }
+            }
+            WmCommand::ConfigureAppearance(changes) => {
+                for change in changes {
+                    change.apply(&mut self.appearance);
+                }
+                self.schedule_redraw();
+            }
             WmCommand::Click { button, count } => self.synthetic_click(button, count),
             WmCommand::PasteKey => self.send_key(4, "v"),
             WmCommand::Scroll { dx, dy } => {
@@ -1015,11 +1037,10 @@ impl MindeState {
                 self.schedule_redraw();
             }
             WmCommand::AddOverlay { x, y, text } => {
-                // Labels are a couple of characters; a small budget keeps
-                // render_message's wrap math trivial.
+                // Keep labels within a small logical layout budget.
                 self.overlays.push((
                     Point::from((x, y)),
-                    crate::render::render_message(&text, 0, 400, 200),
+                    crate::render::MessageState::new(&text, 0, (400, 200)),
                 ));
                 self.schedule_redraw();
             }
@@ -1218,9 +1239,10 @@ impl MindeState {
     fn show_message(&mut self, text: &str, timeout_ms: u64) {
         self.message_generation += 1;
         let generation = self.message_generation;
-        let bounds = self.output_rect_containing(None).size;
-        self.message = Some(crate::render::render_message(
-            text, generation, bounds.w, bounds.h,
+        self.message = Some(crate::render::MessageState::new(
+            text,
+            generation,
+            (i32::MAX, i32::MAX),
         ));
         self.schedule_redraw();
         if timeout_ms > 0 {

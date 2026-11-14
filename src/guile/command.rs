@@ -35,6 +35,7 @@ pub enum WmCommand {
     BorderColor {
         rgba: [f32; 4],
     },
+    ConfigureAppearance(Vec<super::AppearanceChange>),
     /// One-shot timer whose token indexes the Scheme-side thunk table.
     RunAfter {
         ms: u64,
@@ -109,6 +110,7 @@ pub enum WmCommand {
     SetKeyRepeat {
         on: bool,
     },
+    SetKeyboardRepeat(crate::input::KeyboardRepeat),
     AddOverlay {
         x: i32,
         y: i32,

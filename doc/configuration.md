@@ -252,6 +252,59 @@ file or shared-memory descriptor with exactly three native-endian 16-bit
 ramps of the advertised length. Pipes and device descriptors are rejected
 before reading them on the compositor thread.
 
+## Appearance
+
+Set appearance at runtime or from personal Scheme policy. Omitted fields keep
+their current values; the whole request returns `#f` without changes if any
+field is invalid, unknown or duplicated. Colors are opaque `#rrggbb` strings.
+
+```scheme
+(wm-configure-appearance!
+ '((border-width . 2)
+   (background . "#202020")
+   (message-font-size . 20)
+   (message-padding . 10)
+   (message-border-width . 1)
+   (message-foreground . "#eeeeee")
+   (message-background . "#303030")
+   (message-border-color . "#808080")))
+```
+
+| Setting | Default | Accepted values |
+|---|---|---|
+| `border-width` | 3 | exact integer 0–32 logical pixels; 0 hides it |
+| `background` | dark grey (RGB 0.1) | `#rrggbb` |
+| `message-font-size` | 17 | exact integer 6–96 logical pixels |
+| `message-padding` | 12 | exact integer 0–64 logical pixels |
+| `message-border-width` | 2 | exact integer 0–16 logical pixels |
+| `message-foreground` | `#ebdbb2` | `#rrggbb` |
+| `message-background` | `#282828` | `#rrggbb` |
+| `message-border-color` | `#d79921` | `#rrggbb` |
+
+Existing messages and positioned labels update with the new style. Text is
+rasterized at the output's integer-ceil scale (2 for scale 1.5), keeping the
+same logical layout while using enough pixels for the output. On-screen
+rendering and screen capture use the same style. Glyph and message caches are
+bounded; unchanged text and density reuse their buffers. Focus-border colors
+remain controlled by `wm-border-color` and the normal/prefix/resize policy colors.
+
+## Keyboard repeat
+
+Client keyboards and compositor prompts/keymaps share a 200 ms delay and
+25 Hz repeat rate by default. Set both at runtime or from personal Scheme policy:
+
+```scheme
+(wm-set-keyboard-repeat! 30 350) ; rate in Hz, delay in milliseconds
+(wm-set-keyboard-repeat! 0 350)  ; disable repetition
+```
+
+Rate must be an exact integer from 0 to 1000, delay from 0 to 10000.
+Invalid arguments return `#f` without changes. Existing clients receive new
+Wayland repeat settings immediately; newly connected clients inherit them.
+Changing the settings stops any compositor repeat already in progress; the
+next key press uses the new values. `wm-set-key-repeat` remains the internal
+boolean switch used by prompts and keymaps, separate from these shared timings.
+
 ## Input device configuration
 
 On the DRM/libinput backend, per-device pointer, touchpad, touchscreen and tablet behavior is
@@ -264,8 +317,7 @@ compositor primitives, not part of the versioned `(minde …)` module API):
 `"switch"`. Under the nested winit backend there is no libinput context, so it
 returns `()`.
 
-`(wm-configure-input! match #:key tap-to-click natural-scroll accel-profile
-click-method map-to-output)` stores a configuration rule and applies it to matching devices.
+`(wm-configure-input! match #:key ...)` stores a configuration rule and applies it to matching devices.
 `match` is `#t` (every device) or a substring of the device name. The keyword
 settings, each left unchanged when omitted:
 
@@ -276,11 +328,29 @@ settings, each left unchanged when omitted:
 | `#:accel-profile` | `'flat` / `'adaptive` |
 | `#:click-method` | `'button-areas` / `'clickfinger` |
 | `#:map-to-output` | connector name such as `"eDP-1"`, or `'auto` |
+| `#:accel-speed` | finite number from `-1` (slowest) to `1` (fastest) |
+| `#:scroll-method` | `'none`, `'two-finger`, `'edge`, `'on-button-down` |
+| `#:scroll-button` | Linux input button code `0`–`767`; `274` is middle, `0` disables button scrolling |
+| `#:left-handed` | `#t` / `#f` |
+| `#:disable-while-typing` | `#t` / `#f` |
+| `#:middle-emulation` | `#t` / `#f` |
 
 A rule applies to every device already present and, since rules are stored, to
 matching devices as they hotplug. A later rule with the same `match` replaces
 the earlier one. Settings a device does not support are logged and skipped,
 never fatal. Under winit the rule is stored but configures nothing.
+The additional options reject unknown values, non-finite acceleration speeds,
+out-of-range numbers and non-boolean switches: the call returns `#f` and leaves
+the previous rule intact. `'none` disables motion-based scrolling, while a
+physical scroll wheel still works. Button codes use Linux input values, not
+the 1/2/3 numbering accepted by `wm-click`. For example:
+
+```scheme
+(wm-configure-input! "Touchpad" #:accel-speed -0.25
+                     #:scroll-method 'two-finger #:disable-while-typing #t)
+(wm-configure-input! "Trackball" #:scroll-method 'on-button-down
+                     #:scroll-button 274 #:middle-emulation #t)
+```
 
 Absolute pointers, touchscreens and tablets select the first available target
 in this order: the last matching `#:map-to-output` setting, libinput's output

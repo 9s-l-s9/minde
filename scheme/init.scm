@@ -599,7 +599,13 @@ focused client), #f otherwise."
                               (natural-scroll 'unset)
                               (accel-profile 'unset)
                               (click-method 'unset)
-                              (map-to-output 'unset))
+                              (map-to-output 'unset)
+                              (accel-speed 'unset)
+                              (scroll-method 'unset)
+                              (scroll-button 'unset)
+                              (left-handed 'unset)
+                              (disable-while-typing 'unset)
+                              (middle-emulation 'unset))
   "Store a libinput configuration rule and apply it to matching devices.
 
 MATCH is #t (every device) or a string matched as a substring of the
@@ -610,9 +616,14 @@ left unchanged when omitted:
   #:accel-profile  'flat or 'adaptive
   #:click-method   'button-areas or 'clickfinger
   #:map-to-output  an output name or 'auto (restore automatic association)
+  #:accel-speed    a finite number from -1 to 1
+  #:scroll-method 'none, 'two-finger, 'edge or 'on-button-down
+  #:scroll-button a Linux input button code, 0 to 767 (0 disables it)
+  #:left-handed, #:disable-while-typing, #:middle-emulation  #t or #f
 A later rule with the same MATCH replaces the earlier one. On the udev
 backend the rule applies to matching devices now and on hotplug; under
-winit it is stored but configures nothing. Returns #t when stored."
+winit it is stored but configures nothing. Returns #t when stored, or #f
+when the primitive rejects a setting; rejected rules change nothing."
   (let ((var (%guile-user-var 'wm-configure-input-rule!)))
     (and var
          ((variable-ref var)
@@ -621,7 +632,14 @@ winit it is stored but configures nothing. Returns #t when stored."
           (%input-tristate natural-scroll)
           (%input-choice accel-profile '(flat adaptive) "accel-profile")
           (%input-choice click-method '(button-areas clickfinger) "click-method")
-          (%input-output map-to-output)))))
+          (%input-output map-to-output)
+          (filter (lambda (entry) (not (eq? (cdr entry) 'unset)))
+                  `((accel-speed . ,accel-speed)
+                    (scroll-method . ,scroll-method)
+                    (scroll-button . ,scroll-button)
+                    (left-handed . ,left-handed)
+                    (disable-while-typing . ,disable-while-typing)
+                    (middle-emulation . ,middle-emulation)))))))
 
 ;; Frame indicator (StumpWM curframe): echo the frame geometry and pulse
 ;; the focus border bright for a moment.

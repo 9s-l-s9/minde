@@ -9,6 +9,15 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- `wm-configure-appearance!` sets border width, background and overlay font,
+  padding and colors. Existing overlays update immediately and rasterize at
+  the output's integer-ceil scale for sharp high-density text (#147).
+
+- Keyboard repeat timing is configurable through `wm-set-keyboard-repeat!`
+  and shared by clients and compositor prompts/keymaps. Input rules expose
+  acceleration speed, scroll method/button, handedness, disable-while-typing
+  and middle-button emulation, rejecting invalid options atomically (#147).
+
 - CI retains the five newest Guix binary prereleases, protects active builds
   and version releases, and removes abandoned build tags on subsequent runs.
   Older commit-specific downloads expire under this policy (#150).

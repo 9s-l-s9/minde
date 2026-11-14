@@ -57,6 +57,41 @@ fn apply_input_rules(device: &mut LibinputDevice, rules: &[guile::InputRule]) {
 }
 
 fn apply_one_rule(device: &mut LibinputDevice, name: &str, rule: &guile::InputRule) {
+    let options = &rule.options;
+    if let Some(speed) = options.accel_speed {
+        log_config(name, "accel-speed", device.config_accel_set_speed(speed));
+    }
+    if let Some(method) = options.scroll_method {
+        log_config(
+            name,
+            "scroll-method",
+            device.config_scroll_set_method(method),
+        );
+    }
+    if let Some(button) = options.scroll_button {
+        log_config(
+            name,
+            "scroll-button",
+            device.config_scroll_set_button(button),
+        );
+    }
+    if let Some(on) = options.left_handed {
+        log_config(name, "left-handed", device.config_left_handed_set(on));
+    }
+    if let Some(on) = options.disable_while_typing {
+        log_config(
+            name,
+            "disable-while-typing",
+            device.config_dwt_set_enabled(on),
+        );
+    }
+    if let Some(on) = options.middle_emulation {
+        log_config(
+            name,
+            "middle-emulation",
+            device.config_middle_emulation_set_enabled(on),
+        );
+    }
     if let Some(on) = rule.tap {
         log_config(name, "tap-to-click", device.config_tap_set_enabled(on));
     }

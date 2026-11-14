@@ -45,7 +45,7 @@ nested_wayland timeout 30 "$NESTED_PROTOCOL_CLIENT" capture-damage >"$OUT/captur
 }
 cat "$OUT/capture-damage.log"
 
-for scenario in scene-layers scene-message scene-cursor; do
+for scenario in scene-layers scene-message scene-appearance scene-cursor; do
     timeout 45 "$NESTED_PROTOCOL_CLIENT" "$scenario" >"$OUT/$scenario.log" 2>&1 || {
         cat "$OUT/$scenario.log" >&2
         exit 1

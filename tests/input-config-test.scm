@@ -13,8 +13,8 @@
 ;; the real Rust subr would receive; `wm-input-devices` mirrors the winit
 ;; path where no libinput context exists.
 (define %rules '())
-(define (wm-configure-input-rule! match tap natural accel click output)
-  (set! %rules (cons (list match tap natural accel click output) %rules))
+(define* (wm-configure-input-rule! match tap natural accel click output #:optional (options '()))
+  (set! %rules (cons (list match tap natural accel click output options) %rules))
   #t)
 (define (wm-input-devices) '())
 
@@ -49,7 +49,8 @@
         (format #t "FAIL - ~a: expected ~s, got ~s~%" name expected got))))
 (define (check-true name got) (check name (if got #t #f) #t))
 
-(define (last-rule) (car %rules))
+(define (last-rule) (take (car %rules) 6))
+(define (last-options) (list-ref (car %rules) 6))
 
 ;; ---------------------------------------------------------------------
 ;; wm-input-devices is available and empty on the no-libinput path.
@@ -64,6 +65,17 @@
 (check-true "configure returns #t" (wm-configure-input! #t))
 (check "match #t normalizes to the empty string" (last-rule)
        (list "" -1 -1 "" "" #f))
+(check "omitted additional settings remain absent" (last-options) '())
+
+(wm-configure-input! "trackball" #:accel-speed -0.5 #:scroll-method 'on-button-down
+                     #:scroll-button 274 #:left-handed #f
+                     #:disable-while-typing #t #:middle-emulation #f)
+(check "additional settings retain explicit false and numeric values" (last-options)
+       '((accel-speed . -0.5) (scroll-method . on-button-down) (scroll-button . 274)
+         (left-handed . #f) (disable-while-typing . #t) (middle-emulation . #f)))
+(wm-configure-input! "trackball" #:accel-speed 0 #:scroll-method 'none #:scroll-button 0)
+(check "zero settings and disabled scrolling are passed through" (last-options)
+       '((accel-speed . 0) (scroll-method . none) (scroll-button . 0)))
 
 ;; ---------------------------------------------------------------------
 ;; A named match with every setting present, fully normalized.
