@@ -74,6 +74,15 @@ owner dies, and the session stays locked throughout recovery. A client that
 abandons an unconfirmed lock must reconnect before trying again: the pinned
 protocol library retains output bindings from its abandoned lock.
 
+Physical pointer motion, clicks, scrolling and touch contacts target only the
+owning lock client's committed surface tree on the corresponding output.
+An output without a lock surface has no input target. Clicks and taps select
+the lock surface for keyboard focus; desktop grabs and contacts are cancelled
+at lock entry, and locker contacts are cancelled before unlock or owner loss.
+A touch-down can wake powered-off outputs. Both renderers draw the lock
+client's cursor; stale desktop cursor surfaces are excluded. Compositor
+automation and virtual pointer requests remain blocked while locked.
+
 Owner loss fires `wm-on-session-lock-lost` and the `session-lock-lost` hook
 once, including loss before presentation confirmation. The default session
 policy restarts `%lock-command` after one second, doubling subsequent retry

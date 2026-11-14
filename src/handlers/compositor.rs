@@ -177,7 +177,9 @@ impl MindeState {
         while let Some(parent) = get_parent(&root) {
             root = parent;
         }
-        if self.locked {
+        let cursor =
+            matches!(self.cursor_state.status(), CursorImageStatus::Surface(s) if s == &root);
+        if self.locked && !cursor {
             return self
                 .lock_surfaces
                 .iter()
@@ -185,7 +187,7 @@ impl MindeState {
                 .map(|(output, _)| output.clone())
                 .collect();
         }
-        if matches!(self.cursor_state.status(), CursorImageStatus::Surface(s) if s == &root)
+        if cursor
             || get_role(&root) == Some(smithay::wayland::selection::data_device::DND_ICON_ROLE)
         {
             return self

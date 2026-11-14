@@ -15,7 +15,8 @@ use smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server:
 use smithay::{
     reexports::wayland_server::{
         Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
-        backend::ClientId, protocol::wl_surface,
+        backend::ClientId,
+        protocol::{wl_seat, wl_surface},
     },
     utils::SERIAL_COUNTER,
     wayland::{Dispatch2, GlobalDispatch2},
@@ -39,6 +40,25 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, Self>,
     ) {
+        let bound_pointer = if state.locked
+            && matches!(
+                (&request as &dyn Any).downcast_ref::<wl_seat::Request>(),
+                Some(wl_seat::Request::GetPointer { .. })
+            ) {
+            state.seat.get_pointer().and_then(|pointer| {
+                pointer.last_enter().map(|serial| {
+                    (
+                        pointer
+                            .client_pointers(client)
+                            .map(|p| p.id())
+                            .collect::<Vec<_>>(),
+                        serial,
+                    )
+                })
+            })
+        } else {
+            None
+        };
         // A virtual keyboard owns its own map; a pending restoration must
         // finish first so its later timer cannot overwrite that map.
         if (resource as &dyn Any).is::<ZwpVirtualKeyboardV1>() {
@@ -52,13 +72,43 @@ where
         // Explicit surface destruction leaves the client's keyboard alive.
         // Send leave while the surface still exists; after destruction its ID
         // is no longer valid as a keyboard event argument.
+        let destroying_surface = matches!(
+            (&request as &dyn Any).downcast_ref::<wl_surface::Request>(),
+            Some(wl_surface::Request::Destroy)
+        );
         if state.locked
             && let Some(surface) = (resource as &dyn Any).downcast_ref::<wl_surface::WlSurface>()
-            && matches!(
-                (&request as &dyn Any).downcast_ref::<wl_surface::Request>(),
-                Some(wl_surface::Request::Destroy)
-            )
+            && destroying_surface
         {
+            let contains = |focused| {
+                let mut ancestor = Some(focused);
+                while let Some(current) = ancestor {
+                    if &current == surface {
+                        return true;
+                    }
+                    ancestor = smithay::wayland::compositor::get_parent(&current);
+                }
+                false
+            };
+            if state
+                .seat
+                .get_pointer()
+                .and_then(|pointer| pointer.current_focus())
+                .is_some_and(contains)
+            {
+                state.clear_pointer_focus();
+            }
+            // wl_touch.cancel carries no surface reference and ends all
+            // contacts before this resource (possibly a child) disappears.
+            if state
+                .seat
+                .get_touch()
+                .and_then(|touch| touch.grab_start_data())
+                .and_then(|grab| grab.focus)
+                .is_some_and(|(focus, _)| contains(focus))
+            {
+                state.cancel_touch_input();
+            }
             state
                 .lock_surfaces
                 .retain(|(_, lock)| lock.wl_surface() != surface);
@@ -82,8 +132,14 @@ where
         // An input-method client can install a keyboard grab in a protocol
         // request, even without text-input focus. Desktop grabs must never
         // survive to the next key delivery while locked (including virtual keys).
-        if state.locked {
+        // Surface destruction completes after this request callback. Do not
+        // re-enter a child whose destructor has not removed it from the tree
+        // yet; the event-loop reconciliation runs after that removal.
+        if state.locked && !destroying_surface {
             state.enforce_lock_focus();
+        }
+        if let Some((previous, serial)) = bound_pointer {
+            state.initialize_lock_pointer(client, &previous, serial);
         }
     }
 

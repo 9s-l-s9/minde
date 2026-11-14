@@ -25,9 +25,8 @@
 //!   [`MindeState::notify_idle_activity`], so automation keeps the seat
 //!   "active" exactly like a physical device;
 //! - **the session lock** -- each request is gated by [`Self::virtual_input_gate`],
-//!   which drops pointer events while `self.locked` is set, mirroring the
-//!   `process_input_event` locked gate. Virtual pointer input can never reach
-//!   a regular client while the screen is locked.
+//!   which drops virtual pointer events while `self.locked` is set. Physical
+//!   input targets lock surfaces, while virtual pointer automation stays blocked.
 //!
 //! No Scheme surface: like the physical pointer, virtual pointer motion is not
 //! compositor policy.
@@ -370,8 +369,7 @@ fn wl_axis(pointer: &ZwlrVirtualPointerV1, axis: WEnum<wl_pointer::Axis>) -> Opt
 impl MindeState {
     /// Note user activity (resetting idle timers) and report whether virtual
     /// pointer input is currently allowed to flow. Drops events while the
-    /// session is locked, mirroring the `process_input_event` locked gate so
-    /// virtual input can never reach a regular client on a locked screen.
+    /// session is locked; physical input uses separate lock-surface routing.
     fn virtual_input_gate(&mut self) -> bool {
         crate::guile::note_activity();
         self.notify_idle_activity();

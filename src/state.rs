@@ -2832,6 +2832,10 @@ impl MindeState {
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
         use smithay::wayland::shell::wlr_layer::Layer;
 
+        if self.locked {
+            return self.lock_surface_under(pos);
+        }
+
         // The output under the pointer owns the layer surfaces there;
         // fall back to the first output (e.g. pointer parked on a dead
         // zone between differently-sized heads).

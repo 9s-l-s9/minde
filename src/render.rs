@@ -37,6 +37,79 @@ smithay::backend::renderer::element::render_elements! {
 pub const BORDER_COLOR: [f32; 4] = [0.84, 0.60, 0.13, 1.0]; // #d79921
 pub const BORDER_WIDTH: i32 = 3;
 
+/// A locked frame contains only the lock tree and its cursor. Share this
+/// path between DRM and nested rendering, including cursor ownership checks.
+pub(crate) fn lock_elements<R>(
+    renderer: &mut R,
+    surface: Option<&smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+    geometry: Rectangle<i32, Logical>,
+    scale: Scale<f64>,
+    cursor: &mut CursorState,
+    position: Point<f64, Logical>,
+) -> Vec<MindeRenderElements<R>>
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Send + Clone + 'static,
+{
+    use smithay::reexports::wayland_server::Resource;
+    let Some(surface) = surface else {
+        return Vec::new();
+    };
+    let mut elements = Vec::new();
+    let cursor_owned = match cursor.status() {
+        CursorImageStatus::Surface(image) => image.is_alive() && image.client() == surface.client(),
+        _ => true,
+    };
+    if cursor_owned && geometry.to_f64().contains(position) {
+        let location = (position - geometry.loc.to_f64() - cursor.hotspot().to_f64())
+            .to_physical(scale)
+            .to_i32_round();
+        elements.extend(cursor.render_elements(renderer, location, scale));
+    }
+    elements.extend(
+        smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+            renderer,
+            surface,
+            (0, 0),
+            scale,
+            1.0,
+            Kind::Unspecified,
+        ),
+    );
+    elements
+}
+
+pub(crate) fn send_lock_frames(
+    output: &smithay::output::Output,
+    geometry: Rectangle<i32, Logical>,
+    surface: Option<&smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+    cursor: &CursorState,
+    position: Point<f64, Logical>,
+    time: std::time::Duration,
+) {
+    use smithay::reexports::wayland_server::Resource;
+    let Some(surface) = surface else {
+        return;
+    };
+    let send = |surface| {
+        smithay::desktop::utils::send_frames_surface_tree(
+            surface,
+            output,
+            time,
+            Some(std::time::Duration::ZERO),
+            |_, _| Some(output.clone()),
+        )
+    };
+    send(surface);
+    if geometry.to_f64().contains(position)
+        && let CursorImageStatus::Surface(image) = cursor.status()
+        && image.is_alive()
+        && image.client() == surface.client()
+    {
+        send(image);
+    }
+}
+
 /// Persistent buffers for the 4 border edges (stable element ids keep
 /// damage tracking incremental across frames).
 pub struct BorderBuffers {

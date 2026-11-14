@@ -5,6 +5,7 @@ pub use move_grab::MoveSurfaceGrab;
 
 pub mod resize_grab;
 pub use resize_grab::{ResizeEdge, ResizeSurfaceGrab};
+mod clear;
 
 /// The `PointerGrab` methods both grabs forward unchanged to the inner
 /// handle (relative motion, axis, frame and every gesture event). Expanded

@@ -2367,19 +2367,17 @@ impl MindeState {
                 .iter()
                 .find(|(o, _)| o == &output)
                 .map(|(_, surface)| surface)
-                .filter(|surface| surface.alive());
-            let mut elements: Vec<MindeRenderElements<UdevRenderer<'_>>> = Vec::new();
-            if let Some(lock) = lock_surface {
-                elements =
-                    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
-                        &mut renderer,
-                        lock.wl_surface(),
-                        (0, 0),
-                        scale,
-                        1.0,
-                        smithay::backend::renderer::element::Kind::Unspecified,
-                    );
-            }
+                .filter(|surface| {
+                    surface.alive() && self.session_lock.owns_surface(surface.wl_surface())
+                });
+            let elements = crate::render::lock_elements(
+                &mut renderer,
+                lock_surface.map(|lock| lock.wl_surface()),
+                output_geo,
+                scale,
+                &mut self.cursor_state,
+                self.pointer_location,
+            );
             let render_result = output_surface
                 .drm_output
                 .render_frame(
@@ -2409,16 +2407,14 @@ impl MindeState {
                     })
                     .map_err(Into::<SwapBuffersError>::into)?;
             }
-            // Frame callback so the lock client keeps drawing.
-            if let Some((_, lock)) = self.lock_surfaces.iter().find(|(o, _)| o == &output) {
-                smithay::desktop::utils::send_frames_surface_tree(
-                    lock.wl_surface(),
-                    &output,
-                    self.start_time.elapsed(),
-                    Some(Duration::ZERO),
-                    |_, _| Some(output.clone()),
-                );
-            }
+            crate::render::send_lock_frames(
+                &output,
+                output_geo,
+                lock_surface.map(|lock| lock.wl_surface()),
+                &self.cursor_state,
+                self.pointer_location,
+                self.start_time.elapsed(),
+            );
             self.popups.cleanup();
             let _ = self.display_handle.flush_clients();
             return Ok(queued);

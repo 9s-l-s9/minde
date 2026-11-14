@@ -121,6 +121,9 @@ impl smithay::wayland::tablet_manager::TabletSeatHandler for MindeState {
         _tool: &smithay::backend::input::TabletToolDescriptor,
         image: smithay::input::pointer::CursorImageStatus,
     ) {
+        if self.locked {
+            return;
+        }
         self.cursor_state.set_status(image);
         self.schedule_redraw_at(&[self.pointer_location]);
     }

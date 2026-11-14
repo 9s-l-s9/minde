@@ -128,7 +128,7 @@ pub struct Client {
     socket: UnixStream,
     buffer: Vec<u8>,
     next_id: u32,
-    registry: u32,
+    pub registry: u32,
     pub globals: HashMap<String, (u32, u32)>,
     pub events: Vec<Event>,
     pub handlers: HashMap<u32, Handler>,

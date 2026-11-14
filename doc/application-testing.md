@@ -344,7 +344,15 @@ surface is destroyed. It checks one owner-loss notification on disconnection
 or an unconfirmed lock's destruction, and launches a real replacement locker
 through the default Scheme recovery policy. The replacement takes ownership
 and unlocks without exposing desktop input. Scheme tests drive retry timers,
-backoff, failed starts, cancellation and stale callbacks.
+backoff, failed starts, cancellation and stale callbacks. Real host pointer
+events exercise lock-only click/scroll delivery and pixel checks verify a
+locker cursor appearing, moving and hiding, including its frame callbacks
+and a pointer bound after focus was already established. A Rust test runs the actual
+compositor input path with a fake backend and real Wayland clients in an
+isolated process: it checks pointer and touch delivery across two outputs,
+output-local coordinates, held-input cancellation and locker replacement.
+It does not require a GPU or inject events into the user's desktop; physical
+touchscreen hardware remains part of the manual checks.
 Its keyboard filter scenario checks press/release pairs
 through prompts, menus, focus changes, shortcut inhibition and locking, plus
 held modifiers, keypad Enter and compositor repeat. VT suspension balances held

@@ -27,7 +27,7 @@ use smithay::{
 use crate::MindeState;
 use crate::guile;
 use crate::handlers::output_management::HeadChange;
-use crate::render::{BorderBuffers, MindeRenderElements};
+use crate::render::BorderBuffers;
 
 /// Backend hook for `MindeState::apply_output_configuration` under winit.
 /// The host window fixes the output size, so a differing mode is refused;
@@ -227,6 +227,7 @@ fn render_frame(
     damage_tracker: &mut OutputDamageTracker,
     border_buffers: &mut BorderBuffers,
 ) -> Result<(), (&'static str, SwapBuffersError)> {
+    backend.window().set_cursor_visible(!state.locked);
     if state.locked || !state.output_enabled(output) || state.winit_powered_off {
         // Locks take precedence over disabled/DPMS-off outputs. Draw only the
         // lock surface, or solid black until one exists. An unlocked disabled
@@ -239,17 +240,14 @@ fn render_frame(
         };
         {
             let (renderer, mut framebuffer) = backend.bind().map_err(|error| ("bind", error))?;
-            let elements: Vec<MindeRenderElements<GlesRenderer>> =
-                lock.as_ref().map_or_else(Vec::new, |lock| {
-                    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
-                        &mut *renderer,
-                        lock.wl_surface(),
-                        (0, 0),
-                        output.current_scale().fractional_scale(),
-                        1.0,
-                        smithay::backend::renderer::element::Kind::Unspecified,
-                    )
-                });
+            let elements = crate::render::lock_elements(
+                &mut *renderer,
+                lock.as_ref().map(|lock| lock.wl_surface()),
+                state.space.output_geometry(output).unwrap_or_default(),
+                output.current_scale().fractional_scale().into(),
+                &mut state.cursor_state,
+                state.pointer_location,
+            );
             damage_tracker
                 .render_output(
                     &mut *renderer,
@@ -267,15 +265,14 @@ fn render_frame(
         // our evidence that its window has replaced the previous desktop.
         if state.locked {
             state.lock_frame_presented(output, state.lock_generation());
-            if let Some(lock) = lock {
-                smithay::desktop::utils::send_frames_surface_tree(
-                    lock.wl_surface(),
-                    output,
-                    state.start_time.elapsed(),
-                    Some(Duration::ZERO),
-                    |_, _| Some(output.clone()),
-                );
-            }
+            crate::render::send_lock_frames(
+                output,
+                state.space.output_geometry(output).unwrap_or_default(),
+                lock.as_ref().map(|lock| lock.wl_surface()),
+                &state.cursor_state,
+                state.pointer_location,
+                state.start_time.elapsed(),
+            );
         }
         let _ = state.display_handle.flush_clients();
         return Ok(());

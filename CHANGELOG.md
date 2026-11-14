@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- Lock surfaces receive physical pointer and touch input on their respective
+  outputs, including locker cursors and touch wake-up. Lock transitions cancel
+  held input so it cannot cross into the desktop or a replacement locker (#154).
+
 - The default session policy restarts a vanished lock client with backoff,
   including failed replacement starts. Recovery keeps the session locked and
   stops when a new owner takes over or the session unlocks (#154).

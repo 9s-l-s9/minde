@@ -211,13 +211,15 @@ fn emergency_exit_matches(binding: u64, mods: u32, sym: u32) -> bool {
 }
 
 /// Whether `event` counts as user activity that should wake DPMS-off
-/// outputs: key presses, pointer button presses and pointer motion
-/// (relative or absolute). Releases and axis/touch/tablet events do not.
+/// outputs: key/button presses, pointer motion and touch-down. Releases,
+/// scrolling, continuing touch contacts and tablet events do not.
 fn wakes_outputs<I: InputBackend>(event: &InputEvent<I>) -> bool {
     match event {
         InputEvent::Keyboard { event } => event.state() == KeyState::Pressed,
         InputEvent::PointerButton { event } => event.state() == ButtonState::Pressed,
-        InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. } => true,
+        InputEvent::PointerMotion { .. }
+        | InputEvent::PointerMotionAbsolute { .. }
+        | InputEvent::TouchDown { .. } => true,
         _ => false,
     }
 }
@@ -230,15 +232,28 @@ impl MindeState {
         // gate so activity on the lock screen still counts as activity. See
         // handlers::idle.
         self.notify_idle_activity();
-        // While locked, only keyboard events are processed (they reach the
-        // focused lock surface, gated further below so they never hit the
-        // Scheme keybinding layer). Pointer, touch, tablet-tool, and axis
-        // events are all dropped -- the allowlist is Keyboard-only, so every
-        // TabletTool* event is covered -- so no regular client ever sees them.
-        if self.locked && !matches!(event, InputEvent::Keyboard { .. }) {
+        // Hit testing and focus reconciliation restrict these input classes
+        // to the owning lock client's surfaces. Tablet/gesture routes remain
+        // blocked until they have equivalent lock-target handling.
+        if self.locked
+            && !matches!(
+                event,
+                InputEvent::Keyboard { .. }
+                    | InputEvent::PointerMotion { .. }
+                    | InputEvent::PointerMotionAbsolute { .. }
+                    | InputEvent::PointerButton { .. }
+                    | InputEvent::PointerAxis { .. }
+                    | InputEvent::TouchDown { .. }
+                    | InputEvent::TouchMotion { .. }
+                    | InputEvent::TouchUp { .. }
+                    | InputEvent::TouchFrame { .. }
+                    | InputEvent::TouchCancel { .. }
+            )
+        {
             return;
         }
-        // DPMS wake: a key press, button press or any pointer motion powers
+        self.enforce_lock_input_focus();
+        // DPMS wake: a key/button press, pointer motion or touch-down powers
         // every output back on (wlr-output-power-management controllers are
         // told `mode(on)`), before the event is otherwise processed, so the
         // screen a blanked user is typing at lights up. Policy-togglable via
@@ -769,7 +784,10 @@ impl MindeState {
         button_state: ButtonState,
         time_msec: u32,
     ) {
-        if self.locked && button_state == ButtonState::Pressed {
+        if self.locked
+            && button_state == ButtonState::Pressed
+            && !matches!(source, PointerButtonSource::Device(_))
+        {
             return;
         }
         if !self.pointer_buttons.update(source, button, button_state) {
@@ -902,6 +920,9 @@ impl MindeState {
         use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer};
 
         if self.locked {
+            if let Some(surface) = self.lock_root_at(location) {
+                self.set_keyboard_focus(Some(surface), serial);
+            }
             return None;
         }
         self.seat.get_keyboard()?;

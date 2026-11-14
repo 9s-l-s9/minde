@@ -224,6 +224,70 @@ fn unlock(owner: &mut Client, lock: u32, desktop: &mut Client, ordinary: &mut Cl
     }
     panic!("unlock failed to restore ordinary focus");
 }
+
+fn pointer_and_cursor(owner: &mut Client, desktop: &mut Client, pixels: &HostPixels) {
+    fn bind_pointer(client: &mut Client) -> u32 {
+        let seat = client.bind("wl_seat", 8);
+        let pointer = client.alloc();
+        client.send(seat, 0, &words(&[pointer]));
+        client.roundtrip();
+        pointer
+    }
+    let pointer = bind_pointer(owner);
+    let excluded = bind_pointer(desktop);
+    let start = desktop.events.len();
+    let window = env::var("MINDE_SESSION_LOCK_TEST_WINDOW").unwrap();
+    command("xdotool", &["mousemove", "--window", &window, "160", "180"]);
+    command("xdotool", &["click", "1", "click", "4"]);
+    owner.wait(0, |event| event.is(pointer, 4));
+    let enter = owner
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.is(pointer, 0))
+        .unwrap();
+    assert_eq!(enter.word(1), owner.surface);
+    let serial = enter.word(0);
+    for state in [0, 1] {
+        assert!(
+            owner.events.iter().any(|event| event.is(pointer, 3)
+                && event.word(2) == 0x110
+                && event.word(3) == state)
+        );
+    }
+    desktop.roundtrip();
+    assert!(
+        !desktop.events[start..]
+            .iter()
+            .any(|event| event.object == excluded && event.opcode != 1)
+    );
+    let cursor = owner.new_surface();
+    owner.paint(cursor, 12, 12, 0x00ff00);
+    owner.send(pointer, 0, &words(&[serial, cursor, 0, 0]));
+    let frame = owner.alloc();
+    owner.send(cursor, 3, &words(&[frame]));
+    owner.send(cursor, 6, &[]);
+    owner.event(frame, 0);
+    owner.roundtrip();
+    until(
+        || pixels.pixel(161, 181) == 0x00ff00,
+        "lock cursor not rendered",
+    );
+    command("xdotool", &["mousemove", "--window", &window, "220", "180"]);
+    until(
+        || pixels.pixel(221, 181) == 0x00ff00 && pixels.pixel(161, 181) == 0x004080,
+        "lock cursor did not move or left stale pixels",
+    );
+    owner.send(pointer, 0, &words(&[serial, 0, 0, 0]));
+    owner.roundtrip();
+    until(
+        || pixels.pixel(221, 181) == 0x004080,
+        "locker could not hide cursor",
+    );
+    println!(
+        "ok - only the locker receives pointer clicks/scroll and its cursor renders, moves and hides"
+    );
+}
 pub fn run() {
     let pixels = HostPixels::new();
     locked(false);
@@ -271,6 +335,7 @@ pub fn run() {
     locked(true);
     owner.lock_surface(lock, true);
     owner.event(owner.keyboard, 1);
+    pointer_and_cursor(&mut owner, &mut desktop, &pixels);
     inject_key(&mut owner, &mut [&mut desktop, &mut attacker]);
     println!("ok - live owner cannot be replaced; denied surface cannot steal input");
 

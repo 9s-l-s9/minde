@@ -12,7 +12,7 @@ use smithay::{
         backend::ClientId,
         protocol::{wl_output::WlOutput, wl_surface::WlSurface},
     },
-    utils::SERIAL_COUNTER,
+    utils::{Logical, Point, SERIAL_COUNTER},
     wayland::{
         Dispatch2,
         session_lock::{
@@ -130,26 +130,10 @@ impl SessionLockHandler for MindeState {
         self.enforce_lock_focus();
         self.set_text_input_focus(None);
         self.update_keyboard_shortcuts_inhibitors(None);
-        let serial = SERIAL_COUNTER.next_serial();
-        let time = self.start_time.elapsed().as_millis() as u32;
-        if let Some(pointer) = self.seat.get_pointer() {
-            pointer.unset_grab(self, serial, time);
-            let location = self.pointer_location;
-            pointer.motion(
-                self,
-                None,
-                &smithay::input::pointer::MotionEvent {
-                    location,
-                    serial,
-                    time,
-                },
-            );
-            pointer.frame(self);
-        }
+        self.clear_pointer_focus();
         // Clear focus/grabs first, then release held input without delivering
         // cleanup events to a hidden desktop surface. Nothing resumes on unlock.
         self.cancel_synthetic_input();
-        self.release_pointer_buttons(|_| true);
         self.cancel_touch_input();
         // Repaint through the normal backend scheduler. A desktop flip may
         // still be pending; its completion must not acknowledge this lock.
@@ -159,6 +143,8 @@ impl SessionLockHandler for MindeState {
     fn unlock(&mut self) {
         // Only the owning, confirmed protocol object reaches this callback:
         // dispatch_lock_request checks it before Smithay's dispatch.
+        self.clear_pointer_focus();
+        self.cancel_touch_input();
         crate::guile::set_session_lock_confirmed(false);
         crate::guile::set_session_lock_abandoned(false);
         self.locked = false;
@@ -237,6 +223,7 @@ impl MindeState {
         if !self.locked {
             return;
         }
+        self.enforce_lock_input_focus();
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
@@ -372,9 +359,155 @@ impl MindeState {
             .iter()
             .find(|(o, _)| o == output)
             .map(|(_, surface)| surface)
-            .filter(|surface| surface.alive())
+            .filter(|surface| {
+                surface.alive() && self.session_lock.owns_surface(surface.wl_surface())
+            })
+    }
+
+    pub(crate) fn lock_surface_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(WlSurface, Point<f64, Logical>)> {
+        let output = self.space.outputs().find(|output| {
+            self.space
+                .output_geometry(output)
+                .is_some_and(|geo| geo.to_f64().contains(pos))
+        })?;
+        let geo = self.space.output_geometry(output)?;
+        let lock = self.lock_surface_for(output)?;
+        smithay::desktop::utils::under_from_surface_tree(
+            lock.wl_surface(),
+            pos,
+            geo.loc,
+            smithay::desktop::WindowSurfaceType::ALL,
+        )
+        .map(|(surface, origin)| (surface, origin.to_f64()))
+    }
+
+    pub(crate) fn lock_root_at(&self, pos: Point<f64, Logical>) -> Option<WlSurface> {
+        self.lock_surface_under(pos)
+            .and_then(|(surface, _)| self.lock_input_root(&surface))
+    }
+
+    fn lock_input_root(&self, surface: &WlSurface) -> Option<WlSurface> {
+        if !surface.is_alive() {
+            return None;
+        }
+        let mut root = surface.clone();
+        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+            root = parent;
+        }
+        self.lock_surfaces
+            .iter()
+            .find(|(output, lock)| {
+                lock.wl_surface() == &root
+                    && lock.alive()
+                    && self.session_lock.owns_surface(&root)
+                    && self.space.output_geometry(output).is_some()
+            })
+            .map(|(_, lock)| lock.wl_surface().clone())
+    }
+
+    pub(crate) fn enforce_lock_input_focus(&mut self) {
+        if !self.locked {
+            return;
+        }
+        if let Some(touch) = self.seat.get_touch()
+            && touch
+                .grab_start_data()
+                .and_then(|grab| grab.focus)
+                .is_some_and(|(surface, _)| self.lock_input_root(&surface).is_none())
+        {
+            self.cancel_touch_input();
+        }
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        if pointer
+            .current_focus()
+            .is_some_and(|surface| self.lock_input_root(&surface).is_none())
+        {
+            self.clear_pointer_focus();
+        }
+        let under = self.lock_surface_under(self.pointer_location);
+        if !pointer.is_grabbed()
+            && pointer.current_focus().as_ref() != under.as_ref().map(|(surface, _)| surface)
+        {
+            let location = self.pointer_location;
+            pointer.motion(
+                self,
+                under,
+                &smithay::input::pointer::MotionEvent {
+                    location,
+                    serial: SERIAL_COUNTER.next_serial(),
+                    time: self.start_time.elapsed().as_millis() as u32,
+                },
+            );
+            pointer.frame(self);
+        }
+    }
+
+    /// Smithay registers a new wl_pointer without replaying the seat's
+    /// current enter. Initialize only that new resource, retaining the
+    /// existing serial so its cursor requests pass Smithay's validation.
+    pub(super) fn initialize_lock_pointer(
+        &self,
+        client: &Client,
+        previous: &[smithay::reexports::wayland_server::backend::ObjectId],
+        serial: smithay::utils::Serial,
+    ) {
+        use smithay::wayland::compositor::CompositorHandler;
+        if !self.locked {
+            return;
+        }
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        // A focus change during dispatch already sent an enter to it.
+        if pointer.last_enter() != Some(serial) {
+            return;
+        }
+        let Some(focus) = pointer.current_focus().filter(|surface| {
+            surface.client().as_ref() == Some(client) && self.lock_input_root(surface).is_some()
+        }) else {
+            return;
+        };
+        let position = pointer.current_location();
+        let target = pointer
+            .grab_start_data()
+            .and_then(|grab| grab.focus)
+            .filter(|(surface, _)| surface == &focus)
+            .or_else(|| {
+                self.lock_surface_under(position)
+                    .filter(|(surface, _)| surface == &focus)
+            });
+        let Some((_, origin)) = target else {
+            return;
+        };
+        let local = position - origin;
+        let scale = self.client_compositor_state(client).client_scale();
+        for resource in pointer
+            .client_pointers(client)
+            .filter(|p| !previous.contains(&p.id()))
+        {
+            resource.enter(serial.into(), &focus, local.x * scale, local.y * scale);
+            if resource.version() >= 5 {
+                resource.frame();
+            }
+        }
     }
 }
+
+impl LockState {
+    pub(crate) fn owns_surface(&self, surface: &WlSurface) -> bool {
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| owner.is_alive() && owner.client() == surface.client())
+    }
+}
+
+#[cfg(test)]
+mod input_tests;
 
 #[cfg(test)]
 mod tests {
