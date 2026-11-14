@@ -265,6 +265,8 @@ applicable release checks rather than treating their absence as a pass.
   input coordinates agree with the reported configuration.
 - Record an animating application with `wf-recorder`, stop it, then play back
   the result and verify changing frames, dimensions and clean termination.
+  On X1 and T450s, retain the [capture timing comparison](performance.md#reference-laptop-capture-comparison)
+  with and without recording for issue #155.
 - Share an output from a browser through `xdg-desktop-portal-wlr` and
   PipeWire. Verify the remote view updates and that stopping sharing ends the
   stream. See [capture and portal status](release-roadmap.md#screen-capture-and-desktop-portal).

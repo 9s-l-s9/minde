@@ -89,6 +89,7 @@ item is pending, not a pass.
 - [ ] Output hotplug, scaling and arrangement, including kanshi/wlr-randr changes
 - [ ] Clipboard manager preserves clipboard and primary-selection transfers
 - [ ] wf-recorder recording contains changing frames and stops cleanly
+- [ ] Baseline/recording timing snapshots and interval histograms retained (doc/performance.md, issue #155)
 - [ ] Browser portal screen sharing through xdg-desktop-portal-wlr and PipeWire
 - [ ] Idle manager blanks outputs with DPMS; activity restores them without losing layout
 - [ ] Touch/stylus mapping, gestures and pressure on available hardware, including lock isolation

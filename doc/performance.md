@@ -28,6 +28,51 @@ The two new probes expose capture render/readback time for that comparison.
 Reproduce the automated checks with `sh tests/screencapture-e2e.sh` in the
 project Guix environment.
 
+### Reference-laptop capture comparison
+
+For issue #155, use a disposable DRM session on each reference machine (X1
+and T450s). Keep the same animating application, output mode, scale and power
+profile for both phases. Record the machine/GPU, tested revision, application,
+recorder version and exact recording command alongside the snapshots.
+
+From the repository, collect a 30-second interval with no recorder running:
+
+```sh
+mkdir -p build/hardware
+capture_report=$(mktemp -d build/hardware/capture.XXXXXX)
+snapshot() {
+    scripts/mindectl eval '(list (getpid) (wm-version)
+      (wm-runtime-info) (wm-timing-stats))' >"$capture_report/$1.scm"
+}
+snapshot baseline-before
+sleep 30
+snapshot baseline-after
+```
+
+Start `wf-recorder` on that same output in another terminal, retain its log,
+and allow five seconds for startup. While it continues recording, run:
+
+```sh
+snapshot recording-before
+sleep 30
+snapshot recording-after
+```
+
+Stop the recorder, verify the video contains changing frames, and retain the
+four snapshots with the hardware report. The PID must stay the same, uptime
+must increase, and the reported backend must be `udev`. A restarted compositor
+or a failed recording invalidates the comparison.
+
+Each probe is `(name count total-us max-us (b1 b2 b3 b4 b5))`. For `render`,
+`capture-render` and `capture-readback`, subtract the before count, total and
+each bucket from the corresponding after value. The buckets are disjoint:
+0–100, 101–1,000, 1,001–4,000, 4,001–16,600 and above 16,600 microseconds.
+Divide the total delta by the count delta for the interval mean; report no
+samples when the count delta is zero. `max-us` is a lifetime maximum and cannot
+be subtracted to obtain an interval maximum. These probes measure time inside
+compositor operations, not end-to-end display latency. Add the measured
+histograms and evidence paths here when both machine reports are available.
+
 ## Surface commits and layer arrangement — 2026-11-13
 
 The `surface-commits` scenario in `tests/frame-callbacks-e2e.sh` keeps a
