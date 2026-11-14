@@ -135,9 +135,9 @@ Rust primitives stubbed; status publication, rendering and client response time
 are excluded. They do not explain extreme desktop latency by themselves.
 
 Remaining investigation should measure the real event-loop and client paths,
-and include status publication when profiling policy work. The historical
-checkboxes in `TODO.md` include explicitly deferred work; they are not evidence
-that all performance concerns have been resolved.
+and include status publication when profiling policy work. See the remaining
+[design decisions and measurement questions](../TODO.md); the results here
+apply only to the workloads and environments described.
 
 ## DRM presentation membership — 2026-09-07
 

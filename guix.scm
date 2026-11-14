@@ -182,7 +182,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
               ;; a packaged login loads compiled .go files instead of
               ;; autocompiling the module tree into ~/.cache/guile/ccache
               ;; on the compositor main thread before the first output is
-              ;; usable (see TODO.md 1.1). default-config.scm is data read
+              ;; usable. default-config.scm is data read
               ;; by the validator, not code, and is skipped like the
               ;; Makefile target skips it.
               (let* ((ccache (string-append out "/lib/guile/3.0/site-ccache"))

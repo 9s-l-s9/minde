@@ -45,7 +45,7 @@ for f in src/*.rs src/**/*.rs; do
   fi
 done
 
-# Separate guard for the GC-rooting hazard fixed in PLAN.md Epic I, issue I2:
+# Separate guard for the GC-rooting hazard fixed in commit 3459713:
 # bdw-gc scans the stack, registers and statics, but never the Rust heap, so
 # a `Vec<Scm>` collecting heap-allocated values (pairs, strings, symbols)
 # across a further allocating Guile call can be collected out from under a
