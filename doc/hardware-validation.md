@@ -2,8 +2,8 @@
 
 Automated nested tests cannot verify DRM modesetting, libinput, VT switching,
 GPU drivers, suspend/resume, physical hotplug, or the display manager. Perform
-this checklist from a spare text VT before removing the StumpWM rollback
-session.
+this checklist from a spare text VT while keeping a known-good rollback
+session available.
 
 Create the retained, machine-specific report first:
 
@@ -13,8 +13,12 @@ make check-hardware
 
 This only reads system information and writes a Markdown checklist under
 `build/hardware/`; it does not reconfigure, log out, suspend, or change the
-running session. Run it once on X1 and once on T450s, then fill in each result
-while following the sections below.
+running session. Reports can be generated on any machine; the release roadmap
+requires retained reports for X1 and T450s. Fill in each applicable result while
+following the sections below, with evidence paths and an explanation for N/A
+hardware or optional features. Leave untested items pending. Record the tested
+package/revision, configuration paths, keyboard layout, locker and external
+client versions. Test the bundled defaults first and personal policy separately.
 
 ## Preflight
 
@@ -25,25 +29,31 @@ make check-package
 ```
 
 Ensure no unsaved work depends on the graphical session. Keep another VT and a
-known-good StumpWM login entry available.
+known-good login entry available. Replace example connector names and modes
+below with those reported by your hardware.
 
 ## Direct TTY run
 
-From Ctrl+Alt+F3:
+From Ctrl+Alt+F3, in the repository root, explicitly select the bundled policy
+so a personal entry point or declarative configuration cannot replace it:
 
 ```sh
-cd ~/Projects/minde
-guix shell -m manifest.scm -- sh -c \
-  'XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone \
-   cargo run --release --locked -- --tty'
+guix shell -m manifest.scm -- env \
+  MINDE_INIT="$PWD/scheme/init.scm" \
+  MINDE_CONFIG="$PWD/scheme/default-config.scm" \
+  MINDE_SCHEME_DIR="$PWD/scheme" \
+  cargo run --release --locked -- --tty
 ```
+
+Select the keyboard's layout and variant through `XKB_DEFAULT_LAYOUT` and
+`XKB_DEFAULT_VARIANT` if needed. The bundled prefix is **C-t**; it does not
+start a panel, wallpaper or personal applications.
 
 Validate:
 
 - cursor movement, buttons and keyboard layout;
 - terminal launch and every accepted prefix submap;
 - frame borders, split resizing, fullscreen and floating grabs;
-- brightness/audio keys;
 - native Wayland and Xterm/Xwayland windows;
 - clipboard in both directions;
 - output arrangement and physical hotplug when available;
@@ -213,15 +223,70 @@ Adaptive sync (udev, needs a FreeSync/G-Sync-compatible monitor):
 If the compositor wedges, switch VTs and terminate it from the spare console.
 Do not reconfigure the display manager merely to debug a direct TTY failure.
 
+## Session lock and suspend
+
+Use the configured `ext-session-lock-v1` locker (default `swaylock -f`) in
+the disposable session. With the bundled map, **C-t s l** locks and
+**C-t s z** calls `suspend!`. Retain the session log and compare its
+`session locked (ext-session-lock)` confirmation with the suspend log; a
+spawned locker or `wm-session-locked?` alone does not prove presentation.
+
+- Lock with every connected output active. Every output must display the
+  locker or black, with no desktop visible. Keyboard, pointer and available
+  touch input must reach only the locker. Authenticate and check that desktop
+  input resumes normally.
+- Suspend through `suspend!`. Confirm that each active output presents a
+  locked frame before the confirmation and suspend occur. Resume must show
+  only locked content until authentication. Repeat with multiple outputs,
+  physical hotplug and lid close/open where supported.
+- From the spare VT, identify and terminate only this test session's locker
+  process, including its child if it daemonizes. The desktop must remain
+  inaccessible. The default policy starts a replacement after one second,
+  increasing delays after repeated failures. Authenticate with the replacement
+  and confirm normal input after unlock.
+- Retain evidence of locker loss and recovery. If the configured locker cannot
+  start, use the [manual recovery procedure](debugging.md#recovering-a-dead-locker)
+  with a working locker on the same Wayland socket. Ending the compositor is
+  not a successful lock recovery.
+
+The [security model](security.md#session-locking) describes presentation
+confirmation, input isolation and recovery. Nested lock tests cover protocol
+behavior; they do not establish that physical outputs stayed covered.
+
+## External clients
+
+Record the programs and versions tested; install the clients needed for the
+applicable release checks rather than treating their absence as a pass.
+
+- Use a clipboard manager to retain and restore clipboard and primary
+  selection contents across native clients and Xwayland clients when enabled.
+- Apply an output arrangement with `kanshi` or `wlr-randr`, including scale,
+  rotation and disconnect/reconnect. Confirm the visible arrangement and
+  input coordinates agree with the reported configuration.
+- Record an animating application with `wf-recorder`, stop it, then play back
+  the result and verify changing frames, dimensions and clean termination.
+- Share an output from a browser through `xdg-desktop-portal-wlr` and
+  PipeWire. Verify the remote view updates and that stopping sharing ends the
+  stream. See [capture and portal status](release-roadmap.md#screen-capture-and-desktop-portal).
+- Exercise the idle manager and DPMS sequence above without moving windows
+  between outputs. Activity must restore the display without losing layout.
+- On available touch/stylus hardware, test mapping, touch gestures, stylus
+  pressure and lock isolation, including the cancellation scenarios above.
+
 ## Login-session validation
 
-After System/Home dry-runs and reviewing the changelog, apply the intended
-machine configuration, inspect the generated files/store package, then log out
-and select Minde. Confirm personal Eww, wallpaper, brightness policy,
-autostart and Print-prefix behavior separately from repository defaults.
+After reviewing the changelog and a dry run of the intended machine
+configuration, inspect the generated login entry and store package. Log out,
+select Minde in the configured display manager, then verify login and logout.
+The release's SDDM gate must still be exercised on the reference machines;
+record a different display manager as such.
 
-No reboot is normally required. Keep StumpWM selectable until the 1.0 hardware
-gate passes on both X1 and T450s.
+Test any personal keyboard/prefix bindings, brightness/audio policy, external
+panel, wallpaper and autostart programs separately from repository defaults.
+These optional choices do not replace the portable checks.
+
+No reboot is normally required. Keep a known-good session selectable until
+the 1.0 hardware gate passes on both X1 and T450s.
 
 ## Evidence
 

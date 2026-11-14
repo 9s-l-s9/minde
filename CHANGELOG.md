@@ -39,6 +39,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Hardware reports describe the supported session-lock and recovery path,
+  separate portable defaults from optional personal policy, and include the
+  external-client and input checks required for hardware validation (#166).
+
 - Screenshots stay below `MINDE_SCREENSHOT_DIR` (by default the runtime
   directory's `minde/screenshots` child), reject symlinks and existing files,
   and publish complete PNGs without overwriting concurrent captures. Typed

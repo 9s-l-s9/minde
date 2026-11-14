@@ -51,29 +51,68 @@ command_output() {
         command_output 'Seat' false
     fi
 
-    printf '\n## Owner checklist\n\n'
-    printf '%s\n' \
-        '- [ ] Direct DRM/TTY startup and clean exit' \
-        '- [ ] SDDM login and logout using the RC package' \
-        '- [ ] StumpWM rollback session remains selectable' \
-        '- [ ] Keyboard, pointer, de/bone layout, and Print prefix' \
-        '- [ ] Brightness and audio media keys' \
-        '- [ ] Native Wayland terminal and GTK/Qt application' \
-        '- [ ] Xterm/Xwayland mapping and clipboard both directions' \
-        '- [ ] Frame split, resize, movement, exchange, float, and fullscreen' \
-        '- [ ] Eww bar, wallpaper, brightness policy, and personal autostart' \
-        '- [ ] VT switch away and back' \
-        '- [ ] Suspend/resume and lid close/open' \
-        '- [ ] Available output hotplug and scaling/arrangement' \
-        '- [ ] Lock/unlock limitation reviewed (ext-session-lock-v1 unsupported)' \
-        '- [ ] Forced compositor crash leaves a useful redacted report' \
-        '- [ ] Four-hour soak completed without crash or unbounded RSS' \
-        '- [ ] Prior Guix generation rollback tested'
+    cat <<'EOF'
 
-    printf '\n## Results and notes\n\n'
-    printf 'Outcome: pending owner\n\n'
-    printf 'Failures/workarounds:\n\n'
-    printf 'Retained logs or report paths:\n'
+## Owner checklist
+
+Generation collects information only; it does not run these checks. Follow
+doc/hardware-validation.md from a spare VT in a disposable test session.
+Record pass/fail and evidence for each applicable item. Mark unavailable
+hardware and optional features N/A with a reason in the results; an unchecked
+item is pending, not a pass.
+
+### Release-default session
+
+- [ ] Direct DRM/TTY startup and clean exit with the bundled configuration
+- [ ] Keyboard and pointer, selected XKB layout, and default C-t prefix
+- [ ] Native Wayland terminal and GTK/Qt application
+- [ ] Xwayland mapping and clipboard in both directions, when enabled
+- [ ] Frame split, resize, movement, exchange, float, and fullscreen
+- [ ] VT switch away and back, with input and repaint restored
+- [ ] Login and logout using the RC package in the configured display manager
+- [ ] Known-good rollback session remains selectable
+- [ ] Forced compositor crash in the test session leaves useful redacted diagnostics
+- [ ] Four-hour soak completed without crash or unbounded RSS
+- [ ] Prior Guix generation rollback tested
+
+### Session lock and suspend
+
+- [ ] Configured ext-session-lock-v1 locker covers every output; authenticate and unlock
+- [ ] Keyboard, pointer and touch reach only the locker while locked
+- [ ] suspend! waits for a confirmed locked frame on every active output
+- [ ] Resume stays locked until authentication; repeat lid close/open where present
+- [ ] Killing the test session's locker keeps outputs locked or black and starts a replacement
+- [ ] Replacement locker authenticates and unlocks; manual recovery from another VT is available
+
+### Hardware and external clients
+
+- [ ] Output hotplug, scaling and arrangement, including kanshi/wlr-randr changes
+- [ ] Clipboard manager preserves clipboard and primary-selection transfers
+- [ ] wf-recorder recording contains changing frames and stops cleanly
+- [ ] Browser portal screen sharing through xdg-desktop-portal-wlr and PipeWire
+- [ ] Idle manager blanks outputs with DPMS; activity restores them without losing layout
+- [ ] Touch/stylus mapping, gestures and pressure on available hardware, including lock isolation
+
+### Personal configuration (optional; record separately from the defaults)
+
+- [ ] Configured keyboard layout, prefix and custom bindings
+- [ ] Brightness/audio keys and other configured hardware policy
+- [ ] External panel, wallpaper and autostart programs, if configured
+
+## Results and notes
+
+Outcome: pending owner
+
+Tested package/revision, configuration paths, keyboard layout and locker:
+
+Display manager, external clients and versions:
+
+Unavailable hardware or optional features (N/A with reason):
+
+Failures/workarounds:
+
+Retained logs or report paths:
+EOF
 } >"$output"
 
 printf '%s\n' "$output"
