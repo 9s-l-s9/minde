@@ -139,7 +139,11 @@ scenario)
             cargo build >"$scratch/build.log" 2>&1 || fail 'compositor build failed'
     fi
     mkdir -p "$scratch/bin"
-    printf '#!/bin/sh\nexit 17\n' >"$scratch/bin/import"
+    cat >"$scratch/bin/import" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" >"$MINDE_HARNESS_RECORD.import"
+exit 17
+SH
     chmod +x "$scratch/bin/import"
     cat >"$scratch/init.scm" <<'SCM'
 (load-from-path "init")
@@ -189,8 +193,16 @@ SCM
         done
         [ ! -d "$NESTED_RT" ] || fail "$stop_mode retained the runtime directory"
         NESTED_WM_PID='' NESTED_XVFB_PID='' NESTED_RT=''
-        expected=17
-        [ "$stop_mode" != TERM ] || expected=143
+        expected=143
+        if [ "$stop_mode" = failure ]; then
+            # The Scheme driver reports helper failures through its common
+            # assertion exit. Prove this was our injected failure, rather
+            # than accepting an unrelated earlier assertion with status 1.
+            [ -s "$record.import" ] || fail 'scenario never reached the injected screenshot failure'
+            grep -Fq 'command failed ("import" ' "$scratch/driver.log" ||
+                fail 'scenario failed for a reason other than the screenshot helper'
+            expected=1
+        fi
         [ "$status" -eq "$expected" ] || { cat "$scratch/driver.log"; fail "$stop_mode returned $status, expected $expected"; }
         echo "ok - main e2e cleans up after $stop_mode"
     done
