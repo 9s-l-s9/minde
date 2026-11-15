@@ -130,10 +130,9 @@
   (lambda () (echo (or (last-message) "no messages")))
   "last message again")
 
-;; Q now asks before quitting (StumpWM quit-confirm); logout! (minde
-;; session) owns the actual prompt-then-wm-quit shape, so this, the
-;; portable "s q" binding, and the colon prompt all agree on one
-;; implementation.
+;; Q asks before quitting (StumpWM quit-confirm); logout! (minde session)
+;; owns the prompt-then-wm-quit shape, shared with the portable "s q"
+;; binding.
 (bind-prefix-key! "Q" (lambda () (logout!)) "quit (asks)")
 
 ;; ---------------------------------------------------------------------

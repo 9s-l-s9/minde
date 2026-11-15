@@ -2,7 +2,7 @@
 ;; (the Scheme test suites, static analysis, generated-docs drift) touch
 ;; no Rust code, so this omits the whole
 ;; rust/gcc-toolchain/wayland/mesa/x11 side manifest-check.scm carries for
-;; `cargo check` -- installing none of that is what lets this run in
+;; the Rust gate -- installing none of that is what lets this run in
 ;; parallel with (and finish well ahead of) the Rust job in CI.
 ;;
 ;; Usage: guix shell -m manifest-scheme.scm

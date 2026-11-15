@@ -1337,9 +1337,9 @@ fn scm_list(items: &[Scm]) -> Scm {
 /// pattern: a `Vec<Scm>` lives on the Rust heap, which bdw-gc (scanning only
 /// the stack, registers and statics) does not see, so a GC triggered by a
 /// later allocating call while earlier elements sit only in that `Vec` can
-/// collect them out from under us (fixed in commit 3459713). Iterating
-/// `items` in reverse and consing keeps the result in the same order as
-/// `items` without a separate reverse pass.
+/// collect them out from under us. Iterating `items` in reverse and consing
+/// keeps the result in the same order as `items` without a separate reverse
+/// pass.
 fn scm_list_map<T>(items: &[T], mut f: impl FnMut(&T) -> Scm) -> Scm {
     let mut lst = ffi::SCM_EOL;
     for item in items.iter().rev() {

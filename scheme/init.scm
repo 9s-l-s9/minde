@@ -1,6 +1,6 @@
 ;;; init.scm -- minde policy layer.
 ;;;
-;;; Loaded by the Rust side (src/guile/mod.rs) once at startup. Redefine
+;;; Loaded by the Rust side (src/guile/startup.rs) once at startup. Redefine
 ;;; anything here live from the REPL (see below) to change behavior without
 ;;; restarting the compositor.
 

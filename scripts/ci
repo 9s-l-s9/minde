@@ -9,7 +9,7 @@
 # stays in these scripts rather than in the workflow YAML.
 #
 # Default mode composes the existing gates that are safe on a headless runner:
-#   * ./check              -- the fast development gate. It already includes the
+#   * ./check              -- the fixed development gate. It already includes the
 #                             documentation (check-docs) and static-analysis
 #                             (check-static) gates, so they are not repeated.
 #   * check-release-metadata -- executable-helper and release-contract checks.
@@ -72,7 +72,7 @@ case ${1:-} in
         cat <<'EOF'
 usage: scripts/ci [--release-artifacts | --ci-rust | --ci-scheme]
 
-Default: run the fast gate (./check, which includes doc and static gates) and
+Default: run the fixed gate (./check, which includes doc and static gates) and
 the release-metadata check. --release-artifacts also builds the deterministic
 source/vendored archives and writes them with SHA256SUMS to build/ci/artifacts
 (override with MINDE_CI_OUTPUT). --ci-rust and --ci-scheme each run half

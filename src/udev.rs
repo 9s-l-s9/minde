@@ -209,9 +209,10 @@ impl RenderRetry {
         (self.delay, log)
     }
 
+    /// Reset the delay only: intermittent failures must not defeat the
+    /// diagnostic rate limit.
     fn succeeded(&mut self) {
         self.delay = Duration::ZERO;
-        // Intermittent failures must not defeat the diagnostic rate limit.
     }
 }
 
