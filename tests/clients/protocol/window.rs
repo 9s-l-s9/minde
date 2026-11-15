@@ -345,7 +345,19 @@ pub fn run() {
             target.send(virtual_pointer, 2, &words(&[0, 272, 0]));
             target.roundtrip();
         }
+        // The unmapped toplevel is back in its initial state: only the
+        // next bufferless commit may be answered by a configure.
+        let xdg_surface = target.xdg_surface;
+        target.roundtrip();
+        assert!(
+            !target.events[target_start..]
+                .iter()
+                .any(|e| e.is(xdg_surface, 0)),
+            "the unmapping commit was answered by a configure"
+        );
+        let start = target.events.len();
         target.send(target.surface, 6, &[]);
+        target.wait(start, |e| e.is(xdg_surface, 0));
         target.roundtrip();
         evaluate("(length lifecycle-unmaps)", &(cycle + 1).to_string());
         old_id = current;

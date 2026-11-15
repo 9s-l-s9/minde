@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- A toplevel unmapped by a null buffer receives its next configure in answer
+  to the bufferless commit that restarts mapping, not to the unmapping commit.
+
 - Synthetic key chords delivered to focused clients use the requested
   modifiers even while other modifier keys remain held. Remapping `C-F9`
   to `Down` no longer delivers `C-Down`; physical keys retain their state.

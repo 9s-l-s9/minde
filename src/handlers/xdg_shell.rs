@@ -380,7 +380,8 @@ impl MindeState {
         if has_buffer && window.is_some() {
             return window;
         }
-        if !has_buffer && let Some(window) = &window {
+        let unmapping = !has_buffer && window.is_some();
+        if unmapping && let Some(window) = &window {
             self.unmap_window(window);
         }
         let toplevel = self
@@ -389,7 +390,9 @@ impl MindeState {
             .iter()
             .find(|toplevel| toplevel.wl_surface() == surface)
             .cloned()?;
-        if !configured {
+        // Smithay resets the role when a null buffer unmaps it. The initial
+        // configure answers the client's next bufferless commit, not this one.
+        if !configured && !unmapping {
             toplevel.send_configure();
         }
         if !has_buffer {
