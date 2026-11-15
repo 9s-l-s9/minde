@@ -10,11 +10,7 @@ use smithay::{
     },
     utils::Transform,
 };
-use std::{
-    os::unix::fs::PermissionsExt,
-    process::{Command, Stdio},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 #[allow(dead_code)]
 #[path = "../../../tests/clients/protocol/wire.rs"]
 mod wire;
@@ -476,43 +472,9 @@ fn exercise(sender: channel::Sender<Action>) {
 
 #[test]
 fn lock_pointer_and_touch() {
-    const CHILD: &str = "MINDE_LOCK_INPUT_TEST_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        // Guile and compositor globals belong to one thread/process. Isolate
-        // this real-state fixture from the unit runner's other Guile tests.
-        let dir = std::env::temp_dir().join(format!("minde-lock-input-{}", std::process::id()));
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "handlers::session_lock::input_tests::lock_pointer_and_touch",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .env("XDG_RUNTIME_DIR", &dir)
-            .env("WAYLAND_DISPLAY", "wayland-1")
-            .env_remove("NESTED_WAYLAND_DISPLAY")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while child.try_wait().unwrap().is_none() {
-            if Instant::now() > deadline {
-                child.kill().unwrap();
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let result = child.wait_with_output().unwrap();
-        std::fs::remove_dir_all(dir).unwrap();
-        assert!(
-            result.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr)
-        );
+    if !crate::isolated_test::in_child(
+        "handlers::session_lock::input_tests::lock_pointer_and_touch",
+    ) {
         return;
     }
     crate::guile::boot();

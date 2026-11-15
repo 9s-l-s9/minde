@@ -18,6 +18,8 @@ mod handlers;
 mod grabs;
 mod input;
 mod ipc;
+#[cfg(test)]
+mod isolated_test;
 mod logging;
 mod png;
 mod render;
