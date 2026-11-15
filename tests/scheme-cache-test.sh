@@ -8,6 +8,7 @@ trap 'rm -rf "$scratch"' EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$scratch/project with spaces/scripts" "$scratch/project with spaces/scheme/cache-fixture"
 cp Makefile "$scratch/project with spaces/"
+cp scripts/mindectl "$scratch/project with spaces/scripts/"
 if [ -f scripts/compile-scheme ]; then
     cp scripts/compile-scheme "$scratch/project with spaces/scripts/"
 fi
@@ -100,3 +101,23 @@ rm scheme/cache-fixture/zz-broken.scm
 build || fail 'retry after failed compilation'
 expect 4
 echo 'ok - compilation failure is fatal and a retry rebuilds dependents'
+
+# The checkout's CLI must load this cache instead of interpreting its client
+# modules on every call; an installed tree keeps its own bytecode.
+mkdir -p scheme/minde
+: >scheme/minde/control-client.scm
+cat >"$scratch/guile-stub" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$GUILE_LOAD_COMPILED_PATH"
+STUB
+chmod +x "$scratch/guile-stub"
+compiled_path() {
+    env -u GUILE_LOAD_COMPILED_PATH XDG_RUNTIME_DIR="$scratch" \
+        MINDE_GUILE="$scratch/guile-stub" sh scripts/mindectl eval '#t'
+}
+[ "$(compiled_path)" = "$PWD/scripts/../build/ccache" ] ||
+    fail "checkout CLI does not load the development cache: $(compiled_path)"
+mkdir -p lib/guile/3.0/site-ccache
+[ "$(compiled_path)" = "$PWD/scripts/../lib/guile/3.0/site-ccache" ] ||
+    fail "installed bytecode does not take precedence: $(compiled_path)"
+echo 'ok - the command-line client loads compiled modules in a checkout'

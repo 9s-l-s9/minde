@@ -58,11 +58,16 @@ client_modules() {
         echo "mindectl: cannot locate Scheme client modules" >&2
         exit 1
     fi
-    ccache=$script_dir/../lib/guile/3.0/site-ccache
-    if [ -d "$ccache" ]; then
-        GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
-        export GUILE_LOAD_COMPILED_PATH
-    fi
+    # Installed bytecode, or the cache that `make compile-scheme` builds in a
+    # checkout. Guile ignores a compiled file older than its source, so a
+    # stale cache costs time but never changes behavior.
+    for ccache in "$script_dir/../lib/guile/3.0/site-ccache" "$script_dir/../build/ccache"; do
+        if [ -d "$ccache" ]; then
+            GUILE_LOAD_COMPILED_PATH="$ccache${GUILE_LOAD_COMPILED_PATH:+:$GUILE_LOAD_COMPILED_PATH}"
+            export GUILE_LOAD_COMPILED_PATH
+            break
+        fi
+    done
 }
 
 control_client() {
