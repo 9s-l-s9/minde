@@ -1299,6 +1299,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rejected_configuration_keeps_captures_of_restored_heads() {
+        use crate::handlers::screencopy::{CaptureFrame, PendingCapture};
+
+        if !crate::isolated_test::in_child(
+            "handlers::output_management::tests::rejected_configuration_keeps_captures_of_restored_heads",
+        ) {
+            return;
+        }
+        crate::guile::boot();
+        let mut event_loop = smithay::reexports::calloop::EventLoop::try_new().unwrap();
+        let display = smithay::reexports::wayland_server::Display::new().unwrap();
+        let mut state = MindeState::new(&mut event_loop, display).unwrap();
+        let [kept, disabled] = [("kept", 0), ("disabled", 200)].map(|(name, x)| {
+            let output = Output::new(
+                name.into(),
+                PhysicalProperties {
+                    size: (0, 0).into(),
+                    subpixel: Subpixel::Unknown,
+                    make: "test".into(),
+                    model: "test".into(),
+                    serial_number: name.into(),
+                },
+            );
+            output.add_mode(mode(200, 150));
+            output.add_mode(mode(400, 300));
+            output.set_preferred(mode(200, 150));
+            output.change_current_state(Some(mode(200, 150)), None, None, Some((x, 0).into()));
+            state.space.map_output(&output, (x, 0));
+            state.output_management_add_output(&output);
+            output
+        });
+        let capture = |state: &mut MindeState, name: &str| {
+            let path = crate::screenshot::directory().unwrap().join(name);
+            state.pending_captures.push(PendingCapture::new(
+                disabled.clone(),
+                CaptureFrame::File {
+                    destination: crate::screenshot::Destination::prepare(&path).unwrap(),
+                    token: 1,
+                },
+                false,
+                (0, 0).into(),
+                (200, 150).into(),
+            ));
+        };
+
+        // The disable is committed first. The nested backend then refuses
+        // the valid mode change of the other head and the disable is rolled
+        // back.
+        let mut refused = HeadChange::new(kept.clone(), true);
+        refused.mode = Some(mode(400, 300));
+        capture(&mut state, "rejected.png");
+        assert!(
+            state
+                .apply_output_configuration(
+                    &[HeadChange::new(disabled.clone(), false), refused],
+                    false
+                )
+                .is_err()
+        );
+        assert!(state.output_enabled(&disabled));
+        assert_eq!(state.pending_captures.len(), 1);
+
+        // A disable that succeeds retires them.
+        state
+            .apply_output_configuration(&[HeadChange::new(disabled.clone(), false)], false)
+            .unwrap();
+        assert!(!state.output_enabled(&disabled));
+        assert!(state.pending_captures.is_empty());
+    }
+
     fn head(name: &str, enabled: bool, vrr: Option<bool>) -> HeadFacts {
         let output = Output::new(
             name.to_string(),
