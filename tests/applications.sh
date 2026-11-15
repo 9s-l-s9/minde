@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_APPS_OUT:-/tmp/minde-applications}
+nested_output_directory "${MINDE_APPS_OUT:-}" applications keep
 RESULTS="$OUT/results.jsonl"
 SUMMARY="$OUT/summary.txt"
 STRICT=${MINDE_APPS_STRICT:-0}

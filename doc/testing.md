@@ -85,4 +85,4 @@ Every target below is declared `.PHONY` in `Makefile`. Run
 | `make check-hardware` | - |
 | `make demos` | - |
 | `make check-demos` | - |
-| `make clean-test-output` | - |
+| `make clean-test-output` | Nested gates remove their own directory after success. This removes the caller's logs of failed runs and retained benchmark, application and soak results. |

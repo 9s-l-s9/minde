@@ -48,6 +48,11 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Nested test, application, soak and benchmark scripts use a private output
+  directory per run below `TMPDIR`. It is removed after a successful gate and
+  printed after a failure or when it holds results; the existing environment
+  variables still select a fixed directory (#176).
+
 - A rejected output configuration no longer stops capture sessions of the
   heads it restores; sessions end once a disable has actually succeeded (#173).
 

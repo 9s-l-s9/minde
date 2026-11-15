@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_SOAK_OUT:-/tmp/minde-soak}
+nested_output_directory "${MINDE_SOAK_OUT:-}" soak keep
 MINUTES=${SOAK_MINUTES:-60}
 ITERATIONS=${SOAK_ITERATIONS:-0}
 MAX_RSS_GROWTH_KIB=${SOAK_MAX_RSS_GROWTH_KIB:-262144}

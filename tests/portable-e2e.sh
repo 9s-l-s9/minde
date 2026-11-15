@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_PORTABLE_E2E_OUT:-/tmp/minde-portable-e2e}
+nested_output_directory "${MINDE_PORTABLE_E2E_OUT:-}" portable-e2e
 mkdir -p "$OUT"
 
 cleanup() {

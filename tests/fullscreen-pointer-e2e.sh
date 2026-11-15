@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
-OUT=${MINDE_FULLSCREEN_POINTER_E2E_OUT:-/tmp/minde-fullscreen-pointer-e2e}
+nested_output_directory "${MINDE_FULLSCREEN_POINTER_E2E_OUT:-}" fullscreen-pointer-e2e
 CLIENT_PID=
 PANEL_PID=
 SECOND_PID=

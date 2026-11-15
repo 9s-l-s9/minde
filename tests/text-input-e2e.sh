@@ -19,7 +19,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_TEXTINPUT_E2E_OUT:-/tmp/swm14f}
+nested_output_directory "${MINDE_TEXTINPUT_E2E_OUT:-}" text-input-e2e
 FOOT_PID=""
 cleanup() {
     if [ -n "$FOOT_PID" ]; then

@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_FRACTIONAL_E2E_OUT:-/tmp/swm14c}
+nested_output_directory "${MINDE_FRACTIONAL_E2E_OUT:-}" fractional-scale-e2e
 nested_install_cleanup nested_stop
 
 for tool in wayland-info wlr-randr foot; do

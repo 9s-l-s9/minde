@@ -18,7 +18,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_TABLET_E2E_OUT:-/tmp/swm16b}
+nested_output_directory "${MINDE_TABLET_E2E_OUT:-}" tablet-e2e
 nested_install_cleanup nested_stop
 
 command -v wayland-info >/dev/null 2>&1 || {

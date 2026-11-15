@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-OUT=${MINDE_BENCH_OUT:-/tmp/minde-bench-nested}
+nested_output_directory "${MINDE_BENCH_OUT:-}" bench-nested keep
 nested_install_cleanup nested_stop
 nested_start "$OUT" "${MINDE_BENCH_DISPLAY:-:97}"
 if [ "${MINDE_BENCH_GAPS:-0}" = 1 ]; then

@@ -15,7 +15,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_TOUCH_E2E_OUT:-/tmp/swm16a}
+nested_output_directory "${MINDE_TOUCH_E2E_OUT:-}" touch-e2e
 nested_install_cleanup nested_stop
 
 command -v wayland-info >/dev/null 2>&1 || {

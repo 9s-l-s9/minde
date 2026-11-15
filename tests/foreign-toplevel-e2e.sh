@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1 MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1
 
-OUT=${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-/tmp/swm-ft-e2e}
+nested_output_directory "${MINDE_FOREIGN_TOPLEVEL_E2E_OUT:-}" foreign-toplevel-e2e
 nested_install_cleanup nested_stop
 
 for tool in wayland-info foot xdotool; do

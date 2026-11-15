@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_PRESENTATION_E2E_OUT:-/tmp/swm14h}
+nested_output_directory "${MINDE_PRESENTATION_E2E_OUT:-}" presentation-tearing-e2e
 nested_install_cleanup nested_stop
 
 command -v wayland-info >/dev/null 2>&1 || {

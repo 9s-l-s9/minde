@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_SESSION_LOCK_E2E_OUT:-/tmp/minde-session-lock-e2e}
+nested_output_directory "${MINDE_SESSION_LOCK_E2E_OUT:-}" session-lock-e2e
 nested_install_cleanup nested_stop
 for tool in xdotool timeout; do
     command -v "$tool" >/dev/null 2>&1 || {

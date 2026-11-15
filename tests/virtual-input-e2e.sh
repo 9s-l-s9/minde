@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 export MINDE_TEST_PROTOCOLS=1
 export NESTED_XKB_LAYOUT=us,de
 
-OUT=${MINDE_VIRTUAL_INPUT_E2E_OUT:-/tmp/swm14g}
+nested_output_directory "${MINDE_VIRTUAL_INPUT_E2E_OUT:-}" virtual-input-e2e
 FOOT_PID=""
 XTERM_PID=""
 cleanup() {

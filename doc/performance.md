@@ -160,8 +160,8 @@ Reproduce from the repository root:
 guix shell -m manifest.scm -- sh tests/bench-nested.sh
 ```
 
-`MINDE_BENCH_OUT` selects the artifact directory (default
-`/tmp/minde-bench-nested`); `MINDE_BENCH_DISPLAY` selects the isolated X display
+`MINDE_BENCH_OUT` selects the artifact directory (default: a private
+directory below `TMPDIR`, printed on exit); `MINDE_BENCH_DISPLAY` selects the isolated X display
 (default `:97`). The benchmark builds the current checkout, reports process CPU
 from `/proc`, and checks that IPC still responds after powering the output on.
 It does not restart or alter the user's desktop session.

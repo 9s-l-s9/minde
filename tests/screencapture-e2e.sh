@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_SCREENCAPTURE_E2E_OUT:-/tmp/swm-e2e}
+nested_output_directory "${MINDE_SCREENCAPTURE_E2E_OUT:-}" screencapture-e2e
 nested_install_cleanup nested_stop
 export MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS=1
 

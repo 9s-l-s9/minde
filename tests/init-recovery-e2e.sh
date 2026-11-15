@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
-OUT=${MINDE_INIT_RECOVERY_E2E_OUT:-/tmp/minde-init-recovery}
+nested_output_directory "${MINDE_INIT_RECOVERY_E2E_OUT:-}" init-recovery-e2e
 nested_install_cleanup nested_stop
 mkdir -p "$OUT/fixtures"
 printf '(\n' > "$OUT/fixtures/syntax.scm"

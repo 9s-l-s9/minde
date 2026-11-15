@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-OUT=${MINDE_RESIZE_E2E_OUT:-/tmp/minde-resize-e2e}
+nested_output_directory "${MINDE_RESIZE_E2E_OUT:-}" resize-e2e
 FOOT_PID=""
 cleanup() {
     [ -z "$FOOT_PID" ] || kill "$FOOT_PID" 2>/dev/null || true

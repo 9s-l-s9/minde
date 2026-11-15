@@ -10,7 +10,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_KEYBOARD_LAYOUT_E2E_OUT:-/tmp/swm-kblayout-e2e}
+nested_output_directory "${MINDE_KEYBOARD_LAYOUT_E2E_OUT:-}" keyboard-layout-e2e
 export NESTED_XKB_LAYOUT=de,us NESTED_XKB_VARIANT=bone,
 nested_install_cleanup nested_stop
 

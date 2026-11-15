@@ -309,5 +309,9 @@ demos:
 check-demos: check-generated-docs
 	sh tests/check-demos.sh
 
+# Nested gates remove their own directory after success. This removes the
+# caller's logs of failed runs and retained benchmark, application and soak
+# results.
 clean-test-output:
-	rm -rf /tmp/minde-e2e
+	find "$${TMPDIR:-/tmp}" -maxdepth 1 -name 'minde-test-*' \
+		-user "$$(id -un)" -exec rm -rf {} +

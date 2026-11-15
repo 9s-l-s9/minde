@@ -81,9 +81,10 @@ Swaylock may be unavailable because of an identified PAM/account startup
 failure; a running locker that never confirms, protocol errors and unexplained
 exits fail the scenario. The broad `tests/e2e.sh` suite also verifies that killing
 the actual foreground locker leaves the session locked.
-Machine-readable results are written to
-`/tmp/minde-applications/results.json`; JSONL, per-client logs and bounded
-screenshots remain beside it after failures.
+Machine-readable results are written to `results.json` in the run's private
+output directory, whose path the script prints as `test output:` when it
+exits; `MINDE_APPS_OUT` selects a fixed directory instead. JSONL, per-client
+logs and bounded screenshots remain beside it after failures.
 
 `tests/nested-harness-test.sh` runs headless checks in the default static gate:
 colored log fields, repeated teardown, filesystem failures, signal exits,
@@ -328,7 +329,8 @@ make check-soak SOAK_MINUTES=60
 Each iteration maps/unmaps a client, reloads configuration, creates/deletes a
 group, changes the clipboard, simulates a two-output hotplug and restores the
 single output, then validates schema-v1 state. Results and RSS measurements
-are retained in `/tmp/minde-soak/results.json`.
+are retained in `results.json` in the printed output directory
+(`MINDE_SOAK_OUT` selects a fixed one).
 
 Touch cancellation has headless Rust coverage using real Wayland surfaces and
 `wl_touch` resources: completed and pending frames, stationary contacts,

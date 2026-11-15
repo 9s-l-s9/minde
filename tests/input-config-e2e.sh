@@ -18,7 +18,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_INPUT_CONFIG_E2E_OUT:-/tmp/swm14-input}
+nested_output_directory "${MINDE_INPUT_CONFIG_E2E_OUT:-}" input-config-e2e
 nested_install_cleanup nested_stop
 
 nested_start "$OUT" "${MINDE_INPUT_CONFIG_E2E_DISPLAY:-:99}" || {

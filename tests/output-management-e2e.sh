@@ -16,7 +16,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_OUTPUT_MGMT_E2E_OUT:-/tmp/swm-outmgmt-e2e}
+nested_output_directory "${MINDE_OUTPUT_MGMT_E2E_OUT:-}" output-management-e2e
 ALLOW_ENV=MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
 export MINDE_TEST_PROTOCOLS=1
 # The nested compositor inherits our environment; make sure the override is

@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${E2E_OUT:-/tmp/minde-e2e}
+nested_output_directory "${E2E_OUT:-}" e2e
 LOG=$OUT/compositor.log
 SWAYLOCK_PID=
 SUBSCRIBE_PID=

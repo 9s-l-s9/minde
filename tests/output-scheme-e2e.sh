@@ -14,7 +14,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_OUTPUT_SCHEME_E2E_OUT:-/tmp/swm-outscheme-e2e}
+nested_output_directory "${MINDE_OUTPUT_SCHEME_E2E_OUT:-}" output-scheme-e2e
 unset MINDE_OUTPUT_MGMT_ALLOW_NO_HEADS
 nested_install_cleanup nested_stop
 

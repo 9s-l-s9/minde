@@ -4,14 +4,46 @@
 
 # Ownership belongs to this driver, never to an inherited shell environment.
 NESTED_WM_PID='' NESTED_XVFB_PID='' NESTED_RT='' NESTED_WAYLAND_DISPLAY=''
+NESTED_OUT_AUTOMATIC='' NESTED_OUT_KEEP='' NESTED_CLEANUP=nested_stop
 
 nested_install_cleanup() {
     # Capture the caller's cleanup function now, before positional args change.
-    # shellcheck disable=SC2064
-    trap "${1:-nested_stop}" EXIT
+    NESTED_CLEANUP=${1:-nested_stop}
+    trap 'nested_exit "$?"' EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
     trap 'exit 143' TERM
+}
+
+nested_exit() {
+    "$NESTED_CLEANUP"
+    nested_finish_output "$1"
+}
+
+# Set OUT to the caller's override ($1) or to a private directory for this
+# run named after $2. A shared fixed path would let concurrent runs and other
+# users replace logs and compiled helpers. With "keep" as $3 the directory
+# holds results and survives a successful run.
+nested_output_directory() {
+    NESTED_OUT_AUTOMATIC='' NESTED_OUT_KEEP=${3:-}
+    if [ -n "$1" ]; then
+        OUT=$1
+    else
+        OUT=$(mktemp -d "${TMPDIR:-/tmp}/minde-test-$2.XXXXXX") || return 1
+        NESTED_OUT_AUTOMATIC=$OUT
+    fi
+}
+
+# Remove an automatic directory after success; report where the logs of a
+# failed run, or the retained results, can be found.
+nested_finish_output() {
+    [ -n "${NESTED_OUT_AUTOMATIC:-}" ] || return 0
+    if [ "$1" -eq 0 ] && [ -z "${NESTED_OUT_KEEP:-}" ]; then
+        rm -rf "$NESTED_OUT_AUTOMATIC"
+    else
+        echo "test output: $NESTED_OUT_AUTOMATIC" >&2
+    fi
+    NESTED_OUT_AUTOMATIC=''
 }
 
 nested_plain_log() {

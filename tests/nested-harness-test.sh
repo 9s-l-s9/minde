@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 if [ "${1:-all}" = all ]; then
     failed=0
-    for case_name in log stop mktemp mkdir chmod signals client locker; do
+    for case_name in log stop output mktemp mkdir chmod signals client locker; do
         sh tests/nested-harness-test.sh "$case_name" || failed=1
     done
     exit "$failed"
@@ -55,6 +55,36 @@ stop)
     [ "$(wc -l <"$scratch/waits")" -eq 2 ] || fail 'teardown waits on retired PIDs again'
     [ -z "$NESTED_WM_PID$NESTED_XVFB_PID$NESTED_RT" ] || fail 'teardown retains owned resources'
     [ ! -d "$old_runtime" ] || fail 'runtime directory survived teardown'
+    ;;
+output)
+    # Run each outcome in its own shell: the EXIT trap decides what remains.
+    run() {
+        TMPDIR="$scratch" MINDE_HARNESS_OUT="${3:-}" sh -c '
+            . tests/lib/nested-compositor.sh
+            nested_install_cleanup :
+            nested_output_directory "$MINDE_HARNESS_OUT" harness $2
+            printf "%s\n" "$OUT" >"$3"
+            : >"$OUT/artifact"
+            exit "$1"' sh "$1" "$2" "$scratch/path" 2>"$scratch/report"
+    }
+    run 0 '' || fail 'successful run failed'
+    automatic=$(cat "$scratch/path")
+    case $automatic in "$scratch"/minde-test-harness.*) ;; *) fail 'directory ignores TMPDIR or its name' ;; esac
+    [ ! -e "$automatic" ] || fail 'successful run left its directory'
+    [ ! -s "$scratch/report" ] || fail 'successful run reported a directory'
+    if run 7 ''; then fail 'failure status was lost'; fi
+    failed=$(cat "$scratch/path")
+    [ "$failed" != "$automatic" ] || fail 'runs shared a directory'
+    [ -f "$failed/artifact" ] || fail 'failed run lost its logs'
+    grep -Fqx "test output: $failed" "$scratch/report" || fail 'failed run did not report its logs'
+    run 0 keep || fail 'result run failed'
+    kept=$(cat "$scratch/path")
+    [ -f "$kept/artifact" ] || fail 'results were removed after success'
+    grep -Fqx "test output: $kept" "$scratch/report" || fail 'results were not reported'
+    mkdir "$scratch/chosen"
+    run 0 '' "$scratch/chosen" || fail 'override run failed'
+    [ "$(cat "$scratch/path")" = "$scratch/chosen" ] || fail 'override was ignored'
+    [ -f "$scratch/chosen/artifact" ] || fail 'an explicit directory was removed'
     ;;
 mktemp|mkdir|chmod)
     mkdir -p "$scratch/out"

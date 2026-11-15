@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-OUT=${MINDE_KEY_BENCH_OUT:-/tmp/minde-bench-key-dispatch}
+nested_output_directory "${MINDE_KEY_BENCH_OUT:-}" bench-key-dispatch keep
 nested_install_cleanup nested_stop
 if [ -z "${MINDE_NESTED_PACKAGE:-}" ]; then
     make compile-scheme

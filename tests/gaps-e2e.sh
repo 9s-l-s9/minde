@@ -4,7 +4,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-OUT=${MINDE_GAPS_E2E_OUT:-/tmp/minde-gaps-e2e}
+nested_output_directory "${MINDE_GAPS_E2E_OUT:-}" gaps-e2e
 FOOT_PID=""
 BACKGROUND_PID=""
 cleanup() {

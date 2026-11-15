@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_IDLE_E2E_OUT:-/tmp/swm14d}
+nested_output_directory "${MINDE_IDLE_E2E_OUT:-}" idle-e2e
 SWAYIDLE_PID=""
 cleanup() {
     if [ -n "$SWAYIDLE_PID" ]; then

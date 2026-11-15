@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
-OUT=${MINDE_GUILE_BOUNDARY_E2E_OUT:-/tmp/minde-guile-boundary-e2e}
+nested_output_directory "${MINDE_GUILE_BOUNDARY_E2E_OUT:-}" guile-boundary-e2e
 FOOT_PID=""
 cleanup() {
     [ -z "$FOOT_PID" ] || kill "$FOOT_PID" 2>/dev/null || true

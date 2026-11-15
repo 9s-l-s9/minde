@@ -11,7 +11,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_EVENT_SUBSCRIBE_E2E_OUT:-/tmp/swm15c}
+nested_output_directory "${MINDE_EVENT_SUBSCRIBE_E2E_OUT:-}" event-subscribe-e2e
 nested_install_cleanup nested_stop
 
 for tool in foot guile; do

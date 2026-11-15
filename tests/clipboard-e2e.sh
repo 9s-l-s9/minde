@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 export MINDE_TEST_PROTOCOLS=1
 
-OUT=${MINDE_CLIPBOARD_E2E_OUT:-/tmp/swm-clip-e2e}
+nested_output_directory "${MINDE_CLIPBOARD_E2E_OUT:-}" clipboard-e2e
 nested_install_cleanup nested_stop
 
 for tool in wl-copy wl-paste wayland-info; do

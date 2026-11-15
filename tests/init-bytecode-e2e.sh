@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
-OUT=${MINDE_INIT_E2E_OUT:-/tmp/minde-init-bytecode}
+nested_output_directory "${MINDE_INIT_E2E_OUT:-}" init-bytecode-e2e
 nested_install_cleanup nested_stop
 if [ -z "${MINDE_NESTED_PACKAGE:-}" ]; then
     make compile-scheme

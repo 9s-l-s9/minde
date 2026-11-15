@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_PERSISTENCE_E2E_OUT:-/tmp/minde-persistence-e2e}
+nested_output_directory "${MINDE_PERSISTENCE_E2E_OUT:-}" persistence-e2e
 nested_install_cleanup nested_stop
 mkdir -p "$OUT"
 printf '%s\n' '(minde-layouts 2 (("preserved" . leaf)))' >"$OUT/layouts.scm"

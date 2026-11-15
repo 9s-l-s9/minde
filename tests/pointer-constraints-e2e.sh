@@ -10,7 +10,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_POINTER_CONSTRAINTS_E2E_OUT:-/tmp/swm14b}
+nested_output_directory "${MINDE_POINTER_CONSTRAINTS_E2E_OUT:-}" pointer-constraints-e2e
 nested_install_cleanup nested_stop
 
 command -v wayland-info >/dev/null 2>&1 || {

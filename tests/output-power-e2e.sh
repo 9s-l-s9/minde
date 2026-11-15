@@ -10,7 +10,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tests/lib/nested-compositor.sh
 
-OUT=${MINDE_OUTPUT_POWER_E2E_OUT:-/tmp/swm-outpower-e2e}
+nested_output_directory "${MINDE_OUTPUT_POWER_E2E_OUT:-}" output-power-e2e
 nested_install_cleanup nested_stop
 
 command -v wlopm >/dev/null 2>&1 || {
