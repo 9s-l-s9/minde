@@ -17,7 +17,8 @@ fail() {
 }
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/minde-release-check.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 index=0
 for archive in "$source_archive" "$vendored_archive"; do
     index=$((index + 1))

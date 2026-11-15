@@ -45,7 +45,8 @@ case $actual in
 esac
 
 config_dir=$(mktemp -d)
-trap 'rm -rf "$config_dir"' EXIT HUP INT TERM
+trap 'rm -rf "$config_dir"' EXIT
+trap 'exit 1' HUP INT TERM
 cat >"$config_dir/keys.scm" <<'EOF'
 (minde-config (version 1) (prefix () "Page_Up") (bindings ("M-C-g" windows)))
 EOF

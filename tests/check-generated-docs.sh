@@ -2,7 +2,8 @@
 set -eu
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 
 scripts/generate-docs "$tmp"
 

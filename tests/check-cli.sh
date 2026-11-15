@@ -30,7 +30,8 @@ printf '%s\n' "$error" | grep -q 'unknown option: --definitely-invalid'
 printf '%s\n' "$error" | grep -q "Try 'minde --help'"
 
 config_dir=$(mktemp -d)
-trap 'rm -rf "$config_dir"' EXIT HUP INT TERM
+trap 'rm -rf "$config_dir"' EXIT
+trap 'exit 1' HUP INT TERM
 # A developer's installed session may export a different Scheme bundle.
 # This gate exercises the checkout's command schemas with the built binary.
 MINDE_SCHEME_DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")/../scheme" && pwd)
