@@ -4,7 +4,10 @@
 
 use std::{
     fs::{self, File},
-    os::{fd::AsRawFd, unix::net::UnixListener},
+    os::{
+        fd::AsRawFd,
+        unix::{net::UnixListener, process::CommandExt},
+    },
     path::Path,
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -19,7 +22,27 @@ impl Drop for Scratch {
 }
 
 fn assert_startup_error(root: &Path, runtime: Option<&Path>, expected: &str) {
+    assert_startup_error_from(root, runtime, expected, None);
+}
+
+fn assert_startup_error_from(
+    root: &Path,
+    runtime: Option<&Path>,
+    expected: &str,
+    deleted_directory: Option<&Path>,
+) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_minde"));
+    if let Some(directory) = deleted_directory {
+        let directory = directory.to_owned();
+        // Enter and remove the directory in the child, after the fork, so
+        // the compositor starts with a working directory that no longer exists.
+        unsafe {
+            command.pre_exec(move || {
+                std::env::set_current_dir(&directory)?;
+                fs::remove_dir(&directory)
+            });
+        }
+    }
     command
         .arg("--winit")
         .env_remove("XDG_RUNTIME_DIR")
@@ -91,4 +114,16 @@ fn missing_and_exhausted_runtime_sockets_are_startup_errors() {
             .accept()
             .expect("startup replaced an occupied socket");
     }
+}
+
+#[test]
+fn deleted_working_directory_does_not_stop_startup_early() {
+    let root =
+        Scratch(std::env::temp_dir().join(format!("minde-startup-cwd-{}", std::process::id())));
+    fs::create_dir(&root.0).unwrap();
+    let deleted = root.0.join("deleted");
+    fs::create_dir(&deleted).unwrap();
+    // Startup proceeds to the socket setup that this environment rejects.
+    assert_startup_error_from(&root.0, None, "XDG_RUNTIME_DIR", Some(&deleted));
+    assert!(!deleted.exists());
 }

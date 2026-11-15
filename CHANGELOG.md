@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Starting from a working directory that no longer exists reaches normal
+  startup instead of failing while preparing the init-recovery restart.
+
 - A toplevel unmapped by a null buffer receives its next configure in answer
   to the bufferless commit that restarts mapping, not to the unmapping commit.
 

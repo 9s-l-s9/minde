@@ -199,9 +199,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut restart = std::process::Command::new(std::env::current_exe()?);
     restart
         .args(std::env::args_os().skip(1))
-        .current_dir(std::env::current_dir()?)
         .env_clear()
         .envs(std::env::vars_os());
+    // A deleted working directory must not prevent startup. Recovery then
+    // keeps whatever directory the failed init left behind.
+    if let Ok(directory) = std::env::current_dir() {
+        restart.current_dir(directory);
+    }
 
     let mut event_loop: EventLoop<MindeState> = EventLoop::try_new()?;
 
