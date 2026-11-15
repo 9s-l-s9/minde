@@ -188,7 +188,16 @@ fn property(o: &Outputs, opcode: u16) -> Vec<u8> {
     }
 }
 pub fn management(selected: &[String]) {
-    let run = |name: &str| selected.is_empty() || selected.iter().any(|s| s == name);
+    // A misspelled or renamed selection must not pass without running.
+    let matched = std::cell::RefCell::new(Vec::new());
+    let chosen = |name: &str| {
+        let chosen = selected.iter().any(|s| s == name);
+        if chosen {
+            matched.borrow_mut().push(name.to_owned());
+        }
+        chosen
+    };
+    let run = |name: &str| chosen(name) || selected.is_empty();
     if run("serials") {
         serials();
     }
@@ -303,8 +312,14 @@ pub fn management(selected: &[String]) {
     if run("resize") {
         resize();
     }
-    if selected.iter().any(|s| s == "disabled-scheme") {
+    if chosen("disabled-scheme") {
         disabled_scheme();
+    }
+    for name in selected {
+        assert!(
+            matched.borrow().contains(name),
+            "unknown output-management case {name}"
+        );
     }
 }
 

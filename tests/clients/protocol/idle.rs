@@ -238,13 +238,20 @@ pub fn holder(ready: &str) {
 }
 
 pub fn run(selected: &[String]) {
-    for (name, run) in [
+    let cases = [
         ("clock", clock as fn()),
         ("shared", shared),
         ("surface", surface_destroyed),
         ("disconnect", disconnected),
         ("killed", killed),
-    ] {
+    ];
+    for name in selected {
+        assert!(
+            cases.iter().any(|(case, _)| case == name),
+            "unknown idle case {name}"
+        );
+    }
+    for (name, run) in cases {
         if selected.is_empty() || selected.iter().any(|s| s == name) {
             run();
         }
