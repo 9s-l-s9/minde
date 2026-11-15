@@ -577,6 +577,12 @@ fn typing(first: &mut Input, second: &mut Input) {
             ),
             "#t",
         );
+        if released.is_empty() {
+            // Nothing is held at cancellation. Wait beyond the next queued
+            // character before requiring that none reached this client.
+            std::thread::sleep(Duration::from_millis(150));
+            second.roundtrip();
+        }
         for code in released {
             second.key(code, 0, start);
         }
