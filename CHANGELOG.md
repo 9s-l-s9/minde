@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `MINDE_SCREENSHOT_DIR` may lie behind a symbolic link, such as a linked
+  home or picture directory. Requested paths below it still never follow one.
+
 - Without `XDG_RUNTIME_DIR`, status files are published only into a private
   fallback directory owned by the session user. A directory or symbolic link
   created there by someone else is refused and the failure is logged.

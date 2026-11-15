@@ -4,16 +4,14 @@
 //! keep deferred writes from following a replaced path or a symlink.
 
 use smithay::reexports::rustix::{
-    fs::{
-        AtFlags, Mode, OFlags, RenameFlags, mkdirat, open, openat, renameat_with, statat, unlinkat,
-    },
+    fs::{AtFlags, Mode, OFlags, RenameFlags, open, openat, renameat_with, statat, unlinkat},
     io::Errno,
 };
 use std::{
     ffi::OsString,
     fs::File,
     io::{self, Write},
-    os::unix::ffi::OsStrExt,
+    os::unix::{ffi::OsStrExt, fs::DirBuilderExt},
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
@@ -40,13 +38,7 @@ const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
 
-fn descend(parent: &File, name: &std::ffi::OsStr, create: bool) -> io::Result<File> {
-    if create {
-        match mkdirat(parent, name, Mode::from_raw_mode(0o700)) {
-            Ok(()) | Err(Errno::EXIST) => (),
-            Err(error) => return Err(error.into()),
-        }
-    }
+fn descend(parent: &File, name: &std::ffi::OsStr) -> io::Result<File> {
     Ok(openat(parent, name, DIRECTORY_FLAGS, Mode::empty())?.into())
 }
 
@@ -84,16 +76,21 @@ impl Destination {
             })
             .collect::<io::Result<_>>()?;
         let name = parts.pop().ok_or_else(invalid)?.to_os_string();
-        let mut parent: File = open("/", DIRECTORY_FLAGS, Mode::empty())?.into();
-        for component in root.components() {
-            match component {
-                Component::RootDir => (),
-                Component::Normal(name) => parent = descend(&parent, name, true)?,
-                _ => return Err(invalid()),
-            }
-        }
+        // The configured root is trusted and may lie behind a symbolic link,
+        // such as a linked home or picture directory. Only the requested
+        // path below it must never follow one.
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(root)?;
+        let mut parent: File = open(
+            root,
+            DIRECTORY_FLAGS.difference(OFlags::NOFOLLOW),
+            Mode::empty(),
+        )?
+        .into();
         for name in parts {
-            parent = descend(&parent, name, false)?;
+            parent = descend(&parent, name)?;
         }
         match statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW) {
             Err(Errno::NOENT) => (),
@@ -208,6 +205,22 @@ mod tests {
             root.prepare("image.png").unwrap_err().kind(),
             io::ErrorKind::AlreadyExists
         );
+    }
+
+    #[test]
+    fn accepts_a_configured_directory_behind_a_symbolic_link() {
+        let real = Directory::new("linked-target");
+        let holder = Directory::new("linked-holder");
+        let linked = holder.0.join("pictures");
+        symlink(&real.0, &linked).unwrap();
+        // A missing level below the link is created, as below a plain root.
+        let root = linked.join("minde");
+        let target = Destination::prepare_at(&root, &root.join("image.png")).unwrap();
+        target.write_rgba(1, 1, &[255, 0, 0, 255]).unwrap();
+        assert!(real.0.join("minde/image.png").is_file());
+        // Links below the configured directory remain rejected.
+        symlink(&holder.0, root.join("escape")).unwrap();
+        assert!(Destination::prepare_at(&root, &root.join("escape/new")).is_err());
     }
 
     #[test]
