@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- On the DRM backend a capture of an output contains the centered message
+  only when that output displays it.
+
 - `MINDE_SCREENSHOT_DIR` may lie behind a symbolic link, such as a linked
   home or picture directory. Requested paths below it still never follow one.
 

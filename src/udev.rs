@@ -2584,7 +2584,7 @@ impl MindeState {
                 &self.space,
                 &mut self.cursor_state,
                 self.pointer_location,
-                self.message.as_ref(),
+                self.message.as_ref().filter(|_| message_here),
                 &self.overlays,
                 focus,
                 self.border_color,
