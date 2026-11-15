@@ -60,7 +60,7 @@ fn ready(c: &mut Capture, frame: u32, ext: bool) {
     c.send(frame, if ext { 0 } else { 1 }, &[]);
 }
 
-fn quiet(c: &mut Capture, frame: u32) {
+fn quiet(c: &mut Capture, frame: u32, ext: bool) {
     let end = Instant::now() + Duration::from_millis(150);
     while Instant::now() < end {
         match c.read(end) {
@@ -76,11 +76,12 @@ fn quiet(c: &mut Capture, frame: u32) {
             Err(err) => panic!("capture connection failed: {err}"),
         }
     }
+    let finished = if ext { [3, 4] } else { [2, 3] };
     assert!(
         !c.events
             .iter()
-            .any(|e| e.object == frame && [2, 3].contains(&e.opcode)),
-        "copy-with-damage completed without a scene change"
+            .any(|e| e.object == frame && finished.contains(&e.opcode)),
+        "a capture waiting for content completed without a scene change"
     );
 }
 
@@ -192,16 +193,38 @@ pub fn run() {
         "matching clients repeated the capture render/readback"
     );
     let before = counts();
-    let unchanged = ext(&mut c, session, &a, &[]);
-    ready(&mut c, unchanged, true);
-    assert!(damage(&c, unchanged, true).is_empty());
+    // After its first frame a session's capture may wait for new content.
+    // Without buffer damage it stays pending and costs no capture work,
+    // so a recorder does not make the compositor render a static screen.
+    let waiting = ext(&mut c, session, &a, &[]);
+    quiet(&mut c, waiting, true);
     assert_eq!(
         counts(),
         before,
         "unchanged capture rendered or read back pixels"
     );
+    let renders = || crate::input::numbers(&ipc("(list (cadr (assq 'render (wm-timing-stats))))"));
+    let idle = renders();
+    quiet(&mut c, waiting, true);
+    assert_eq!(
+        renders(),
+        idle,
+        "a waiting capture kept the output rendering"
+    );
+    for row in 20..32 {
+        source
+            .write_all_at(&0x55ee33u32.to_ne_bytes().repeat(16), (row * 280 + 30) * 4)
+            .unwrap();
+    }
+    panel.input.send(surface, 1, &words(&[source_buffer, 0, 0]));
+    panel.input.send(surface, 2, &words(&[30, 20, 16, 12]));
+    panel.input.send(surface, 6, &[]);
+    panel.input.roundtrip();
+    ready(&mut c, waiting, true);
+    assert_eq!(damage(&c, waiting, true), vec![[50, 40, 16, 12]]);
+    assert_eq!(a.pixel(55, 45), 0x55ee33);
     println!(
-        "ok - two sessions share one 16x12 update/readback, repair reused buffers and skip unchanged work"
+        "ok - two sessions share one 16x12 update/readback, repair reused buffers, and an unchanged frame waits for content"
     );
 
     let wlr_buffer = Buffer::new(&mut c);
@@ -215,7 +238,7 @@ pub fn run() {
         .write_all_at(&vec![0xa5; (size.0 * size.1 * 4) as usize], 0)
         .unwrap();
     let waiting = wlr(&mut c, &wlr_buffer, true);
-    quiet(&mut c, waiting);
+    quiet(&mut c, waiting, false);
     for row in 20..32 {
         source
             .write_all_at(&0x33ee55u32.to_ne_bytes().repeat(16), (row * 280 + 30) * 4)
@@ -233,7 +256,7 @@ pub fn run() {
     let immediate = wlr(&mut c, &wlr_buffer, false);
     ready(&mut c, immediate, false);
     let abandoned = wlr(&mut c, &wlr_buffer, true);
-    quiet(&mut c, abandoned);
+    quiet(&mut c, abandoned, false);
     c.send(abandoned, 1, &[]);
     c.roundtrip();
     println!("ok - wlr damage waits for changes, reports their extent and accepts cancellation");

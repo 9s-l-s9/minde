@@ -560,9 +560,17 @@ pub fn satisfy_output_captures<R>(
         }
         for capture in captures {
             let damage = scene.changed_since(capture.history.as_ref());
-            if damage.is_empty()
-                && matches!(&capture.frame, CaptureFrame::Wlr(frame) if frame.with_damage)
-            {
+            // After a session's first frame the ext protocol lets a capture
+            // wait for new content, like a damage-aware wlr copy. Completing
+            // it at once would make a recorder request, and this output
+            // render, at its own rate on a static screen. A buffer the
+            // client marked as damaged still needs its repair now.
+            let waits_for_content = match &capture.frame {
+                CaptureFrame::Wlr(frame) => frame.with_damage,
+                CaptureFrame::Ext(frame) => frame.damage().is_empty(),
+                CaptureFrame::File { .. } => false,
+            };
+            if damage.is_empty() && waits_for_content {
                 pending.push(capture);
                 continue; // Reconsider on the next scene change, without a polling timer.
             }

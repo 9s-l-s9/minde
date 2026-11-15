@@ -9,6 +9,11 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- After its first frame, an `ext-image-copy-capture` request without buffer
+  damage waits for new content, as the protocol allows and damage-aware wlr
+  copies already did. A recorder no longer makes the compositor render a
+  static screen at the recorder's request rate (#179).
+
 - On the DRM backend, startup and session resume bring heads up from the
   connector state the kernel already holds. The driver's probe of every
   connector follows immediately afterwards and corrects a stale state; a
