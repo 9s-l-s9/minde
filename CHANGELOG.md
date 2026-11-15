@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- A rejected output configuration no longer stops capture sessions of the
+  heads it restores; sessions end once a disable has actually succeeded (#173).
+
 - On the DRM backend a capture of an output contains the centered message
   only when that output displays it.
 

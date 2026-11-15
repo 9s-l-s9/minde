@@ -697,11 +697,13 @@ impl MindeState {
         }
         self.applying_output_config = false;
         self.commit_udev_enable_intent(changes);
-        // Closing a layer role cannot be rolled back. Wait until every head
-        // succeeded, including when the DRM hook already unmapped the output.
+        // Closing a layer role or stopping a capture session cannot be
+        // rolled back. Wait until every head succeeded, including when the
+        // DRM hook already unmapped the output.
         for r in &resolved {
             if !r.change.enabled {
                 self.close_output_layers(&r.change.output);
+                self.capture_output_removed(&r.change.output);
             }
         }
         Ok(())
@@ -715,7 +717,6 @@ impl MindeState {
         let output = &change.output;
         if !change.enabled {
             self.space.unmap_output(output);
-            self.capture_output_removed(output);
             return;
         }
         let new_transform = change.transform.map(wl_to_transform);

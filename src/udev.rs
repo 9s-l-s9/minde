@@ -953,6 +953,7 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
         for output in old_outputs {
             if !state.output_enabled(&output) {
                 state.close_output_layers(&output);
+                state.capture_output_removed(&output);
             }
         }
         state.invalidate_lock_presentation();
@@ -1447,8 +1448,10 @@ fn disable_head_inner(
     // (no restore possible once the surface is gone).
     state.gamma_output_removed(&output);
     state.space.unmap_output(&output);
-    state.capture_output_removed(&output);
+    // A batch may still roll this back; its owner retires layers and
+    // capture sessions once the final layout is known.
     if !state.applying_output_config {
+        state.capture_output_removed(&output);
         state.close_output_layers(&output);
     }
     output.leave_all();
