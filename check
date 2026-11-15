@@ -10,14 +10,14 @@ usage() {
     cat <<'EOF'
 usage: ./check [TEST.scm ...]
 
-With no arguments, run the fixed development gate: Rust format/build/test/Clippy,
-Scheme/API/configuration/keymap and control-client suites, static analysis,
-and documentation.
+With no arguments, run the fixed development gate: Rust
+format/build/test/CLI/Clippy, Scheme/API/configuration/keymap and
+control-client suites, static analysis, and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
   --release      integration, videos, package, and archive verification
-  --rust-only    just Rust format/build/test/Clippy (requires libguile; see
+  --rust-only    just Rust format/build/test/CLI/Clippy (requires libguile; see
                  manifest-check.scm)
   --scheme-only  just the Scheme suites, static analysis, and docs (no
                  Rust/native toolchain required; see manifest-scheme.scm)
@@ -52,6 +52,8 @@ rust_gate() {
         LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             cargo "$step" --locked
     done
+    # The command-line contract runs the binary that was just built.
+    sh tests/check-cli.sh target/debug/minde
     LD_LIBRARY_PATH="${GUIX_ENVIRONMENT:-}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         cargo clippy --locked --all-targets -- -D warnings
 }

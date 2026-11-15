@@ -49,7 +49,7 @@ SCHEME_TESTS := \
 	docs check-generated-docs check-demos check-foundation-package check-ui-package \
 	release-archives check-release-archives release clean-test-output
 
-check: check-tools check-rust check-cli check-static check-scheme check-api check-config check-keymaps check-control
+check: check-tools check-rust check-static check-scheme check-api check-config check-keymaps check-control
 
 check-tools:
 	@command -v cargo >/dev/null 2>&1 || { \
@@ -60,7 +60,8 @@ check-tools:
 check-rust:
 	./check --rust-only
 
-check-cli: check-rust
+# check-rust already includes this contract; rerun it against an existing build.
+check-cli:
 	sh tests/check-cli.sh target/debug/minde
 
 # Real Unix-socket clients and offline selector contracts, without a desktop

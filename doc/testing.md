@@ -21,14 +21,14 @@ Guix package checks run Rust tests and Clippy offline in release mode.
 ```
 usage: ./check [TEST.scm ...]
 
-With no arguments, run the fixed development gate: Rust format/build/test/Clippy,
-Scheme/API/configuration/keymap and control-client suites, static analysis,
-and documentation.
+With no arguments, run the fixed development gate: Rust
+format/build/test/CLI/Clippy, Scheme/API/configuration/keymap and
+control-client suites, static analysis, and documentation.
 
 Optional maintainer modes:
   --all          bounded nested integration suite
   --release      integration, videos, package, and archive verification
-  --rust-only    just Rust format/build/test/Clippy (requires libguile; see
+  --rust-only    just Rust format/build/test/CLI/Clippy (requires libguile; see
                  manifest-check.scm)
   --scheme-only  just the Scheme suites, static analysis, and docs (no
                  Rust/native toolchain required; see manifest-scheme.scm)
@@ -50,7 +50,7 @@ Every target below is declared `.PHONY` in `Makefile`. Run
 | `make check` | - |
 | `make check-tools` | - |
 | `make check-rust` | - |
-| `make check-cli` | - |
+| `make check-cli` | check-rust already includes this contract; rerun it against an existing build. |
 | `make check-control` | Real Unix-socket clients and offline selector contracts, without a desktop or provider credentials. The real compositor scenario is a separate gate. |
 | `make check-control-e2e` | - |
 | `make check-static` | - |
