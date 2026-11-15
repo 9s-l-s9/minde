@@ -110,7 +110,9 @@ if [ "$#" -gt 0 ]; then
         [ -f "$test" ] || { echo "error: test not found: $test" >&2; exit 2; }
     done
     for test in "$@"; do
-        guile --no-auto-compile -L scheme "$test"
+        # As in the Makefile: never test a running session's installed policy.
+        env -u MINDE_SCHEME_DIR -u MINDE_CONFIG \
+            guile --no-auto-compile -L scheme "$test"
     done
     exit 0
 fi

@@ -3,9 +3,11 @@ SHELL := /bin/sh
 # Compiled Scheme bytecode for the development/test loops (see
 # compile-scheme). GUILE_LOAD_COMPILED_PATH makes every guile below load the
 # .go files instead of re-interpreting (or autocompiling into ~/.cache) the
-# module tree on each of the ~30 test processes.
+# module tree on each of the ~30 test processes. A developer's running
+# session exports its installed policy bundle and personal configuration;
+# the gates must exercise this checkout's files instead.
 CCACHE := build/ccache
-GUILE_ENV := GUILE_LOAD_COMPILED_PATH=$(CURDIR)/$(CCACHE)$${GUILE_LOAD_COMPILED_PATH:+:$$GUILE_LOAD_COMPILED_PATH} GUILE_AUTO_COMPILE=0
+GUILE_ENV := env -u MINDE_SCHEME_DIR -u MINDE_CONFIG GUILE_LOAD_COMPILED_PATH=$(CURDIR)/$(CCACHE)$${GUILE_LOAD_COMPILED_PATH:+:$$GUILE_LOAD_COMPILED_PATH} GUILE_AUTO_COMPILE=0
 GUILE := $(GUILE_ENV) guile --no-auto-compile -L scheme
 
 SCHEME_TESTS := \
