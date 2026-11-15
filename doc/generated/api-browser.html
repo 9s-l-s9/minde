@@ -1755,9 +1755,9 @@ same-named saved layouts on load. Does not persist; see save-layout!.&quot;
   &quot;Returns registered layout names in stable insertion order.&quot;
   (map car %layouts))</code></pre></template></article><article id="b176" class="abr-binding" data-label="(minde layouts) layout-spec  ·  scheme/minde/layouts.scm lines 44-46"><h3><code>layout-spec</code><span class="kind">procedure</span></h3><p class="sig"><code>(layout-spec name)</code></p><p class="desc">Returns the frame-tree specification registered as NAME, or #f.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/layouts.scm#L44">View on GitHub: scheme/minde/layouts.scm:44</a></p><button class="abr-show-source" data-id="b176">View source</button><template><pre><code>(define (layout-spec name)
   &quot;Returns the frame-tree specification registered as NAME, or #f.&quot;
-  (assoc-ref %layouts name))</code></pre></template></article><article id="b177" class="abr-binding" data-label="(minde layouts) load-layouts!  ·  scheme/minde/layouts.scm lines 89-100"><h3><code>load-layouts!</code><span class="kind">procedure</span></h3><p class="sig"><code>(load-layouts!)</code></p><p class="desc">Loads validated saved layouts; configuration-defined names take precedence.
+  (assoc-ref %layouts name))</code></pre></template></article><article id="b177" class="abr-binding" data-label="(minde layouts) load-layouts!  ·  scheme/minde/layouts.scm lines 97-108"><h3><code>load-layouts!</code><span class="kind">procedure</span></h3><p class="sig"><code>(load-layouts!)</code></p><p class="desc">Loads validated saved layouts; configuration-defined names take precedence.
 Missing files are ignored. Invalid files leave the registry unchanged and
-block saves until a successful reload or removal. Returns #t on success.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/layouts.scm#L89">View on GitHub: scheme/minde/layouts.scm:89</a></p><button class="abr-show-source" data-id="b177">View source</button><template><pre><code>(define (load-layouts!)
+block saves until a successful reload or removal. Returns #t on success.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/layouts.scm#L97">View on GitHub: scheme/minde/layouts.scm:97</a></p><button class="abr-show-source" data-id="b177">View source</button><template><pre><code>(define (load-layouts!)
   &quot;Loads validated saved layouts; configuration-defined names take precedence.
 Missing files are ignored. Invalid files leave the registry unchanged and
 block saves until a successful reload or removal. Returns #t on success.&quot;
@@ -1768,22 +1768,32 @@ block saves until a successful reload or removal. Returns #t on success.&quot;
       (lambda (entry)
         (unless (member (car entry) %defined-layout-names)
           (register-layout! (car entry) (cdr entry))))
-      saved))))</code></pre></template></article><article id="b178" class="abr-binding" data-label="(minde layouts) save-layout!  ·  scheme/minde/layouts.scm lines 67-80"><h3><code>save-layout!</code><span class="kind">procedure</span></h3><p class="sig"><code>(save-layout! name)</code></p><p class="desc">Saves the live frame tree as NAME, preserving previously saved layouts.
-Other configuration presets are not copied into the file. Returns #f on
-failure without changing the registry or overwriting an unreadable file.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/layouts.scm#L67">View on GitHub: scheme/minde/layouts.scm:67</a></p><button class="abr-show-source" data-id="b178">View source</button><template><pre><code>(define (save-layout! name)
+      saved))))</code></pre></template></article><article id="b178" class="abr-binding" data-label="(minde layouts) save-layout!  ·  scheme/minde/layouts.scm lines 67-88"><h3><code>save-layout!</code><span class="kind">procedure</span></h3><p class="sig"><code>(save-layout! name)</code></p><p class="desc">Saves the live frame tree as NAME, preserving previously saved layouts.
+Other configuration presets are not copied into the file. A name that the
+configuration defines is refused: its definition replaces any saved layout
+of that name on every load. Returns #f on refusal or failure without
+changing the registry or overwriting an unreadable file.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/layouts.scm#L67">View on GitHub: scheme/minde/layouts.scm:67</a></p><button class="abr-show-source" data-id="b178">View source</button><template><pre><code>(define (save-layout! name)
   &quot;Saves the live frame tree as NAME, preserving previously saved layouts.
-Other configuration presets are not copied into the file. Returns #f on
-failure without changing the registry or overwriting an unreadable file.&quot;
-  (let* ((spec (dump-layout-spec))
-         (saved (save-persistent-state!
-                 (layouts-file) 'minde-layouts valid-layouts?
-                 (lambda (previous)
-                   (append (alist-delete name previous) (list (cons name spec)))))))
-    (and saved
-         (begin
-           (register-layout! name spec)
-           (echo (string-append &quot;saved layout: &quot; name))
-           #t))))</code></pre></template></article></section><section><h2>(minde input)</h2><article id="b179" class="abr-binding" data-label="(minde input) configure-prompt-ui!  ·  scheme/minde/ui/prompt.scm lines 31-39"><h3><code>configure-prompt-ui!</code><span class="kind">procedure</span></h3><p class="sig"><code>(configure-prompt-ui! #:key show clear set-key-repeat request-paste set-clipboard)</code></p><p class="desc">Inject display and clipboard operations. Omitted operations keep their
+Other configuration presets are not copied into the file. A name that the
+configuration defines is refused: its definition replaces any saved layout
+of that name on every load. Returns #f on refusal or failure without
+changing the registry or overwriting an unreadable file.&quot;
+  (if (member name %defined-layout-names)
+      (begin
+        (echo (string-append &quot;layout &quot; name
+                             &quot; is defined by the configuration; choose another name&quot;))
+        #f)
+      (let* ((spec (dump-layout-spec))
+             (saved (save-persistent-state!
+                     (layouts-file) 'minde-layouts valid-layouts?
+                     (lambda (previous)
+                       (append (alist-delete name previous)
+                               (list (cons name spec)))))))
+        (and saved
+             (begin
+               (register-layout! name spec)
+               (echo (string-append &quot;saved layout: &quot; name))
+               #t)))))</code></pre></template></article></section><section><h2>(minde input)</h2><article id="b179" class="abr-binding" data-label="(minde input) configure-prompt-ui!  ·  scheme/minde/ui/prompt.scm lines 31-39"><h3><code>configure-prompt-ui!</code><span class="kind">procedure</span></h3><p class="sig"><code>(configure-prompt-ui! #:key show clear set-key-repeat request-paste set-clipboard)</code></p><p class="desc">Inject display and clipboard operations. Omitted operations keep their
 current value, allowing this module to run without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/ui/prompt.scm#L31">View on GitHub: scheme/minde/ui/prompt.scm:31</a></p><button class="abr-show-source" data-id="b179">View source</button><template><pre><code>(define* (configure-prompt-ui! #:key show clear set-key-repeat
                                request-paste set-clipboard)
   &quot;Inject display and clipboard operations. Omitted operations keep their

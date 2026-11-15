@@ -137,6 +137,17 @@
 (check "user snapshots can be updated by reloading"
        (layout-spec "old-user") '(vsplit 1/2 leaf leaf))
 
+;; A configuration preset replaces a saved layout of its name on every
+;; load, so saving under that name must not report success.
+(check "saving under a configuration preset is refused" (save-layout! "full") #f)
+(check-true "the refusal names the conflict"
+            (string-contains (car %messages) "defined by the configuration"))
+(check "a refused save leaves the preset registered"
+       (layout-spec "full") '(hsplit 1/2 leaf leaf))
+(check "a refused save leaves the file untouched"
+       (read-versioned-datum-file %layouts-file 'minde-layouts 1)
+       '(("old-user" vsplit 1/2 leaf leaf)))
+
 (delete-file %layouts-file)
 
 ;; ---------------------------------------------------------------------

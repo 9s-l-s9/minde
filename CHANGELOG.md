@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `save-layout!` refuses a name that the configuration defines and says so,
+  instead of reporting a save that the next start discards (#174).
+
 - `restore-from-file` validates the whole desktop dump before changing any
   group. A malformed file, or one listing a window in two frames, is rejected
   without side effects (#175).

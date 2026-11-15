@@ -66,18 +66,26 @@ other heads are unchanged. Echoes an error for an unknown name."
 
 (define (save-layout! name)
   "Saves the live frame tree as NAME, preserving previously saved layouts.
-Other configuration presets are not copied into the file. Returns #f on
-failure without changing the registry or overwriting an unreadable file."
-  (let* ((spec (dump-layout-spec))
-         (saved (save-persistent-state!
-                 (layouts-file) 'minde-layouts valid-layouts?
-                 (lambda (previous)
-                   (append (alist-delete name previous) (list (cons name spec)))))))
-    (and saved
-         (begin
-           (register-layout! name spec)
-           (echo (string-append "saved layout: " name))
-           #t))))
+Other configuration presets are not copied into the file. A name that the
+configuration defines is refused: its definition replaces any saved layout
+of that name on every load. Returns #f on refusal or failure without
+changing the registry or overwriting an unreadable file."
+  (if (member name %defined-layout-names)
+      (begin
+        (echo (string-append "layout " name
+                             " is defined by the configuration; choose another name"))
+        #f)
+      (let* ((spec (dump-layout-spec))
+             (saved (save-persistent-state!
+                     (layouts-file) 'minde-layouts valid-layouts?
+                     (lambda (previous)
+                       (append (alist-delete name previous)
+                               (list (cons name spec)))))))
+        (and saved
+             (begin
+               (register-layout! name spec)
+               (echo (string-append "saved layout: " name))
+               #t)))))
 
 (define (valid-layouts? saved)
   (and (list? saved)
