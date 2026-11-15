@@ -5,6 +5,7 @@
 use std::{
     os::unix::fs::PermissionsExt,
     process::{Command, Stdio},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -18,10 +19,13 @@ pub(crate) fn in_child(test: &str) -> bool {
     if std::env::var_os(CHILD).is_some() {
         return true;
     }
+    // Keep the name short: the socket path below it is limited to 108 bytes
+    // and build sandboxes already use a long temporary directory.
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "minde-isolated-{}-{}",
+        "minde-test-{}-{}",
         std::process::id(),
-        test.rsplit("::").next().unwrap()
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir(&dir).unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
