@@ -966,16 +966,52 @@ the window actually moved; the caller re-syncs."
     (lambda (key . args)
       (echo (format #f "could not dump desktop: ~a ~s" key args)))))
 
+(define (window-id? value)
+  (and (integer? value) (exact? value) (>= value 0)))
+
+(define (valid-frame-dump? dump)
+  ;; (spec leaf-window-lists leaf-currents current-frame-index)
+  (and (list? dump) (= (length dump) 4)
+       (valid-layout-spec? (car dump))
+       (let ((window-lists (cadr dump)) (currents (caddr dump)))
+         (and (list? window-lists)
+              (every (lambda (ids) (and (list? ids) (every window-id? ids)))
+                     window-lists)
+              ;; A window belongs to one frame.
+              (let ((ids (concatenate window-lists)))
+                (= (length ids) (length (delete-duplicates ids))))
+              (list? currents)
+              (every (lambda (id) (or (not id) (window-id? id))) currents)))
+       (window-id? (cadddr dump))))
+
+(define (valid-desktop-dump? datum)
+  (define (valid-float? float)
+    (and (pair? float) (window-id? (car float))
+         (or (not (cdr float))
+             (and (list? (cdr float)) (= (length (cdr float)) 4)
+                  (every integer? (cdr float))))))
+  (and (list? datum) (= (length datum) 4)
+       (eq? (car datum) 'minde-desktop)
+       (equal? (cadr datum) 1)
+       (list? (cadddr datum))
+       (every (lambda (entry)
+                (and (list? entry) (= (length entry) 4)
+                     (string? (car entry))
+                     (boolean? (cadr entry))
+                     (valid-frame-dump? (caddr entry))
+                     (list? (cadddr entry))
+                     (every valid-float? (cadddr entry))))
+              (cadddr datum))))
+
 (define (restore-from-file path)
   "Re-applies a dump-desktop file: groups are matched (or created) by
 name, their frame layouts and window assignments restored, float
-geometries re-applied. Groups not in the dump are left alone."
+geometries re-applied. Groups not in the dump are left alone. The whole
+file is validated first; a malformed one changes nothing."
   (catch #t
     (lambda ()
       (let ((d (call-with-input-file path read)))
-        (if (not (and (list? d) (>= (length d) 4)
-                      (eq? (car d) 'minde-desktop)
-                      (equal? (cadr d) 1)))
+        (if (not (valid-desktop-dump? d))
             (echo (string-append path " is not a desktop dump"))
             (begin
               (for-each

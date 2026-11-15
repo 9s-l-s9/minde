@@ -48,6 +48,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `restore-from-file` validates the whole desktop dump before changing any
+  group. A malformed file, or one listing a window in two frames, is rejected
+  without side effects (#175).
+
 - Nested test, application, soak and benchmark scripts use a private output
   directory per run below `TMPDIR`. It is removed after a successful gate and
   printed after a failure or when it holds results; the existing environment

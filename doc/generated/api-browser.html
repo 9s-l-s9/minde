@@ -999,7 +999,7 @@ left, right, top or bottom.&quot;
         (change-dynamic-param!
          (lambda (st) (list (car st) (cadr st) r))))))</code></pre></template></article><article id="b105" class="abr-binding" data-label="(minde groups) clear-placement-rules!  ·  scheme/minde/groups.scm lines 766-768"><h3><code>clear-placement-rules!</code><span class="kind">procedure</span></h3><p class="sig"><code>(clear-placement-rules!)</code></p><p class="desc">Removes every in-memory placement rule without writing the rules file.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L766">View on GitHub: scheme/minde/groups.scm:766</a></p><button class="abr-show-source" data-id="b105">View source</button><template><pre><code>(define (clear-placement-rules!)
   &quot;Removes every in-memory placement rule without writing the rules file.&quot;
-  (set! %placement-rules '()))</code></pre></template></article><article id="b106" class="abr-binding" data-label="(minde groups) configure-output!  ·  scheme/minde/groups.scm lines 1203-1240"><h3><code>configure-output!</code><span class="kind">procedure</span></h3><p class="sig"><code>(configure-output! name #:key (mode (quote unset)) (position (quote unset)) (scale (quote unset)) (transform (quote unset)) (enabled (quote unset)) (adaptive-sync (quote unset)))</code></p><p class="desc">Ask the compositor to reconfigure the head called NAME (a connector
+  (set! %placement-rules '()))</code></pre></template></article><article id="b106" class="abr-binding" data-label="(minde groups) configure-output!  ·  scheme/minde/groups.scm lines 1239-1276"><h3><code>configure-output!</code><span class="kind">procedure</span></h3><p class="sig"><code>(configure-output! name #:key (mode (quote unset)) (position (quote unset)) (scale (quote unset)) (transform (quote unset)) (enabled (quote unset)) (adaptive-sync (quote unset)))</code></p><p class="desc">Ask the compositor to reconfigure the head called NAME (a connector
 name as listed by `output-heads'). Keyword settings, each left unchanged
 when omitted:
   #:mode          (w h refresh-mhz), (w h) or a string &quot;WxH@R&quot; (R in Hz)
@@ -1022,7 +1022,7 @@ string on rejection. Because this is the user's own policy speaking it
 does not consult `output-configuration-allowed?', which gates external
 clients only. Under the nested winit backend mode changes are refused
 (the host window fixes the size). Malformed settings raise an error;
-returns #t once queued, #f without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1203">View on GitHub: scheme/minde/groups.scm:1203</a></p><button class="abr-show-source" data-id="b106">View source</button><template><pre><code>(define* (configure-output! name #:key (mode 'unset) (position 'unset)
+returns #t once queued, #f without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1239">View on GitHub: scheme/minde/groups.scm:1239</a></p><button class="abr-show-source" data-id="b106">View source</button><template><pre><code>(define* (configure-output! name #:key (mode 'unset) (position 'unset)
                             (scale 'unset) (transform 'unset)
                             (enabled 'unset) (adaptive-sync 'unset))
   &quot;Ask the compositor to reconfigure the head called NAME (a connector
@@ -1236,7 +1236,7 @@ marked * (StumpWM groups/vgroups).&quot;
                   (string-trim-both (group-name g))
                   (group-window-count g)))
         %groups)
-   &quot;\n&quot;))</code></pre></template></article><article id="b129" class="abr-binding" data-label="(minde groups) handle-foreign-activate!  ·  scheme/minde/groups.scm lines 1111-1119"><h3><code>handle-foreign-activate!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-foreign-activate! id)</code></p><p class="desc">Rust: a taskbar requests activation. Validate ID before changing groups.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1111">View on GitHub: scheme/minde/groups.scm:1111</a></p><button class="abr-show-source" data-id="b129">View source</button><template><pre><code>(define (handle-foreign-activate! id)
+   &quot;\n&quot;))</code></pre></template></article><article id="b129" class="abr-binding" data-label="(minde groups) handle-foreign-activate!  ·  scheme/minde/groups.scm lines 1147-1155"><h3><code>handle-foreign-activate!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-foreign-activate! id)</code></p><p class="desc">Rust: a taskbar requests activation. Validate ID before changing groups.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1147">View on GitHub: scheme/minde/groups.scm:1147</a></p><button class="abr-show-source" data-id="b129">View source</button><template><pre><code>(define (handle-foreign-activate! id)
   &quot;Rust: a taskbar requests activation. Validate ID before changing groups.&quot;
   (let ((group (window-group id)))
     (and group (group-owns-window? group id)
@@ -1244,47 +1244,47 @@ marked * (StumpWM groups/vgroups).&quot;
            (unless (eq? group (current-group)) (switch-to-group! group))
            (when (and (fullscreen-window) (not (equal? (fullscreen-window) id)))
              (fullscreen!))
-           (focus-window-by-id! id)))))</code></pre></template></article><article id="b130" class="abr-binding" data-label="(minde groups) handle-heads-change!  ·  scheme/minde/groups.scm lines 1165-1172"><h3><code>handle-heads-change!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-heads-change! new-heads)</code></p><p class="desc">Multi-head backends report the full usable-rect list here:
-((id x y w h) ...).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1165">View on GitHub: scheme/minde/groups.scm:1165</a></p><button class="abr-show-source" data-id="b130">View source</button><template><pre><code>(define (handle-heads-change! new-heads)
+           (focus-window-by-id! id)))))</code></pre></template></article><article id="b130" class="abr-binding" data-label="(minde groups) handle-heads-change!  ·  scheme/minde/groups.scm lines 1201-1208"><h3><code>handle-heads-change!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-heads-change! new-heads)</code></p><p class="desc">Multi-head backends report the full usable-rect list here:
+((id x y w h) ...).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1201">View on GitHub: scheme/minde/groups.scm:1201</a></p><button class="abr-show-source" data-id="b130">View source</button><template><pre><code>(define (handle-heads-change! new-heads)
   &quot;Multi-head backends report the full usable-rect list here:
 ((id x y w h) ...).&quot;
   (note-policy-change!)
   (let ((before (map car (heads))))
     (heads-changed! new-heads %groups)
     (retile-changed-heads! before))
-  (when (pair? new-heads) (show-persistence-errors!)))</code></pre></template></article><article id="b131" class="abr-binding" data-label="(minde groups) handle-keyboard-layout-changed!  ·  scheme/minde/groups.scm lines 1310-1315"><h3><code>handle-keyboard-layout-changed!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-keyboard-layout-changed! name)</code></p><p class="desc">Rust: the active keyboard layout group is now NAME (a string such as
+  (when (pair? new-heads) (show-persistence-errors!)))</code></pre></template></article><article id="b131" class="abr-binding" data-label="(minde groups) handle-keyboard-layout-changed!  ·  scheme/minde/groups.scm lines 1346-1351"><h3><code>handle-keyboard-layout-changed!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-keyboard-layout-changed! name)</code></p><p class="desc">Rust: the active keyboard layout group is now NAME (a string such as
 &quot;English (US)&quot;) -- after `set-keyboard-layout!' or an XKB toggle option
 like grp:win_space_toggle. The default shows NAME through the message
-overlay; redefine it to update a bar or stay silent.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1310">View on GitHub: scheme/minde/groups.scm:1310</a></p><button class="abr-show-source" data-id="b131">View source</button><template><pre><code>(define (handle-keyboard-layout-changed! name)
+overlay; redefine it to update a bar or stay silent.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1346">View on GitHub: scheme/minde/groups.scm:1346</a></p><button class="abr-show-source" data-id="b131">View source</button><template><pre><code>(define (handle-keyboard-layout-changed! name)
   &quot;Rust: the active keyboard layout group is now NAME (a string such as
 \&quot;English (US)\&quot;) -- after `set-keyboard-layout!' or an XKB toggle option
 like grp:win_space_toggle. The default shows NAME through the message
 overlay; redefine it to update a bar or stay silent.&quot;
-  (rust-call 'wm-message name))</code></pre></template></article><article id="b132" class="abr-binding" data-label="(minde groups) handle-output-configure-failed!  ·  scheme/minde/groups.scm lines 1258-1262"><h3><code>handle-output-configure-failed!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-configure-failed! name reason)</code></p><p class="desc">Rust: a `configure-output!' request for the head NAME was rejected
-for REASON (a string). The default logs it through `wm-log'.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1258">View on GitHub: scheme/minde/groups.scm:1258</a></p><button class="abr-show-source" data-id="b132">View source</button><template><pre><code>(define (handle-output-configure-failed! name reason)
+  (rust-call 'wm-message name))</code></pre></template></article><article id="b132" class="abr-binding" data-label="(minde groups) handle-output-configure-failed!  ·  scheme/minde/groups.scm lines 1294-1298"><h3><code>handle-output-configure-failed!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-configure-failed! name reason)</code></p><p class="desc">Rust: a `configure-output!' request for the head NAME was rejected
+for REASON (a string). The default logs it through `wm-log'.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1294">View on GitHub: scheme/minde/groups.scm:1294</a></p><button class="abr-show-source" data-id="b132">View source</button><template><pre><code>(define (handle-output-configure-failed! name reason)
   &quot;Rust: a `configure-output!' request for the head NAME was rejected
 for REASON (a string). The default logs it through `wm-log'.&quot;
   (rust-call 'wm-log
-             (format #f &quot;configure-output!: ~a: ~a&quot; name reason)))</code></pre></template></article><article id="b133" class="abr-binding" data-label="(minde groups) handle-output-configured!  ·  scheme/minde/groups.scm lines 1250-1256"><h3><code>handle-output-configured!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-configured!)</code></p><p class="desc">Rust: the output layout was just changed -- by an external
+             (format #f &quot;configure-output!: ~a: ~a&quot; name reason)))</code></pre></template></article><article id="b133" class="abr-binding" data-label="(minde groups) handle-output-configured!  ·  scheme/minde/groups.scm lines 1286-1292"><h3><code>handle-output-configured!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-configured!)</code></p><p class="desc">Rust: the output layout was just changed -- by an external
 wlr-output-management client or by `configure-output!'. The default
 does nothing; redefine it to re-tile, persist or log. The head model
 has already been reflowed through `handle-heads-change!' by the time
-this runs.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1250">View on GitHub: scheme/minde/groups.scm:1250</a></p><button class="abr-show-source" data-id="b133">View source</button><template><pre><code>(define (handle-output-configured!)
+this runs.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1286">View on GitHub: scheme/minde/groups.scm:1286</a></p><button class="abr-show-source" data-id="b133">View source</button><template><pre><code>(define (handle-output-configured!)
   &quot;Rust: the output layout was just changed -- by an external
 wlr-output-management client or by `configure-output!'. The default
 does nothing; redefine it to re-tile, persist or log. The head model
 has already been reflowed through `handle-heads-change!' by the time
 this runs.&quot;
-  *unspecified*)</code></pre></template></article><article id="b134" class="abr-binding" data-label="(minde groups) handle-output-geometry!  ·  scheme/minde/groups.scm lines 1152-1156"><h3><code>handle-output-geometry!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-geometry! x y width height)</code></p><p class="desc">Single-head compatibility path (old binaries / winit-era configs).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1152">View on GitHub: scheme/minde/groups.scm:1152</a></p><button class="abr-show-source" data-id="b134">View source</button><template><pre><code>(define (handle-output-geometry! x y width height)
+  *unspecified*)</code></pre></template></article><article id="b134" class="abr-binding" data-label="(minde groups) handle-output-geometry!  ·  scheme/minde/groups.scm lines 1188-1192"><h3><code>handle-output-geometry!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-output-geometry! x y width height)</code></p><p class="desc">Single-head compatibility path (old binaries / winit-era configs).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1188">View on GitHub: scheme/minde/groups.scm:1188</a></p><button class="abr-show-source" data-id="b134">View source</button><template><pre><code>(define (handle-output-geometry! x y width height)
   &quot;Single-head compatibility path (old binaries / winit-era configs).&quot;
   (when (and (&gt; width 0) (&gt; height 0))
     (heads-changed! (list (list 0 x y width height)) %groups)
-    (show-persistence-errors!)))</code></pre></template></article><article id="b135" class="abr-binding" data-label="(minde groups) handle-window-fullscreen!  ·  scheme/minde/groups.scm lines 1105-1109"><h3><code>handle-window-fullscreen!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-fullscreen! id on)</code></p><p class="desc">Rust: an application requests fullscreen for ID without taking focus.
-Records hidden-group requests for the next activation; unknown IDs do nothing.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1105">View on GitHub: scheme/minde/groups.scm:1105</a></p><button class="abr-show-source" data-id="b135">View source</button><template><pre><code>(define (handle-window-fullscreen! id on)
+    (show-persistence-errors!)))</code></pre></template></article><article id="b135" class="abr-binding" data-label="(minde groups) handle-window-fullscreen!  ·  scheme/minde/groups.scm lines 1141-1145"><h3><code>handle-window-fullscreen!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-fullscreen! id on)</code></p><p class="desc">Rust: an application requests fullscreen for ID without taking focus.
+Records hidden-group requests for the next activation; unknown IDs do nothing.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1141">View on GitHub: scheme/minde/groups.scm:1141</a></p><button class="abr-show-source" data-id="b135">View source</button><template><pre><code>(define (handle-window-fullscreen! id on)
   &quot;Rust: an application requests fullscreen for ID without taking focus.
 Records hidden-group requests for the next activation; unknown IDs do nothing.&quot;
   (let ((group (window-group id)))
-    (and group (set-group-fullscreen! group id on))))</code></pre></template></article><article id="b136" class="abr-binding" data-label="(minde groups) handle-window-map!  ·  scheme/minde/groups.scm lines 1032-1042"><h3><code>handle-window-map!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-map! id title app-id)</code></p><p class="desc">Places a newly mapped window, applies locked rules, and retiles if dynamic.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1032">View on GitHub: scheme/minde/groups.scm:1032</a></p><button class="abr-show-source" data-id="b136">View source</button><template><pre><code>(define (handle-window-map! id title app-id)
+    (and group (set-group-fullscreen! group id on))))</code></pre></template></article><article id="b136" class="abr-binding" data-label="(minde groups) handle-window-map!  ·  scheme/minde/groups.scm lines 1068-1078"><h3><code>handle-window-map!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-map! id title app-id)</code></p><p class="desc">Places a newly mapped window, applies locked rules, and retiles if dynamic.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1068">View on GitHub: scheme/minde/groups.scm:1068</a></p><button class="abr-show-source" data-id="b136">View source</button><template><pre><code>(define (handle-window-map! id title app-id)
   &quot;Places a newly mapped window, applies locked rules, and retiles if dynamic.&quot;
   (let ((rule (find (lambda (r) (and (rule-lock? r)
                                      (rule-matches? r title app-id)))
@@ -1294,12 +1294,12 @@ Records hidden-group requests for the next activation; unknown IDs do nothing.&q
         (track-window-map! id title app-id))
     ;; New tiled window in a dynamic group: it becomes the master.
     (unless (window-floating? id)
-      (let ((g (window-group id))) (when g (retile-group-heads! g))))))</code></pre></template></article><article id="b137" class="abr-binding" data-label="(minde groups) handle-window-move!  ·  scheme/minde/groups.scm lines 1148-1150"><h3><code>handle-window-move!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-move! id x y w h)</code></p><p class="desc">Rust reports the final geometry of a super+drag move/resize.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1148">View on GitHub: scheme/minde/groups.scm:1148</a></p><button class="abr-show-source" data-id="b137">View source</button><template><pre><code>(define (handle-window-move! id x y w h)
+      (let ((g (window-group id))) (when g (retile-group-heads! g))))))</code></pre></template></article><article id="b137" class="abr-binding" data-label="(minde groups) handle-window-move!  ·  scheme/minde/groups.scm lines 1184-1186"><h3><code>handle-window-move!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-move! id x y w h)</code></p><p class="desc">Rust reports the final geometry of a super+drag move/resize.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1184">View on GitHub: scheme/minde/groups.scm:1184</a></p><button class="abr-show-source" data-id="b137">View source</button><template><pre><code>(define (handle-window-move! id x y w h)
   &quot;Rust reports the final geometry of a super+drag move/resize.&quot;
-  (update-floating-window-geometry! id x y w h))</code></pre></template></article><article id="b138" class="abr-binding" data-label="(minde groups) handle-window-title-change!  ·  scheme/minde/groups.scm lines 1044-1087"><h3><code>handle-window-title-change!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-title-change! id title app-id)</code></p><p class="desc">Rust: a mapped toplevel's title/app-id changed. Refreshes bookkeeping
+  (update-floating-window-geometry! id x y w h))</code></pre></template></article><article id="b138" class="abr-binding" data-label="(minde groups) handle-window-title-change!  ·  scheme/minde/groups.scm lines 1080-1123"><h3><code>handle-window-title-change!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-title-change! id title app-id)</code></p><p class="desc">Rust: a mapped toplevel's title/app-id changed. Refreshes bookkeeping
 (windowlist, remapped keys, rules, status line). If the app-id was empty
 at the first buffer commit, apply any locked placement rule when it
-first becomes known.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1044">View on GitHub: scheme/minde/groups.scm:1044</a></p><button class="abr-show-source" data-id="b138">View source</button><template><pre><code>(define (handle-window-title-change! id title app-id)
+first becomes known.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1080">View on GitHub: scheme/minde/groups.scm:1080</a></p><button class="abr-show-source" data-id="b138">View source</button><template><pre><code>(define (handle-window-title-change! id title app-id)
   &quot;Rust: a mapped toplevel's title/app-id changed. Refreshes bookkeeping
 (windowlist, remapped keys, rules, status line). If the app-id was empty
 at the first buffer commit, apply any locked placement rule when it
@@ -1342,9 +1342,9 @@ first becomes known.&quot;
     ;; does not otherwise require a frame synchronization.
     (refresh-external-status!)
     (unless (and (equal? old-title title) (equal? old-app-id app-id))
-      (run-event-hook! 'window-title-changed id title app-id))))</code></pre></template></article><article id="b139" class="abr-binding" data-label="(minde groups) handle-window-unmap!  ·  scheme/minde/groups.scm lines 1121-1146"><h3><code>handle-window-unmap!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-unmap! id)</code></p><p class="desc">Removes ID from whichever group's tree currently holds it -- the active
+      (run-event-hook! 'window-title-changed id title app-id))))</code></pre></template></article><article id="b139" class="abr-binding" data-label="(minde groups) handle-window-unmap!  ·  scheme/minde/groups.scm lines 1157-1182"><h3><code>handle-window-unmap!</code><span class="kind">procedure</span></h3><p class="sig"><code>(handle-window-unmap! id)</code></p><p class="desc">Removes ID from whichever group's tree currently holds it -- the active
 group first (which re-syncs), then every hidden group (which doesn't need
-a sync since nothing hidden is on-screen).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1121">View on GitHub: scheme/minde/groups.scm:1121</a></p><button class="abr-show-source" data-id="b139">View source</button><template><pre><code>(define (handle-window-unmap! id)
+a sync since nothing hidden is on-screen).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1157">View on GitHub: scheme/minde/groups.scm:1157</a></p><button class="abr-show-source" data-id="b139">View source</button><template><pre><code>(define (handle-window-unmap! id)
   &quot;Removes ID from whichever group's tree currently holds it -- the active
 group first (which re-syncs), then every hidden group (which doesn't need
 a sync since nothing hidden is on-screen).&quot;
@@ -1369,10 +1369,10 @@ a sync since nothing hidden is on-screen).&quot;
   ;; Repair the owning group, including its unfocused and hidden heads.
   (when owner (retile-group-heads! owner))
   (run-event-hook! 'destroy-window id)
-  #t)</code></pre></template></article><article id="b140" class="abr-binding" data-label="(minde groups) keyboard-layouts  ·  scheme/minde/groups.scm lines 1273-1279"><h3><code>keyboard-layouts</code><span class="kind">procedure</span></h3><p class="sig"><code>(keyboard-layouts)</code></p><p class="desc">The XKB layout groups of the seat keyboard, in keymap order, as a list
+  #t)</code></pre></template></article><article id="b140" class="abr-binding" data-label="(minde groups) keyboard-layouts  ·  scheme/minde/groups.scm lines 1309-1315"><h3><code>keyboard-layouts</code><span class="kind">procedure</span></h3><p class="sig"><code>(keyboard-layouts)</code></p><p class="desc">The XKB layout groups of the seat keyboard, in keymap order, as a list
 of alists ((name . &quot;German (Bone)&quot;) (active . #t)). Groups come from
 XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
-gives one entry. Returns '() without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1273">View on GitHub: scheme/minde/groups.scm:1273</a></p><button class="abr-show-source" data-id="b140">View source</button><template><pre><code>(define (keyboard-layouts)
+gives one entry. Returns '() without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1309">View on GitHub: scheme/minde/groups.scm:1309</a></p><button class="abr-show-source" data-id="b140">View source</button><template><pre><code>(define (keyboard-layouts)
   &quot;The XKB layout groups of the seat keyboard, in keymap order, as a list
 of alists ((name . \&quot;German (Bone)\&quot;) (active . #t)). Groups come from
 XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
@@ -1429,8 +1429,8 @@ deleted (StumpWM gmerge).&quot;
      (else
       (adopt-group-into-current! g)
       (sync-frames!)
-      (echo (group-list-string))))))</code></pre></template></article><article id="b146" class="abr-binding" data-label="(minde groups) move-current-window-to-next-group-and-follow!  ·  scheme/minde/groups.scm lines 1015-1024"><h3><code>move-current-window-to-next-group-and-follow!</code><span class="kind">procedure</span></h3><p class="sig"><code>(move-current-window-to-next-group-and-follow!)</code></p><p class="desc">Moves the current window to the next group and switches there with it
-(StumpWM gmove-and-follow).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1015">View on GitHub: scheme/minde/groups.scm:1015</a></p><button class="abr-show-source" data-id="b146">View source</button><template><pre><code>(define (move-current-window-to-next-group-and-follow!)
+      (echo (group-list-string))))))</code></pre></template></article><article id="b146" class="abr-binding" data-label="(minde groups) move-current-window-to-next-group-and-follow!  ·  scheme/minde/groups.scm lines 1051-1060"><h3><code>move-current-window-to-next-group-and-follow!</code><span class="kind">procedure</span></h3><p class="sig"><code>(move-current-window-to-next-group-and-follow!)</code></p><p class="desc">Moves the current window to the next group and switches there with it
+(StumpWM gmove-and-follow).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1051">View on GitHub: scheme/minde/groups.scm:1051</a></p><button class="abr-show-source" data-id="b146">View source</button><template><pre><code>(define (move-current-window-to-next-group-and-follow!)
   &quot;Moves the current window to the next group and switches there with it
 (StumpWM gmove-and-follow).&quot;
   (let ((idx (current-group-index)) (n (length %groups))
@@ -1473,8 +1473,8 @@ group or the current frame has no window.&quot;
         (when id
           (move-window-between-groups!
            id (current-group) (list-ref %groups (modulo (+ idx 1) n)))
-          (sync-frames!))))))</code></pre></template></article><article id="b149" class="abr-binding" data-label="(minde groups) next-urgent!  ·  scheme/minde/groups.scm lines 1089-1103"><h3><code>next-urgent!</code><span class="kind">procedure</span></h3><p class="sig"><code>(next-urgent!)</code></p><p class="desc">Jumps to the oldest urgent window (StumpWM next-urgent), switching to
-its group if needed.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1089">View on GitHub: scheme/minde/groups.scm:1089</a></p><button class="abr-show-source" data-id="b149">View source</button><template><pre><code>(define (next-urgent!)
+          (sync-frames!))))))</code></pre></template></article><article id="b149" class="abr-binding" data-label="(minde groups) next-urgent!  ·  scheme/minde/groups.scm lines 1125-1139"><h3><code>next-urgent!</code><span class="kind">procedure</span></h3><p class="sig"><code>(next-urgent!)</code></p><p class="desc">Jumps to the oldest urgent window (StumpWM next-urgent), switching to
+its group if needed.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1125">View on GitHub: scheme/minde/groups.scm:1125</a></p><button class="abr-show-source" data-id="b149">View source</button><template><pre><code>(define (next-urgent!)
   &quot;Jumps to the oldest urgent window (StumpWM next-urgent), switching to
 its group if needed.&quot;
   (let ((urgent (urgent-windows)))
@@ -1488,17 +1488,17 @@ its group if needed.&quot;
            (else
             (unless (eq? g (current-group))
               (switch-to-group! g))
-            (focus-window-by-id! id)))))))</code></pre></template></article><article id="b150" class="abr-binding" data-label="(minde groups) output-configuration-allowed?  ·  scheme/minde/groups.scm lines 1242-1248"><h3><code>output-configuration-allowed?</code><span class="kind">procedure</span></h3><p class="sig"><code>(output-configuration-allowed?)</code></p><p class="desc">Policy predicate consulted before an external wlr-output-management
+            (focus-window-by-id! id)))))))</code></pre></template></article><article id="b150" class="abr-binding" data-label="(minde groups) output-configuration-allowed?  ·  scheme/minde/groups.scm lines 1278-1284"><h3><code>output-configuration-allowed?</code><span class="kind">procedure</span></h3><p class="sig"><code>(output-configuration-allowed?)</code></p><p class="desc">Policy predicate consulted before an external wlr-output-management
 client (wlr-randr, kanshi, shikane, wdisplays) may test or apply an
 output configuration. The default accepts everything; redefine it in
 your init file to return #f (or gate on your own state) to refuse
-external changes. `configure-output!' does not consult it.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1242">View on GitHub: scheme/minde/groups.scm:1242</a></p><button class="abr-show-source" data-id="b150">View source</button><template><pre><code>(define (output-configuration-allowed?)
+external changes. `configure-output!' does not consult it.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1278">View on GitHub: scheme/minde/groups.scm:1278</a></p><button class="abr-show-source" data-id="b150">View source</button><template><pre><code>(define (output-configuration-allowed?)
   &quot;Policy predicate consulted before an external wlr-output-management
 client (wlr-randr, kanshi, shikane, wdisplays) may test or apply an
 output configuration. The default accepts everything; redefine it in
 your init file to return #f (or gate on your own state) to refuse
 external changes. `configure-output!' does not consult it.&quot;
-  #t)</code></pre></template></article><article id="b151" class="abr-binding" data-label="(minde groups) output-heads  ·  scheme/minde/groups.scm lines 1188-1201"><h3><code>output-heads</code><span class="kind">procedure</span></h3><p class="sig"><code>(output-heads)</code></p><p class="desc">Every known output head, disabled ones included, as a list of alists:
+  #t)</code></pre></template></article><article id="b151" class="abr-binding" data-label="(minde groups) output-heads  ·  scheme/minde/groups.scm lines 1224-1237"><h3><code>output-heads</code><span class="kind">procedure</span></h3><p class="sig"><code>(output-heads)</code></p><p class="desc">Every known output head, disabled ones included, as a list of alists:
 ((name . &quot;DP-1&quot;) (enabled . #t) (make . &quot;DEL&quot;) (model . &quot;U2723QE&quot;)
  (serial . &quot;ABC&quot;) (description . &quot;DEL U2723QE ABC&quot;)
  (mode . (3840 2160 60000)) (preferred-mode . (3840 2160 60000))
@@ -1508,7 +1508,7 @@ Modes are (width height refresh-mhz); MODE and PREFERRED-MODE are #f
 when unknown; ADAPTIVE-SYNC is #t, #f or the symbol `unsupported'.
 Unlike `wm-outputs' (enabled heads' usable rectangles, keyed by the
 compositor's head id) this is the raw per-connector view a
-wlr-output-management client sees. Returns '() without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1188">View on GitHub: scheme/minde/groups.scm:1188</a></p><button class="abr-show-source" data-id="b151">View source</button><template><pre><code>(define (output-heads)
+wlr-output-management client sees. Returns '() without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1224">View on GitHub: scheme/minde/groups.scm:1224</a></p><button class="abr-show-source" data-id="b151">View source</button><template><pre><code>(define (output-heads)
   &quot;Every known output head, disabled ones included, as a list of alists:
 ((name . \&quot;DP-1\&quot;) (enabled . #t) (make . \&quot;DEL\&quot;) (model . \&quot;U2723QE\&quot;)
  (serial . \&quot;ABC\&quot;) (description . \&quot;DEL U2723QE ABC\&quot;)
@@ -1573,18 +1573,18 @@ ignoring surrounding whitespace. Blank input leaves the name unchanged.&quot;
     (validate-group-name name (current-group))
     (set-group-name! (current-group) (string-append &quot; &quot; (string-trim-both name) &quot; &quot;))
     (note-policy-change!)
-    (echo (group-list-string))))</code></pre></template></article><article id="b155" class="abr-binding" data-label="(minde groups) restore-from-file  ·  scheme/minde/groups.scm lines 969-997"><h3><code>restore-from-file</code><span class="kind">procedure</span></h3><p class="sig"><code>(restore-from-file path)</code></p><p class="desc">Re-applies a dump-desktop file: groups are matched (or created) by
+    (echo (group-list-string))))</code></pre></template></article><article id="b155" class="abr-binding" data-label="(minde groups) restore-from-file  ·  scheme/minde/groups.scm lines 1006-1033"><h3><code>restore-from-file</code><span class="kind">procedure</span></h3><p class="sig"><code>(restore-from-file path)</code></p><p class="desc">Re-applies a dump-desktop file: groups are matched (or created) by
 name, their frame layouts and window assignments restored, float
-geometries re-applied. Groups not in the dump are left alone.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L969">View on GitHub: scheme/minde/groups.scm:969</a></p><button class="abr-show-source" data-id="b155">View source</button><template><pre><code>(define (restore-from-file path)
+geometries re-applied. Groups not in the dump are left alone. The whole
+file is validated first; a malformed one changes nothing.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1006">View on GitHub: scheme/minde/groups.scm:1006</a></p><button class="abr-show-source" data-id="b155">View source</button><template><pre><code>(define (restore-from-file path)
   &quot;Re-applies a dump-desktop file: groups are matched (or created) by
 name, their frame layouts and window assignments restored, float
-geometries re-applied. Groups not in the dump are left alone.&quot;
+geometries re-applied. Groups not in the dump are left alone. The whole
+file is validated first; a malformed one changes nothing.&quot;
   (catch #t
     (lambda ()
       (let ((d (call-with-input-file path read)))
-        (if (not (and (list? d) (&gt;= (length d) 4)
-                      (eq? (car d) 'minde-desktop)
-                      (equal? (cadr d) 1)))
+        (if (not (valid-desktop-dump? d))
             (echo (string-append path &quot; is not a desktop dump&quot;))
             (begin
               (for-each
@@ -1632,20 +1632,20 @@ rotate-windows).&quot;
 preserving unreadable files and leaving the in-memory rules unchanged.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L790">View on GitHub: scheme/minde/groups.scm:790</a></p><button class="abr-show-source" data-id="b160">View source</button><template><pre><code>(define (save-placement-rules!)
   &quot;Writes deduplicated placement rules atomically. Returns #f on failure,
 preserving unreadable files and leaving the in-memory rules unchanged.&quot;
-  (persist-placement-rules! %placement-rules))</code></pre></template></article><article id="b161" class="abr-binding" data-label="(minde groups) set-head-mode!  ·  scheme/minde/groups.scm lines 1174-1179"><h3><code>set-head-mode!</code><span class="kind">procedure</span></h3><p class="sig"><code>(set-head-mode! mode)</code></p><p class="desc">'per-head (a frame tree per monitor, StumpWM style) or 'span (one
-tree over the union of all monitors).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1174">View on GitHub: scheme/minde/groups.scm:1174</a></p><button class="abr-show-source" data-id="b161">View source</button><template><pre><code>(define (set-head-mode! mode)
+  (persist-placement-rules! %placement-rules))</code></pre></template></article><article id="b161" class="abr-binding" data-label="(minde groups) set-head-mode!  ·  scheme/minde/groups.scm lines 1210-1215"><h3><code>set-head-mode!</code><span class="kind">procedure</span></h3><p class="sig"><code>(set-head-mode! mode)</code></p><p class="desc">'per-head (a frame tree per monitor, StumpWM style) or 'span (one
+tree over the union of all monitors).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1210">View on GitHub: scheme/minde/groups.scm:1210</a></p><button class="abr-show-source" data-id="b161">View source</button><template><pre><code>(define (set-head-mode! mode)
   &quot;'per-head (a frame tree per monitor, StumpWM style) or 'span (one
 tree over the union of all monitors).&quot;
   (let ((before (map car (heads))))
     (set-heads-mode! mode %groups)
-    (retile-changed-heads! before)))</code></pre></template></article><article id="b162" class="abr-binding" data-label="(minde groups) set-keyboard-layout!  ·  scheme/minde/groups.scm lines 1286-1308"><h3><code>set-keyboard-layout!</code><span class="kind">procedure</span></h3><p class="sig"><code>(set-keyboard-layout! spec)</code></p><p class="desc">Activate a keyboard layout group. SPEC is a zero-based index into
+    (retile-changed-heads! before)))</code></pre></template></article><article id="b162" class="abr-binding" data-label="(minde groups) set-keyboard-layout!  ·  scheme/minde/groups.scm lines 1322-1344"><h3><code>set-keyboard-layout!</code><span class="kind">procedure</span></h3><p class="sig"><code>(set-keyboard-layout! spec)</code></p><p class="desc">Activate a keyboard layout group. SPEC is a zero-based index into
 `keyboard-layouts', the symbol `next' or `prev' (cycling with wrap-around),
 or a string matched case-insensitively as a prefix of a group's name
 (&quot;English&quot; selects &quot;English (US)&quot;). The switch is queued to the
 compositor, which tells the focused client through the normal modifiers
 event; `handle-keyboard-layout-changed!' then runs with the new name.
 Returns #t once queued, #f without a compositor or for an unknown name;
-a malformed SPEC raises.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1286">View on GitHub: scheme/minde/groups.scm:1286</a></p><button class="abr-show-source" data-id="b162">View source</button><template><pre><code>(define (set-keyboard-layout! spec)
+a malformed SPEC raises.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1322">View on GitHub: scheme/minde/groups.scm:1322</a></p><button class="abr-show-source" data-id="b162">View source</button><template><pre><code>(define (set-keyboard-layout! spec)
   &quot;Activate a keyboard layout group. SPEC is a zero-based index into
 `keyboard-layouts', the symbol `next' or `prev' (cycling with wrap-around),
 or a string matched case-insensitively as a prefix of a group's name
@@ -1675,7 +1675,7 @@ gnext-with-window).&quot;
 gprev-with-window).</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L386">View on GitHub: scheme/minde/groups.scm:386</a></p><button class="abr-show-source" data-id="b164">View source</button><template><pre><code>(define (shift-current-window-to-previous-group!)
   &quot;Moves the current window to the previous group and follows it (StumpWM
 gprev-with-window).&quot;
-  (gshift-with-window! -1))</code></pre></template></article><article id="b165" class="abr-binding" data-label="(minde groups) status-line  ·  scheme/minde/groups.scm lines 1005-1010"><h3><code>status-line</code><span class="kind">procedure</span></h3><p class="sig"><code>(status-line)</code></p><p class="desc">Returns the compatibility one-line group and focused-window status.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1005">View on GitHub: scheme/minde/groups.scm:1005</a></p><button class="abr-show-source" data-id="b165">View source</button><template><pre><code>(define (status-line)
+  (gshift-with-window! -1))</code></pre></template></article><article id="b165" class="abr-binding" data-label="(minde groups) status-line  ·  scheme/minde/groups.scm lines 1041-1046"><h3><code>status-line</code><span class="kind">procedure</span></h3><p class="sig"><code>(status-line)</code></p><p class="desc">Returns the compatibility one-line group and focused-window status.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1041">View on GitHub: scheme/minde/groups.scm:1041</a></p><button class="abr-show-source" data-id="b165">View source</button><template><pre><code>(define (status-line)
   &quot;Returns the compatibility one-line group and focused-window status.&quot;
   (let ((id (focused-window-id)))
     (string-append (group-list-string)
@@ -1722,17 +1722,17 @@ or clearing focus).&quot;
   &quot;Switches to the previous group in %groups, wrapping around.&quot;
   (let ((idx (current-group-index)) (n (length %groups)))
     (when (and idx (&gt; n 1))
-      (switch-to-group! (modulo (- idx 1) n)))))</code></pre></template></article><article id="b170" class="abr-binding" data-label="(minde groups) wm-on-session-lock  ·  scheme/minde/groups.scm lines 1328-1332"><h3><code>wm-on-session-lock</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-lock)</code></p><p class="desc">Rust: the session-lock surface is up and the session is now locked.
-Cancels frame selection and runs the 'session-lock hook.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1328">View on GitHub: scheme/minde/groups.scm:1328</a></p><button class="abr-show-source" data-id="b170">View source</button><template><pre><code>(define (wm-on-session-lock)
+      (switch-to-group! (modulo (- idx 1) n)))))</code></pre></template></article><article id="b170" class="abr-binding" data-label="(minde groups) wm-on-session-lock  ·  scheme/minde/groups.scm lines 1364-1368"><h3><code>wm-on-session-lock</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-lock)</code></p><p class="desc">Rust: the session-lock surface is up and the session is now locked.
+Cancels frame selection and runs the 'session-lock hook.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1364">View on GitHub: scheme/minde/groups.scm:1364</a></p><button class="abr-show-source" data-id="b170">View source</button><template><pre><code>(define (wm-on-session-lock)
   &quot;Rust: the session-lock surface is up and the session is now locked.
 Cancels frame selection and runs the 'session-lock hook.&quot;
   (cancel-frame-selection!)
-  (run-event-hook! 'session-lock))</code></pre></template></article><article id="b171" class="abr-binding" data-label="(minde groups) wm-on-session-lock-lost  ·  scheme/minde/groups.scm lines 1339-1342"><h3><code>wm-on-session-lock-lost</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-lock-lost)</code></p><p class="desc">Rust: the lock owner disappeared; the session remains locked.
-Runs the 'session-lock-lost hook once for that owner.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1339">View on GitHub: scheme/minde/groups.scm:1339</a></p><button class="abr-show-source" data-id="b171">View source</button><template><pre><code>(define (wm-on-session-lock-lost)
+  (run-event-hook! 'session-lock))</code></pre></template></article><article id="b171" class="abr-binding" data-label="(minde groups) wm-on-session-lock-lost  ·  scheme/minde/groups.scm lines 1375-1378"><h3><code>wm-on-session-lock-lost</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-lock-lost)</code></p><p class="desc">Rust: the lock owner disappeared; the session remains locked.
+Runs the 'session-lock-lost hook once for that owner.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1375">View on GitHub: scheme/minde/groups.scm:1375</a></p><button class="abr-show-source" data-id="b171">View source</button><template><pre><code>(define (wm-on-session-lock-lost)
   &quot;Rust: the lock owner disappeared; the session remains locked.
 Runs the 'session-lock-lost hook once for that owner.&quot;
-  (run-event-hook! 'session-lock-lost))</code></pre></template></article><article id="b172" class="abr-binding" data-label="(minde groups) wm-on-session-unlock  ·  scheme/minde/groups.scm lines 1334-1337"><h3><code>wm-on-session-unlock</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-unlock)</code></p><p class="desc">Rust: the session-lock surface was torn down; the session is
-unlocked again. Runs the 'session-unlock hook.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1334">View on GitHub: scheme/minde/groups.scm:1334</a></p><button class="abr-show-source" data-id="b172">View source</button><template><pre><code>(define (wm-on-session-unlock)
+  (run-event-hook! 'session-lock-lost))</code></pre></template></article><article id="b172" class="abr-binding" data-label="(minde groups) wm-on-session-unlock  ·  scheme/minde/groups.scm lines 1370-1373"><h3><code>wm-on-session-unlock</code><span class="kind">procedure</span></h3><p class="sig"><code>(wm-on-session-unlock)</code></p><p class="desc">Rust: the session-lock surface was torn down; the session is
+unlocked again. Runs the 'session-unlock hook.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1370">View on GitHub: scheme/minde/groups.scm:1370</a></p><button class="abr-show-source" data-id="b172">View source</button><template><pre><code>(define (wm-on-session-unlock)
   &quot;Rust: the session-lock surface was torn down; the session is
 unlocked again. Runs the 'session-unlock hook.&quot;
   (run-event-hook! 'session-unlock))</code></pre></template></article></section><section><h2>(minde layouts)</h2><article id="b173" class="abr-binding" data-label="(minde layouts) apply-layout!  ·  scheme/minde/layouts.scm lines 48-57"><h3><code>apply-layout!</code><span class="kind">procedure</span></h3><p class="sig"><code>(apply-layout! name)</code></p><p class="desc">Rebuilds the current head's frame tree from the layout named NAME,

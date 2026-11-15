@@ -642,6 +642,43 @@
 (check "automatic names remain unique after deletion"
        (length (delete-duplicates (map string-trim-both (group-names)))) (length (group-names)))
 
+;; A desktop dump is validated as a whole before any group changes.
+(let* ((path (format #f "~a/minde-groups-dump-~a.scm"
+                     (or (getenv "TMPDIR") "/tmp") (getpid)))
+       (write-dump! (lambda (datum)
+                      (call-with-output-file path
+                        (lambda (port) (write datum port)))))
+       (names (group-names)))
+  (dump-desktop-to-file path)
+  (restore-from-file path)
+  (check-true "a written dump restores"
+              (string-prefix? "desktop restored" (last-message)))
+  (check "restoring a written dump keeps the groups" (group-names) names)
+  (for-each
+   (lambda (rejected)
+     (write-dump! (cdr rejected))
+     (restore-from-file path)
+     (check-true (string-append "rejected dump: " (car rejected))
+                 (string-suffix? "is not a desktop dump" (last-message)))
+     (check (string-append "rejected dump changes no group: " (car rejected))
+            (group-names) names))
+   (list
+    (cons "window in two frames"
+          '(minde-desktop 1 per-head
+            (("dump-duplicate" #f ((hsplit 1/2 leaf leaf) ((1) (1)) (1 1) 0) ()))))
+    (cons "malformed entry after a valid one"
+          '(minde-desktop 1 per-head
+            (("dump-valid" #f (leaf (()) (#f) 0) ()) ("dump-broken" #f))))
+    (cons "invalid layout"
+          '(minde-desktop 1 per-head
+            (("dump-layout" #f ((hsplit 1/2 leaf) (()) (#f) 0) ()))))
+    (cons "invalid float geometry"
+          '(minde-desktop 1 per-head
+            (("dump-float" #t (leaf (()) (#f) 0) ((1 . (0 0 100)))))))
+    (cons "unsupported version"
+          '(minde-desktop 2 per-head (("dump-version" #f (leaf (()) (#f) 0) ()))))))
+  (delete-file path))
+
 (if (zero? %failures)
     (begin
       (format #t "all tests passed~%")
