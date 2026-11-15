@@ -20,7 +20,11 @@ nested_install_cleanup cleanup
 mkdir -p "$OUT"
 protocols=$(pkg-config --variable=pkgdatadir wayland-protocols)
 # Use the protocol already pinned by Cargo, including vendored builds.
-wlr_manifest=$(cargo metadata --offline --locked --format-version 1 | jq -r '.packages[] | select(.name == "wayland-protocols-wlr") | .manifest_path')
+# Restrict the query to this host: a registry populated by ordinary builds
+# lacks the crates of other platforms, which --offline cannot fetch.
+host=$(rustc -vV | sed -n 's/^host: //p')
+wlr_manifest=$(cargo metadata --offline --locked --format-version 1 --filter-platform "$host" |
+    jq -r '.packages[] | select(.name == "wayland-protocols-wlr") | .manifest_path')
 wlr_protocols=$(dirname "$wlr_manifest")/wlr-protocols
 for spec in "xdg-shell $protocols/stable/xdg-shell/xdg-shell.xml" \
     "pointer-constraints $protocols/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml" \
