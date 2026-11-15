@@ -44,7 +44,7 @@ fn assign<C: Copy + Eq + Hash, R: Copy + Eq>(
 }
 
 #[derive(Default)]
-pub(super) struct ConnectorMapper {
+struct ConnectorMapper {
     assigned: HashMap<connector::Handle, crtc::Handle>,
 }
 
@@ -82,6 +82,45 @@ impl CrtcMapper for ConnectorMapper {
 
     fn crtc_for_connector(&self, connector: &connector::Handle) -> Option<crtc::Handle> {
         self.assigned.get(connector).copied()
+    }
+}
+
+/// Whether a scan asks the driver to detect every display again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Probe {
+    /// What the kernel last saw. Returns at once.
+    Cached,
+    /// Re-detect displays and their modes. Disconnected DP and HDMI ports
+    /// can take the driver hundreds of milliseconds each.
+    Forced,
+}
+
+/// The connectors of one device as last read, with their controllers.
+#[derive(Default)]
+pub(super) struct ConnectorScan {
+    connectors: HashMap<connector::Handle, connector::Info>,
+    mapper: ConnectorMapper,
+}
+
+impl ConnectorScan {
+    pub(super) fn scan(&mut self, drm: &impl Device, probe: Probe) -> std::io::Result<()> {
+        let resources = drm.resource_handles()?;
+        self.connectors = resources
+            .connectors()
+            .iter()
+            .filter_map(|handle| drm.get_connector(*handle, probe == Probe::Forced).ok())
+            .map(|info| (info.handle(), info))
+            .collect();
+        self.mapper.map(drm, self.connectors.values());
+        Ok(())
+    }
+
+    pub(super) fn connectors(&self) -> impl Iterator<Item = &connector::Info> {
+        self.connectors.values()
+    }
+
+    pub(super) fn crtc_for_connector(&self, connector: &connector::Handle) -> Option<crtc::Handle> {
+        self.mapper.crtc_for_connector(connector)
     }
 }
 

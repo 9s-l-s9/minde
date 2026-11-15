@@ -94,7 +94,6 @@ use smithay::{
         presentation::{PresentationState, Refresh},
     },
 };
-use smithay_drm_extras::drm_scanner::DrmScanner;
 use tracing::{debug, error, info, warn};
 
 use crate::edid::{EdidInfo, parse_edid};
@@ -105,7 +104,7 @@ use crate::{MindeState, guile};
 mod device;
 use device::{EventRegistration, SessionDevice};
 mod connectors;
-use connectors::ConnectorMapper;
+use connectors::{ConnectorScan, Probe as ConnectorProbe};
 
 /// The renderer type produced by `GpuManager::single_renderer`, matching
 /// anvil's `UdevRenderer` alias. We only ever address the primary node
@@ -352,7 +351,7 @@ struct DeviceData {
     // original descriptor to libseat (fields are dropped in this order).
     _registration: EventRegistration<MindeState>,
     drm_output_manager: GbmDrmOutputManager,
-    drm_scanner: DrmScanner<ConnectorMapper>,
+    connectors: ConnectorScan,
     waiting_connectors: std::collections::HashSet<connector::Handle>,
     heads: HashMap<crtc::Handle, HeadEntry>,
     render_node: Option<DrmNode>,
@@ -636,7 +635,7 @@ pub fn init_udev(
                 // Hotplug while paused must be reconciled only after the
                 // device is active. Failed setup is retried by the same scan.
                 for node in &active_nodes {
-                    scan_connectors(state, *node);
+                    scan_connectors_then_probe(state, *node);
                 }
                 let mut to_repaint = Vec::new();
                 if let Some(udev) = state.udev_data.as_mut() {
@@ -843,7 +842,7 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
         DeviceData {
             _registration: registration,
             drm_output_manager,
-            drm_scanner: DrmScanner::new_with_mapper(ConnectorMapper::default()),
+            connectors: ConnectorScan::default(),
             waiting_connectors: Default::default(),
             heads: HashMap::new(),
             render_node,
@@ -851,7 +850,7 @@ fn device_added(state: &mut MindeState, node: DrmNode, path: &Path) -> Result<()
         },
     );
 
-    scan_connectors(state, node);
+    scan_connectors_then_probe(state, node);
     Ok(())
 }
 
@@ -877,10 +876,21 @@ fn remove_device_syncobj<N: PartialEq>(
     }
 }
 
+/// Bring heads up from what the kernel already knows, then let the driver
+/// detect displays again once the frame and the startup hook are under way.
+/// Probing first kept the screen dark for about a second on a laptop with
+/// four unused DP and HDMI ports; the probe still corrects a stale cache.
+fn scan_connectors_then_probe(state: &mut MindeState, node: DrmNode) {
+    scan_connectors(state, node, ConnectorProbe::Cached);
+    state.handle.insert_idle(move |state| {
+        scan_connectors(state, node, ConnectorProbe::Forced);
+    });
+}
+
 /// Reconcile heads against the full current mapping. A waiting connector
 /// can acquire a CRTC without another Connected event, and a known head
 /// can gain usable modes after its first scan.
-fn scan_connectors(state: &mut MindeState, node: DrmNode) {
+fn scan_connectors(state: &mut MindeState, node: DrmNode, probe: ConnectorProbe) {
     let (connected, retired) = {
         let udev = state.udev_data.as_mut().unwrap();
         if udev.paused || !udev.session.is_active() {
@@ -892,20 +902,32 @@ fn scan_connectors(state: &mut MindeState, node: DrmNode) {
         if !device.drm_output_manager.device().is_active() {
             return;
         }
-        if let Err(err) = device
-            .drm_scanner
-            .scan_connectors(device.drm_output_manager.device())
-        {
+        let started = std::time::Instant::now();
+        let scanned = device
+            .connectors
+            .scan(device.drm_output_manager.device(), probe);
+        let count = device.connectors.connectors().count();
+        info!(
+            ?node,
+            ?probe,
+            connectors = count,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "connector scan"
+        );
+        crate::timing::record_with(crate::timing::Probe::ConnectorScan, started, || {
+            format!("{node} {probe:?} connectors={count}")
+        });
+        if let Err(err) = scanned {
             warn!(?err, "failed to scan connectors");
             return;
         }
         let mut connected = Vec::new();
         let mut waiting = std::collections::HashSet::new();
-        for info in device.drm_scanner.connectors().values() {
+        for info in device.connectors.connectors() {
             if info.state() != connector::State::Connected {
                 continue;
             }
-            if let Some(crtc) = device.drm_scanner.crtc_for_connector(&info.handle()) {
+            if let Some(crtc) = device.connectors.crtc_for_connector(&info.handle()) {
                 connected.push((info.clone(), crtc));
             } else {
                 waiting.insert(info.handle());
@@ -1522,7 +1544,8 @@ fn device_changed(state: &mut MindeState, node: DrmNode) {
     if !has_device {
         return;
     }
-    scan_connectors(state, node);
+    // The kernel reported a change: detect displays and modes again.
+    scan_connectors(state, node, ConnectorProbe::Forced);
 }
 
 fn device_removed(state: &mut MindeState, node: DrmNode) {

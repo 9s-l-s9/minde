@@ -9,6 +9,12 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- On the DRM backend, startup and session resume bring heads up from the
+  connector state the kernel already holds. The driver's probe of every
+  connector follows immediately afterwards and corrects a stale state; a
+  hotplug event still probes at once. Each scan is logged with its duration
+  and counted by the `connector-scan` probe (#178).
+
 - `(wm-timing-slow)` returns the most recent samples that exceeded one frame
   with their context: the bound key, the command, the output, or the connector
   scan. `(wm-timing-stats)` gains a `connector-scan` probe (#180).
