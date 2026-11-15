@@ -48,6 +48,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Without `XDG_RUNTIME_DIR`, status files are published only into a private
+  fallback directory owned by the session user. A directory or symbolic link
+  created there by someone else is refused and the failure is logged.
+
 - `wlr-screencopy` raises `invalid_buffer` for an shm buffer whose format
   differs from the advertised one instead of failing the frame later.
 

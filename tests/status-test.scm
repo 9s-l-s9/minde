@@ -230,6 +230,29 @@
       (list json legacy)))
    '(#f ""))
   (check "fallback directory is private" (= (stat:perms (stat private)) #o700))
+  ;; Another user can create or link the shared fallback first. Refuse a
+  ;; directory open to others and a symbolic link, then recover.
+  (let ((logged (length %logs))
+        (elsewhere (string-append temporary "/elsewhere")))
+    (chmod private #o755)
+    (update-window-title! 42 "exposed-fallback" "test")
+    (publish-status!)
+    (check "an exposed fallback directory receives no status"
+           (not (or (file-exists? json) (file-exists? legacy))))
+    (check "the refused publication is logged" (= (length %logs) (+ logged 1)))
+    (rmdir private)
+    (mkdir elsewhere #o700)
+    (symlink elsewhere private)
+    (publish-status!)
+    (check "a linked fallback directory receives no status"
+           (not (file-exists? (string-append elsewhere "/status.json"))))
+    (delete-file private)
+    (rmdir elsewhere)
+    (publish-status!)
+    (check "a private fallback directory recovers"
+           (and (file-exists? json) (file-exists? legacy)))
+    (for-each (lambda (path) (when (file-exists? path) (delete-file path)))
+              (list json legacy)))
   (rmdir private)
   (rmdir temporary))
 

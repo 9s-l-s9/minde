@@ -220,11 +220,24 @@ When REDACT? is true, window titles and application identifiers are omitted."
   "Returns the current compositor state as one compact schema-v1 JSON object."
   (json-value (current-state #:redact? redact?)))
 
+(define (private-directory? directory)
+  (let ((metadata (lstat directory)))
+    (and (eq? (stat:type metadata) 'directory)
+         (= (stat:uid metadata) (geteuid))
+         (zero? (logand (stat:perms metadata) #o077)))))
+
 (define (atomic-write-file path write-contents)
   (let* ((directory (dirname path))
          (temporary (string-append path ".tmp." (number->string (getpid)))))
     (unless (file-exists? directory)
       (mkdir directory #o700))
+    ;; Without XDG_RUNTIME_DIR the default lies in a shared temporary
+    ;; directory, where another user can create or link it first.
+    (when (and (not (nonempty-environment "XDG_RUNTIME_DIR"))
+               (string=? directory (runtime-base-directory))
+               (not (private-directory? directory)))
+      (error "status directory must be private and owned by the session user"
+             directory))
     (call-with-output-file temporary
       (lambda (port)
         (write-contents port)
