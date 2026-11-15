@@ -48,6 +48,9 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- `wlr-screencopy` raises `invalid_buffer` for an shm buffer whose format
+  differs from the advertised one instead of failing the frame later.
+
 - Starting from a working directory that no longer exists reaches normal
   startup instead of failing while preparing the init-recovery restart.
 

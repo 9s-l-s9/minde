@@ -37,7 +37,7 @@ use smithay::reexports::{
     },
 };
 use smithay::utils::{Logical, Physical, Rectangle, Scale, Size};
-use smithay::wayland::shm::{shm_format_to_fourcc, with_buffer_contents};
+use smithay::wayland::shm::with_buffer_contents;
 
 use super::screencopy::{
     CaptureFrame, CaptureGeometry, CaptureHistory, FillOutcome, PendingCapture, capture_geometry,
@@ -346,7 +346,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, WlrFrameData> for MindeState {
 }
 
 /// Checks a client's buffer matches the advertised size (and, for shm, stride
-/// and a supported format). Returns the protocol error string on mismatch.
+/// and format). Returns the protocol error string on mismatch.
 fn validate_buffer(buffer: &WlBuffer, inner: &WlrFrameInner) -> Result<(), &'static str> {
     match smithay::backend::renderer::buffer_type(buffer) {
         Some(smithay::backend::renderer::BufferType::Shm) => {
@@ -357,10 +357,9 @@ fn validate_buffer(buffer: &WlBuffer, inner: &WlrFrameInner) -> Result<(), &'sta
                 if data.stride != inner.shm_stride as i32 {
                     return Err("shm buffer has the wrong stride");
                 }
-                if shm_format_to_fourcc(data.format).is_none() {
-                    return Err("shm buffer has an unsupported format");
+                if data.format != inner.shm_format {
+                    return Err("shm buffer does not use the advertised format");
                 }
-                let _ = inner.shm_format;
                 Ok(())
             })
             .map_err(|_| "attached buffer is not a valid shm buffer")?

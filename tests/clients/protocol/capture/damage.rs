@@ -270,4 +270,22 @@ pub fn run() {
     assert_eq!(a.bytes(), b.bytes());
     println!("ok - slow sessions and evicted capture images recover with full damage");
     panel.destroy();
+
+    // The frame advertises XRGB8888 only. This must remain last: the
+    // protocol error ends the connection.
+    let size = c.size();
+    let file = memfile((size.0 * size.1 * 4) as usize, 0);
+    let (shm, pool, argb, frame) = (c.shm, c.alloc(), c.alloc(), c.alloc());
+    c.send_fd(
+        shm,
+        0,
+        &words(&[pool, size.0 * size.1 * 4]),
+        file.as_raw_fd(),
+    );
+    c.send(pool, 0, &words(&[argb, 0, size.0, size.1, size.0 * 4, 0]));
+    c.send(c.wlr, 0, &words(&[frame, 0, c.output]));
+    c.event(frame, 6);
+    c.send(frame, 0, &words(&[argb]));
+    c.expect_error(frame, 1);
+    println!("ok - wlr capture rejects a buffer in an unadvertised format");
 }
