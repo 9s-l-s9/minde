@@ -885,8 +885,11 @@ impl MindeState {
             .insert_source(channel, |event, _, state| {
                 if let ChannelEvent::Msg(cmd) = event {
                     let started = std::time::Instant::now();
+                    let name = cmd.name();
                     state.apply_wm_command(cmd);
-                    crate::timing::record(crate::timing::Probe::ApplyCommand, started);
+                    crate::timing::record_with(crate::timing::Probe::ApplyCommand, started, || {
+                        name
+                    });
                 }
             })
             .map_err(|error| format!("failed to register the wm command channel: {error}"))?;

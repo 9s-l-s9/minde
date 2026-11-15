@@ -148,3 +148,43 @@ pub enum KeyboardLayoutSpec {
     /// The group before the active one, wrapping around.
     Prev,
 }
+
+impl WmCommand {
+    /// The variant's name without its payload, which can hold user text.
+    pub(crate) fn name(&self) -> String {
+        struct Name(String);
+        impl std::fmt::Write for Name {
+            fn write_str(&mut self, part: &str) -> std::fmt::Result {
+                let end = part
+                    .find(|c: char| !c.is_ascii_alphanumeric())
+                    .unwrap_or(part.len());
+                self.0.push_str(&part[..end]);
+                // Stop formatting at the first character after the name.
+                if end == part.len() {
+                    Ok(())
+                } else {
+                    Err(std::fmt::Error)
+                }
+            }
+        }
+        let mut name = Name(String::new());
+        let _ = std::fmt::write(&mut name, format_args!("{self:?}"));
+        name.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_omits_the_payload() {
+        assert_eq!(WmCommand::ClearFocus.name(), "ClearFocus");
+        let typed = WmCommand::SendString {
+            text: "secret".into(),
+            delay_ms: 0,
+        };
+        assert_eq!(typed.name(), "SendString");
+        assert_eq!(WmCommand::Focus { id: 7 }.name(), "Focus");
+    }
+}

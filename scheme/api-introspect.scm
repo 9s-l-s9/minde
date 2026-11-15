@@ -107,7 +107,9 @@
     (wm-floating-ids "(wm-floating-ids)"
      "The window ids the compositor currently treats as floating.")
     (wm-timing-stats "(wm-timing-stats)"
-     "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch, rendering and layer arrangement.")
+     "Per-probe (name count total-us max-us buckets) timing of command application, key dispatch, rendering, layer arrangement, capture work and connector scans.")
+    (wm-timing-slow "(wm-timing-slow)"
+     "The most recent samples that exceeded one 60 Hz frame, oldest first, as (name us age-ms context); the context names the bound key, command or output and never contains typed text.")
     (wm-place-windows "(wm-place-windows placements)"
      "Apply a whole layout at once: PLACEMENTS is a list of (id x y w h) tiled or (id x y w h #f) float entries; returns the ids of unknown windows.")
     (wm-raise-window "(wm-raise-window id)"

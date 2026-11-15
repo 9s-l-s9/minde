@@ -144,5 +144,18 @@ of command application, key dispatch, rendering and layer arrangement (counts at
 100 us, 1 ms, 4 ms, 16.6 ms, and above), and `drift.txt`, the
 `(mirror-drift)` list of facts whose policy-side mirror disagrees with the
 compositor. An empty list `()` is the healthy state.
+
+The histograms say how often a step was slow, not why. The compositor also
+keeps the 32 most recent samples that exceeded one 60 Hz frame:
+
+```sh
+scripts/mindectl eval '(wm-timing-slow)'
+```
+
+Each entry is `(probe microseconds age-ms context)`. The context names the
+bound key and its modifier bits, the command, the output with the frame's
+outcome and pending captures, or the DRM device with the kind of connector
+scan. It never contains typed text: a key that no binding consumed is recorded
+as `unbound key`. The report does not include these samples.
 Output comparisons use raw usable rectangles, before layout gaps or span
 mode combine and inset them. Those layout settings do not constitute drift.

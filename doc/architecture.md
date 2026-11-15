@@ -121,5 +121,6 @@ keeps the registry and the Rust table identical.
 `src/timing.rs` records the duration of every applied command, key dispatch,
 rendered frame and usable-area/layer arrangement in lock-free histograms.
 `(wm-timing-stats)` returns
-them; the diagnostic report writes `timing.txt`. `make bench-scheme` times
+them; the diagnostic report writes `timing.txt`. Samples slower than one
+frame are kept with their context for `(wm-timing-slow)`. `make bench-scheme` times
 the frame-sync path against stubbed primitives.

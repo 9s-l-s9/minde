@@ -342,8 +342,9 @@ fn send_command(cmd: WmCommand) -> bool {
             // is suspended in a Scheme call for the whole duration.
             let state = unsafe { &mut *state };
             let started = std::time::Instant::now();
+            let name = cmd.name();
             let applied = state.apply_wm_command(cmd);
-            crate::timing::record(crate::timing::Probe::ApplyCommand, started);
+            crate::timing::record_with(crate::timing::Probe::ApplyCommand, started, || name);
             return applied;
         }
     }
@@ -764,6 +765,21 @@ unsafe extern "C" fn wm_timing_stats() -> Scm {
             from_i64(probe.total_us as i64),
             from_i64(probe.max_us as i64),
             buckets,
+        ])
+    })
+}
+
+/// `(wm-timing-slow)` -> the retained samples that exceeded one frame, oldest
+/// first, as `(name us age-ms context)`. The context names what was slow: a
+/// bound key, a command, an output. It never contains typed text.
+unsafe extern "C" fn wm_timing_slow() -> Scm {
+    let samples = crate::timing::slow_snapshot();
+    scm_list_map(&samples, |sample| {
+        scm_list(&[
+            from_symbol(sample.name),
+            from_i64(sample.us as i64),
+            from_i64(sample.age_ms as i64),
+            from_str(&sample.context),
         ])
     })
 }
@@ -1712,6 +1728,7 @@ fn register_primitives() {
         register_gsubr("wm-transient-ids", 0, 0, gsubr!(wm_transient_ids, 0));
         register_gsubr("wm-floating-ids", 0, 0, gsubr!(wm_floating_ids, 0));
         register_gsubr("wm-timing-stats", 0, 0, gsubr!(wm_timing_stats, 0));
+        register_gsubr("wm-timing-slow", 0, 0, gsubr!(wm_timing_slow, 0));
         register_gsubr("wm-focus-window", 1, 0, gsubr!(wm_focus_window, 1));
         register_gsubr("wm-close-window", 1, 0, gsubr!(wm_close_window, 1));
         register_gsubr("wm-clear-focus", 0, 0, gsubr!(wm_clear_focus, 0));
@@ -1880,7 +1897,14 @@ pub fn handle_key(mods: u32, keysym: u32, keysym_name: &str, utf8: &str) -> bool
         errored = result.is_none(),
         "handle_key"
     );
-    crate::timing::record(crate::timing::Probe::HandleKey, started);
+    // Name only a key that a binding consumed, never ordinary typing.
+    crate::timing::record_with(crate::timing::Probe::HandleKey, started, || {
+        if consumed {
+            format!("{keysym_name} mods={mods}")
+        } else {
+            "unbound key".into()
+        }
+    });
     consumed
 }
 

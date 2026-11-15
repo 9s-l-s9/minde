@@ -2261,8 +2261,16 @@ impl MindeState {
         let interval = refresh_interval(&output);
 
         let started = std::time::Instant::now();
+        let captures = self.pending_captures.len();
         let rendered = self.render_surface(node, crtc);
-        crate::timing::record(crate::timing::Probe::Render, started);
+        crate::timing::record_with(crate::timing::Probe::Render, started, || {
+            let outcome = match &rendered {
+                Ok(true) => "flip",
+                Ok(false) => "no damage",
+                Err(_) => "error",
+            };
+            format!("{} {outcome} captures={captures}", output.name())
+        });
         let now = self.start_time.elapsed();
         let Some(surface) = self.output_surface_mut(node, crtc) else {
             return;

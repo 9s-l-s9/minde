@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- `(wm-timing-slow)` returns the most recent samples that exceeded one frame
+  with their context: the bound key, the command, the output, or the connector
+  scan. `(wm-timing-stats)` gains a `connector-scan` probe (#180).
+
 - `wm-configure-appearance!` sets border width, background and overlay font,
   padding and colors. Existing overlays update immediately and rasterize at
   the output's integer-ceil scale for sharp high-density text (#147).
