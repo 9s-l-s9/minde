@@ -47,14 +47,8 @@ This counter also detects a supported change followed by its inverse."
   ;; Read the policy owner's records, never maintain another group mirror.
   (module-ref (resolve-module '(minde groups)) '%groups))
 
-(define (group-ids g)
-  (delete-duplicates
-   (append (append-map frame-window-ids
-                       (append-map frame-leaves (group-all-trees g)))
-           (group-floats g))))
-
 (define (window-group id)
-  (find (lambda (g) (member id (group-ids g))) (groups)))
+  (find (lambda (g) (member id (group-window-ids g))) (groups)))
 
 (define (group-head-trees g)
   (sort

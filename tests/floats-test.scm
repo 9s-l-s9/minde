@@ -239,6 +239,38 @@
 (check "ratclick forwards" %clicks '(1))
 (check "idle-ms reads the subr" (idle-ms) 1234)
 
+;; Number shortcuts share a group's namespace across tiles and floats.
+(create-group! "numbered")
+(handle-window-map! 20 "first" "term")
+(float-this!)
+(handle-window-map! 21 "second" "term")
+(check "a new tile skips the float's number" (map window-number '(20 21)) '(0 1))
+(select-window-by-number! 0)
+(check "the float can be selected by number" (focused-window-id) 20)
+(renumber-window! 1)
+(check "renumber swaps the focused float and the tile"
+       (map window-number '(20 21)) '(1 0))
+
+(create-floating-group-in-background! "number destination")
+(add-placement-rule! #:app-id "number-float" #:group "number destination")
+(handle-window-map! 22 "first float" "number-float")
+(handle-window-map! 23 "second float" "number-float")
+(check "rule-placed floats use the hidden group's own numbers"
+       (map window-number '(22 23)) '(0 1))
+(move-window-to-next-group!)
+(check "moving a float reserves numbers already used by destination floats"
+       (map window-number '(22 23 20)) '(0 1 2))
+(switch-to-next-group!)
+(select-window-by-number! 2)
+(check "the moved float is selectable by its new number" (focused-window-id) 20)
+(let ((custom (expt 2 64)))
+  (renumber-window! custom)
+  (handle-window-map! 24 "third float" "term")
+  (check "mapping reuses the gap left by a large custom number" (window-number 24) 2)
+  (select-window-by-number! custom)
+  (shift-current-window-to-previous-group!)
+  (check "a moved float keeps an available custom number" (window-number 20) custom))
+
 (if (zero? %failures)
     (format #t "all tests passed~%")
     (begin (format #t "~a failure(s)~%" %failures)

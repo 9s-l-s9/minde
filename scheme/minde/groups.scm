@@ -148,11 +148,6 @@
   (let ((g (find-group-by-name name)))
     (and g (member id (group-window-ids g)) #t)))
 
-(define (group-window-ids g)
-  (append (append-map frame-window-ids
-                      (append-map frame-leaves (group-all-trees g)))
-          (group-floats g)))
-
 (define (window-group id)
   (find (lambda (g) (member id (group-window-ids g))) %groups))
 
@@ -196,8 +191,7 @@ or clearing focus)."
       ;; target group (from whichever group holds it) before parking.
       (for-each
        (lambda (id)
-         (let ((g (find (lambda (g) (member id (group-window-ids g)))
-                        %groups)))
+         (let ((g (window-group id)))
            (when (and g (not (eq? g target)))
              (move-window-between-groups! id g target))))
        (sticky-windows))
@@ -343,7 +337,7 @@ A no-op with one group."
              (find (lambda (t) (remove-window-from-tree-in! t id))
                    (group-all-trees g)))
            (hide-window! id)
-           (ensure-unique-window-number! id (group-all-trees fallback))
+           (ensure-unique-window-number! id fallback)
            (frame-add-window! (group-current-frame fallback) id))
          ids)
         (switch-to-group! fallback)
@@ -504,7 +498,7 @@ marked * (StumpWM groups/vgroups)."
               (begin
                 (hide-window! id)
                 (frame-add-window! (group-current-frame to) id)))))
-    (ensure-unique-window-number! id (group-all-trees to))
+    (ensure-unique-window-number! id to)
     ;; If either end is the visible group and dynamic, retile it now;
     ;; a hidden dynamic group retiles when activated.
     (when (and (eq? to (current-group)) (dynamic-group? to))
@@ -870,7 +864,7 @@ Refuses windows without an app-id instead of remembering a transient title."
          (leaf (list-ref leaves (min (max 0 (caddr rule))
                                      (- (length leaves) 1)))))
     (remember-window-title! id title app-id)
-    (assign-window-number! id (group-all-trees g))
+    (assign-window-number! id g)
     (if float?
         (add-float! g id (default-float-rect))
         (frame-add-window! leaf id))
@@ -922,7 +916,7 @@ the window actually moved; the caller re-syncs."
     (and source (or float? (not (member id (frame-window-ids leaf))))
          (begin
            (any (lambda (t) (remove-window-from-tree-in! t id)) (group-all-trees source))
-           (ensure-unique-window-number! id (group-all-trees g))
+           (ensure-unique-window-number! id g)
            (if float?
                (begin
                  (clear-unmaximized! id)
