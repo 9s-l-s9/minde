@@ -31,14 +31,17 @@ fn await_id(title: &str) -> u32 {
     );
     id.unwrap()
 }
-fn spawn_display(out: &Path, label: &str, expected: &str) {
-    let path = out.join(format!("{label}.display"));
+fn check_spawn_environment(out: &Path, label: &str, display: &str) {
+    let path = out.join(format!("{label}.env"));
     let quoted = format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
-    let command = "printf '%s' \"${DISPLAY-unset}\" > ".to_owned() + &quoted;
+    let command = format!(
+        "printf '%s\\n' \"${{DISPLAY-unset}}\" \"${{GDK_BACKEND-unset}}\" \"${{MOZ_ENABLE_WAYLAND-unset}}\" > {quoted}"
+    );
+    let expected = format!("{display}\nx11\nunset\n");
     evaluate(&format!("(wm-spawn {command:?})"), "#t");
     until(
         || fs::read_to_string(&path).is_ok_and(|s| s == expected),
-        "spawned DISPLAY did not match",
+        "spawned client did not receive its Xwayland display and configured toolkit environment",
     );
 }
 fn start_drag(anchor: &mut Input, pointer: u32, id: u32, button: u32) {
@@ -421,7 +424,7 @@ pub fn run() {
     let pointer = anchor.virtual_pointer();
     let mut target = X11Client::new(&executable, "x11-lifecycle-target");
     output_associations(&mut observer, &target);
-    spawn_display(out, "ready", &xdisplay);
+    check_spawn_environment(out, "ready", &xdisplay);
     let cases = env::var("MINDE_XWAYLAND_CASES").unwrap_or_else(|_| "unmap loss".into());
     if cases.split_whitespace().any(|s| s == "unmap") {
         for button in [272, 273] {
@@ -514,7 +517,7 @@ pub fn run() {
         anchor.wait(pointer_start, |e| e.is(anchor_pointer, 0));
         anchor.send(pointer, 2, &words(&[0, 272, 0]));
         anchor.roundtrip();
-        spawn_display(out, "failed", "unset");
+        check_spawn_environment(out, "failed", "unset");
         let clipboard = Command::new("timeout")
             .args(["5", "wl-paste", "--no-newline"])
             .env(

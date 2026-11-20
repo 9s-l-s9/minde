@@ -9,6 +9,10 @@ Target version: `1.0.0-rc1`.
 
 ### Changed
 
+- Programs launched with `wm-spawn` inherit the session's GTK and Mozilla
+  backend preferences. These can be set in the user's Minde init file.
+  The TTY debug launcher also honors the session's keyboard layout and variant.
+
 - After its first frame, an `ext-image-copy-capture` request without buffer
   damage waits for new content, as the protocol allows and damage-aware wlr
   copies already did. A recorder no longer makes the compositor render a

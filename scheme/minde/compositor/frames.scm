@@ -1989,7 +1989,7 @@ rect positioned by its gravity (StumpWM unmaximize)."
      ((not (memq grav %gravities))
       (echo (format #f "unknown gravity ~a" grav)))
      ((not (hash-ref %unmaximized id))
-      (echo "unmaximize first (Print P u)"))
+      (echo "run (unmaximize!) before setting window gravity"))
      (else
       (hash-set! %unmaximized id grav)
       (sync-frames!)

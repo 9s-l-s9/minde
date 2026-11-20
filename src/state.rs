@@ -689,8 +689,7 @@ impl MindeState {
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "winit");
 
-        // Keymap from the standard XKB_DEFAULT_* environment variables
-        // (e.g. XKB_DEFAULT_LAYOUT=de XKB_DEFAULT_VARIANT=bone).
+        // Build the seat keymap from the session's standard XKB_DEFAULT_* values.
         let env = |k: &str| std::env::var(k).unwrap_or_default();
         let (rules, model, layout, variant) = (
             env("XKB_DEFAULT_RULES"),

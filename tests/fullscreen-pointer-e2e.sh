@@ -45,9 +45,10 @@ gcc -Wall -Wextra -Werror -I"$OUT" tests/clients/pointer-constraints.c \
 gcc -Wall -Wextra -Werror tests/clients/x11-fullscreen.c \
     $(pkg-config --cflags --libs x11) -o "$OUT/x11-client"
 
-# Autostart runs before Xwayland is ready. Probe the real child environment
-# while retaining the bundled policy used by the rest of this gate.
+# Exercise child environment inheritance with Xwayland starting, ready and lost.
 cat >"$OUT/startup.scm" <<'EOF'
+(setenv "GDK_BACKEND" "x11")
+(unsetenv "MOZ_ENABLE_WAYLAND")
 (primitive-load-path "init.scm")
 (define lifecycle-original-startup handle-startup!)
 (define (handle-startup!)
