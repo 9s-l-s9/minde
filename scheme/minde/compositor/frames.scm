@@ -137,6 +137,7 @@
             focus-last-head!
             head-of-window
             group-all-trees
+            group-window-ids
             map-group-frame-trees!
             add-float!
             default-float-rect
@@ -410,8 +411,8 @@
                                 (car pair)))
                         (group-heads %active-group))))
 
-(define (active-leaves)
-  (append-map frame-leaves (group-all-trees %active-group)))
+(define (group-leaves group)
+  (append-map frame-leaves (group-all-trees group)))
 
 (define (set-last-output-from-head!)
   (let ((r (head-rect %current-head-id)))
@@ -612,7 +613,7 @@ and 'span (one tree over the union of all monitors)."
                              (if rect (caddr rect) (frame-w frame))
                              (if rect (cadddr rect) (frame-h frame)))))
         (frame-window-ids frame)))
-     (append-map frame-leaves (group-all-trees g))))
+     (group-leaves g)))
   ;; Park the group's floats too (keeping their size; wm-place-float so
   ;; they don't pick up tiled states while hidden).
   (for-each
@@ -630,7 +631,7 @@ and 'span (one tree over the union of all monitors)."
   "Returns the number of tiled and floating windows owned by G."
   (+ (length (group-floats g))
      (apply + (map (lambda (f) (length (frame-window-ids f)))
-                   (append-map frame-leaves (group-all-trees g))))))
+                   (group-leaves g)))))
 
 ;; Parks a single window off-screen -- used when a window is moved out of
 ;; the active group's tree into a hidden group (so it doesn't linger
@@ -851,47 +852,62 @@ Returns the previously reported raw (title . app-id) pair, or #f."
 
 ;; ---------------------------------------------------------------------
 ;; Window numbers (StumpWM: every window gets the smallest free number
-;; in its group; Print 0-9 select by number).
+;; in its group; number shortcuts select within that group).
 ;; ---------------------------------------------------------------------
 
-;; id -> number. Global map, but numbers are only kept unique within a
-;; group (a window lives in exactly one group's tree).
+;; id -> number. Each group shares one set of numbers across heads and floats.
 (define %window-numbers (make-hash-table))
 
 (define (window-number id)
   "Returns window ID's group-local selection number, or #f."
   (hash-ref %window-numbers id))
 
-;; TREE may also be a LIST of trees (e.g. group-all-trees output), so
-;; number bookkeeping can span a group's heads.
+;; TREE may also be a list of trees, as returned by group-all-trees.
 (define (tree-window-ids tree)
   (if (or (null? tree) (pair? tree))
       (append-map tree-window-ids tree)
       (append-map frame-window-ids (frame-leaves tree))))
 
-(define (used-numbers-in tree except-id)
+(define (group-window-ids group)
+  "Returns GROUP's tiled windows across all heads, followed by its floats."
+  (fold-right (lambda (frame ids) (append (frame-window-ids frame) ids))
+              (group-floats group)
+              (group-leaves group)))
+
+(define (used-window-numbers group-or-tree except-id)
+  ;; The numbering helpers also accept a tree or list of trees for callers
+  ;; that explicitly supply a tiled scope.
   (filter-map (lambda (id)
-                (and (not (equal? id except-id))
-                     (hash-ref %window-numbers id)))
-              (tree-window-ids tree)))
+                (and (not (equal? id except-id)) (window-number id)))
+              (if (group? group-or-tree)
+                  (group-window-ids group-or-tree)
+                  (tree-window-ids group-or-tree))))
 
 (define (smallest-free used)
-  (let loop ((n 0)) (if (memv n used) (loop (+ n 1)) n)))
+  ;; With N occupied numbers at least one of 0..N is free, even when a
+  ;; window was manually renumbered well above N.
+  (let* ((count (length used))
+         (occupied (make-bitvector (1+ count) #f)))
+    (for-each (lambda (n)
+                (when (and (exact-integer? n) (<= 0 n count))
+                  (bitvector-set-bit! occupied n)))
+              used)
+    (bitvector-position occupied #f)))
 
-(define (assign-window-number! id tree)
-  "Gives ID the smallest number not used by another window of TREE."
-  (hash-set! %window-numbers id (smallest-free (used-numbers-in tree id))))
+(define (assign-window-number! id group-or-tree)
+  "Gives ID the smallest number not used by another window in GROUP-OR-TREE."
+  (hash-set! %window-numbers id (smallest-free (used-window-numbers group-or-tree id))))
 
 (define (forget-window-number! id)
   "Removes the group-local selection number assigned to window ID."
   (hash-remove! %window-numbers id))
 
-(define (ensure-unique-window-number! id tree)
-  "Keeps ID's number if free within TREE (its new group), else assigns a
-fresh one -- for windows moved between groups."
-  (let ((n (hash-ref %window-numbers id)))
-    (when (or (not n) (memv n (used-numbers-in tree id)))
-      (assign-window-number! id tree))))
+(define (ensure-unique-window-number! id group-or-tree)
+  "Keeps ID's number if available in GROUP-OR-TREE, else assigns the first free one."
+  (let ((n (window-number id))
+        (used (used-window-numbers group-or-tree id)))
+    (when (or (not n) (memv n used))
+      (hash-set! %window-numbers id (smallest-free used)))))
 
 (define (window-id-by-number n)
   (find (lambda (id) (eqv? n (hash-ref %window-numbers id)))
@@ -925,9 +941,9 @@ fresh one -- for windows moved between groups."
         (echo (format #f "no window ~a" n)))))
 
 (define (renumber-window! n)
-  "Gives the current window the number N; if another window of the group
+  "Gives the focused window the number N. If another window of the group
 holds N, the two swap (StumpWM renumber)."
-  (let ((id (current-frame-window)))
+  (let ((id (focused-window-id)))
     (when id
       (let ((holder (window-id-by-number n))
             (old (hash-ref %window-numbers id)))
@@ -2011,14 +2027,13 @@ window')."
 ;; "buffer list" that focus-next-window!/pull-hidden-next! cycle through.
 (define (all-window-ids)
   "Returns all active-group window identifiers in frame then float order."
-  (append (append-map frame-window-ids (active-leaves))
-          (group-floats %active-group)))
+  (group-window-ids %active-group))
 
 ;; The leaf frame a window currently lives in (any head of the active
 ;; group), or #f.
 (define (frame-of-window id)
   (find (lambda (f) (member id (frame-window-ids f)))
-        (active-leaves)))
+        (group-leaves %active-group)))
 
 ;; The head id whose tree holds window ID in the active group, or #f.
 (define (head-of-window id)
@@ -2063,7 +2078,7 @@ is raised in it if it was hidden."
    (lambda (f)
      (filter (lambda (id) (not (equal? id (frame-current-window f))))
              (frame-window-ids f)))
-   (active-leaves)))
+   (group-leaves %active-group)))
 
 (define (pull-hidden-next!)
   "StumpWM's `pull` (pull-hidden-next): moves the next HIDDEN window of
@@ -2652,7 +2667,7 @@ Returning to a fullscreen group restores its window and focus."
   (if (window-floating? id)
       (member id (group-floats group))
       (any (lambda (frame) (member id (frame-window-ids frame)))
-           (append-map frame-leaves (group-all-trees group)))))
+           (group-leaves group))))
 
 (define (prune-fullscreen-owners!)
   ;; Explicit moves/merges/sticky transfers end fullscreen for the moved
@@ -2795,7 +2810,7 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
   "Adds ID to the active group's current frame as its new current window
 -- or floats it right away if the active group is a float group."
   (remember-window-title! id title app-id)
-  (assign-window-number! id (group-all-trees %active-group))
+  (assign-window-number! id %active-group)
   (if (group-float? %active-group)
       (begin
         (add-float! %active-group id (default-float-rect))
@@ -2809,7 +2824,7 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
 #:float? placement rule matched) instead of adding it to the current
 frame -- the frame's window keeps its place and focus geometry."
   (remember-window-title! id title app-id)
-  (assign-window-number! id (group-all-trees %active-group))
+  (assign-window-number! id %active-group)
   (run-event-hook! 'new-window id title app-id)
   (float-window! id))
 

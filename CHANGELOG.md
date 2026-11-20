@@ -63,6 +63,10 @@ Target version: `1.0.0-rc1`.
 
 ### Fixed
 
+- Window-number shortcuts now account for floating windows when mapping or
+  moving windows between groups. Renumbering a focused float swaps numbers
+  with the window that already holds the requested number.
+
 - `save-layout!` refuses a name that the configuration defines and says so,
   instead of reporting a save that the next start discards (#174).
 
