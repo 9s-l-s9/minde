@@ -6,7 +6,7 @@ command -v rg >/dev/null 2>&1 || {
     exit 127
 }
 
-set -- scheme/init.scm scheme/default-config.scm guix.scm
+set -- scheme/init.scm scheme/default-config.scm guix.scm debug-tty.sh
 pattern='Projects/System|Projects/images|Projects/WorkingMemory|de.*bone|swaybg|swaylock|emacsclient|ASK_AI_SYSTEM'
 
 if rg -n "$pattern" "$@"; then

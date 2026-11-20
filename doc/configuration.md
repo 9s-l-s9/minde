@@ -129,6 +129,18 @@ Personal Scheme can add launchers, hooks, layouts, placement rules and
 `(register-configuration-layer!)` once so later declarative reloads retain that
 baseline.
 
+`wm-spawn` passes the session's toolkit settings to its children. To prefer
+native Wayland for GTK and Mozilla applications, put these settings in
+`~/.config/minde/init.scm` before starting any clients:
+
+```scheme
+(setenv "GDK_BACKEND" "wayland,x11")
+(setenv "MOZ_ENABLE_WAYLAND" "1")
+```
+
+To choose a backend for a single launch, set it in the command, for example
+`(wm-spawn "GDK_BACKEND=x11 gtk4-demo")`.
+
 This explicitly captures the current prefix and global bindings in place of
 inheriting future bundled defaults. Use declarative bindings when changes
 should remain entirely controlled by the configuration file.
@@ -415,11 +427,11 @@ selection for restoration when the layer closes.
 
 ### Keyboard layouts
 
-minde builds one keymap from the standard `XKB_DEFAULT_*` variables. A comma
-list gives several *layout groups* that share the keymap:
+minde and its TTY debug launcher use the standard `XKB_DEFAULT_*` variables.
+A comma-separated list gives several *layout groups* that share one keymap:
 
 ```sh
-XKB_DEFAULT_LAYOUT=de,us XKB_DEFAULT_VARIANT=bone, minde
+XKB_DEFAULT_LAYOUT=us,de minde
 ```
 
 If xkbcommon cannot compile the requested keymap, minde logs all five
@@ -432,16 +444,14 @@ xkbcommon's own toggle options work unchanged
 (`XKB_DEFAULT_OPTIONS=grp:win_space_toggle`, `grp:caps_toggle`, ...); the
 compositor also exposes the groups to Scheme so a switch can sit under the
 prefix key. `(keyboard-layouts)` lists the groups in keymap order as
-`((name . "German (Bone)") (active . #t))` alists;
+`((name . "English (US)") (active . #t))` alists;
 `(set-keyboard-layout! spec)` activates one by zero-based index, by the
 symbol `next`/`prev` (cycling) or by a case-insensitive name prefix
 (`"English"`). The focused client sees the change through the normal
 modifiers event. Whenever the active group changes -- through
 `set-keyboard-layout!` or an XKB toggle -- `(handle-keyboard-layout-changed!
 name)` runs; the default shows the name in the message overlay, redefine it
-for a bar or silence. A typical use is a keyboard whose firmware already
-implements the layout (a Corne with Bone on a US host) next to the built-in
-keyboard:
+for a bar or silence. To cycle the configured layouts from the prefix map:
 
 ```scheme
 (bind-prefix-key! "k" (lambda () (set-keyboard-layout! 'next)) "keyboard layout")

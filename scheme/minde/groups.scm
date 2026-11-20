@@ -1293,8 +1293,8 @@ for REASON (a string). The default logs it through `wm-log'."
 
 ;; ---------------------------------------------------------------------
 ;; Keyboard layout groups. minde builds one keymap from the standard
-;; XKB_DEFAULT_* variables; a comma list (XKB_DEFAULT_LAYOUT="de,us",
-;; XKB_DEFAULT_VARIANT="bone,") yields several groups that these
+;; XKB_DEFAULT_* variables. A comma-separated list of layouts, such as
+;; XKB_DEFAULT_LAYOUT="us,de", yields several groups that these
 ;; wrappers (over `wm-keyboard-layouts' / `wm-set-keyboard-layout!')
 ;; switch between -- an in-compositor alternative to grp:* toggle
 ;; options, so the switch can live under the prefix key.
@@ -1302,7 +1302,7 @@ for REASON (a string). The default logs it through `wm-log'."
 
 (define (keyboard-layouts)
   "The XKB layout groups of the seat keyboard, in keymap order, as a list
-of alists ((name . \"German (Bone)\") (active . #t)). Groups come from
+of alists ((name . \"English (US)\") (active . #t)). Groups come from
 XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
 gives one entry. Returns '() without a compositor."
   (let ((layouts (rust-call 'wm-keyboard-layouts)))

@@ -843,7 +843,7 @@ Use configure-gaps! and gaps-on! for StumpWM-style per-edge padding.&quot;
      ((not (memq grav %gravities))
       (echo (format #f &quot;unknown gravity ~a&quot; grav)))
      ((not (hash-ref %unmaximized id))
-      (echo &quot;unmaximize first (Print P u)&quot;))
+      (echo &quot;run (unmaximize!) before setting window gravity&quot;))
      (else
       (hash-set! %unmaximized id grav)
       (sync-frames!)
@@ -1369,11 +1369,11 @@ a sync since nothing hidden is on-screen).&quot;
   (when owner (retile-group-heads! owner))
   (run-event-hook! 'destroy-window id)
   #t)</code></pre></template></article><article id="b140" class="abr-binding" data-label="(minde groups) keyboard-layouts  ·  scheme/minde/groups.scm lines 1303-1309"><h3><code>keyboard-layouts</code><span class="kind">procedure</span></h3><p class="sig"><code>(keyboard-layouts)</code></p><p class="desc">The XKB layout groups of the seat keyboard, in keymap order, as a list
-of alists ((name . &quot;German (Bone)&quot;) (active . #t)). Groups come from
+of alists ((name . &quot;English (US)&quot;) (active . #t)). Groups come from
 XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
 gives one entry. Returns '() without a compositor.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/groups.scm#L1303">View on GitHub: scheme/minde/groups.scm:1303</a></p><button class="abr-show-source" data-id="b140">View source</button><template><pre><code>(define (keyboard-layouts)
   &quot;The XKB layout groups of the seat keyboard, in keymap order, as a list
-of alists ((name . \&quot;German (Bone)\&quot;) (active . #t)). Groups come from
+of alists ((name . \&quot;English (US)\&quot;) (active . #t)). Groups come from
 XKB_DEFAULT_LAYOUT (comma separated) at startup; a single-layout keymap
 gives one entry. Returns '() without a compositor.&quot;
   (let ((layouts (rust-call 'wm-keyboard-layouts)))

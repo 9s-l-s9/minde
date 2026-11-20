@@ -655,13 +655,6 @@ pub fn spawn_on_main_thread(cmd: &str) {
     let display = XWAYLAND_DISPLAY.load(Ordering::SeqCst);
     if display >= 0 {
         command.env("DISPLAY", format!(":{display}"));
-        // With DISPLAY set, dual-stack toolkits (Firefox/zen, GTK apps)
-        // would default to X11 -- through Xwayland their CSD shadow
-        // margins aren't compensated (the old zen gap bug). Prefer
-        // Wayland; X11-only apps ignore these. A user command can still
-        // override with its own VAR=... prefix.
-        command.env("MOZ_ENABLE_WAYLAND", "1");
-        command.env("GDK_BACKEND", "wayland,x11");
     } else {
         // Never launch an X11 client on the host display while our server
         // is starting, disabled or failed. Keep the compositor's own env.
@@ -1063,7 +1056,7 @@ unsafe extern "C" fn wm_configure_appearance(settings: Scm) -> Scm {
     }
 }
 
-/// `(wm-keyboard-layouts)` -> list of `((name . "German (Bone)")
+/// `(wm-keyboard-layouts)` -> list of `((name . "English (US)")
 /// (active . #t))` alists, one per XKB layout group of the seat keyboard
 /// in keymap order. `()` before the keyboard exists.
 unsafe extern "C" fn wm_keyboard_layouts() -> Scm {
