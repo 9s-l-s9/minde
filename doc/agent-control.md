@@ -201,10 +201,9 @@ make the outcome unknown. Receipts are not durable across restarts and do
 not provide exactly-once semantics for arbitrary `eval`.
 
 ```sh
-mindectl eval '(wm-screenshot-directory)' --json
-# Use the returned absolute directory in the path below.
-mindectl call screenshot \
-  '((path . "/run/user/1000/minde/screenshots/window.png") (window . 42))' --json
+# eval prints the path as a quoted Scheme string, ready for the call arguments.
+path=$(mindectl eval '(string-append (wm-screenshot-directory) "/window.png")')
+mindectl call screenshot "((path . $path) (window . 42))" --json
 mindectl wait REQUEST-ID --session SESSION --timeout-ms 10000 --json
 ```
 

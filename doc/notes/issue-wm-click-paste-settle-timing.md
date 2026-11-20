@@ -1,7 +1,7 @@
 # Bug/Feature: Klicks auf custom Controls flaky, Doppelklick unerkannt, Paste-Lag — Primitive sollen „settlen"
 
 ## Symptom
-Drei Timing-Races aus echten Ashby-/GTK-Sessions (AUTOMATION-WISHLIST E/F, #6):
+Drei Timing-Races bei Browser-Formularen und GTK-Dialogen (AUTOMATION-WISHLIST E/F, #6):
 
 1. **Klick auf custom React-Controls (Radio/Segmented-Pill) registriert oft nicht.**
    Muster, das schließlich klappte: warpen, ~400 ms warten, klicken, ~300 ms
@@ -28,7 +28,7 @@ Drei Timing-Races aus echten Ashby-/GTK-Sessions (AUTOMATION-WISHLIST E/F, #6):
    damit Skripte nicht selbst schlafen müssen.
 
 ## Akzeptanz
-- 10/10 Klicks auf einen Ashby-Radio-Label treffen ohne manuelles Warten.
+- 10/10 Klicks auf das Label eines Radiobuttons treffen ohne manuelles Warten.
 - `(wm-click 'left 2)` öffnet eine Datei in einer GTK-Liste.
 - Nach `(wm-paste 2000)` zeigt der direkt folgende Screenshot den Feldinhalt.
 
@@ -43,10 +43,10 @@ Fix 1+2 umgesetzt: `wm-click` sendet jetzt vor dem Press eine **Hover-Motion +
 warp→warten→klicken-Workaround ist damit Default. `(wm-click 'left 2)` existierte
 bereits (count-Parameter) und profitiert vom neuen Timing. Fix 3 (Paste-Settle)
 bewusst nicht umgesetzt: synchroner IPC-Reply-Kontrakt; stattdessen billige
-Verifikation via neuem `wm-screenshot`. Ashby-Real-Test steht aus.
+Verifikation via neuem `wm-screenshot`. Test im Browser steht aus.
 
-## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+## Real-World-Verifikation (2026-09-01, nested Session + Zen)
 Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
-Zen-Onboarding (3 Buttons) und echte Ashby-Radios (direkt auf den Kreis, kein
+Zen-Onboarding (3 Buttons) und Radiobuttons im Formular (direkt auf den Kreis, kein
 Label-Umweg nötig): jeder Klick sitzt beim ersten Versuch. Hover→Settle→Click
 bestätigt. **VERIFIZIERT.**

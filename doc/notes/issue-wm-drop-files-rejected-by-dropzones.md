@@ -5,7 +5,7 @@
 `(wm-automation-status token)` meldet danach `(drop-files rejected)`. Die Datei
 landet **nicht** in der Ziel-Dropzone.
 
-**Reproduktion (2026-08-25, echtes Zen nativ Wayland, Ashby-Upload-Feld
+**Reproduktion (2026-08-25, Zen nativ unter Wayland, Upload-Feld
 „or drag and drop here"):**
 - An mehreren Koordinaten innerhalb der Dropzone getestet (`1600,730`, `1665,698`,
   `1575,698`, `1500,730`) → jedes Mal `(drop-files rejected)`.
@@ -34,7 +34,7 @@ klicken (der Clamp-Fix war hier der entscheidende Baustein; Enter/Return schlie�
 Dialog weiterhin nicht zuverlässig). Funktionierte einwandfrei.
 
 ## Akzeptanz
-`(wm-drop-files x y '("/abs/cv.pdf"))` auf eine Firefox/Zen-Dropzone
+`(wm-drop-files x y '("/tmp/test.pdf"))` auf eine Firefox/Zen-Dropzone
 (`<input type=file>` bzw. „drag and drop here") hängt die Datei an; Status endet auf
 `done`/`accepted` statt `rejected`. Mehrere Pfade → mehrere Dateien.
 
@@ -47,11 +47,11 @@ Dwell-Loop von 10 auf **40 Motion-Turns (~1 s)** erhöht und pro Turn ein
 **±1-px-Jitter** eingebaut, damit der Client echte Koordinatenänderungen sieht
 (Browser feuern `dragover` pro Motion-Event und koalescen Positionsduplikate).
 Release weiterhin sofort bei `DndAction::Copy`. Umsetzung in `src/state.rs`
-(`start_automation_dnd`/`continue_automation_dnd`). Gegen echte Ashby-Dropzone
-noch zu verifizieren; GTK-Dialog-Fallback bleibt dokumentiert.
+(`start_automation_dnd`/`continue_automation_dnd`). Im Browser noch
+zu verifizieren; GTK-Dialog-Fallback bleibt dokumentiert.
 
-## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+## Real-World-Verifikation (2026-09-01, nested Session + Zen)
 Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
-Echte Ashby-Dropzone (jobs.ashbyhq.com/sierra, Resume-Feld): `(wm-drop-files
+Datei-Dropzone im Browser-Formular: `(wm-drop-files
 x y (list pdf))` → `(drop-files accepted)`, Datei erscheint als Attachment mit
 Replace-Button (vorher abgelehnt). Dwell-40+Jitter bestätigt. **VERIFIZIERT.**

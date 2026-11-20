@@ -101,8 +101,8 @@ trigger a site rebuild.
 - Keep generated files, logs, and screenshots out of the repository.
 - Update CHANGELOG.md for user-visible changes.
 - Preserve SPDX headers and NOTICE entries on upstream-derived code.
-- Keep repository defaults portable; personal programs and host policy belong
-  in the separate System configuration.
+- Keep repository defaults portable. Put program choices and host-specific
+  settings in user or system configuration.
 
 By contributing, you agree that your contribution is licensed under the
 license declared by the file, or GPL-3.0-or-later when no file-specific SPDX

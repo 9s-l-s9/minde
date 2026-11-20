@@ -15,8 +15,7 @@ change without compatibility aliases before 1.0.
 
 - A built-in modeline, panel, or system tray; use a separate tool such as eww.
 - Support for arbitrary distributions or untested GPUs before 1.0.
-- Personal programs and host-specific configuration from the maintainer's
-  System repository.
+- Site-specific launchers and machine settings supplied by a user configuration.
 
 For a bug, run the smallest relevant `make check-*` target and include the
 revision from `minde --version`, backend, Guix system revision, reproduction

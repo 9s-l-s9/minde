@@ -68,52 +68,25 @@ upstream-signed Guix 1.5.0 bootstrap whose SHA-256 is pinned in
 Guix builds and tests the archive in its isolated build environment. Neither a
 developer's `target/` cache nor a local checkout is used for the installed binary.
 
-The personal System repository consumes these builds with:
+To consume a binary release, select the full source commit. Verify that the
+GitHub provenance names that commit and this repository's `guix-binary.yml`
+workflow on `main`, running on a GitHub-hosted runner. The attested
+`binary.scm` records the Minde and Xwayland store paths and the SHA-256
+digests of the archive, closure list and ephemeral signing key. Verify those
+digests before importing the archive, and authorize the key for that import
+only. Pin the commit and digests in the consuming configuration so replacing
+a release asset cannot silently change an installation.
 
-```sh
-cd ../System
-make minde-install COMMIT=<full commit from a successful guix-binary run>
-make reconfigure-system
-make reconfigure-home
-```
+CI exercises the Guix import with a temporary key authorization. It checks
+that an unauthorized archive is rejected, that a signed store item can be
+restored, and that the daemon's global trust list is preserved.
 
-The import requires `guix`, `gh`, `curl`, `xz`, `unshare`/`mount`, internet access, and
-`sudo` on a machine with a root-owned Guix store (as on these System configurations). Commit the
-resulting `minde-binary.lock.scm` with the System configuration. On another
-`x86_64-linux` PC using that configuration, `make minde-install` imports the
-same pinned build; no GitHub login, Minde source checkout, or Rust compiler is
-needed for the import.
-The existing System Home configuration separately loads Shikane's package
-recipe from the Minde checkout; retain that checkout when using that configuration.
-
-The importer verifies GitHub's signature against the exact repository,
-workflow, `main` ref, and source commit, and rejects self-hosted attestations.
-The attested metadata pins the archive, closure list, and Guix public key by
-SHA-256. The privileged import copies the inputs to a private directory and
-verifies them again before using Guix's signature-checking NAR importer.
-The build key is authorized only in that process's temporary Guix configuration;
-it is never added to `/etc/guix/acl`. No long-lived signing secret is stored in
-GitHub. The import runs in a private mount namespace, preserving the system's
-read-only store mount. CI tests rejection of an unauthorized archive and the
-successful restoration of a signed store item before publishing. Installed
-outputs are retained under `/var/guix/gcroots/minde-binary/`.
-
-The System selector defaults to the imported binary and fails with instructions
-if it is missing. Its local derivations only create symlinks to the imported
-Minde and Xwayland outputs. Updating unrelated Guix channels or editing the
-Minde checkout therefore does not compile Minde. `MINDE_BUILD_LOCAL=1` explicitly
-opts back into a source build; the RC archive overrides below remain available.
-
-The build and import paths exclude `emSign ECC Root CA - G3` and the older
+The binary build excludes `emSign ECC Root CA - G3` and the older
 `AAA Certificate Services` root by certificate fingerprint, covering both trust
 paths for the compromised eMudhra intermediate keys. TLS verification stays
 enabled. This is scoped to these workflows and downloads; it does not update
 the machine's general-purpose trust store. See the
 [Mozilla incident report](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449).
-
-The GitHub Release itself is not an immutable trust anchor: repository admins
-can modify assets. The importer rejects changed metadata for an already pinned
-commit, and changing the binary requires selecting and reviewing a new commit.
 
 ## Package entry points
 
@@ -229,22 +202,14 @@ exist. Run `bin/minde --version` and confirm it reports the release version
 and commit. Search installed text for the temporary checkout path; there must
 be no match.
 
-To evaluate the personal System/Home configuration against the RC archive
-while retaining the normal checkout fallback:
+To build the vendored archive from the checkout that produced it:
 
 ```sh
-export MINDE_RC_ARCHIVE="$PWD/build/release/1.0.0-rc1/minde-1.0.0-rc1-vendored.tar.gz"
-export MINDE_RC_REVISION="$(git rev-parse HEAD)"
-make -C ~/Projects/System qa-home-samuel qa-system-x1 qa-system-t450s
+MINDE_SOURCE_ARCHIVE="$PWD/build/release/1.0.0-rc1/minde-1.0.0-rc1-vendored.tar.gz" \
+MINDE_VERSION=1.0.0-rc1 MINDE_BUILD_REVISION="$(git rev-parse HEAD)" \
+guix build -f guix/release.scm
 ```
 
-The shared `~/Projects/System/minde-package.scm` selector uses the archive
-only when both variables are present. Without them, existing reconfiguration
-continues to use the checkout package. Preserve both variables explicitly if
-you later invoke a privileged reconfiguration for the live SDDM test.
-
-To test the SDDM entry in a real login, install the package through the System
-configuration, reconfigure, and restart into a fresh session. Keep the prior
-Guix generation and StumpWM session available for rollback. That live-login
-step and switching `~/Projects/System` from the checkout to the actual RC
-artifact remain pending until performed by the owner.
+For a login test, add the release package to the operating system's packages
+and select Minde in the SDDM session menu. Keep the prior Guix generation
+available for rollback.
