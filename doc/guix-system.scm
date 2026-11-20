@@ -23,7 +23,5 @@
 ;;                    ;; ... your existing packages ...
 ;;                    %base-packages)))
 
-;; After reconfigure, the SDDM greeter's session dropdown gains a
-;; "minde" (Wayland) entry next to your X11 StumpWM session. Your
-;; StumpWM setup is untouched -- both sessions coexist and you pick at
-;; login. Per-user Scheme config: ~/.config/minde/init.scm.
+;; After reconfiguration, select "minde" in the SDDM session menu.
+;; Per-user Scheme configuration lives in ~/.config/minde/init.scm.

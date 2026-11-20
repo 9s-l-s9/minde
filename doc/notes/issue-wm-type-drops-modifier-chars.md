@@ -10,10 +10,10 @@ Beim Tippen von Formularfeldern über `(wm-type "…")` fallen alle Zeichen weg,
 einen Shift-/AltGr-Level brauchen — Buchstaben und `/` gehen, `@ :` (und vermutlich
 `! ? € {} …`) nicht.
 
-**Reproduktion (2026-08-25, echtes Zen, Ashby-Formular):**
+**Reproduktion (2026-08-25, Webformular in Zen):**
 - `(wm-type "user@example.com")` → Feld enthielt `userexample.com`
   (das `@` fehlte).
-- `(wm-type "https://www.linkedin.com/in/…")` → `https//www.linkedin.com/in/…`
+- Beim Tippen einer URL erschien `https://` als `https//`
   (der `:` fehlte; `/` kam durch).
 
 ## Vermutete Ursache
@@ -45,7 +45,7 @@ wird mehr gedroppt. Umsetzung in `src/state.rs` (`send_string`,
 `SyntheticAction::SetClipboard`). Achtung: das Clipboard enthält danach das
 letzte Fallback-Zeichen.
 
-## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+## Real-World-Verifikation (2026-09-01, nested Session + Zen)
 Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
 Zen-URL-Leiste: `(wm-type "a@b:c_x?!")` kommt vollständig und in richtiger
 Reihenfolge an (@ : ? ! vorher gedroppt). Clipboard-Fallback bestätigt.

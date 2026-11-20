@@ -1,6 +1,6 @@
 # minde — Automation/Scripting Wishlist
 
-Gesammelt beim Fahren von echten Browser-Formularen (Ashby-Bewerbungen) über den
+Beobachtungen beim Ausfüllen mehrseitiger Browser-Formulare über den
 IPC-Socket `$XDG_RUNTIME_DIR/minde-ipc.sock` (2026-08-25). Ziel: minde als
 zuverlässiges, headless-artiges Automatisierungs-Target. Sortiert nach Reibung.
 
@@ -16,9 +16,9 @@ zuverlässiges, headless-artiges Automatisierungs-Target. Sortiert nach Reibung.
    `(wm-click 'left)`. Mindestens (a).
 
 2. **`wm-send-string` verliert führende Zeichen.**
-   „Samuel Levi Schmidt" kam als „ Schmidt" an (nur der Rest nach der letzten
-   Pause). Vermutlich feuert die virtuelle Tastatur schneller als der Client die
-   Fokus-/Repeat-Events verarbeitet. Aktuell unbrauchbar für Formularfelder — wir
+   Bei einer Eingabe aus drei Wörtern kam nur das letzte Wort mit führendem
+   Leerzeichen an. Vermutlich feuert die virtuelle Tastatur schneller als der
+   Client die Fokus-/Repeat-Events verarbeitet. Aktuell unbrauchbar für Formularfelder — wir
    mussten auf `wm-set-clipboard` + Ctrl+V ausweichen.
    **Fix:** konfigurierbares Inter-Key-Delay, oder pro Zeichen auf ein
    commit/frame warten.
@@ -78,7 +78,7 @@ zuverlässiges, headless-artiges Automatisierungs-Target. Sortiert nach Reibung.
     `wm-raise-window` soll über Frames/Gruppen hinweg tatsächlich sichtbar raisen.
     Bei Child-/Dialog-Fenstern (File-Upload) war Fokussieren zusätzlich zickig.
 
-## 🔎 Neue Findings (2026-08-25, nach dem großen Update — HiPeople erfolgreich gefahren)
+## 🔎 Neue Findings (2026-08-25, nach dem Update)
 
 Das Update hat fast die ganze Liste umgesetzt (danke!). Zwei Rest-Punkte tauchten beim
 echten Fahren auf:
@@ -107,13 +107,12 @@ B. **`wm-drop-files` wird von Browser-Dropzones abgelehnt** (`(drop-files reject
 - `all-window-ids` / `window-title` / `window-app-id`: perfekt zum Fenster-Finden.
 - `wm-set-clipboard` + `wm-send-key 4 "v"`: der zuverlässige Text-Eingabe-Weg.
 
-## 🔎 Neue Findings (2026-08-29, atira-Ashby-Bewerbung end-to-end gefahren)
+## 🔎 Neue Findings (2026-08-29, mehrseitiges Browser-Formular)
 
 C. **`wm-scroll` scrollt weiterhin nicht** (bestätigt, s. `issue-wm-scroll-no-effect.md`),
    UND `Page_Down`/`Page_Up`/`End`/`Home` scrollen **nicht**, sobald ein Formularfeld
-   fokussiert ist (die Keys gehen ins Feld, nicht an den Viewport). Bei einem langen
-   Ashby-Formular war das der größte Zeitfresser. **Zuverlässiger Workaround gefunden:
-   Tab-Walk** — ein Feld fokussieren (`wm-click` hinein) und dann mehrfach
+   fokussiert ist (die Keys gehen ins Feld, nicht an den Viewport).
+   **Workaround:** Ein Feld fokussieren (`wm-click` hinein) und dann mehrfach
    `(wm-send-key 0 "Tab")`; der Browser scrollt das jeweils fokussierte Element
    automatisch in den Sichtbereich. So kommt man deterministisch bis zum Submit-Button.
    (Mausrad-Buttons 4/5 via `wm-click` scrollten hier ebenfalls nicht.)
@@ -124,10 +123,10 @@ D. **`wm-type` liefert `+` und Leerzeichen korrekt** (2026-08-29: „+49 000 000
    Modifier-Symbole (`@`, `:` — s. `issue-wm-type-drops-modifier-chars.md`), aber
    `+`/Space/Ziffern gehen. Für Sonderzeichen weiter Clipboard+Paste nutzen.
 
-E. **Klicks auf custom React-Controls (Ashby Radio/Segmented-Toggle) sind flaky und
+E. **Klicks auf custom React-Controls (Radio/Segmented-Toggle) sind flaky und
    brauchen das Label, nicht das Grafik-Element.** Ein `wm-click` auf den Radio-*Kreis*
-   bzw. die Pill-Mitte registrierte oft gar nicht; erst der Klick auf den **Label-Text**
-   (z. B. „Social media …", „Yes") selektierte. Zudem landete derselbe Klick mal, mal
+   bzw. die Pill-Mitte registrierte oft gar nicht. Erst der Klick auf den **Label-Text**
+   wählte die Option aus. Zudem landete derselbe Klick mal, mal
    nicht — Muster, das schließlich klappte: warpen, ~400 ms warten, klicken, ~300 ms
    drauf bleiben, per Crop-Screenshot verifizieren (Selektion = schwarz gefüllter Pill
    bzw. blauer Radio-Dot, sehr subtil). Verdacht: entweder Klick-Timing/Serial oder das
@@ -142,10 +141,6 @@ F. **Clipboard-Paste hat ~1 s Render-Lag im Feld.** Nach `wm-send-key 4 "v"` ers
    ≥1,5–2 s warten, DANN verifizieren; nie auf Basis eines Sofort-Screenshots re-pasten.
    (Kein Bug zwingend, aber dokumentierenswert; ggf. `wm-paste` erst nach Client-Commit
    zurückkehren lassen.)
-- **Der entscheidende Win:** nativer Compositor-Input hat KEIN „remote control"-
-  Flag → reCAPTCHA v3 / Ashby lassen durch, wo CDP/Marionette/Playwright blocken.
-  minde ist damit ein besseres Browser-Automatisierungs-Target als jedes
-  WebDriver-Framework. Die obigen Fixes machen es rund.
 
 ## 🔧 Update 2026-08-31 — Fünferpaket implementiert (Details in den issue-*.md)
 
@@ -163,12 +158,10 @@ F. **Clipboard-Paste hat ~1 s Render-Lag im Feld.** Nach `wm-send-key 4 "v"` ers
 
 Alle Änderungen: `make check` grün (fmt, build, test, clippy -D warnings,
 Scheme-/API-Tests); Headless-Smoke (Xvfb winit) für scroll/type/screenshot ok.
-Real-World-Verifikation (Zen-Langseite, Ashby-Radio, Ashby-Dropzone) steht aus.
+Real-World-Verifikation (Zen-Langseite, Radiobutton, Datei-Dropzone) steht aus.
 
 ### Real-World-Verifikation 2026-09-01
 Alle fünf Fixes in einer nested Session (neues Binary) gegen echte Seiten
 bestätigt: Wikipedia-Scroll (value120), Zen-URL-Leiste `a@b:c_x?!` (Type-
-Fallback), Zen-Onboarding + Ashby-Radios erster Versuch (Click-Settle), Ashby-
-Dropzone akzeptiert Drop (DnD-Dwell), 20× wm-screenshot als Verify-Loop.
-Ashby hat den minde-Flow nicht als Bot geflaggt. Host-Session läuft noch mit
-altem Binary — Compositor-Neustart nötig, damit die Fixes dort ankommen.
+Fallback), Zen-Onboarding und Radiobuttons beim ersten Versuch (Click-Settle),
+Datei-Dropzone akzeptiert Drop (DnD-Dwell), 20× wm-screenshot als Verify-Loop.

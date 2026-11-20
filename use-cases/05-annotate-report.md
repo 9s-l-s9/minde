@@ -23,12 +23,13 @@ with the annotations, writes the sidecar, and publishes an
 
 ### 2. Agent side  (plan:H2, H3, B3)
 
-The agent, subscribed with `mindectl subscribe --events`, receives:
+The agent subscribes with `mindectl subscribe --events`. With
+`XDG_STATE_HOME=/tmp/minde-example`, the event contains absolute paths:
 
 ```scheme
 (annotation-report
-  #:image "/home/samuel/.local/state/minde/annotations/20260905-141203.png"
-  #:sidecar "/home/samuel/.local/state/minde/annotations/20260905-141203.geometry.scm"
+  #:image "/tmp/minde-example/minde/annotations/20260905-141203.png"
+  #:sidecar "/tmp/minde-example/minde/annotations/20260905-141203.geometry.scm"
   #:shapes ((rect (1412 388 220 64) #:colour "#ff4040"
                   #:windows (23) #:frame 1
                   #:label "checkbox misaligned")))

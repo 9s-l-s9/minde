@@ -1,8 +1,8 @@
 # Feature: native Screenshot-Primitive `(wm-screenshot path [id])`
 
 ## Motivation
-Der Automatisierungs-Verify-Loop (Bewerbungs-Submits, LinkedIn-Collect) hängt heute
-an externem `grim`: jeder Klick wird per Vollbild-Screenshot + Crop verifiziert.
+Die Verifikation von UI-Interaktionen hängt heute an externem `grim`:
+Jeder Klick wird per Vollbild-Screenshot + Crop verifiziert.
 Das ist der größte Zeitfresser im Flow und macht den IPC nicht self-contained
 (AUTOMATION-WISHLIST #7). Die Capture-Maschinerie existiert bereits zweifach
 (`ext-image-copy-capture-v1`, `wlr-screencopy`) — eine IPC-Primitive kann sie
@@ -45,7 +45,7 @@ Render über die bestehende Capture-Queue (`CaptureFrame::File`,
 Headless-Smoke bestanden: 1280×800-PNG, `identify` parst es, Status `done`.
 Offen: `tests/screencapture-e2e.sh` um den IPC-Weg erweitern.
 
-## Real-World-Verifikation (2026-09-01, nested Session + Zen + Ashby)
+## Real-World-Verifikation (2026-09-01, nested Session + Zen)
 Nested `run-nested`-Session (neues Binary), frisches Zen-Profil, echte Seiten:
 20 Screenshots im Live-Flow als Verify-Loop genutzt (Output-Variante, ~1s
 Turnaround inkl. Deferred-Status). Fenster-Variante bisher nur headless

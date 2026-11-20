@@ -13,9 +13,8 @@ guix shell -m manifest.scm
 scripts/run-nested
 ```
 
-The nested window uses the dependency-light repository configuration. Its
-prefix is `C-t`; a personal Guix Home configuration may replace that with
-`Print` without changing the repository default.
+The nested window uses the repository configuration. Its prefix is `C-t`.
+You can change it with the `prefix` field in your configuration.
 
 ## Basic interaction
 

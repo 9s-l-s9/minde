@@ -21,7 +21,7 @@ ohne den GTK-Portal-Datei-Dialog.
 ```scheme
 ;; Dateien als text/uri-list auf die Surface an Output-Koordinaten (X Y) droppen.
 ;; PATHS ist eine Liste absoluter Pfade. Rückgabe #t bei Erfolg.
-(wm-drop-files x y paths)          ; z. B. (wm-drop-files 1100 660 '("/home/…/cv.pdf"))
+(wm-drop-files x y paths)          ; z. B. (wm-drop-files 1100 660 '("/tmp/test.pdf"))
 
 ;; Optional, generalisiert (gleiche Mechanik, anderer MIME-Typ):
 (wm-drop-text  x y text)           ; bietet text/plain;charset=utf-8 an
@@ -57,8 +57,8 @@ Perspektivisch könnte eine allgemeine Form die MIME-Aushandlung offenlegen:
 
 ## Offene Fragen / Scope
 - **XWayland:** native Wayland-Surfaces zuerst. XWayland nutzt XDND (eigene Bridge)
-  — synthetischer Wayland-DnD landet dort nicht automatisch; separat tracken. (Für
-  den Ashby-Fall lief Zen *nativ Wayland*, also im Scope.)
+  — synthetischer Wayland-DnD landet dort nicht automatisch; separat tracken.
+  Der Test mit Zen lief nativ unter Wayland.
 - **Button-Held-Erwartung:** Manche Clients erwarten einen gehaltenen Pointer-Button
   während des Drags. Prüfen, ob Smithays server-initiierter Grab das für Firefox/Zen
   korrekt abbildet (dort funktioniert normaler File-DnD über `text/uri-list`).
@@ -75,5 +75,5 @@ Perspektivisch könnte eine allgemeine Form die MIME-Aushandlung offenlegen:
 ## Testplan
 - Minimale HTML-Testseite mit `<input type=file>` + Dropzone lokal öffnen, drop
   auslösen, Dateiliste prüfen.
-- Realtest: eine Ashby-Bewerbungs-Dropzone (Resume-Feld) — heute manuell über den
-  Portal-Dialog gelöst; mit `wm-drop-files` soll es dialoglos gehen.
+- Im Browser eine Datei auf ein Upload-Feld ziehen und prüfen, dass sie ohne
+  Portal-Dialog im Formular erscheint.

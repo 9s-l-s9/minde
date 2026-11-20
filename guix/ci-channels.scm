@@ -1,4 +1,4 @@
-;; The binary builder uses the same Guix revision as ../System/channels.scm.
+;; Pin the Guix revision used by the binary builder.
 ;; The resulting binary closure is exported, so consumers do not need to
 ;; reproduce the build environment or compile Minde when their channels change.
 (list (channel
