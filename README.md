@@ -24,7 +24,8 @@ layer. What you learn about the running system becomes code you can use every da
   External panels such as Eww can use the same status interface; Scheme commands
   can combine window operations with your own logic.
 - **Give agents a clear control surface.** Discover typed actions, inspect every
-  group, and verify changes with session-bound receipts. Use the remote Scheme
+  group, and verify changes with session-bound receipts. Inside a GTK window,
+  use `mindectl a11y tree ID --depth 4` to find buttons, fields and menus. Use the remote Scheme
   REPL or optional classifier adapter; see [agent control](doc/agent-control.md).
 
 ## How it fits together

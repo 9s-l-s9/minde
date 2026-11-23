@@ -367,13 +367,28 @@ commands require their declared argument names but cannot validate types."
     (scope . ,(command-scope command))
     (effects . ,(command-effects command))))
 
+(define %widget-tool
+  '((name . mindectl-a11y)
+    (kind . cli-tool)
+    (summary . "Read or operate widgets inside an application window using AT-SPI accessibility. Start with the widget tree.")
+    (windows . "mindectl query windows --json")
+    (start . "mindectl a11y tree WINDOW-ID --depth 4")
+    (help . "mindectl a11y --help")))
+
+(define (widget-query? needle)
+  (any (lambda (text) (string-contains text needle))
+       (list "mindectl-a11y" (string-downcase (assq-ref %widget-tool 'summary))
+             "gtk gtk3 swt gimp inkscape anylogic"
+             "buttons checkboxes dropdowns combo-box menus dialogs text fields forms controls click a button inspect select focus")))
+
 (define (describe-action name)
-  "Return NAME's full readable command contract, or #f if unregistered.
+  "Return NAME's command contract or CLI tool entry, or #f if unknown.
 Missing legacy metadata is explicitly unknown; PARAMETERS is #f for legacy
 commands. EXAMPLES are Scheme call data, never strings to evaluate."
   (let ((command (command-ref name)))
-    (and command
-         (append (action-summary command)
+    (if (not command)
+        (and (memq name '(a11y mindectl-a11y)) %widget-tool)
+        (append (action-summary command)
                  `((arguments . ,(command-arguments command))
                    (parameters . ,(command-parameters command))
                    (result-schema . ,(command-result-schema command))
@@ -383,9 +398,7 @@ commands. EXAMPLES are Scheme call data, never strings to evaluate."
                    (documentation . ,(command-documentation command))
                    (examples . ,(command-examples command)))))))
 
-(define* (search-actions #:optional (query ""))
-  "Return concise action summaries matching QUERY in name, category, or
-summary, case-insensitively. Empty QUERY returns all registered actions."
+(define (registered-action-summaries query)
   (unless (string? query) (error "search query must be a string" query))
   (let ((needle (string-downcase query)))
     (filter-map
@@ -398,10 +411,18 @@ summary, case-insensitively. Empty QUERY returns all registered actions."
               (action-summary command))))
      (command-names))))
 
+(define* (search-actions #:optional (query ""))
+  "Search registered actions and CLI tools. Tool results carry kind cli-tool."
+  (let ((actions (registered-action-summaries query)))
+    (if (widget-query? (string-downcase query))
+        (cons %widget-tool actions)
+        actions)))
+
 (define (capabilities)
-  "Return the versioned command schema capabilities and concise action list."
+  "Return the versioned command schema, CLI tool entries and action summaries."
   `((schema-version . 1)
     (representation . scheme)
     (schema-types . ,%schema-types)
     (schema-constructors . (enum maybe list-of))
-    (actions . ,(search-actions))))
+    (tools . (,%widget-tool))
+    (actions . ,(registered-action-summaries ""))))

@@ -14,11 +14,20 @@ The implementation decisions and validation milestones live in the
 
 ```sh
 mindectl capabilities --scheme
+mindectl search button --json
+mindectl help a11y --json
 mindectl search focus --scheme
 mindectl help focus-window! --scheme
 mindectl query desktop --scheme
 mindectl query windows --json
 ```
+
+For a task inside an application, look at the `tools` field in capabilities.
+The `mindectl-a11y` entry gives the command to list windows, the first widget
+query and local help. Substitute a window ID from the first command into the
+second. Search also finds this tool by task terms such as `button`, `dropdown`
+and `GTK`. A result with `kind: cli-tool` runs via the displayed shell command.
+Use `mindectl call` for typed entries in `actions`.
 
 Capabilities and search return concise summaries. Help returns a complete
 contract: named parameters, types, required flags, defaults, constraints,
