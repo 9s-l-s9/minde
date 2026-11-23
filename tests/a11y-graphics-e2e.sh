@@ -6,7 +6,18 @@ set -eu
 cd "$(dirname "$0")/.."
 if [ "${1:-}" != --isolated ]; then
     runtime=$(mktemp -d)
-    trap 'rm -rf "$runtime"' EXIT
+    remove_bus_runtime() {
+        # GVfs may still be releasing its private FUSE mount after D-Bus exits.
+        for _ in $(seq 1 50); do
+            if ! mountpoint -q "$runtime/gvfs" && rm -rf --one-file-system "$runtime"; then
+                return 0
+            fi
+            sleep 0.1
+        done
+        echo "Private runtime still busy: $runtime" >&2
+        return 1
+    }
+    trap remove_bus_runtime EXIT
     unset DISPLAY WAYLAND_DISPLAY AT_SPI_BUS_ADDRESS
     export XDG_RUNTIME_DIR="$runtime"
     dbus-run-session -- sh tests/a11y-graphics-e2e.sh --isolated
@@ -20,6 +31,9 @@ inkscape_pid=
 cleanup() {
     for pid in "$gimp_pid" "$inkscape_pid"; do
         [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+    done
+    for pid in "$gimp_pid" "$inkscape_pid"; do
+        [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
     done
     nested_stop
 }

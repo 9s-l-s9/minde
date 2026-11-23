@@ -21,14 +21,35 @@ capacity.get_accessible().set_name("Capacity")
 box = window.get_content_area()
 box.add(units)
 box.add(capacity)
-for _ in range(2):
-    box.add(Gtk.Button(label="Duplicate"))
-window.add_button("Finish", Gtk.ResponseType.OK)
+selections = []
+focus_order = []
+for section in ("General", "Geräteeinstellungen"):
+    panel = Gtk.Box()
+    panel.get_accessible().set_name(section)
+    button = Gtk.Button(label="Duplicate")
+    button.connect("clicked", lambda _button, name: selections.append(name), section)
+    panel.add(button)
+    box.add(panel)
+secret = Gtk.Entry()
+secret.set_visibility(False)
+secret.set_text("private-fixture-value")
+secret.get_accessible().set_name("Password")
+box.add(secret)
+finish = window.add_button("Finish", Gtk.ResponseType.OK)
+
+
+def remember_focus(_window, widget):
+    if widget in (finish, capacity):
+        focus_order.append(widget)
+
+
+window.connect("set-focus", remember_focus)
 
 
 def submitted(dialog, response):
     if response == Gtk.ResponseType.OK:
-        result_path.write_text(json.dumps([units.get_active_text(), capacity.get_text()]))
+        moved_focus = any(a == finish and b == capacity for a, b in zip(focus_order, focus_order[1:]))
+        result_path.write_text(json.dumps([units.get_active_text(), capacity.get_text(), selections, moved_focus]))
     Gtk.main_quit()
 
 
