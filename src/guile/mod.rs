@@ -708,7 +708,7 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
 }
 
 unsafe extern "C" fn wm_window_pid(id: Scm) -> Scm {
-    let id = to_i64(id) as u64;
+    let id = checked_arg!(to_id(id));
     with_state(|state| state.window_pid(id))
         .flatten()
         .map_or_else(|| from_bool(false), |pid| from_i64(i64::from(pid)))
