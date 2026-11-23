@@ -128,6 +128,12 @@
      "Send Ctrl+V to the focused surface using the synthetic key queue.")
     (wm-scroll "(wm-scroll dx dy)"
      "Scroll DX/DY wheel notches (1 = one wheel click) at the current pointer position; sends discrete value120 plus continuous values.")
+    (wm-button-press "(wm-button-press button)"
+     "Press and hold BUTTON (left/middle/right, 1/2/3 or evdev code) after a hover/settle motion until wm-button-release; returns #f for an unknown button.")
+    (wm-button-release "(wm-button-release button)"
+     "Release BUTTON previously held by wm-button-press, in queue order with other synthetic input.")
+    (wm-drag "(wm-drag x1 y1 x2 y2 [steps])"
+     "Drag with the left button from X1,Y1 to X2,Y2: warp, press, STEPS paced motion events (default 10, 1-200), release. Works for native Wayland and XWayland clients.")
     (wm-screenshot "(wm-screenshot path [window-id])"
      "Publish a new PNG below wm-screenshot-directory; reject symlinks, traversal and existing files. The complete file appears atomically. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token or #f; completion via wm-automation-status.")
     (wm-screenshot-directory "(wm-screenshot-directory)"

@@ -82,6 +82,21 @@ pub enum WmCommand {
         button: u32,
         count: u32,
     },
+    /// Hold `button` (1=left 2=middle 3=right) until `ButtonRelease`.
+    ButtonPress {
+        button: u32,
+    },
+    ButtonRelease {
+        button: u32,
+    },
+    /// Press at (x1,y1), move in `steps` paced motion events, release at (x2,y2).
+    Drag {
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        steps: u32,
+    },
     SendKey {
         mods: u32,
         keysym: String,

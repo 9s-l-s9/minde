@@ -963,6 +963,44 @@ unsafe extern "C" fn wm_click(button: Scm, count: Scm) -> Scm {
     }))
 }
 
+unsafe extern "C" fn wm_button_press(button: Scm) -> Scm {
+    let Some(button) = button_number(button) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::ButtonPress { button }))
+}
+
+unsafe extern "C" fn wm_button_release(button: Scm) -> Scm {
+    let Some(button) = button_number(button) else {
+        return from_bool(false);
+    };
+    from_bool(send_command(WmCommand::ButtonRelease { button }))
+}
+
+/// `(wm-drag x1 y1 x2 y2 [steps])` -- left-button drag with paced
+/// intermediate motion events (default 10, at most 200).
+unsafe extern "C" fn wm_drag(x1: Scm, y1: Scm, x2: Scm, y2: Scm, steps: Scm) -> Scm {
+    let x1 = checked_arg!(to_i32(x1));
+    let y1 = checked_arg!(to_i32(y1));
+    let x2 = checked_arg!(to_i32(x2));
+    let y2 = checked_arg!(to_i32(y2));
+    let steps = if steps == ffi::SCM_UNDEFINED {
+        10
+    } else {
+        checked_arg!(to_i64(steps))
+    };
+    if !(1..=200).contains(&steps) {
+        return from_bool(false);
+    }
+    from_bool(send_command(WmCommand::Drag {
+        x1,
+        y1,
+        x2,
+        y2,
+        steps: steps as u32,
+    }))
+}
+
 /// `(wm-screenshot path [window-id])` -- deferred PNG screenshot of the
 /// output under the pointer, or the rectangle of `window-id` using its
 /// largest-overlap output's scene and scale. Returns an
@@ -1777,6 +1815,9 @@ fn register_primitives() {
         // Documented alias of wm-send-string (doc/api.md, "wm-type").
         register_gsubr("wm-type", 1, 1, gsubr!(wm_send_string, 2));
         register_gsubr("wm-click", 1, 1, gsubr!(wm_click, 2));
+        register_gsubr("wm-button-press", 1, 0, gsubr!(wm_button_press, 1));
+        register_gsubr("wm-button-release", 1, 0, gsubr!(wm_button_release, 1));
+        register_gsubr("wm-drag", 4, 1, gsubr!(wm_drag, 5));
         register_gsubr("wm-send-key", 2, 0, gsubr!(wm_send_key, 2));
         register_gsubr(
             "wm-warp-pointer-relative",
@@ -2173,6 +2214,8 @@ mod tests {
                 format!("(wm-place-windows (list '(0 1 2 3 4) (list 0 0 0 {invalid} 20)))"),
                 format!("(wm-click {invalid})"),
                 format!("(wm-click 'left {invalid})"),
+                format!("(wm-drag 0 0 {invalid} 0)"),
+                format!("(wm-drag 0 0 1 1 {invalid})"),
                 format!("(wm-drop-text {invalid} 0 \"payload\")"),
                 format!("(wm-drop-files 0 {invalid} (list \"/proc/self/exe\"))"),
                 format!("(wm-send-string \"text\" {invalid})"),
@@ -2284,6 +2327,39 @@ mod tests {
                 count: 1
             }
         ));
+        assert_eq!(
+            eval_string("(wm-button-press 'left)"),
+            Some(ffi::SCM_BOOL_T)
+        );
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::ButtonPress { button: 1 }
+        ));
+        assert_eq!(
+            eval_string("(wm-button-release 273)"),
+            Some(ffi::SCM_BOOL_T)
+        );
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::ButtonRelease { button: 3 }
+        ));
+        assert_eq!(
+            eval_string("(wm-button-press 'bogus)"),
+            Some(ffi::SCM_BOOL_F)
+        );
+        assert_eq!(eval_string("(wm-drag 1 2 3 4)"), Some(ffi::SCM_BOOL_T));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WmCommand::Drag {
+                x1: 1,
+                y1: 2,
+                x2: 3,
+                y2: 4,
+                steps: 10
+            }
+        ));
+        assert_eq!(eval_string("(wm-drag 1 2 3 4 0)"), Some(ffi::SCM_BOOL_F));
+        assert_eq!(eval_string("(wm-drag 1 2 3 4 201)"), Some(ffi::SCM_BOOL_F));
         assert!(receiver.try_recv().is_err());
         for expression in [
             "(wm-configure-input-rule! \"boundary-device\" -1 -1 \"\" \"\" #f)",

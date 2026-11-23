@@ -140,7 +140,16 @@ Typing does not read or replace either selection and does not send a paste
 shortcut. A focus change or session lock cancels the remaining text.
 `wm-click` accepts
 `left`/`middle`/`right`, 1/2/3, or evdev BTN_LEFT/BTN_MIDDLE/BTN_RIGHT codes;
-its optional count is sequenced as one multi-click gesture. `wm-set-clipboard`
+its optional count is sequenced as one multi-click gesture.
+`wm-button-press` and `wm-button-release` take the same button names and hold
+or release a button in queue order with other synthetic input (a hover/settle
+motion precedes the press); a held button is released when synthetic input is
+cancelled. `(wm-drag x1 y1 x2 y2 [steps])` moves the pointer to the start,
+presses the left button, sends `steps` paced motion events (default 10, at most
+200, about 15 ms apart) and releases at the end, so toolkits that need several
+motions to start a drag recognize it. The events use the normal seat path, so
+native Wayland and XWayland clients behave alike. All three return `#f` for
+invalid arguments. `wm-set-clipboard`
 sets CLIPBOARD for Ctrl+V/`wm-paste`; `wm-set-primary` sets the middle-click
 PRIMARY selection. The older `wm-request-paste` asynchronously reads CLIPBOARD
 into minde's active prompt. A client-owned paste completes on EOF, after
