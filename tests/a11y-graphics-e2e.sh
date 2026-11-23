@@ -6,6 +6,8 @@ set -eu
 cd "$(dirname "$0")/.."
 if [ "${1:-}" != --isolated ]; then
     runtime=$(mktemp -d)
+    # Invoked by the EXIT trap below.
+    # shellcheck disable=SC2317
     remove_bus_runtime() {
         # GVfs may still be releasing its private FUSE mount after D-Bus exits.
         for _ in $(seq 1 50); do
