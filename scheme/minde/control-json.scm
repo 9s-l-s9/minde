@@ -56,7 +56,7 @@ are explicitly tagged, never inferred to be a JSON object or array."
     (array value (lambda (item) (record item 'layout-definition))))
    ((and (eq? kind 'window) (eq? key 'locations)) (array value (lambda (item) (record item 'location))))
    ((and (eq? kind 'windows) (eq? key 'windows)) (array value (lambda (item) (record item 'window))))
-   ((and (eq? kind 'capabilities) (eq? key 'actions)) (array value (lambda (item) (record item 'summary))))
+   ((and (eq? kind 'capabilities) (memq key '(actions tools))) (array value (lambda (item) (record item 'summary))))
    ((and (eq? kind 'description) (eq? key 'parameters))
     (if value (array value (lambda (item) (record item 'parameter))) "false"))
    ((and (eq? kind 'parameter) (eq? key 'type)) (type-json value))
