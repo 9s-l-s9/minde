@@ -32,6 +32,7 @@ usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
        mindectl wait ID [--session S --timeout-ms N] [--scheme|--json]
        mindectl events-since SEQUENCE [--session S] [--scheme|--json]
        mindectl watch [--scheme|--json] [--count N]
+       mindectl a11y tree|find|click|set-text|select WINDOW-ID [OPTIONS]
        mindectl repl
        mindectl check-config FILE [--live] [--scheme|--json]
        mindectl query state --json
@@ -198,6 +199,43 @@ command=${1:-}
 case "$command" in
     eval|capabilities|help|search|request|call|wait|events-since|watch|repl|check-config|--machine|--scheme|--json)
         control_client "$@"
+        ;;
+    a11y)
+        shift
+        helper=$(dirname -- "$0")/minde-a11y
+        [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+        op=$1
+        id=$2
+        shift 2
+        case "$op" in tree|find|click|set-text|select) ;; *) usage >&2; exit 2 ;; esac
+        case "$id" in ''|*[!0-9]*) echo "mindectl: expected a numeric window ID" >&2; exit 2 ;; esac
+        # Resolve both facts in one compositor dispatch. Pass the title as an
+        # argv element, preserving whitespace, quotes, and newlines verbatim.
+        exec "$GUILE" -q --no-auto-compile -c "$client_prelude"'
+          (use-modules (ice-9 match))
+          (match (cdr (member "--" (command-line)))
+            ((path helper op id options ...)
+             (let ((sock (connect-private path)))
+               (write `(cond ((wm-session-locked?) (quote locked))
+                             (else (let ((title (wm-window-title ,(string->number id))))
+                                     (and title
+                                          (list (wm-window-pid ,(string->number id))
+                                                (car title)))))) sock)
+               (force-output sock)
+               (shutdown sock 1)
+               (let ((reply (read sock)))
+                 (close sock)
+                 (match reply
+                   (((quote ok) ((? integer? pid) (? string? title)))
+                    (apply execl helper helper op
+                           (append options (list (string-append "--pid=" (number->string pid))
+                                                 (string-append "--title=" title)))))
+                   (((quote ok) (quote locked))
+                    (display "mindectl: session is locked\n" (current-error-port))
+                    (exit 1))
+                   (_
+                    (display "mindectl: cannot resolve window identity (unknown window, PID unavailable, or incompatible compositor)\n" (current-error-port))
+                    (exit 1)))))))' -- "$socket_path" "$helper" "$op" "$id" "$@"
         ;;
     query)
         if [ "${2:-}" = desktop ] || [ "${2:-}" = windows ]; then

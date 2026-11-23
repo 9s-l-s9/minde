@@ -24,6 +24,9 @@ Target version: `1.0.0-rc1`.
   (`#:dialog? #t #:float? #f` keeps matching dialogs tiled). minde now also
   advertises the xdg-dialog protocol.
 
+- `mindectl a11y` lets agents inspect accessible widget trees, activate a
+  named button, select an entry and edit text in a target window via AT-SPI.
+
 ### Changed
 
 - Programs launched with `wm-spawn` inherit the session's GTK and Mozilla

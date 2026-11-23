@@ -24,6 +24,7 @@ Entered with `guix shell -m manifest.scm`:
 - `pkg-config`
 - `guile`
 - `guile-json`
+- `python`
 - `curl`
 - `coreutils`
 - `tar`
@@ -75,6 +76,7 @@ Entered with `guix shell -m manifest.scm`:
 - `git-minimal`
 - `guile-3.0`
 - `pkg-config`
+- `python`
 - `rust`
 - `rust:cargo`
 - `rust:tools`
@@ -105,7 +107,7 @@ Entered with `guix shell -m manifest.scm`:
 
 | Path (relative to the package output) | Contents |
 |---|---|
-| `bin` | minde binary, minde-session wrapper, control helpers (minde-cmd, minde-msg, mindectl), optional classifier client (minde-agent) |
+| `bin` | minde binary, minde-session wrapper, control helpers (minde-cmd, minde-msg, mindectl, minde-a11y), optional classifier client (minde-agent) |
 | `share/minde` | runtime Scheme tree and default-config.scm |
 | `share/guile/site/3.0` | installed minde Guile modules (GUILE_LOAD_PATH root) |
 | `share/doc/minde` | README, changelog, policies, provenance, licenses, doc/, release/ |

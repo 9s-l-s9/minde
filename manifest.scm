@@ -11,6 +11,7 @@
    "guile"
    ;; Client JSON and optional provider HTTP transport.
    "guile-json"
+   "python"
    "curl"
    "coreutils"
    ;; Release archives and their offline-resolution regression tests.

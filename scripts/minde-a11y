@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""One bounded AT-SPI request. mindectl supplies the target window identity."""
+import argparse
+import json
+import signal
+import sys
+
+
+class Failure(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def children(node):
+    for index in range(node.get_child_count()):
+        child = node.get_child_at_index(index)
+        if child is not None:
+            yield index, child
+
+
+def walk(node, depth=None):
+    """Yield nodes with parent and index, refusing an incomplete search."""
+    stack = [iter([(0, None, -1, node)])]
+    count = 0
+    while stack:
+        entry = next(stack[-1], None)
+        if entry is None:
+            stack.pop()
+            continue
+        level, parent, index, current = entry
+        count += 1
+        if count > 4096:
+            raise Failure("tree-limit", "Accessibility tree exceeds 4096 nodes")
+        yield level, parent, index, current
+        if depth is None or level < depth:
+            stack.append(descendants(current, level + 1))
+
+
+def descendants(parent, level):
+    for index, child in children(parent):
+        yield level, parent, index, child
+
+
+def unique(matches, label):
+    first = next(matches, None)
+    if first is None:
+        raise Failure("not-found", f"No matching {label}")
+    if next(matches, None) is not None:
+        raise Failure("ambiguous", f"More than one matching {label}")
+    return first
+
+
+def role(node):
+    return node.get_role_name().lower().replace(" ", "-")
+
+
+def describe(node):
+    return {"role": role(node), "name": node.get_name() or ""}
+
+
+def activate(atspi, node):
+    if node.get_action_iface():
+        for i in range(atspi.Action.get_n_actions(node)):
+            if atspi.Action.get_action_name(node, i).lower() in ("click", "press", "activate"):
+                return atspi.Action.do_action(node, i)
+    raise Failure("unsupported-action", "Widget exports no click, press or activate action")
+
+
+def request(atspi, args):
+    if atspi.init() != 0:
+        raise Failure("bus-unavailable", "Could not initialize AT-SPI on the session bus")
+    desktop = atspi.get_desktop(0)
+    if desktop is None:
+        raise Failure("bus-unavailable", "AT-SPI desktop is unavailable")
+
+    def windows():
+        for _, app in children(desktop):
+            if app.get_process_id() == args.pid:
+                for _, window in children(app):
+                    if window.get_name() == args.title:
+                        yield window
+
+    window = unique(windows(), "accessible window (check PID, title and toolkit accessibility)")
+    if args.operation == "tree":
+        return [dict(depth=d, **describe(n)) for d, _, _, n in walk(window, args.depth)]
+
+    def matches():
+        for _, _, _, node in walk(window):
+            if (args.role is None or role(node) == args.role) and (
+                args.name is None or node.get_name() == args.name
+            ):
+                yield node
+
+    node = unique(matches(), "widget")
+    if args.operation == "find":
+        result = describe(node)
+        result["bounds"] = None
+        if node.get_component_iface():
+            rect = atspi.Component.get_extents(node, atspi.CoordType.WINDOW)
+            if rect and min(rect.x, rect.y) > -(2**31) and min(rect.width, rect.height) > 0:
+                result["bounds"] = dict(x=rect.x, y=rect.y, width=rect.width,
+                                        height=rect.height, space="window")
+        return result
+    if args.operation == "click":
+        success = activate(atspi, node)
+    elif args.operation == "set-text":
+        if not node.get_editable_text_iface():
+            raise Failure("unsupported-action", "Widget does not expose EditableText")
+        success = atspi.EditableText.set_text_contents(node, args.value)
+    else:
+        def entries():
+            for _, parent, index, item in walk(node):
+                if parent is not None and item.get_name() == args.value and (
+                    parent.get_selection_iface() or role(item) in ("menu-item", "list-item", "radio-menu-item")
+                ):
+                    yield parent, index, item
+        parent, index, item = unique(entries(), "selectable entry")
+        # A menu selection highlights a row. Activating it commits the choice.
+        if role(item) in ("menu-item", "radio-menu-item"):
+            success = activate(atspi, item)
+        elif parent.get_selection_iface():
+            success = atspi.Selection.select_child(parent, index)
+        else:
+            success = activate(atspi, item)
+    if not success:
+        raise Failure("action-failed", "The application declined the action")
+    return True
+
+
+def timeout(signum, frame):
+    raise Failure("timeout", "AT-SPI request exceeded its time limit")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("operation", choices=["tree", "find", "click", "set-text", "select"])
+    parser.add_argument("--pid", required=True, type=int)
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--depth", type=int, default=6)
+    parser.add_argument("--role")
+    parser.add_argument("--name")
+    parser.add_argument("--value")
+    args = parser.parse_args()
+    try:
+        if args.pid <= 0 or not args.title or args.depth < 0:
+            raise Failure("invalid-target", "Expected positive PID, window title and nonnegative depth")
+        if args.operation != "tree" and args.name is None and not args.role:
+            raise Failure("invalid-selector", "Specify --role or --name")
+        if args.operation in ("select", "set-text") and args.value is None:
+            raise Failure("missing-value", "This action requires --value")
+        try:
+            import gi
+            gi.require_version("Atspi", "2.0")
+            from gi.repository import Atspi
+        except (ImportError, ValueError) as exc:
+            raise Failure("missing-dependency", "Install Python PyGObject and the Atspi 2.0 typelib") from exc
+        signal.signal(signal.SIGALRM, timeout)
+        signal.alarm(15)
+        Atspi.set_timeout(1200, 2000)
+        result = request(Atspi, args)
+        print(json.dumps({"ok": True, "result": result}))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": getattr(exc, "code", "atspi-error"),
+                          "message": str(exc)}))
+        return 1
+    finally:
+        signal.alarm(0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
