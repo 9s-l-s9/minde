@@ -233,7 +233,10 @@ and action names of one widget. The JSON result has these fields:
 | `value` | Current finite numeric value, or `null` if unavailable. |
 
 Use `focus` to ask a focusable widget to
-take keyboard focus. Use `invoke --action NAME` to perform an action listed by
+take focus inside the application. Success means the toolkit accepted the
+request. Under XWayland the accessible state may omit `focused` even after
+GTK reports the focus transfer. For editing a known field, `set-text` targets
+the widget directly. Use `invoke --action NAME` to perform an action listed by
 `inspect`, for example an expand action on a tree row when the toolkit
 exports one. Read back the state after an action that changes the document.
 
