@@ -49,12 +49,27 @@ enum SyntheticAction {
     Key { code: u32, pressed: bool },
     ChordKey { code: u32, pressed: bool, mods: u32 },
     Button { code: u32, pressed: bool },
+    // Button owned by the fixed manual source, so a later wm-button-release
+    // (a separate command with its own sequence) balances wm-button-press.
+    ManualButton { code: u32, pressed: bool },
+    // Absolute pointer motion; queued so drags are paced against buttons.
+    Move { x: f64, y: f64 },
     Scroll { dx: f64, dy: f64 },
     Unicode { ch: char },
     // Re-sends a motion frame at the current pointer position. Queued ahead
     // of clicks so hover-sensitive clients (custom React controls) see
     // hover->settle->press instead of a press out of nowhere.
     Hover,
+}
+
+/// Owner of buttons held by `wm-button-press` until `wm-button-release`.
+/// Sequence numbers start at 1, so 0 never collides with a queued gesture.
+const MANUAL_BUTTON_SOURCE: PointerButtonSource = PointerButtonSource::Synthetic(0);
+
+/// evdev code for the 1/2/3 button numbering shared with `wm-click`.
+fn synthetic_button_code(button: u32) -> u32 {
+    const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
+    CODES[(button - 1) as usize]
 }
 
 #[derive(Debug)]
@@ -909,6 +924,9 @@ impl MindeState {
                 WmCommand::SendString { .. }
                     | WmCommand::SendKey { .. }
                     | WmCommand::Click { .. }
+                    | WmCommand::ButtonPress { .. }
+                    | WmCommand::ButtonRelease { .. }
+                    | WmCommand::Drag { .. }
                     | WmCommand::PasteKey
                     | WmCommand::Scroll { .. }
                     | WmCommand::WarpPointer { .. }
@@ -1006,6 +1024,39 @@ impl MindeState {
                 self.schedule_redraw();
             }
             WmCommand::Click { button, count } => self.synthetic_click(button, count),
+            WmCommand::ButtonPress { button } => {
+                // Hover/settle first, as for wm-click.
+                self.enqueue_synthetic(
+                    vec![
+                        (SyntheticAction::Hover, 100),
+                        (
+                            SyntheticAction::ManualButton {
+                                code: synthetic_button_code(button),
+                                pressed: true,
+                            },
+                            0,
+                        ),
+                    ],
+                    false,
+                );
+            }
+            WmCommand::ButtonRelease { button } => self.enqueue_synthetic(
+                vec![(
+                    SyntheticAction::ManualButton {
+                        code: synthetic_button_code(button),
+                        pressed: false,
+                    },
+                    0,
+                )],
+                false,
+            ),
+            WmCommand::Drag {
+                x1,
+                y1,
+                x2,
+                y2,
+                steps,
+            } => self.synthetic_drag((x1 as f64, y1 as f64), (x2 as f64, y2 as f64), steps),
             WmCommand::PasteKey => self.send_key(4, "v"),
             WmCommand::Scroll { dx, dy } => {
                 self.enqueue_synthetic(vec![(SyntheticAction::Scroll { dx, dy }, 0)], false);
@@ -1353,11 +1404,53 @@ impl MindeState {
         }
     }
 
+    /// `wm-drag`: warp to the start, settle, press the left button, move in
+    /// `steps` paced motion events (many toolkits only start a drag after
+    /// several motions beyond a threshold), settle, release. Events take the
+    /// normal seat path, so native Wayland and XWayland clients see the same
+    /// input.
+    fn synthetic_drag(&mut self, from: (f64, f64), to: (f64, f64), steps: u32) {
+        const STEP_MS: u64 = 15;
+        let code = synthetic_button_code(1);
+        let mut actions = Vec::with_capacity(steps as usize + 4);
+        actions.push((
+            SyntheticAction::Move {
+                x: from.0,
+                y: from.1,
+            },
+            150,
+        ));
+        actions.push((
+            SyntheticAction::Button {
+                code,
+                pressed: true,
+            },
+            60,
+        ));
+        for step in 1..=steps {
+            let t = step as f64 / steps as f64;
+            actions.push((
+                SyntheticAction::Move {
+                    x: from.0 + (to.0 - from.0) * t,
+                    y: from.1 + (to.1 - from.1) * t,
+                },
+                if step == steps { 80 } else { STEP_MS },
+            ));
+        }
+        actions.push((
+            SyntheticAction::Button {
+                code,
+                pressed: false,
+            },
+            0,
+        ));
+        self.enqueue_synthetic(actions, false);
+    }
+
     /// `wm-click`: `count` clicks of `button` (1=left 2=middle 3=right, as
     /// StumpWM ratclick counts them) at the current pointer position.
     fn synthetic_click(&mut self, button: u32, count: u32) {
-        const CODES: [u32; 3] = [0x110, 0x112, 0x111]; // BTN_LEFT/MIDDLE/RIGHT
-        let code = CODES[(button - 1) as usize];
+        let code = synthetic_button_code(button);
         // hover->settle->press: give hover-sensitive clients (custom React
         // radios/pills) event-loop turns to update their hit target before
         // the press lands; hold/gap are sized so multi-clicks register as
@@ -1793,6 +1886,17 @@ impl MindeState {
                 },
                 time,
             ),
+            SyntheticAction::ManualButton { code, pressed } => self.pointer_button_event(
+                MANUAL_BUTTON_SOURCE,
+                code,
+                if pressed {
+                    smithay::backend::input::ButtonState::Pressed
+                } else {
+                    smithay::backend::input::ButtonState::Released
+                },
+                time,
+            ),
+            SyntheticAction::Move { x, y } => self.warp_pointer((x, y).into()),
             SyntheticAction::Scroll { dx, dy } => {
                 use smithay::backend::input::{Axis, AxisSource};
                 // dx/dy are wheel notches (1.0 = one physical wheel click).

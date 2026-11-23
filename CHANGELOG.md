@@ -7,6 +7,14 @@ yet made a public release; breaking changes remain possible before 1.0.
 
 Target version: `1.0.0-rc1`.
 
+### Added
+
+- `wm-button-press`, `wm-button-release` and `wm-drag` complete the synthetic
+  pointer API. `(wm-drag x1 y1 x2 y2 [steps])` presses the left button at the
+  start, sends paced intermediate motion events (default 10) and releases at
+  the end, so GTK, SWT and other toolkits that wait for several motion events
+  recognize a drag. Native Wayland and XWayland clients receive identical input.
+
 ### Changed
 
 - Programs launched with `wm-spawn` inherit the session's GTK and Mozilla
