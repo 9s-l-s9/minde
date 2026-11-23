@@ -3,6 +3,7 @@
 """One bounded AT-SPI request. mindectl supplies the target window identity."""
 import argparse
 import json
+import math
 import signal
 import sys
 
@@ -60,12 +61,44 @@ def describe(node):
     return {"role": role(node), "name": node.get_name() or ""}
 
 
+def actions(atspi, node):
+    if not node.get_action_iface():
+        return []
+    return [atspi.Action.get_action_name(node, i)
+            for i in range(atspi.Action.get_n_actions(node))]
+
+
 def activate(atspi, node):
-    if node.get_action_iface():
-        for i in range(atspi.Action.get_n_actions(node)):
-            if atspi.Action.get_action_name(node, i).lower() in ("click", "press", "activate"):
-                return atspi.Action.do_action(node, i)
+    for index, name in enumerate(actions(atspi, node)):
+        if name.lower() in ("click", "press", "activate"):
+            return atspi.Action.do_action(node, index)
     raise Failure("unsupported-action", "Widget exports no click, press or activate action")
+
+
+def lookup(root, role_name, name, label, depth):
+    matches = (node for _, _, _, node in walk(root, depth)
+               if (role_name is None or role(node) == role_name)
+               and (name is None or node.get_name() == name))
+    return unique(matches, label)
+
+
+def inspect(atspi, node):
+    result = describe(node)
+    result.update(states=sorted(state.value_nick for state in node.get_state_set().get_states()),
+                  interfaces=sorted(node.get_interfaces()), actions=actions(atspi, node),
+                  text=None, text_truncated=False, value=None)
+    if node.get_role() == atspi.Role.PASSWORD_TEXT:
+        return result
+    if node.get_text_iface():
+        count = atspi.Text.get_character_count(node)
+        if count >= 0:
+            result["text"] = atspi.Text.get_text(node, 0, min(count, 4096))
+            result["text_truncated"] = count > 4096
+    if node.get_value_iface():
+        value = atspi.Value.get_current_value(node)
+        if math.isfinite(value):
+            result["value"] = value
+    return result
 
 
 def request(atspi, args):
@@ -83,17 +116,16 @@ def request(atspi, args):
                         yield window
 
     window = unique(windows(), "accessible window (check PID, title and toolkit accessibility)")
+    depth = getattr(args, "depth", None)
+    scope = window
+    if args.within_name is not None or args.within_role is not None:
+        scope = lookup(window, args.within_role, args.within_name, "scope", depth)
     if args.operation == "tree":
-        return [dict(depth=d, **describe(n)) for d, _, _, n in walk(window, args.depth)]
+        return [dict(depth=d, **describe(n)) for d, _, _, n in walk(scope, 6 if depth is None else depth)]
 
-    def matches():
-        for _, _, _, node in walk(window):
-            if (args.role is None or role(node) == args.role) and (
-                args.name is None or node.get_name() == args.name
-            ):
-                yield node
-
-    node = unique(matches(), "widget")
+    node = lookup(scope, args.role, args.name, "widget", depth)
+    if args.operation == "inspect":
+        return inspect(atspi, node)
     if args.operation == "find":
         result = describe(node)
         result["bounds"] = None
@@ -103,8 +135,20 @@ def request(atspi, args):
                 result["bounds"] = dict(x=rect.x, y=rect.y, width=rect.width,
                                         height=rect.height, space="window")
         return result
+    if not node.get_state_set().contains(atspi.StateType.ENABLED):
+        raise Failure("disabled", "The target widget is disabled")
     if args.operation == "click":
         success = activate(atspi, node)
+    elif args.operation == "invoke":
+        names = actions(atspi, node)
+        if args.action not in names:
+            raise Failure("unsupported-action", "Widget does not export this action")
+        index = unique((i for i, name in enumerate(names) if name == args.action), "action")
+        success = atspi.Action.do_action(node, index)
+    elif args.operation == "focus":
+        if not node.get_component_iface():
+            raise Failure("unsupported-action", "Widget does not expose Component")
+        success = atspi.Component.grab_focus(node)
     elif args.operation == "set-text":
         if not node.get_editable_text_iface():
             raise Failure("unsupported-action", "Widget does not expose EditableText")
@@ -135,19 +179,24 @@ def timeout(signum, frame):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("operation", choices=["tree", "find", "click", "set-text", "select"])
+    parser.add_argument("operation", choices=["tree", "find", "inspect", "invoke", "focus", "click", "set-text", "select"])
     parser.add_argument("--pid", required=True, type=int)
     parser.add_argument("--title", required=True)
-    parser.add_argument("--depth", type=int, default=6)
+    parser.add_argument("--depth", type=int, help="limit lookup below each search root (root depth is zero)")
     parser.add_argument("--role")
     parser.add_argument("--name")
+    parser.add_argument("--within-role")
+    parser.add_argument("--within-name")
+    parser.add_argument("--action")
     parser.add_argument("--value")
     args = parser.parse_args()
     try:
-        if args.pid <= 0 or not args.title or args.depth < 0:
+        if args.pid <= 0 or not args.title or (args.depth is not None and args.depth < 0):
             raise Failure("invalid-target", "Expected positive PID, window title and nonnegative depth")
         if args.operation != "tree" and args.name is None and not args.role:
             raise Failure("invalid-selector", "Specify --role or --name")
+        if args.operation == "invoke" and not args.action:
+            raise Failure("missing-action", "Specify --action with the exact advertised name")
         if args.operation in ("select", "set-text") and args.value is None:
             raise Failure("missing-value", "This action requires --value")
         try:

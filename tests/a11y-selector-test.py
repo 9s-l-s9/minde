@@ -20,14 +20,14 @@ def accessible(name, role, *children):
 
 
 class TargetTest(unittest.TestCase):
-    def check_refusal(self, windows, code):
+    def check_refusal(self, windows, code, within_name=None):
         api = Mock()
         api.init.return_value = 0
         app = accessible("app", "application", *windows)
         app.get_process_id.return_value = 23
         api.get_desktop.return_value = accessible("desktop", "desktop", app)
         args = SimpleNamespace(operation="click", pid=23, title="Properties",
-                               role="push-button", name="OK")
+                               role="push-button", name="OK", within_name=within_name, within_role=None)
         with self.assertRaises(bridge["Failure"]) as caught:
             bridge["request"](api, args)
         self.assertEqual(caught.exception.code, code)
@@ -41,6 +41,11 @@ class TargetTest(unittest.TestCase):
         self.check_refusal([accessible("Properties", "dialog",
                                        accessible("OK", "push button"),
                                        accessible("OK", "push button"))], "ambiguous")
+
+    def test_duplicate_parent(self):
+        self.check_refusal([accessible("Properties", "dialog",
+                                       accessible("Section", "panel", accessible("OK", "push button")),
+                                       accessible("Section", "panel"))], "ambiguous", "Section")
 
     def test_other_window_button(self):
         self.check_refusal([accessible("Unrelated", "dialog", accessible("OK", "push button")),

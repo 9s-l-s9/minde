@@ -217,8 +217,41 @@ mindectl a11y tree 7 --depth 6
 mindectl a11y find 7 --role push-button --name Finish
 mindectl a11y select 7 --role combo-box --name 'Model time units' --value minutes
 mindectl a11y set-text 7 --role text --name Capacity --value 3
+mindectl a11y inspect 7 --role text --name Capacity
 mindectl a11y click 7 --role push-button --name Finish
 ```
+
+Use `inspect` to read the current text, numeric value, states, interfaces
+and action names of one widget. The JSON result has these fields:
+
+| Field | Meaning |
+|---|---|
+| `role`, `name` | The accessible object's role and name. |
+| `states` | State names reported by the toolkit, for example `focused` or `checked`. |
+| `interfaces`, `actions` | Interfaces and exact action names exposed by this widget. |
+| `text`, `text_truncated` | Up to 4096 characters and a truncation flag. Unavailable text and password contents yield `null`. |
+| `value` | Current finite numeric value, or `null` if unavailable. |
+
+Use `focus` to ask a focusable widget to
+take keyboard focus. Use `invoke --action NAME` to perform an action listed by
+`inspect`, for example an expand action on a tree row when the toolkit
+exports one. Read back the state after an action that changes the document.
+
+When multiple panels contain the same widget, narrow the search with
+`--within-role`, `--within-name` or both. The ancestor must itself be unique.
+For example, to read the Capacity field in a panel named Machine A:
+
+```sh
+mindectl a11y inspect 7 --within-name 'Machine A' --role text --name Capacity
+```
+
+For large applications, start with a shallow tree. With `--depth N`, the
+window or subtree root is level 0. If you specify a scope, the helper first
+searches for that scope within N levels of the window and then searches
+within N levels of the scope. A target must be unique inside the searched
+region. Without this option, selectors search all levels and `tree` displays
+six levels below its root. A traversal exceeding 4096 objects returns an
+error. Use `mindectl a11y --help` for the command list.
 
 The controller resolves the application's process ID and window title. A separate
 helper queries the session accessibility bus, so a slow application does not
@@ -238,3 +271,9 @@ with PyGObject and the Atspi 2.0 introspection data. For GTK3, check that `NO_AT
 canvases may expose only a single object. Use the compositor's screenshot and
 pointer facilities for those regions. The headless GTK3 integration test and
 its Guix invocation are in [tests/a11y-e2e.sh](../tests/a11y-e2e.sh).
+
+The optional [graphics application test](../tests/a11y-graphics-e2e.sh)
+uses disposable documents and application profiles on a nested Wayland desktop.
+With Inkscape 1.4.3 it reads the “Zoom with window size” checkbox, invokes
+its advertised action and checks the new state. With GIMP 3.2.0 it closes
+the welcome dialog and verifies that the image window stays open.
