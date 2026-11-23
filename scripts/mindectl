@@ -32,7 +32,7 @@ usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
        mindectl wait ID [--session S --timeout-ms N] [--scheme|--json]
        mindectl events-since SEQUENCE [--session S] [--scheme|--json]
        mindectl watch [--scheme|--json] [--count N]
-       mindectl a11y tree|find|click|set-text|select WINDOW-ID [OPTIONS]
+       mindectl a11y tree|find|inspect|focus|invoke|click|set-text|select WINDOW-ID [OPTIONS]
        mindectl repl
        mindectl check-config FILE [--live] [--scheme|--json]
        mindectl query state --json
@@ -203,39 +203,65 @@ case "$command" in
     a11y)
         shift
         helper=$(dirname -- "$0")/minde-a11y
+        case ${1:-} in
+            -h|--help)
+                cat <<'A11Y_HELP'
+usage: mindectl a11y OPERATION WINDOW-ID [OPTIONS]
+
+tree                   List widget roles and names (--depth N).
+find                   Return the unique widget and its window-relative bounds.
+inspect                Read widget state, text, value and advertised actions.
+focus                  Ask the widget to take keyboard focus.
+invoke --action NAME   Perform an advertised action by its exact name.
+click                  Activate a button or another clickable widget.
+set-text --value TEXT  Replace an editable field's contents.
+select --value NAME    Choose a named entry in a selection widget.
+
+Use --role ROLE and/or --name NAME to identify a widget. Limit the search to
+a subtree with --within-role ROLE and/or --within-name NAME. Use --depth N
+to limit each lookup to N levels below its root.
+List window IDs with: mindectl query desktop --json
+A11Y_HELP
+                exit 0 ;;
+        esac
         [ "$#" -ge 2 ] || { usage >&2; exit 2; }
         op=$1
         id=$2
         shift 2
-        case "$op" in tree|find|click|set-text|select) ;; *) usage >&2; exit 2 ;; esac
+        case "$op" in tree|find|inspect|focus|invoke|click|set-text|select) ;; *) usage >&2; exit 2 ;; esac
         case "$id" in ''|*[!0-9]*) echo "mindectl: expected a numeric window ID" >&2; exit 2 ;; esac
-        # Resolve both facts in one compositor dispatch. Pass the title as an
-        # argv element, preserving whitespace, quotes, and newlines verbatim.
-        exec "$GUILE" -q --no-auto-compile -c "$client_prelude"'
-          (use-modules (ice-9 match))
-          (match (cdr (member "--" (command-line)))
-            ((path helper op id options ...)
-             (let ((sock (connect-private path)))
-               (write `(cond ((wm-session-locked?) (quote locked))
-                             (else (let ((title (wm-window-title ,(string->number id))))
-                                     (and title
-                                          (list (wm-window-pid ,(string->number id))
-                                                (car title)))))) sock)
-               (force-output sock)
-               (shutdown sock 1)
-               (let ((reply (read sock)))
-                 (close sock)
-                 (match reply
+        # Keep user arguments in the shell: Guile execl transliterates them in
+        # the C locale. Emit the UTF-8 title followed by a newline and PID
+        # so even trailing newlines in the title survive command substitution.
+        client_modules
+        identity=$("$GUILE" -q --no-auto-compile -L "$modules" -c '
+          (use-modules (ice-9 match) (minde control-client))
+          (match (cdr (command-line))
+            ((path id)
+             (let* ((id (string->number id))
+                    (query `(if (wm-session-locked?) (quote locked)
+                                (let ((title (wm-window-title ,id)))
+                                  (and title (list (wm-window-pid ,id) (car title))))))
+                    (reply (ipc-request path (call-with-output-string
+                                               (lambda (port) (write query port))))))
+               (match reply
+                   (((quote error) _ ...) (exit (emit-reply reply (quote raw))))
                    (((quote ok) ((? integer? pid) (? string? title)))
-                    (apply execl helper helper op
-                           (append options (list (string-append "--pid=" (number->string pid))
-                                                 (string-append "--title=" title)))))
+                    (set-port-encoding! (current-output-port) "UTF-8")
+                    (display title)
+                    (newline)
+                    (display pid))
                    (((quote ok) (quote locked))
                     (display "mindectl: session is locked\n" (current-error-port))
                     (exit 1))
                    (_
                     (display "mindectl: cannot resolve window identity (unknown window, PID unavailable, or incompatible compositor)\n" (current-error-port))
-                    (exit 1)))))))' -- "$socket_path" "$helper" "$op" "$id" "$@"
+                    (exit 1))))))' "$socket_path" "$id")
+        newline='
+'
+        pid=${identity##*"$newline"}
+        title=${identity%"$newline"*}
+        exec "$helper" "$op" "$@" "--pid=$pid" "--title=$title"
         ;;
     query)
         if [ "${2:-}" = desktop ] || [ "${2:-}" = windows ]; then
