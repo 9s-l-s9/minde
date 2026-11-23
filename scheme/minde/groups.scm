@@ -731,16 +731,19 @@ retile)."
 (define* (add-placement-rule! #:optional (matcher #f)
                               #:key (app-id #f) (title #f) (group #f) (frame 0)
                               (follow? #f) (raise? #f) (lock? #t)
-                              (float? #f))
+                              (float? #f) (dialog? #f))
   "Appends a placement rule unless an equivalent rule already exists.
 #:app-id matches exactly; #:title is a case-sensitive substring. When both
 are supplied, both must match. The deprecated positional string matches
 an exact app-id, falling back to a title substring only without an app-id.
 #:float? #t makes matching windows float instead of joining a frame --
 e.g. Firefox's Picture-in-Picture player, which would otherwise hijack
-the current frame and push the browser window offscreen."
+the current frame and push the browser window offscreen.
+#:dialog? #t matches only dialog windows (see window-dialog?) and may be
+combined with #:app-id / #:title; with #:float? #f it keeps matching dialogs
+tiled instead of the default centered float."
   ;; #:raise? is StumpWM's name for what our #:follow? does.
-  (let ((rule (list (make-placement-matcher matcher app-id title)
+  (let ((rule (list (make-placement-matcher matcher app-id title dialog?)
                     group frame (or follow? raise?) lock? float?)))
     (unless (valid-placement-rules? (list rule)) (error "invalid placement rule" rule))
     (unless (member rule %placement-rules)
@@ -831,7 +834,7 @@ Refuses windows without an app-id instead of remembering a transient title."
                (app (window-app-id id))
                (before (length %placement-rules)))
           (and (persist-placement-rules!
-                (remove (lambda (r) (rule-matches? r title app))
+                (remove (lambda (r) (rule-matches? r title app id))
                         %placement-rules))
                (begin
                  (echo (format #f "forgot ~a rule(s)"
@@ -845,8 +848,13 @@ Refuses windows without an app-id instead of remembering a transient title."
               (frame-leaves tree)))
        (group-all-trees (current-group))))
 
-(define (rule-matches? rule title app-id)
-  (placement-rule-matches? rule title app-id))
+(define* (rule-matches? rule title app-id #:optional (id #f))
+  ;; Only rules with a dialog selector need the window's hints.
+  (placement-rule-matches? rule title app-id
+                           (and id (assq 'dialog (car rule)) (window-dialog? id))))
+
+(define (rule-dialog-selector? rule)
+  (and (assq 'dialog (car rule)) #t))
 
 (define (find-group-loose name)
   (and name
@@ -858,7 +866,10 @@ Refuses windows without an app-id instead of remembering a transient title."
 (define (place-by-rule! rule id title app-id)
   (let* ((g (or (find-group-loose (cadr rule)) (current-group)))
          (active? (eq? g (current-group)))
-         (float? (or (group-float? g) (rule-float? rule)))
+         ;; Dialogs float by default; a rule with its own #:dialog? selector
+         ;; decides for itself (#:float? #f keeps them tiled).
+         (float? (or (group-float? g) (rule-float? rule)
+                     (and (not (rule-dialog-selector? rule)) (window-dialog? id))))
          (tree (if active? (current-tree) (group-tree g)))
          (leaves (frame-leaves tree))
          (leaf (list-ref leaves (min (max 0 (caddr rule))
@@ -866,7 +877,7 @@ Refuses windows without an app-id instead of remembering a transient title."
     (remember-window-title! id title app-id)
     (assign-window-number! id g)
     (if float?
-        (add-float! g id (default-float-rect))
+        (add-float! g id (new-float-rect id))
         (frame-add-window! leaf id))
     (run-event-hook! 'new-window id title app-id)
     (if active?
@@ -893,7 +904,7 @@ Affected dynamic groups retile every head immediately."
        (unless (window-floating? id)
          (let* ((title (window-client-title id))
                 (rule (find (lambda (r)
-                              (rule-matches? r title (window-app-id id)))
+                              (rule-matches? r title (window-app-id id) id))
                             %placement-rules)))
            (when (and rule (apply-rule-to-mapped! id rule))
              (set! moved (+ moved 1))))))
@@ -1062,7 +1073,7 @@ file is validated first; a malformed one changes nothing."
 (define (handle-window-map! id title app-id)
   "Places a newly mapped window, applies locked rules, and retiles if dynamic."
   (let ((rule (find (lambda (r) (and (rule-lock? r)
-                                     (rule-matches? r title app-id)))
+                                     (rule-matches? r title app-id id)))
                     %placement-rules)))
     (if rule
         (place-by-rule! rule id title app-id)
@@ -1091,9 +1102,9 @@ first becomes known."
     (when (and (not (window-floating? id))
                (window-in-active-group? id))
       (let ((rule (find (lambda (r) (and (rule-lock? r) (rule-float? r)
-                                         (rule-matches? r title app-id)
+                                         (rule-matches? r title app-id id)
                                          (not (rule-matches? r old-title
-                                                             old-app-id))))
+                                                             old-app-id id))))
                         %placement-rules)))
         (when rule
           (float-window! id)
@@ -1101,7 +1112,7 @@ first becomes known."
     (when (and first-app-id? (not (window-floating? id)))
       (let ((rule (find (lambda (r) (and (rule-lock? r)
                                          (not (rule-float? r))
-                                         (rule-matches? r title app-id)))
+                                         (rule-matches? r title app-id id)))
                         %placement-rules)))
         (when (and rule (apply-rule-to-mapped! id rule))
           (let ((target (or (find-group-loose (cadr rule)) (current-group))))

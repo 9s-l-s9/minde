@@ -732,6 +732,29 @@ unsafe extern "C" fn wm_transient_ids() -> Scm {
     scm_list_map(&ids, |id| from_i64(*id as i64))
 }
 
+/// `(wm-window-hints id)` -> `((parent . id-or-#f) (type . symbol)
+/// (size . (w . h)-or-#f))`, or `#f` for an unknown window. `type` is one of
+/// `normal`, `dialog`, `utility`, `splash`, `other`; a native Wayland window
+/// with an xdg-dialog object reports `dialog`.
+unsafe extern "C" fn wm_window_hints(id: Scm) -> Scm {
+    let id = checked_arg!(to_id(id));
+    let Some(hints) = with_state(|state| state.window_hints(id)).flatten() else {
+        return from_bool(false);
+    };
+    let pair = |key: &str, value: Scm| unsafe { ffi::scm_cons(from_symbol(key), value) };
+    let parent = hints
+        .parent
+        .map_or(from_bool(false), |p| from_i64(p as i64));
+    let size = hints.size.map_or(from_bool(false), |(w, h)| unsafe {
+        ffi::scm_cons(from_i64(w as i64), from_i64(h as i64))
+    });
+    scm_list(&[
+        pair("parent", parent),
+        pair("type", from_symbol(hints.kind)),
+        pair("size", size),
+    ])
+}
+
 /// `(wm-floating-ids)` -> the ids Rust currently treats as floating (set
 /// through `wm-set-floating`), for `mirror-drift`.
 unsafe extern "C" fn wm_floating_ids() -> Scm {
@@ -1814,6 +1837,7 @@ fn register_primitives() {
         register_gsubr("wm-send-string", 1, 1, gsubr!(wm_send_string, 2));
         // Documented alias of wm-send-string (doc/api.md, "wm-type").
         register_gsubr("wm-type", 1, 1, gsubr!(wm_send_string, 2));
+        register_gsubr("wm-window-hints", 1, 0, gsubr!(wm_window_hints, 1));
         register_gsubr("wm-click", 1, 1, gsubr!(wm_click, 2));
         register_gsubr("wm-button-press", 1, 0, gsubr!(wm_button_press, 1));
         register_gsubr("wm-button-release", 1, 0, gsubr!(wm_button_release, 1));

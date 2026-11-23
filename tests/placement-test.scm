@@ -461,6 +461,68 @@
 (delete-file %rules-path)
 
 ;; ---------------------------------------------------------------------
+;; Dialogs: transient / DIALOG / UTILITY / SPLASH windows float centered over
+;; their parent, in their own size; plain toplevels stay tiled; the
+;; #:dialog? selector overrides the default.
+;; ---------------------------------------------------------------------
+
+(define %hints (make-hash-table))   ; id -> wm-window-hints alist
+(define %geoms (make-hash-table))   ; id -> wm-window-geometry list
+(define (wm-window-hints id) (hash-ref %hints id #f))
+(define (wm-window-geometry id) (hash-ref %geoms id #f))
+
+(clear-placement-rules!)
+(handle-window-map! 300 "parent" "app")
+(hash-set! %hints 300 '((parent . #f) (type . normal) (size . #f)))
+(hash-set! %geoms 300 '(100 100 400 300))
+(check-true "toplevel without parent stays tiled" (not (window-floating? 300)))
+(check "window-dialog? is false for a plain toplevel" (window-dialog? 300) #f)
+
+(hash-set! %hints 301 '((parent . 300) (type . normal) (size . (200 . 100))))
+(handle-window-map! 301 "Open file" "app")
+(check-true "transient window floats" (window-floating? 301))
+(check "transient window is centered over its parent in its own size"
+       (float-geometry 301) '(200 200 200 100))
+
+(hash-set! %hints 302 '((parent . #f) (type . dialog) (size . #f)))
+(handle-window-map! 302 "Settings" "other")
+(check-true "dialog type without parent floats" (window-floating? 302))
+(check "dialog without size hint uses the default float size"
+       (cddr (float-geometry 302)) (cddr (default-float-rect)))
+
+(hash-set! %hints 303 '((parent . #f) (type . splash) (size . (5000 . 5000))))
+(handle-window-map! 303 "Splash" "other")
+(check "oversized hint is clamped to the head"
+       (cddr (float-geometry 303)) (list (list-ref (car (heads)) 3) (list-ref (car (heads)) 4)))
+
+(hash-set! %hints 304 '((parent . #f) (type . other) (size . #f)))
+(handle-window-map! 304 "tooltip-ish" "other")
+(check-true "other window types stay tiled" (not (window-floating? 304)))
+
+;; Selector: #:dialog? matches only dialogs and can keep them tiled.
+(add-placement-rule! #:app-id "keep" #:dialog? #t #:float? #f)
+(hash-set! %hints 305 '((parent . 300) (type . normal) (size . #f)))
+(handle-window-map! 305 "dlg" "keep")
+(check-true "#:dialog? #:float? #f keeps a dialog tiled" (not (window-floating? 305)))
+(hash-set! %hints 306 '((parent . #f) (type . normal) (size . #f)))
+(handle-window-map! 306 "main" "keep")
+(check-true "dialog rule ignores non-dialogs" (not (window-floating? 306)))
+(check "dialog selector matcher is canonical data"
+       (car (car (@@ (minde groups) %placement-rules))) '((app-id . "keep") (dialog . #t)))
+(check "dialog-only rule needs a dialog"
+       (placement-rule-matches? (list '((dialog . #t)) #f 0 #f #t #f) "t" "a") #f)
+(check "dialog-only rule matches a dialog"
+       (placement-rule-matches? (list '((dialog . #t)) #f 0 #f #t #f) "t" "a" #t) #t)
+(check-true "dialog rules validate"
+            (valid-placement-rules? (list (list '((dialog . #t)) #f 0 #f #t #t))))
+(check "dialog selector must be #t"
+       (valid-placement-rules? (list (list '((dialog . #f)) #f 0 #f #t #t))) #f)
+(clear-placement-rules!)
+(add-placement-rule! #:dialog? #t #:float? #t #:group "III")
+(check-true "dialog rule alone is valid" (= 1 (length (@@ (minde groups) %placement-rules))))
+(clear-placement-rules!)
+
+;; ---------------------------------------------------------------------
 
 (if (zero? %failures)
     (begin

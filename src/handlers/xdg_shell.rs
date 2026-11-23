@@ -79,6 +79,10 @@ fn request_fullscreen(surface: &ToplevelSurface, id: u64, on: bool) {
     }
 }
 
+// The dialog hint is read from the toplevel's role attributes when the window
+// maps (`MindeState::window_hints`); no per-change reaction is needed.
+impl smithay::wayland::shell::xdg::dialog::XdgDialogHandler for MindeState {}
+
 impl XdgShellHandler for MindeState {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state

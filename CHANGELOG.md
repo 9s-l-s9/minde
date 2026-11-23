@@ -15,6 +15,15 @@ Target version: `1.0.0-rc1`.
   the end, so GTK, SWT and other toolkits that wait for several motion events
   recognize a drag. Native Wayland and XWayland clients receive identical input.
 
+- Dialogs float. A toplevel with a parent (xdg `set_parent`, X11
+  `WM_TRANSIENT_FOR`), an xdg-dialog object, or the X11 window type DIALOG,
+  UTILITY or SPLASH floats centered over its parent (or the current frame) in
+  the size the client reports; ordinary toplevels still tile. The new
+  `window-dialog?` predicate, the `wm-window-hints` primitive and the
+  `#:dialog?` selector of `add-placement-rule!` expose and override this
+  (`#:dialog? #t #:float? #f` keeps matching dialogs tiled). minde now also
+  advertises the xdg-dialog protocol.
+
 ### Changed
 
 - Programs launched with `wm-spawn` inherit the session's GTK and Mozilla
