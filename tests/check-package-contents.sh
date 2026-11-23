@@ -14,7 +14,7 @@ fail() {
     exit 1
 }
 
-for executable in minde minde-session minde-cmd minde-msg mindectl minde-agent; do
+for executable in minde minde-session minde-cmd minde-msg mindectl minde-agent minde-a11y; do
     [ -x "$out/bin/$executable" ] || fail "missing executable bin/$executable"
 done
 

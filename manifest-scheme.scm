@@ -11,6 +11,7 @@
    ;; mindectl repl's history and completion.
    "guile-readline"
    "guile-json"
+   "python"
    ;; Declarative key validation uses the same XKB names as the compositor.
    "libxkbcommon"
    "curl"

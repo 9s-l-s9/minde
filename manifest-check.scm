@@ -20,6 +20,7 @@
    "guile"
    "guile-readline"
    "guile-json"
+   "python"
    "curl"
    "coreutils"
    ;; Static binary-retention tests use the same JSON planner as CI.

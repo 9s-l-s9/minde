@@ -360,6 +360,7 @@
    ((name . wm-set-clipboard) (signature . "(wm-set-clipboard text)") (documentation . "Set the Wayland CLIPBOARD selection contents to TEXT."))
    ((name . wm-set-primary) (signature . "(wm-set-primary text)") (documentation . "Set the Wayland PRIMARY (middle-click) selection contents to TEXT."))
    ((name . wm-place-float) (signature . "(wm-place-float id x y w h)") (documentation . "Move and size the floating window ID to the given rectangle."))
+   ((name . wm-window-pid) (signature . "(wm-window-pid id)") (documentation . "Return the native client or local X11 client PID for window ID, or #f if unavailable."))
    ((name . wm-window-title) (signature . "(wm-window-title id)") (documentation . "The (title . app-id) pair the client set on window ID, or #f."))
    ((name . wm-geometry-revision) (signature . "(wm-geometry-revision)") (documentation . "Monotonic process-local epoch for changes in committed window geometry, including changes reverted between snapshot reads."))
    ((name . wm-transient-ids) (signature . "(wm-transient-ids)") (documentation . "Return transient window IDs from Wayland parent and X11 transient hints."))

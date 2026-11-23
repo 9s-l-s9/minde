@@ -98,6 +98,8 @@
      "Set the Wayland PRIMARY (middle-click) selection contents to TEXT.")
     (wm-place-float "(wm-place-float id x y w h)"
      "Move and size the floating window ID to the given rectangle.")
+    (wm-window-pid "(wm-window-pid id)"
+     "Return the native client or local X11 client PID for window ID, or #f if unavailable.")
     (wm-window-title "(wm-window-title id)"
      "The (title . app-id) pair the client set on window ID, or #f.")
     (wm-geometry-revision "(wm-geometry-revision)"

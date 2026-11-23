@@ -7,6 +7,11 @@ yet made a public release; breaking changes remain possible before 1.0.
 
 Target version: `1.0.0-rc1`.
 
+### Added
+
+- `mindectl a11y` lets agents inspect accessible widget trees, activate a
+  named button, select an entry and edit text in a target window via AT-SPI.
+
 ### Changed
 
 - After its first frame, an `ext-image-copy-capture` request without buffer
