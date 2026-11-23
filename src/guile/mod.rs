@@ -700,6 +700,13 @@ unsafe extern "C" fn wm_place_window(id: Scm, x: Scm, y: Scm, w: Scm, h: Scm) ->
     from_bool(send_command(WmCommand::Place { id, x, y, w, h }))
 }
 
+unsafe extern "C" fn wm_window_pid(id: Scm) -> Scm {
+    let id = to_i64(id) as u64;
+    with_state(|state| state.window_pid(id))
+        .flatten()
+        .map_or_else(|| from_bool(false), |pid| from_i64(i64::from(pid)))
+}
+
 /// `(wm-window-title ID)` -> `(title . app-id)` as the client set them, or
 /// `#f` for an unknown window or off the main thread. Rust owns this
 /// fact; Scheme's `window-title` asks here first and keeps its own copy
@@ -1778,6 +1785,7 @@ fn register_primitives() {
         register_gsubr("wm-version", 0, 0, gsubr!(wm_version, 0));
         register_gsubr("wm-place-window", 5, 0, gsubr!(wm_place_window, 5));
         register_gsubr("wm-place-windows", 1, 0, gsubr!(wm_place_windows, 1));
+        register_gsubr("wm-window-pid", 1, 0, gsubr!(wm_window_pid, 1));
         register_gsubr("wm-window-title", 1, 0, gsubr!(wm_window_title, 1));
         register_gsubr("wm-transient-ids", 0, 0, gsubr!(wm_transient_ids, 0));
         register_gsubr("wm-floating-ids", 0, 0, gsubr!(wm_floating_ids, 0));

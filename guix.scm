@@ -24,6 +24,7 @@
 
 (use-modules (guix packages)
              (guix gexp)
+             (guix utils)
              (guix build-system gnu)
              (srfi srfi-1)
              (ice-9 popen)
@@ -36,6 +37,9 @@
              (gnu packages pkg-config)
              (gnu packages guile)
              (gnu packages curl)
+             (gnu packages python)
+             ((gnu packages glib) #:select (glib gobject-introspection python-pygobject))
+             ((gnu packages gtk) #:select (at-spi2-core))
              (gnu packages admin)
              (gnu packages freedesktop)
              (gnu packages xdisorg)
@@ -163,6 +167,7 @@ first, or set MINDE_SOURCE_ARCHIVE for a known-good artifact.~%~%"
                  "tests/commands-test.scm"
                  "tests/control-test.scm"
                  "tests/control-client-test.scm"))
+              (invoke "python3" "tests/a11y-selector-test.py")
               (invoke "guile" "--no-auto-compile" "-L" "scheme" "tests/control-agent-test.scm"))))
         (replace 'install
           (lambda* (#:key inputs #:allow-other-keys)
@@ -318,6 +323,20 @@ exec ~a/minde --tty \"$@\" > \"$LOGDIR/session.log\" 2>&1
                     (,(string-append #$(this-package-input "guile-json") "/lib/guile/3.0/site-ccache")))
                   `("MINDE_CURL" = (,(string-append #$(this-package-input "curl") "/bin/curl")))
                   `("PATH" prefix (,(string-append #$(this-package-input "coreutils") "/bin")))))
+              (let ((helper (string-append bin "/minde-a11y")))
+                (install-file "scripts/minde-a11y" bin)
+                (substitute* helper
+                  (("^#!/usr/bin/env python3")
+                   (string-append "#!" #$python "/bin/python3")))
+                (wrap-program helper
+                  `("GUIX_PYTHONPATH" prefix
+                    (,(string-append #$python-pygobject "/lib/python"
+                                     #$(version-major+minor (package-version python))
+                                     "/site-packages")))
+                  `("GI_TYPELIB_PATH" prefix
+                    (,(string-append #$at-spi2-core "/lib/girepository-1.0")
+                     ,(string-append #$gobject-introspection "/lib/girepository-1.0")
+                     ,(string-append #$glib "/lib/girepository-1.0")))))
               (call-with-output-file (string-append sessions "/minde.desktop")
                 (lambda (port)
                   (display "[Desktop Entry]
@@ -332,6 +351,7 @@ Type=Application
          (list rust "cargo")
          (list rust "tools")
          git-minimal
+         python
          pkg-config
          guile-3.0))
   (inputs

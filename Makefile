@@ -71,6 +71,7 @@ check-control: compile-scheme
 	$(GUILE) tests/control-transport-test.scm
 	$(GUILE) tests/control-cli-test.scm
 	$(GUILE) tests/control-agent-test.scm
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/a11y-selector-test.py
 
 check-control-e2e:
 	sh tests/control-e2e.sh

@@ -2577,6 +2577,19 @@ impl MindeState {
         Some(id)
     }
 
+    /// Process owning the native client connection, or the X client behind
+    /// XWayland. XRes resolves the owner on the server, unlike _NET_WM_PID.
+    pub fn window_pid(&self, id: u64) -> Option<u32> {
+        use smithay::reexports::wayland_server::Resource;
+        let window = self.window_by_id(id)?;
+        if let Some(x11) = window.x11_surface() {
+            return x11.get_client_pid().ok().filter(|pid| *pid > 0);
+        }
+        let client = window.toplevel()?.wl_surface().client()?;
+        let pid = client.get_credentials(&self.display_handle).ok()?.pid;
+        u32::try_from(pid).ok().filter(|pid| *pid > 0)
+    }
+
     /// The title and app-id (X11 class) window `id` currently carries, as
     /// the client set them: the one source `(wm-window-title)` reads.
     pub fn window_title(&self, id: u64) -> Option<(String, String)> {

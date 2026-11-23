@@ -204,3 +204,37 @@ is used by `mindectl query state --json` and the atomic status file.
 `current-state-json` accepts `#:redact? #t` for diagnostics that must omit
 focused-window title and application ID. The complete schema and stability
 rules are documented in [diagnostics.md](diagnostics.md).
+
+## Accessible widgets
+
+Use `mindectl a11y` to inspect a client window and operate its widgets through
+AT-SPI, the Linux desktop accessibility API. Start with the Minde window ID
+and inspect the roles and names the application actually exports. For example,
+if a dialog has ID 7:
+
+```sh
+mindectl a11y tree 7 --depth 6
+mindectl a11y find 7 --role push-button --name Finish
+mindectl a11y select 7 --role combo-box --name 'Model time units' --value minutes
+mindectl a11y set-text 7 --role text --name Capacity --value 3
+mindectl a11y click 7 --role push-button --name Finish
+```
+
+The controller resolves the application's process ID and window title. A separate
+helper queries the session accessibility bus, so a slow application does not
+block the compositor's event loop. Selectors match exact accessible names and
+roles. An ambiguous match fails before the helper acts. Selection, text edits
+and button presses use the widget's own interfaces, independently of keyboard
+focus. After an action opens or closes a dialog, resolve the new window ID and
+inspect its tree before continuing.
+
+Successful requests print JSON with `ok` and `result`. A tree lists role, name
+and depth. Find reports window-relative bounds when the toolkit supplies them. Actions report whether the toolkit accepted the request.
+Check the resulting application state when completion matters.
+
+The session needs a working AT-SPI bus and a toolkit that exports accessible
+objects. When running from a source checkout, the helper also needs Python
+with PyGObject and the Atspi 2.0 introspection data. For GTK3, check that `NO_AT_BRIDGE` is unset. Custom-drawn diagram
+canvases may expose only a single object. Use the compositor's screenshot and
+pointer facilities for those regions. The headless GTK3 integration test and
+its Guix invocation are in [tests/a11y-e2e.sh](../tests/a11y-e2e.sh).

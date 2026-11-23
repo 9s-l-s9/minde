@@ -70,6 +70,11 @@ update revisions without gathering desktop facts. Extensions that directly
 modify private policy records must call `note-desktop-change!`; the supported
 policy operations invalidate their own changes.
 
+For GTK dialogs and other applications that expose an accessibility tree,
+use the window ID from `mindectl query desktop --json` with
+`mindectl a11y tree ID`. The [widget commands](api.md#accessible-widgets)
+can select a named option, edit a specific field and press a dialog button.
+
 ## Call an action and check its result
 
 ```sh
