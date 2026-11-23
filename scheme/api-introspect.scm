@@ -104,6 +104,8 @@
      "Monotonic process-local epoch for changes in committed window geometry, including changes reverted between snapshot reads.")
     (wm-transient-ids "(wm-transient-ids)"
      "Return transient window IDs from Wayland parent and X11 transient hints.")
+    (wm-window-hints "(wm-window-hints id)"
+     "Placement hints of window ID as ((parent . id|#f) (type . normal|dialog|utility|splash|other) (size . (w . h)|#f)), or #f for an unknown window.")
     (wm-floating-ids "(wm-floating-ids)"
      "The window ids the compositor currently treats as floating.")
     (wm-timing-stats "(wm-timing-stats)"
@@ -126,14 +128,14 @@
      "Synthesize a paced key press/release with modifier mask MODS; Enter aliases Return.")
     (wm-paste "(wm-paste)"
      "Send Ctrl+V to the focused surface using the synthetic key queue.")
-    (wm-scroll "(wm-scroll dx dy)"
-     "Scroll DX/DY wheel notches (1 = one wheel click) at the current pointer position; sends discrete value120 plus continuous values.")
     (wm-button-press "(wm-button-press button)"
      "Press and hold BUTTON (left/middle/right, 1/2/3 or evdev code) after a hover/settle motion until wm-button-release; returns #f for an unknown button.")
     (wm-button-release "(wm-button-release button)"
      "Release BUTTON previously held by wm-button-press, in queue order with other synthetic input.")
     (wm-drag "(wm-drag x1 y1 x2 y2 [steps])"
      "Drag with the left button from X1,Y1 to X2,Y2: warp, press, STEPS paced motion events (default 10, 1-200), release. Works for native Wayland and XWayland clients.")
+    (wm-scroll "(wm-scroll dx dy)"
+     "Scroll DX/DY wheel notches (1 = one wheel click) at the current pointer position; sends discrete value120 plus continuous values.")
     (wm-screenshot "(wm-screenshot path [window-id])"
      "Publish a new PNG below wm-screenshot-directory; reject symlinks, traversal and existing files. The complete file appears atomically. Untargeted capture uses the pointer output; WINDOW-ID uses its greatest-overlap output and full rectangle at that output's scale, without stitching. Offscreen targets fail asynchronously. Returns a token or #f; completion via wm-automation-status.")
     (wm-screenshot-directory "(wm-screenshot-directory)"

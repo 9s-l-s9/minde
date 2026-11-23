@@ -149,7 +149,16 @@ presses the left button, sends `steps` paced motion events (default 10, at most
 200, about 15 ms apart) and releases at the end, so toolkits that need several
 motions to start a drag recognize it. The events use the normal seat path, so
 native Wayland and XWayland clients behave alike. All three return `#f` for
-invalid arguments. `wm-set-clipboard`
+invalid arguments.
+
+New toplevels that are dialogs float instead of tiling. `(window-dialog? id)`
+is true for a window with a parent (xdg parent or X11 `WM_TRANSIENT_FOR`), an
+xdg-dialog object, or X11 type DIALOG, UTILITY or SPLASH. Such a window floats
+centered over its parent when visible in the active group, otherwise over the
+current frame, in the size it reports (clamped to the head), else the default
+float size. `(wm-window-hints id)` returns the raw facts as
+`((parent . id) (type . symbol) (size . (w . h)))`; see
+`#:dialog?` in `add-placement-rule!` (doc/configuration.md) to override. `wm-set-clipboard`
 sets CLIPBOARD for Ctrl+V/`wm-paste`; `wm-set-primary` sets the middle-click
 PRIMARY selection. The older `wm-request-paste` asynchronously reads CLIPBOARD
 into minde's active prompt. A client-owned paste completes on EOF, after

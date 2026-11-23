@@ -684,6 +684,16 @@ the app-id shown for an empty title do not participate in matching.
                      #:float? #t)
 ```
 
+`#:dialog? #t` matches only dialog windows: those with a parent window, an
+xdg-dialog object, or the X11 window type DIALOG, UTILITY or SPLASH. It can be
+combined with `#:app-id` and `#:title`. Dialogs float centered over their
+parent by default; a rule with `#:dialog? #t #:float? #f` keeps matching
+dialogs in the frame tree, and one with `#:group` moves them elsewhere.
+
+```scheme
+(add-placement-rule! #:app-id "gimp" #:dialog? #t #:float? #f)
+```
+
 Rules run in order; put specific rules before broader ones. `#:lock? #f`
 restricts a rule to `place-existing-windows!`, which reapplies rules to
 already mapped windows. Locked rules also run when an initially empty app-id

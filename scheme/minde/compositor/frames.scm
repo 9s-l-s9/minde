@@ -141,6 +141,9 @@
             map-group-frame-trees!
             add-float!
             default-float-rect
+            window-dialog?
+            dialog-float-rect
+            new-float-rect
             track-window-map!
             track-float-map!
             track-window-unmap!
@@ -1129,6 +1132,62 @@ otherwise the active group's focused float or current frame's selected window."
     (list (+ (car r) (quotient (- (caddr r) w) 2))
           (+ (cadr r) (quotient (- (cadddr r) h) 2))
           w h)))
+
+;; Dialog detection and placement.  Rust reports ((parent . id|#f)
+;; (type . normal|dialog|utility|splash|other) (size . (w . h)|#f)) through
+;; wm-window-hints, from xdg parent / xdg-dialog on native Wayland and from
+;; WM_TRANSIENT_FOR / _NET_WM_WINDOW_TYPE on XWayland.
+(define (window-hints id)
+  (and id (rust-call-if-bound 'wm-window-hints id)))
+
+(define (window-dialog? id)
+  "True when window ID is a dialog: it has a parent window (transient), is an
+xdg-dialog, or has the X11 window type DIALOG, UTILITY or SPLASH."
+  (let ((hints (window-hints id)))
+    (and hints
+         (or (and (assq-ref hints 'parent) #t)
+             (and (memq (assq-ref hints 'type) '(dialog utility splash)) #t)))))
+
+(define (visible-parent-rect parent)
+  ;; PARENT's (x y w h) when it is visible in the active group, else #f.
+  (and parent
+       (group-owns-window? %active-group parent)
+       (let ((r (or (float-geometry parent)
+                    (rust-call-if-bound 'wm-window-geometry parent))))
+         (and (list? r) (= (length r) 4)
+              (let ((cx (+ (car r) (quotient (caddr r) 2)))
+                    (cy (+ (cadr r) (quotient (cadddr r) 2))))
+                (any (lambda (h)
+                       (and (>= cx (list-ref h 1))
+                            (< cx (+ (list-ref h 1) (list-ref h 3)))
+                            (>= cy (list-ref h 2))
+                            (< cy (+ (list-ref h 2) (list-ref h 4)))))
+                     (heads)))
+              r))))
+
+(define (dialog-float-rect id)
+  "Float rectangle for dialog ID: the client's own size when it reports one
+(else the default float size), centered over its parent window when that is
+visible in the active group (else over the current frame), and kept inside
+the current head."
+  (let* ((hints (window-hints id))
+         (size (and hints (assq-ref hints 'size)))
+         (dflt (default-float-rect))
+         (hx (head-rect-x)) (hy (head-rect-y))
+         (hw (head-rect-w)) (hh (head-rect-h))
+         (w (min hw (if size (max 1 (car size)) (caddr dflt))))
+         (h (min hh (if size (max 1 (cdr size)) (cadddr dflt))))
+         (anchor (or (visible-parent-rect (and hints (assq-ref hints 'parent)))
+                     (frame-display-rect %current-frame)))
+         (x (+ (car anchor) (quotient (- (caddr anchor) w) 2)))
+         (y (+ (cadr anchor) (quotient (- (cadddr anchor) h) 2))))
+    (list (max hx (min x (- (+ hx hw) w)))
+          (max hy (min y (- (+ hy hh) h)))
+          w h)))
+
+(define (new-float-rect id)
+  "Initial float rectangle for newly mapped window ID."
+  (if (window-dialog? id) (dialog-float-rect id) (default-float-rect)))
 
 (define (add-float! g id rect)
   "Registers ID as a float of G at RECT (bookkeeping + the Rust flag;
@@ -2808,12 +2867,13 @@ Called from Rust as (handle-urgent-window! id) via init.scm."
 
 (define (track-window-map! id title app-id)
   "Adds ID to the active group's current frame as its new current window
--- or floats it right away if the active group is a float group."
+-- or floats it right away if the active group is a float group or the
+window is a dialog (transient, DIALOG/UTILITY/SPLASH; see window-dialog?)."
   (remember-window-title! id title app-id)
   (assign-window-number! id %active-group)
-  (if (group-float? %active-group)
+  (if (or (group-float? %active-group) (window-dialog? id))
       (begin
-        (add-float! %active-group id (default-float-rect))
+        (add-float! %active-group id (new-float-rect id))
         (set! %focused-float id))
       (frame-add-window! %current-frame id))
   (run-event-hook! 'new-window id title app-id)

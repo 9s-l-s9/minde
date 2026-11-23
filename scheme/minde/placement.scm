@@ -16,20 +16,24 @@
 (define (valid-matcher? matcher)
   (and (list? matcher) (pair? matcher)
        (every (lambda (entry)
-                (and (pair? entry) (memq (car entry) '(app-id title legacy))
-                     (nonempty-text? (cdr entry))))
+                (and (pair? entry)
+                     (if (eq? (car entry) 'dialog)
+                         (eq? (cdr entry) #t)
+                         (and (memq (car entry) '(app-id title legacy))
+                              (nonempty-text? (cdr entry))))))
               matcher)
        (= (length matcher) (length (delete-duplicates (map car matcher))))
        (or (not (assq 'legacy matcher)) (= (length matcher) 1))))
 
-(define (make-placement-matcher legacy app-id title)
-  (when (and legacy (or app-id title))
-    (error "use either the deprecated string matcher or #:app-id / #:title"))
+(define* (make-placement-matcher legacy app-id title #:optional (dialog? #f))
+  (when (and legacy (or app-id title dialog?))
+    (error "use either the deprecated string matcher or #:app-id / #:title / #:dialog?"))
   (let ((matcher (if legacy `((legacy . ,legacy))
                      (append (if app-id `((app-id . ,app-id)) '())
-                             (if title `((title . ,title)) '())))))
+                             (if title `((title . ,title)) '())
+                             (if dialog? '((dialog . #t)) '())))))
     (unless (valid-matcher? matcher)
-      (error "placement requires a nonempty #:app-id or #:title"))
+      (error "placement requires a nonempty #:app-id or #:title, or #:dialog? #t"))
     matcher))
 
 (define (valid-rule-fields? rule)
@@ -49,7 +53,7 @@
   (delete-duplicates
    (map (lambda (rule)
           (cons (filter-map (lambda (key) (assq key (car rule)))
-                            '(app-id title legacy))
+                            '(app-id title dialog legacy))
                 (cdr rule)))
         rules)))
 
@@ -79,12 +83,15 @@ Keeps duplicates so diagnostics refer to the original file's rule positions."
     (unless (valid-placement-rules? rules) (error "invalid placement rules" rules))
     rules))
 
-(define (placement-rule-matches? rule title app-id)
+(define* (placement-rule-matches? rule title app-id #:optional (dialog? #f))
+  "True when RULE matches. DIALOG? says whether the window is a dialog
+(transient or dialog-type); only rules with a dialog selector look at it."
   (let* ((matcher (car rule))
          (legacy (assq-ref matcher 'legacy))
          (app (assq-ref matcher 'app-id))
          (text (assq-ref matcher 'title)))
-    (and (if legacy
+    (and (or (not (assq 'dialog matcher)) dialog?)
+         (if legacy
              (if (nonempty-text? app-id) (string=? app-id legacy)
                  (and (string? title) (string-contains title legacy)))
              (and (or (not app) (and (string? app-id) (string=? app-id app)))
@@ -94,12 +101,14 @@ Keeps duplicates so diagnostics refer to the original file's rule positions."
 (define (matcher-covers? broad narrow)
   (let ((old (assq-ref broad 'legacy)) (new (assq-ref narrow 'legacy))
         (app (assq-ref broad 'app-id)) (other-app (assq-ref narrow 'app-id))
-        (title (assq-ref broad 'title)) (other-title (assq-ref narrow 'title)))
+        (title (assq-ref broad 'title)) (other-title (assq-ref narrow 'title))
+        (dialog (assq-ref broad 'dialog)) (other-dialog (assq-ref narrow 'dialog)))
     (cond
      ;; Legacy rules also match titles on clients without an app-id.
      (old (or (equal? old new) (equal? old other-app)))
      (new #f)
-     (else (and (or (not app) (equal? app other-app))
+     (else (and (or (not dialog) other-dialog)
+                (or (not app) (equal? app other-app))
                 (or (not title)
                     (and other-title (string-contains other-title title))))))))
 

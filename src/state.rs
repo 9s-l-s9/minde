@@ -62,6 +62,14 @@ enum SyntheticAction {
     Hover,
 }
 
+/// Placement hints reported by `wm-window-hints`.
+pub(crate) struct WindowHints {
+    pub parent: Option<u64>,
+    /// `normal`, `dialog`, `utility`, `splash` or `other`.
+    pub kind: &'static str,
+    pub size: Option<(i32, i32)>,
+}
+
 /// Owner of buttons held by `wm-button-press` until `wm-button-release`.
 /// Sequence numbers start at 1, so 0 never collides with a queued gesture.
 const MANUAL_BUTTON_SOURCE: PointerButtonSource = PointerButtonSource::Synthetic(0);
@@ -264,6 +272,9 @@ pub struct MindeState {
     // Smithay protocol state
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    /// Keeps the xdg-dialog global alive; the hint itself lives on the
+    /// toplevel's role attributes (read by `window_hints`).
+    pub xdg_dialog_state: smithay::wayland::shell::xdg::dialog::XdgDialogState,
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Self>,
@@ -567,6 +578,8 @@ impl MindeState {
 
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_dialog_state =
+            smithay::wayland::shell::xdg::dialog::XdgDialogState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let popups = PopupManager::default();
 
@@ -781,6 +794,7 @@ impl MindeState {
 
             compositor_state,
             xdg_shell_state,
+            xdg_dialog_state,
             shm_state,
             output_manager_state,
             seat_state,
@@ -2472,6 +2486,53 @@ impl MindeState {
             .insert(id, (title.clone(), app_id.clone()));
         self.foreign_toplevel_created(id, title, app_id);
         id
+    }
+
+    /// Dialog-related facts for `wm-window-hints`: the parent window's id
+    /// (xdg parent or X11 WM_TRANSIENT_FOR), the window type, and the
+    /// client's own current size. Scheme decides what to do with them.
+    pub(crate) fn window_hints(&self, id: u64) -> Option<WindowHints> {
+        use smithay::wayland::shell::xdg::{XdgToplevelSurfaceData, dialog::ToplevelDialogHint};
+        use smithay::xwayland::xwm::WmWindowType;
+        let window = self.window_by_id(id)?;
+        let size = window.geometry().size;
+        let size = (size.w > 0 && size.h > 0).then_some((size.w, size.h));
+        if let Some(toplevel) = window.toplevel() {
+            let (parent, hint) =
+                smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok())
+                        .map(|d| (d.parent.clone(), d.dialog_hint))
+                        .unwrap_or_default()
+                });
+            let parent = parent
+                .and_then(|surface| window_for_surface(&surface))
+                .and_then(|w| self.id_for_window(&w))
+                .filter(|parent| *parent != id);
+            let kind = match hint {
+                ToplevelDialogHint::Unknown => "normal",
+                ToplevelDialogHint::Dialog | ToplevelDialogHint::Modal => "dialog",
+            };
+            return Some(WindowHints { parent, kind, size });
+        }
+        let x11 = window.x11_surface()?;
+        let parent = x11.is_transient_for().and_then(|xid| {
+            self.windows
+                .iter()
+                .find(|(_, w)| w.x11_surface().is_some_and(|s| s.window_id() == xid))
+                .map(|(&pid, _)| pid)
+                .filter(|parent| *parent != id)
+        });
+        let kind = match x11.window_type() {
+            Some(WmWindowType::Dialog) => "dialog",
+            Some(WmWindowType::Utility) => "utility",
+            Some(WmWindowType::Splash) => "splash",
+            Some(WmWindowType::Normal) | None => "normal",
+            Some(_) => "other",
+        };
+        Some(WindowHints { parent, kind, size })
     }
 
     /// Best-effort current title/app-id for a window, from whichever shell

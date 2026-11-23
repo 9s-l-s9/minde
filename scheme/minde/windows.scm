@@ -11,6 +11,7 @@
                window-title
                window-app-id
                window-floating?
+               window-dialog?
                window-number
                focus-window-by-id!
                focus-next-window!
