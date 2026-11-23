@@ -26,6 +26,13 @@ echo "Accessibility test logs: $out"
 unset NO_AT_BRIDGE AT_SPI_BUS_ADDRESS
 export GTK_A11Y=always GIO_USE_VFS=local
 nested_start "$out" "${MINDE_A11Y_E2E_DISPLAY:-:86}" || exit 1
+# An agent starts from the public catalog without knowing the tool's name.
+scripts/mindectl search button --json >"$out/discovery.json"
+tool=$(jq -er '.[] | select(.kind == "cli-tool") | .name' "$out/discovery.json")
+scripts/mindectl help "$tool" --json | jq -e '.windows == "mindectl query windows --json"
+    and .start == "mindectl a11y tree WINDOW-ID --depth 4"' >/dev/null
+scripts/mindectl capabilities --json | jq -e --arg name "$tool" '.tools | any(.name == $name)' >/dev/null
+
 for backend in wayland x11; do
     if [ "$backend" = x11 ]; then
         number=$(timeout 30 scripts/mindectl eval '(caddr (wm-runtime-info))')
@@ -41,7 +48,7 @@ for backend in wayland x11; do
     fixture_pid=$!
     id=
     for _ in $(seq 1 50); do
-        id=$(scripts/mindectl query desktop --json | jq -r --arg title "$title" '.windows[]? | select(.title == $title) | .id')
+        id=$(scripts/mindectl query windows --json | jq -r --arg title "$title" '.windows[]? | select(.title == $title) | .id')
         [ -n "$id" ] && break
         kill -0 "$fixture_pid"
         sleep 0.2
@@ -62,7 +69,7 @@ for backend in wayland x11; do
     done
     if [ -z "$ready" ]; then cat "$out/find.err" "$out/find.json" >&2; exit 1; fi
     jq -e '.ok and .result.role == "push-button" and .result.name == "Finish"' "$out/find.json"
-    a11y tree | jq -e . >/dev/null
+    a11y tree --depth 4 | jq -e . >/dev/null
     if a11y click --role push-button --name Missing >"$out/missing.json" 2>"$out/missing.err"; then
         echo "Missing button unexpectedly accepted" >&2; exit 1
     fi

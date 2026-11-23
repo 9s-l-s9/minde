@@ -158,10 +158,19 @@
               (not (assq-ref (cadr (assq-ref help 'parameters)) 'required)))))
 (check "unknown help returns false" (not (describe-action 'missing!)))
 (check "discovery searches summaries case-insensitively"
-       (equal? '(typed!) (map (lambda (entry) (assq-ref entry 'name))
+       (equal? '(mindectl-a11y typed!) (map (lambda (entry) (assq-ref entry 'name))
                              (search-actions "WINDOW"))))
 (check "summary discovery excludes verbose fields"
        (every (lambda (entry) (not (assq 'documentation entry))) (search-actions)))
+(check "GTK discovery leads to an executable CLI entry point"
+       (let* ((tool (car (assq-ref (capabilities) 'tools)))
+              (name (assq-ref tool 'name)))
+         (and (eq? (assq-ref tool 'kind) 'cli-tool)
+              (equal? tool (describe-action name))
+              (equal? tool (describe-action 'a11y))
+              (equal? (list tool) (search-actions "GTK"))
+              (not (command-ref name))
+              (string=? (assq-ref tool 'help) "mindectl a11y --help"))))
 (check "capabilities include registered user commands and version"
        (let ((summary (capabilities)))
          (and (= 1 (assq-ref summary 'schema-version))

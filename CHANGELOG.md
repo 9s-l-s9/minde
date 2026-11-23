@@ -12,7 +12,8 @@ Target version: `1.0.0-rc1`.
 - `mindectl a11y` lets agents inspect accessible widget trees, activate a
   named button, select an entry and edit text in a target window via AT-SPI.
   Agents can scope queries to a panel, read widget state and text, move focus
-  and invoke the actions advertised by a widget.
+  and invoke the actions advertised by a widget. The capabilities catalog,
+  search and help expose the CLI entry point for application widgets.
 
 ### Changed
 

@@ -24,7 +24,7 @@ usage() {
     cat <<'EOF'
 usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
        mindectl capabilities [--scheme|--json]
-       mindectl help ACTION [--scheme|--json]
+       mindectl help ACTION-OR-TOOL [--scheme|--json]
        mindectl search QUERY [--scheme|--json]
        mindectl query desktop|windows [--scheme|--json]
        mindectl request [--scheme|--json]
@@ -39,6 +39,8 @@ usage: mindectl eval EXPR [--machine|--scheme|--json] [--backtrace]
        mindectl subscribe --json
        mindectl subscribe --events
        mindectl report --output DIRECTORY
+
+For buttons, fields and menus inside an application, start with mindectl a11y --help.
 
 --scheme/--machine preserve the complete IPC envelope; --json projects typed
 control data and tags arbitrary Scheme values as {"$scheme":"..."}.

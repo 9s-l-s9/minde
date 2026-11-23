@@ -1914,13 +1914,14 @@ prefix matches). HISTORY names the history list (C-p/C-n).&quot;
       (error &quot;duplicate key binding&quot; notation))
     (hash-set! registry notation value)))</code></pre></template></article><article id="b191" class="abr-binding" data-label="(minde input) registered-keys  ·  scheme/minde/foundation/keys.scm lines 57-59"><h3><code>registered-keys</code><span class="kind">procedure</span></h3><p class="sig"><code>(registered-keys registry)</code></p><p class="desc">Returns REGISTRY entries as canonical-notation/value pairs.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/foundation/keys.scm#L57">View on GitHub: scheme/minde/foundation/keys.scm:57</a></p><button class="abr-show-source" data-id="b191">View source</button><template><pre><code>(define (registered-keys registry)
   &quot;Returns REGISTRY entries as canonical-notation/value pairs.&quot;
-  (hash-map-&gt;list (lambda (key value) (cons key value)) registry))</code></pre></template></article></section><section><h2>(minde commands)</h2><article id="b192" class="abr-binding" data-label="(minde commands) capabilities  ·  scheme/minde/commands.scm lines 401-407"><h3><code>capabilities</code><span class="kind">procedure</span></h3><p class="sig"><code>(capabilities)</code></p><p class="desc">Return the versioned command schema capabilities and concise action list.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L401">View on GitHub: scheme/minde/commands.scm:401</a></p><button class="abr-show-source" data-id="b192">View source</button><template><pre><code>(define (capabilities)
-  &quot;Return the versioned command schema capabilities and concise action list.&quot;
+  (hash-map-&gt;list (lambda (key value) (cons key value)) registry))</code></pre></template></article></section><section><h2>(minde commands)</h2><article id="b192" class="abr-binding" data-label="(minde commands) capabilities  ·  scheme/minde/commands.scm lines 421-428"><h3><code>capabilities</code><span class="kind">procedure</span></h3><p class="sig"><code>(capabilities)</code></p><p class="desc">Return the versioned command schema, CLI tool entries and action summaries.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L421">View on GitHub: scheme/minde/commands.scm:421</a></p><button class="abr-show-source" data-id="b192">View source</button><template><pre><code>(define (capabilities)
+  &quot;Return the versioned command schema, CLI tool entries and action summaries.&quot;
   `((schema-version . 1)
     (representation . scheme)
     (schema-types . ,%schema-types)
     (schema-constructors . (enum maybe list-of))
-    (actions . ,(search-actions))))</code></pre></template></article><article id="b193" class="abr-binding" data-label="(minde commands) clear-command-registry!  ·  scheme/minde/commands.scm lines 135-137"><h3><code>clear-command-registry!</code><span class="kind">procedure</span></h3><p class="sig"><code>(clear-command-registry!)</code></p><p class="desc">Removes every command from the process-local registry.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L135">View on GitHub: scheme/minde/commands.scm:135</a></p><button class="abr-show-source" data-id="b193">View source</button><template><pre><code>(define (clear-command-registry!)
+    (tools . (,%widget-tool))
+    (actions . ,(registered-action-summaries &quot;&quot;))))</code></pre></template></article><article id="b193" class="abr-binding" data-label="(minde commands) clear-command-registry!  ·  scheme/minde/commands.scm lines 135-137"><h3><code>clear-command-registry!</code><span class="kind">procedure</span></h3><p class="sig"><code>(clear-command-registry!)</code></p><p class="desc">Removes every command from the process-local registry.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L135">View on GitHub: scheme/minde/commands.scm:135</a></p><button class="abr-show-source" data-id="b193">View source</button><template><pre><code>(define (clear-command-registry!)
   &quot;Removes every command from the process-local registry.&quot;
   (set! %commands (make-hash-table)))</code></pre></template></article><article id="b194" class="abr-binding" data-label="(minde commands) command-arguments  ·  scheme/minde/commands.scm lines 40-59"><h3><code>command-arguments</code><span class="kind">syntax</span></h3><p class="sig"><code>(command-arguments RECORD)</code></p><p class="desc">Returns RECORD's ordered command argument names.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L40">View on GitHub: scheme/minde/commands.scm:40</a></p><button class="abr-show-source" data-id="b194">View source</button><template><pre><code>(define-record-type &lt;command&gt;
   (make-command name procedure arguments category summary documentation demo-id
@@ -2235,15 +2236,16 @@ prefix matches). HISTORY names the history list (C-p/C-n).&quot;
   (examples command-examples))</code></pre></template></article><article id="b213" class="abr-binding" data-label="(minde commands) commands-in-category  ·  scheme/minde/commands.scm lines 146-149"><h3><code>commands-in-category</code><span class="kind">procedure</span></h3><p class="sig"><code>(commands-in-category category)</code></p><p class="desc">Returns registered command records whose category is CATEGORY.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L146">View on GitHub: scheme/minde/commands.scm:146</a></p><button class="abr-show-source" data-id="b213">View source</button><template><pre><code>(define (commands-in-category category)
   &quot;Returns registered command records whose category is CATEGORY.&quot;
   (filter (lambda (command) (eq? category (command-category command)))
-          (map command-ref (command-names))))</code></pre></template></article><article id="b214" class="abr-binding" data-label="(minde commands) describe-action  ·  scheme/minde/commands.scm lines 370-384"><h3><code>describe-action</code><span class="kind">procedure</span></h3><p class="sig"><code>(describe-action name)</code></p><p class="desc">Return NAME's full readable command contract, or #f if unregistered.
+          (map command-ref (command-names))))</code></pre></template></article><article id="b214" class="abr-binding" data-label="(minde commands) describe-action  ·  scheme/minde/commands.scm lines 384-399"><h3><code>describe-action</code><span class="kind">procedure</span></h3><p class="sig"><code>(describe-action name)</code></p><p class="desc">Return NAME's command contract or CLI tool entry, or #f if unknown.
 Missing legacy metadata is explicitly unknown; PARAMETERS is #f for legacy
-commands. EXAMPLES are Scheme call data, never strings to evaluate.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L370">View on GitHub: scheme/minde/commands.scm:370</a></p><button class="abr-show-source" data-id="b214">View source</button><template><pre><code>(define (describe-action name)
-  &quot;Return NAME's full readable command contract, or #f if unregistered.
+commands. EXAMPLES are Scheme call data, never strings to evaluate.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L384">View on GitHub: scheme/minde/commands.scm:384</a></p><button class="abr-show-source" data-id="b214">View source</button><template><pre><code>(define (describe-action name)
+  &quot;Return NAME's command contract or CLI tool entry, or #f if unknown.
 Missing legacy metadata is explicitly unknown; PARAMETERS is #f for legacy
 commands. EXAMPLES are Scheme call data, never strings to evaluate.&quot;
   (let ((command (command-ref name)))
-    (and command
-         (append (action-summary command)
+    (if (not command)
+        (and (memq name '(a11y mindectl-a11y)) %widget-tool)
+        (append (action-summary command)
                  `((arguments . ,(command-arguments command))
                    (parameters . ,(command-parameters command))
                    (result-schema . ,(command-result-schema command))
@@ -2345,21 +2347,12 @@ and alist (unique symbol keys). Compound types are (enum VALUE ...),
               ((maybe) (or (eq? value #f) (match (cadr type) value)))
               ((list-of) (and (list? value)
                               (every (lambda (v) (match (cadr type) v)) value)))
-              (else #f)))))))</code></pre></template></article><article id="b219" class="abr-binding" data-label="(minde commands) search-actions  ·  scheme/minde/commands.scm lines 386-399"><h3><code>search-actions</code><span class="kind">procedure</span></h3><p class="sig"><code>(search-actions #:optional (query &quot;&quot;))</code></p><p class="desc">Return concise action summaries matching QUERY in name, category, or
-summary, case-insensitively. Empty QUERY returns all registered actions.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L386">View on GitHub: scheme/minde/commands.scm:386</a></p><button class="abr-show-source" data-id="b219">View source</button><template><pre><code>(define* (search-actions #:optional (query &quot;&quot;))
-  &quot;Return concise action summaries matching QUERY in name, category, or
-summary, case-insensitively. Empty QUERY returns all registered actions.&quot;
-  (unless (string? query) (error &quot;search query must be a string&quot; query))
-  (let ((needle (string-downcase query)))
-    (filter-map
-     (lambda (name)
-       (let ((command (command-ref name)))
-         (and (any (lambda (text) (string-contains (string-downcase text) needle))
-                   (list (symbol-&gt;string name)
-                         (symbol-&gt;string (command-category command))
-                         (command-summary command)))
-              (action-summary command))))
-     (command-names))))</code></pre></template></article><article id="b220" class="abr-binding" data-label="(minde commands) validate-command-arguments  ·  scheme/minde/commands.scm lines 327-355"><h3><code>validate-command-arguments</code><span class="kind">procedure</span></h3><p class="sig"><code>(validate-command-arguments name arguments)</code></p><p class="desc">Validate a named ARGUMENTS alist and return values in procedure order,
+              (else #f)))))))</code></pre></template></article><article id="b219" class="abr-binding" data-label="(minde commands) search-actions  ·  scheme/minde/commands.scm lines 414-419"><h3><code>search-actions</code><span class="kind">procedure</span></h3><p class="sig"><code>(search-actions #:optional (query &quot;&quot;))</code></p><p class="desc">Search registered actions and CLI tools. Tool results carry kind cli-tool.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L414">View on GitHub: scheme/minde/commands.scm:414</a></p><button class="abr-show-source" data-id="b219">View source</button><template><pre><code>(define* (search-actions #:optional (query &quot;&quot;))
+  &quot;Search registered actions and CLI tools. Tool results carry kind cli-tool.&quot;
+  (let ((actions (registered-action-summaries query)))
+    (if (widget-query? (string-downcase query))
+        (cons %widget-tool actions)
+        actions)))</code></pre></template></article><article id="b220" class="abr-binding" data-label="(minde commands) validate-command-arguments  ·  scheme/minde/commands.scm lines 327-355"><h3><code>validate-command-arguments</code><span class="kind">procedure</span></h3><p class="sig"><code>(validate-command-arguments name arguments)</code></p><p class="desc">Validate a named ARGUMENTS alist and return values in procedure order,
 including defaults. No procedure is called. Failure throws
 command-validation-error with stable CODE and readable DETAILS. Legacy
 commands require their declared argument names but cannot validate types.</p><p class="extra"><b>Demonstration:</b> non-visual</p><p class="extra"><a href="https://github.com/9s-l-s9/minde/blob/main/scheme/minde/commands.scm#L327">View on GitHub: scheme/minde/commands.scm:327</a></p><button class="abr-show-source" data-id="b220">View source</button><template><pre><code>(define (validate-command-arguments name arguments)
