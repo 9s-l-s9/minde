@@ -28,13 +28,13 @@ export GTK_A11Y=always GIO_USE_VFS=local
 nested_start "$out" "${MINDE_A11Y_E2E_DISPLAY:-:86}" || exit 1
 for backend in wayland x11; do
     if [ "$backend" = x11 ]; then
-        number=$(timeout 5 scripts/mindectl eval '(caddr (wm-runtime-info))')
+        number=$(timeout 30 scripts/mindectl eval '(caddr (wm-runtime-info))')
         case "$number" in ''|*[!0-9]*) echo "XWayland unavailable: $number" >&2; exit 1;; esac
         display=:$number
     else
         display=
     fi
-    title="Minde accessibility fixture ($backend)"
+    title="Minde accessibility fixture — Übersicht ($backend)"
     result_dir=$(mktemp -d "$out/$backend.XXXXXX")
     env DISPLAY="$display" WAYLAND_DISPLAY="$NESTED_WAYLAND_DISPLAY" GDK_BACKEND="$backend" \
         python3 tests/clients/a11y-gtk3.py "$result_dir/submitted.json" "$title" >"$out/$backend.log" 2>&1 &
@@ -50,7 +50,7 @@ for backend in wayland x11; do
     a11y() {
         operation=$1
         shift
-        timeout 18 scripts/mindectl a11y "$operation" "$id" "$@"
+        LC_ALL=C timeout 18 scripts/mindectl a11y "$operation" "$id" "$@"
     }
     ready=
     for _ in $(seq 1 30); do
@@ -63,22 +63,31 @@ for backend in wayland x11; do
     if [ -z "$ready" ]; then cat "$out/find.err" "$out/find.json" >&2; exit 1; fi
     jq -e '.ok and .result.role == "push-button" and .result.name == "Finish"' "$out/find.json"
     a11y tree | jq -e . >/dev/null
-    if a11y click --role push-button --name Missing >"$out/missing.json" 2>&1; then
+    if a11y click --role push-button --name Missing >"$out/missing.json" 2>"$out/missing.err"; then
         echo "Missing button unexpectedly accepted" >&2; exit 1
     fi
     jq -e '.error == "not-found"' "$out/missing.json"
-    if a11y click --role push-button --name Duplicate >"$out/duplicate.json" 2>&1; then
+    if a11y click --role push-button --name Duplicate >"$out/duplicate.json" 2>"$out/duplicate.err"; then
         echo "Ambiguous button unexpectedly accepted" >&2; exit 1
     fi
     jq -e '.error == "ambiguous"' "$out/duplicate.json"
     a11y select --role combo-box --name 'Model time units' --value hours
     a11y set-text --role text --name Capacity --value 3
+    a11y focus --role push-button --name Finish
+    a11y focus --role text --name Capacity
+    a11y inspect --role text --name Capacity >"$out/field.json"
+    jq -e '.ok and .result.text == "3" and (.result.states | index("editable") != null)' "$out/field.json"
+    a11y inspect --name Password >"$out/password.json"
+    jq -e '.ok and .result.text == null' "$out/password.json"
+    a11y inspect --within-name Geräteeinstellungen --role push-button --name Duplicate >"$out/actions.json"
+    action=$(jq -er '.result.actions[] | select(. == "click")' "$out/actions.json")
+    a11y invoke --within-name Geräteeinstellungen --role push-button --name Duplicate --action "$action"
     a11y click --role push-button --name Finish
     for _ in $(seq 1 50); do
         [ -s "$result_dir/submitted.json" ] && break
         sleep 0.1
     done
-    jq -e '. == ["hours", "3"]' "$result_dir/submitted.json"
+    jq -e '. == ["hours", "3", ["Geräteeinstellungen"], true]' "$result_dir/submitted.json"
     wait "$fixture_pid"
     fixture_pid=
     echo "$backend GTK3 semantic form actions passed"
